@@ -1,14 +1,12 @@
 import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { useFrame, useThree, type ThreeEvent } from '@react-three/fiber';
-import { useGLTF } from '@react-three/drei';
+import { useAnatomyModel, preloadAnatomyModel } from './model';
 import { ORGANS, TISSUE, MESH_TO_ORGAN, ORGAN_BY_ID, type MeshSpec, type Tissue } from '../anatomy/organs';
 import type { OrganId, SystemId } from '../types';
 import { useUI } from '../state/ui';
 import { useHealth } from '../lib/store';
 import { BIOMARKERS } from '../lib/catalog';
-
-export const MODEL_URL = `${import.meta.env.BASE_URL}models/anatomy.glb`;
 
 /** Shared lookup so the camera rig can frame meshes by name. */
 export const meshRegistry = new Map<string, THREE.Mesh>();
@@ -53,7 +51,7 @@ const organSystems = (() => {
 })();
 
 export function Anatomy() {
-  const { scene } = useGLTF(MODEL_URL, false, true);
+  const { scene } = useAnatomyModel();
   const { gl, invalidate } = useThree();
   const selected = useHealth(s => s.selectedOrgan);
   const activeSystem = useHealth(s => s.activeSystem);
@@ -172,4 +170,4 @@ export function Anatomy() {
   );
 }
 
-useGLTF.preload(MODEL_URL, false, true);
+preloadAnatomyModel();

@@ -31,3 +31,4 @@ tools/anatomy/*.log
 tools/anatomy/job*
 tools/anatomy/__pycache__/
 shots/
+dist-artifact

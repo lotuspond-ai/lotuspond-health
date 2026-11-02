@@ -1,7 +1,7 @@
 import { Suspense, useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { Canvas, useThree } from '@react-three/fiber';
-import { Bvh, CameraControls, Html, MeshReflectorMaterial, useProgress } from '@react-three/drei';
+import { Bvh, CameraControls, Html, MeshReflectorMaterial } from '@react-three/drei';
 import { EffectComposer, N8AO, Bloom, Vignette, ToneMapping, SMAA } from '@react-three/postprocessing';
 import { ToneMappingMode } from 'postprocessing';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
@@ -128,8 +128,7 @@ function Landmarks() {
 }
 
 function Loader() {
-  const { progress } = useProgress();
-  return <Html center><div className="stage-loading">Growing the model… {Math.round(progress)}%</div></Html>;
+  return <Html center><div className="stage-loading">Loading the 3D model…</div></Html>;
 }
 
 function ToneFix({ quality }: { quality: 'high' | 'fast' }) {

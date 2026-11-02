@@ -51,3 +51,7 @@ cd ../.. && npx gltf-transform meshopt tools/anatomy/anatomy_raw.glb public/mode
 ```
 
 Model coordinates are metres with `+x` toward the person's left, `+y` up and `+z` toward the front.
+
+## Publishing as a Claude artifact
+
+`npm run build:artifact` writes `dist-artifact/`: the same app, with the 3D model shipped as base64 text (`models/anatomy.b64.txt`) for hosts that don't serve `.glb` files, and a body-only `index.html`.
