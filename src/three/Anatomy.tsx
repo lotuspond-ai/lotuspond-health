@@ -61,9 +61,9 @@ export function Anatomy() {
   const { hovered, setHovered, layers, xray, section } = useUI();
   const animating = useRef(true);
 
-  const skinGhost = useMemo(() => ghost('#8fd3dc', 0.32, 0.022), []);
+  const skinGhost = useMemo(() => ghost('#8fd3dc', 0.42, 0.03), []);
   const boneGhost = useMemo(() => ghost('#efe6d2', 0.30, 0.05), []);
-  const contextGhost = useMemo(() => ghost('#9fd6dd', 0.20, 0.015), []);
+  const contextGhost = useMemo(() => ghost('#9fd6dd', 0.13, 0.01), []);
   const clipPlane = useMemo(() => new THREE.Plane(new THREE.Vector3(0, 0, -1), 0), []);
 
   const parts = useMemo(() => {
@@ -109,7 +109,7 @@ export function Anatomy() {
     for (const p of parts) {
       const isFocus = focus === p.organ;
       const isBone = p.organ === 'marrow';
-      p.mesh.visible = !(isBone && !layers.skeleton);
+      p.mesh.visible = !(isBone && (!layers.skeleton || (focus && focus !== 'marrow')));
       let mat: THREE.Material = p.solid;
       if (focus && !isFocus) mat = isBone ? boneGhost : contextGhost;
       else if (isBone && !bonesSolid) mat = boneGhost;

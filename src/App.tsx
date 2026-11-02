@@ -28,7 +28,9 @@ export default function App() {
           <button className="btn btn--primary" onClick={() => setUploadOpen(true)}>{Icon.upload} Upload</button>
         </div>
       </header>
-      {view === 'body' ? <BodyMap /> : view === 'markers' ? <Biomarkers /> : <Scans />}
+      <BodyMap hidden={view !== 'body'} />
+      {view === 'markers' && <Biomarkers />}
+      {view === 'scans' && <Scans />}
       <MarkerDrawer />
       <UploadDialog />
       <ScanViewer />

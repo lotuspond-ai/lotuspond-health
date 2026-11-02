@@ -68,7 +68,7 @@ function StageOverlay() {
       </div>
       <div className="stage__tools" role="group" aria-label="Model layers">
         {!organ && <button className="chip" aria-pressed={layers.skin} onClick={() => toggleLayer('skin')}>Skin</button>}
-        <button className="chip" aria-pressed={layers.skeleton} onClick={() => toggleLayer('skeleton')}>Skeleton</button>
+        {(!organ || organ.id === 'marrow') && <button className="chip" aria-pressed={layers.skeleton} onClick={() => toggleLayer('skeleton')}>Skeleton</button>}
         <button className="chip" aria-pressed={layers.labels} onClick={() => toggleLayer('labels')}>Labels</button>
         <button className="chip" aria-pressed={quality === 'high'} onClick={() => setQuality(quality === 'high' ? 'fast' : 'high')} title="Soft shadows and water reflections">Studio light</button>
       </div>
@@ -200,11 +200,11 @@ function OrganPanel({ organ, series }: { organ: OrganId; series: Series[] }) {
   );
 }
 
-export default function BodyMap() {
+export default function BodyMap({ hidden }: { hidden?: boolean }) {
   const series = useSeries();
   const selected = useHealth(s => s.selectedOrgan);
   return (
-    <main className="bodymap">
+    <main className="bodymap" hidden={hidden}>
       <IndexPanel series={series} />
       <section className="stage" aria-label="3D body model">
         <Suspense fallback={<div className="stage__title"><p>Loading the 3D model…</p></div>}><Stage /></Suspense>

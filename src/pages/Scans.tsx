@@ -35,9 +35,9 @@ export default function Scans() {
               <button className="thumb" onClick={() => setScanOpen(s.id)}><img src={s.thumbDataUrl} alt={`Scan ${s.fileName}`} /><span>{s.modality ?? 'Scan'}</span></button>
               <b title={s.fileName}>{s.fileName}</b>
               <span className="muted" style={{ fontSize: 13 }}>{[s.bodyPart, formatDate(s.date)].filter(Boolean).join(', ')}</span>
-              <div style={{ display: 'flex', gap: 8 }}>
+              <div className="scan-card__row">
                 <OrganSelect value={s.organ} onChange={o => updateScan(s.id, { organ: o })} />
-                {s.organ && <button className="btn btn--quiet" onClick={() => { selectOrgan(s.organ); setView('body'); }}>Show on body</button>}
+                {s.organ && <button className="linkish" onClick={() => { selectOrgan(s.organ); setView('body'); }}>Show on body</button>}
               </div>
             </div>
           ))}

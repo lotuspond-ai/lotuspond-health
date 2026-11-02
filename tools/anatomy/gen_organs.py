@@ -58,19 +58,18 @@ if want('lungs'):
         sc.s(Capsule((0, 1.50, -0.064), (0, 1.12, -0.066), 0.026), 0.012)
         sc.s(Capsule((0.022, 1.38, -0.050), (0.020, 1.15, -0.048), 0.016), 0.006)
         P = np.array([s * 0.07, 1.305, -0.012]); n = np.array([0, 0.16, 0.19]); n /= np.linalg.norm(n)
-        H = np.array([s * 0.030, 1.322, -0.022])
-        def obl(x, y, z, P=P, n=n, H=H):
+        base = sc; DEPTH = 0.0055      # fissures as surface grooves (a full-depth slit renders as terraces)
+        def obl(x, y, z, P=P, n=n, base=base):
             d = (x - P[0]) * n[0] + (y - P[1]) * n[1] + (z - P[2]) * n[2]
-            r = np.sqrt((x - H[0]) ** 2 + (y - H[1]) ** 2 + (z - H[2]) ** 2)
-            return np.maximum(np.abs(d) - 0.0011, 0.030 - r)
-        sc.s(Fn(obl, (-0.2, 1.1, -0.15), (0.2, 1.5, 0.12)), 0.0015)
+            return np.maximum(np.abs(d) - 0.0016, -(base(x, y, z) + DEPTH))
+        groove = Scene().u(Fn(obl, (-0.2, 1.1, -0.15), (0.2, 1.5, 0.12)))
         if s < 0:
-            def hor(x, y, z, P=P, n=n, H=H):
+            def hor(x, y, z, P=P, n=n, base=base):
                 d = (x - P[0]) * n[0] + (y - P[1]) * n[1] + (z - P[2]) * n[2]
-                r = np.sqrt((x - H[0]) ** 2 + (y - H[1]) ** 2 + (z - H[2]) ** 2)
-                return np.maximum(np.maximum(np.abs(y - 1.300) - 0.0011, -d), 0.030 - r)
-            sc.s(Fn(hor, (-0.2, 1.25, -0.15), (0.0, 1.35, 0.12)), 0.0015)
-        v, t = mesh_scene(sc, 0.0024, smooth=1)
+                return np.maximum(np.maximum(np.abs(y - 1.300) - 0.0016, -d), -(base(x, y, z) + DEPTH))
+            groove.u(Fn(hor, (-0.2, 1.25, -0.15), (0.0, 1.35, 0.12)))
+        sc = Scene().u(base).s(groove, 0.0025)
+        v, t = mesh_scene(sc, 0.0022, smooth=1)
         save('lung_' + ('r' if s < 0 else 'l'), v, t)
 
 if want('heart'):

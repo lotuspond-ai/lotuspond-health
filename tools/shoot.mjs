@@ -12,6 +12,7 @@ page.on('pageerror', e => logs.push(`PAGEERROR: ${e.message}`));
 await page.goto(url, { waitUntil: 'networkidle' });
 for (const s of steps) {
   if (s.click) await page.click(s.click, { timeout: 15000 });
+  if (s.files) await page.setInputFiles(s.files[0], s.files.slice(1));
   if (s.eval) await page.evaluate(s.eval);
   if (s.wait) await page.waitForTimeout(s.wait);
   if (s.waitFor) await page.waitForSelector(s.waitFor, { timeout: 60000 });

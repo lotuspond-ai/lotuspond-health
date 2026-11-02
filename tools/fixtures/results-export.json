@@ -1,0 +1,35 @@
+{
+  "date": "2026-10-20",
+  "results": [
+    {
+      "name": "Hemoglobin",
+      "value": 12.9,
+      "unit": "g/dL",
+      "range": "12.0 - 15.5"
+    },
+    {
+      "name": "Platelet Count",
+      "value": "2.6",
+      "unit": "lakhs/cumm",
+      "range": "1.5 - 4.1"
+    },
+    {
+      "name": "SGPT (ALT)",
+      "value": "33",
+      "unit": "U/L",
+      "range": "Upto 40"
+    },
+    {
+      "name": "Ferritin",
+      "value": "28",
+      "unit": "ng/mL",
+      "range": "15 - 150"
+    },
+    {
+      "name": "Glucose Fasting",
+      "value": "5.1",
+      "unit": "mmol/L",
+      "range": "3.9 - 5.6"
+    }
+  ]
+}

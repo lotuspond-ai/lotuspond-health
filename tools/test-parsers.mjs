@@ -1,0 +1,416 @@
+// Parser tests for the LotusPond Health data layer. Run: node tools/test-parsers.mjs
+// Uses Node's built-in TypeScript type stripping (Node >= 22.18) to import src/lib/*.ts directly.
+// Regenerate fixtures first with: python3 tools/make-fixtures.py
+import { readFileSync, existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+import { execFileSync } from 'node:child_process';
+
+const here = dirname(fileURLToPath(import.meta.url));
+const fixtures = join(here, 'fixtures');
+const lib = p => new URL(`../src/lib/${p}`, import.meta.url).href;
+
+const { matchMarkerName, BIOMARKERS, findMarker, SYSTEM_LABELS } = await import(lib('catalog.ts'));
+const { parseRangeText, computeStatus, resolveRange, normalizeUnit, formatValue, refreshMeasurement } = await import(lib('status.ts'));
+const { detectReportDate, parseDate } = await import(lib('parse/dates.ts'));
+const { parseCsvText } = await import(lib('parse/csv.ts'));
+const { parseJsonText } = await import(lib('parse/json.ts'));
+const { parseReportPages, buildLines, findRows } = await import(lib('parse/pdf-text.ts'));
+const { decodeDicom, applyWindow, headerMeta, hasDicmMagic } = await import(lib('parse/dicom-core.ts'));
+const { dicomOrgan, displayModality } = await import(lib('parse/dicom.ts')).catch(() => ({}));
+const { guessOrgan, guessModality } = await import(lib('parse/organs.ts'));
+const { parseValue } = await import(lib('parse/rows.ts'));
+const { SAMPLE } = await import(lib('sample.ts'));
+const store = await import(lib('store.ts'));
+const { buildExport } = await import(lib('export.ts'));
+
+let pass = 0, fail = 0;
+const failures = [];
+function check(name, ok, detail = '') {
+  if (ok) pass++;
+  else { fail++; failures.push(`${name}${detail ? ` — ${detail}` : ''}`); }
+}
+const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+const section = t => console.log(`\n== ${t}`);
+
+/* ---------------- catalog ---------------- */
+section('catalog');
+const ids = new Set();
+for (const b of BIOMARKERS) {
+  check(`unique id ${b.id}`, !ids.has(b.id)); ids.add(b.id);
+  check(`${b.id} has organs`, b.organs.length > 0);
+  check(`${b.id} has about`, b.about.length > 10);
+  check(`${b.id} system label`, !!SYSTEM_LABELS[b.system]);
+  check(`${b.id} aliases lower-case`, b.aliases.every(a => a === a.toLowerCase()));
+}
+console.log(`  ${BIOMARKERS.length} biomarkers`);
+check('catalog size ~75+', BIOMARKERS.length >= 75, String(BIOMARKERS.length));
+
+const NAME_CASES = [
+  ['SGPT', 'alt'], ['ALT (SGPT)', 'alt'], ['S.G.P.T', 'alt'], ['Alanine Aminotransferase', 'alt'], ['SGOT (AST)', 'ast'],
+  ['HDL Cholesterol', 'hdl'], ['HDL Cholesterol - Direct', 'hdl'], ['Non-HDL Cholesterol', 'non_hdl'], ['NON HDL CHOLESTEROL', 'non_hdl'],
+  ['LDL Cholesterol (Calculated)', 'ldl'], ['Cholesterol, Total', 'total_cholesterol'], ['Total Cholesterol', 'total_cholesterol'],
+  ['Chol/HDL Ratio', 'tc_hdl_ratio'], ['TC/HDL Cholesterol Ratio', 'tc_hdl_ratio'], ['LDL/HDL Ratio', 'ldl_hdl_ratio'], ['VLDL', 'vldl'],
+  ['Triglycerides', 'triglycerides'], ['Haemoglobin (Hb)', 'hemoglobin'], ['Hemoglobin', 'hemoglobin'], ['Hb', 'hemoglobin'],
+  ['Total Leucocyte Count (TLC)', 'wbc'], ['WBC Count', 'wbc'], ['RBC Count', 'rbc'], ['PCV', 'hematocrit'], ['Packed Cell Volume', 'hematocrit'],
+  ['MCV', 'mcv'], ['MCH', 'mch'], ['MCHC', 'mchc'], ['RDW-CV', 'rdw'], ['RDW-SD', 'rdw_sd'], ['Neutrophils', 'neutrophils_pct'],
+  ['Absolute Neutrophil Count', 'neutrophils_abs'], ['Lymphocytes Absolute', 'lymphocytes_abs'], ['Eosinophils', 'eosinophils_pct'],
+  ['Absolute Eosinophil Count (AEC)', 'eosinophils_abs'], ['Platelet Count', 'platelets'], ['MPV', 'mpv'], ['ESR (Westergren)', 'esr'],
+  ['Glucose Fasting (FBS)', 'glucose_fasting'], ['Fasting Blood Sugar', 'glucose_fasting'], ['Glucose - Post Prandial', 'glucose_pp'],
+  ['Blood Sugar PP', 'glucose_pp'], ['HbA1c', 'hba1c'], ['Glycosylated Haemoglobin (HbA1c)', 'hba1c'], ['Estimated Average Glucose (eAG)', 'eag'],
+  ['Bilirubin Total', 'bilirubin_total'], ['Bilirubin Direct', 'bilirubin_direct'], ['Bilirubin - Indirect', 'bilirubin_indirect'],
+  ['Alkaline Phosphatase', 'alp'], ['GGT', 'ggt'], ['Gamma GT (GGTP)', 'ggt'], ['Total Protein', 'total_protein'], ['Albumin', 'albumin'],
+  ['Globulin', 'globulin'], ['A/G Ratio', 'ag_ratio'], ['Serum Creatinine', 'creatinine'], ['Blood Urea', 'urea'], ['BUN', 'bun'],
+  ['BUN/Creatinine Ratio', 'bun_creatinine_ratio'], ['eGFR', 'egfr'], ['Uric Acid', 'uric_acid'], ['Sodium (Na+)', 'sodium'],
+  ['Potassium', 'potassium'], ['Chloride', 'chloride'], ['Calcium, Total', 'calcium'], ['Magnesium', 'magnesium'], ['Phosphorus', 'phosphorus'],
+  ['Iron', 'iron'], ['Serum Iron', 'iron'], ['TIBC', 'tibc'], ['Transferrin Saturation', 'transferrin_sat'], ['Ferritin', 'ferritin'],
+  ['TSH (Ultrasensitive)', 'tsh'], ['TSH 3rd Generation', 'tsh'], ['T3, Total', 't3'], ['T4, Total', 't4'], ['Free T3', 'ft3'], ['FT4', 'ft4'],
+  ['25-OH Vitamin D (Total)', 'vitamin_d'], ['Vitamin D 25 Hydroxy', 'vitamin_d'], ['Vitamin B12', 'vitamin_b12'], ['Folic Acid', 'folate'],
+  ['hs-CRP', 'hs_crp'], ['C-Reactive Protein (CRP)', 'crp'], ['NT-proBNP', 'nt_probnp'], ['Troponin I', 'troponin_i'], ['Homocysteine', 'homocysteine'],
+  ['Lipoprotein (a)', 'lpa'], ['Apolipoprotein B', 'apob'], ['Apo A1', 'apoa1'], ['Insulin Fasting', 'insulin'], ['Testosterone Total', 'testosterone'],
+  ['Cortisol (Morning)', 'cortisol'], ['Pus Cells', 'urine_pus_cells'], ['Specific Gravity', 'urine_sg'], ['Urine Glucose', 'urine_glucose'],
+  ['Nitrite', 'urine_nitrite'], ['Ketone Bodies', 'urine_ketones'], ['Hemoglobin mg/dL', 'hemoglobin'],
+];
+const NEG_CASES = ['Patient Name', 'Reported On', 'Page 1 of 2', 'Method: Enzymatic', 'CA 125', 'Iron Deficiency Anemia note', 'HDL/LDL interpretation table', 'Free Testosterone', 'Ionized Calcium', 'Urine Creatinine', 'Microalbumin'];
+let nameOk = 0;
+for (const [raw, want] of NAME_CASES) {
+  const got = matchMarkerName(raw)?.id ?? null;
+  check(`matchMarkerName(${raw})`, got === want, `got ${got}, want ${want}`);
+  if (got === want) nameOk++;
+}
+for (const raw of NEG_CASES) {
+  const got = matchMarkerName(raw)?.id ?? null;
+  check(`no false match for "${raw}"`, got === null || (raw === 'Iron Deficiency Anemia note' && got === null), `got ${got}`);
+}
+check('urine context: Glucose → urine_glucose', matchMarkerName('Glucose', { section: 'urine' })?.id === 'urine_glucose');
+check('urine context: Protein → urine_protein', matchMarkerName('Protein', { section: 'urine' })?.id === 'urine_protein');
+check('urine context: RBC → urine_rbc', matchMarkerName('RBC', { section: 'urine' })?.id === 'urine_rbc');
+console.log(`  names: ${nameOk}/${NAME_CASES.length} positive cases`);
+
+/* ---------------- ranges ---------------- */
+section('ranges');
+const RANGE_CASES = [
+  ['13.0 - 17.0', { low: 13, high: 17 }], ['13-17', { low: 13, high: 17 }], ['< 200', { high: 200 }], ['<=5.7', { high: 5.7 }],
+  ['> 40', { low: 40 }], ['≥40', { low: 40 }], ['Upto 40', { high: 40 }], ['Up to 40', { high: 40 }], ['0.4 to 4.0', { low: 0.4, high: 4 }],
+  ['Desirable: <200', { high: 200 }], ['4000 - 11000', { low: 4000, high: 11000 }], ['1.5 – 4.1', { low: 1.5, high: 4.1 }],
+  ['Desirable: <200 Borderline: 200-239 High: >=240', { high: 200 }],
+  ['Non-diabetic: < 5.7 Pre-diabetic: 5.7 - 6.4 Diabetic: >= 6.5', { high: 5.7 }],
+  ['Deficiency: <20 Insufficiency: 20-30 Sufficiency: 30-100 Toxicity: >100', { low: 30, high: 100 }],
+  ['Male: 13-17 Female: 12-15', { low: 12, high: 17 }], ['Low: <40 High: >=60', { low: 40, high: 60 }],
+  ['Optimal: <100 Near optimal: 100-129 Borderline high: 130-159', { high: 100 }],
+  ['Low risk: <1.0 Average risk: 1.0-3.0 High risk: >3.0', { high: 3 }],
+  ['3.5 - 5.0', { low: 3.5, high: 5 }], ['<1 Low risk; 1 - 3 Average risk; > 3 High risk', { high: 3 }], ['1,50,000 - 4,10,000', { low: 150000, high: 410000 }], ['> 60 mL/min/1.73m2', { low: 60 }],
+  ['Less than 150', { high: 150 }], ['0.0 - 0.3', { low: 0, high: 0.3 }],
+];
+let rangeOk = 0;
+for (const [text, want] of RANGE_CASES) {
+  const r = parseRangeText(text);
+  const got = r ? { ...(r.low != null ? { low: r.low } : {}), ...(r.high != null ? { high: r.high } : {}) } : null;
+  const ok = eq(got, want);
+  check(`parseRangeText(${text})`, ok, `got ${JSON.stringify(got)}`);
+  if (ok) rangeOk++;
+}
+check('parseRangeText(Negative) → null', parseRangeText('Negative') === null);
+check('parseRangeText("") → null', parseRangeText('') === null);
+console.log(`  ranges: ${rangeOk}/${RANGE_CASES.length}`);
+
+check('status high', computeStatus(250, { high: 200, source: 'report' }) === 'high');
+check('status low', computeStatus(30, { low: 40, source: 'report' }) === 'low');
+check('status inclusive bounds', computeStatus(40, { low: 40, high: 60, source: 'report' }) === 'normal');
+check('status no range', computeStatus(5, null) === 'unknown');
+check('status Negative → normal', computeStatus(null, { text: 'Negative', source: 'report' }, 'Negative') === 'normal');
+check('status Positive with neg ref → high', computeStatus(null, { text: 'Negative', source: 'report' }, 'Positive') === 'high');
+const ldl = findMarker('ldl');
+check('resolveRange report wins', resolveRange(ldl, { high: 130, source: 'report', text: '<130' })?.high === 130);
+check('resolveRange typical fallback', resolveRange(ldl, null)?.source === 'typical' && resolveRange(ldl, null)?.high === 100);
+const glu = normalizeUnit(findMarker('glucose_fasting'), 5.5, 'mmol/L');
+check('normalizeUnit glucose mmol/L → mg/dL', Math.abs(glu.value - 99) < 0.5 && glu.unit === 'mg/dL', JSON.stringify(glu.value));
+const chol = normalizeUnit(findMarker('total_cholesterol'), 5.2, 'mmol/l');
+check('normalizeUnit cholesterol mmol/L', Math.abs(chol.value - 201) < 1, String(chol.value));
+check('normalizeUnit gm% alias', normalizeUnit(findMarker('hemoglobin'), 13, 'gm%').matched);
+check('normalizeUnit thousand/cumm alias', normalizeUnit(findMarker('wbc'), 7.8, 'thousand/cumm').matched);
+check('normalizeUnit mIU/L ≡ µIU/mL', normalizeUnit(findMarker('tsh'), 2, 'mIU/L').matched);
+check('normalizeUnit lakhs/cumm platelets', normalizeUnit(findMarker('platelets'), 2.45, 'lakhs/cumm').value === 245);
+check('normalizeUnit cells/cumm WBC', normalizeUnit(findMarker('wbc'), 7800, 'cells/cumm').value === 7.8);
+check('normalizeUnit HbA1c mmol/mol', Math.abs(normalizeUnit(findMarker('hba1c'), 48, 'mmol/mol').value - 6.54) < 0.05);
+check('formatValue keeps <', formatValue({ value: 0.5, valueText: '<0.5', unit: 'mg/L' }) === '<0.5 mg/L', formatValue({ value: 0.5, valueText: '<0.5', unit: 'mg/L' }));
+check('formatValue qualitative', formatValue({ value: null, valueText: 'Negative', unit: '' }) === 'Negative');
+check('formatValue converted', formatValue({ value: 99.088, valueText: '5.5', unit: 'mg/dL' }) === '99.1 mg/dL', formatValue({ value: 99.088, valueText: '5.5', unit: 'mg/dL' }));
+check('parseValue 1,234', parseValue('1,234').value === 1234);
+check('parseValue 13.5 H', parseValue('13.5 H').value === 13.5 && parseValue('13.5 H').flag === 'high');
+check('parseValue <0.5', parseValue('<0.5').value === 0.5 && parseValue('<0.5').text === '<0.5');
+check('parseValue 2.5 lakhs', parseValue('2.5 lakhs').value === 250000);
+check('parseValue Negative', parseValue('Negative').value === null);
+check('parseValue 2-4 → 4', parseValue('2-4').value === 4);
+
+/* ---------------- dates ---------------- */
+section('dates');
+const DATE_CASES = [
+  ['Collected On: 28/Oct/2026', '2026-10-28'], ['28-10-2026', '2026-10-28'], ['2026-10-28', '2026-10-28'], ['16 Jul 2026', '2026-07-16'],
+  ['Jul 16, 2026', '2026-07-16'], ['10/28/2026', '2026-10-28'], ['05/06/2026', '2026-06-05'], ['28.10.2026', '2026-10-28'],
+  ['Reported On: 30/10/2026\nSample Collected: 28/10/2026 08:10', '2026-10-28'],
+  ['Date of Birth: 12/03/1992  Collection Date: 2026-07-02', '2026-07-02'],
+  ['Printed: 01-Nov-2026  Drawn: 29-Oct-2026', '2026-10-29'],
+  ['Patient: X  DOB 01/01/1990 Report date 03/04/2026', '2026-04-03'],
+  ['Registered on 16th July 2026', '2026-07-16'],
+];
+let dateOk = 0;
+for (const [text, want] of DATE_CASES) {
+  const got = detectReportDate(text);
+  check(`detectReportDate(${JSON.stringify(text)})`, got === want, `got ${got}`);
+  if (got === want) dateOk++;
+}
+check('US option', detectReportDate('05/06/2026', { us: true }) === '2026-05-06');
+check('invalid date rejected', parseDate('31/02/2026') === null);
+check('parseDate compact 20261028', parseDate('20261028') === '2026-10-28');
+console.log(`  dates: ${dateOk}/${DATE_CASES.length}`);
+
+/* ---------------- CSV ---------------- */
+section('CSV');
+const CSV = `Lotus Diagnostics,,,,
+Patient,Asha Demo,,,
+Investigation,Result,Units,Biological Reference Interval,Date
+Haemoglobin,12.1,g/dL,13.0 - 17.0,28/10/2026
+Total Leucocyte Count,"7,800",cells/cumm,4000 - 11000,28/10/2026
+SGPT (ALT),48,U/L,Upto 40,28/10/2026
+Glucose Fasting,5.4,mmol/L,3.9 - 5.6,28/10/2026
+HDL Cholesterol,38,mg/dL,> 40,2026-07-02
+HDL Cholesterol,44,mg/dL,> 40,2026-10-28
+Non-HDL Cholesterol,176,mg/dL,< 130,2026-10-28
+Mystery Marker X,3.3,U/L,1-5,2026-10-28
+URINE ROUTINE,,,,
+Glucose,Negative,,Negative,2026-10-28
+Pus Cells,2-4,/hpf,0 - 5,2026-10-28
+`;
+const csv = parseCsvText(CSV, 'report.csv');
+const byId = (r, id, date) => r.measurements.find(m => m.markerId === id && (!date || m.date === date));
+check('CSV row count', csv.measurements.length === 10, String(csv.measurements.length));
+check('CSV Hb low', byId(csv, 'hemoglobin')?.status === 'low');
+check('CSV TLC converted to 10^3/µL', byId(csv, 'wbc')?.value === 7.8 && byId(csv, 'wbc')?.range?.low === 4, JSON.stringify(byId(csv, 'wbc')));
+check('CSV ALT high', byId(csv, 'alt')?.status === 'high');
+check('CSV glucose mmol→mg/dL', Math.abs((byId(csv, 'glucose_fasting')?.value ?? 0) - 97.3) < 0.5 && byId(csv, 'glucose_fasting')?.status === 'normal', JSON.stringify(byId(csv, 'glucose_fasting')));
+check('CSV two HDL dates', byId(csv, 'hdl', '2026-07-02')?.status === 'low' && byId(csv, 'hdl', '2026-10-28')?.status === 'normal');
+check('CSV non-HDL not HDL', byId(csv, 'non_hdl')?.value === 176);
+check('CSV unmatched kept', csv.measurements.some(m => m.markerId === null && m.rawName === 'Mystery Marker X' && m.confidence === 'low'));
+check('CSV urine section glucose', byId(csv, 'urine_glucose')?.status === 'normal', JSON.stringify(byId(csv, 'urine_glucose')));
+check('CSV pus cells 2-4', byId(csv, 'urine_pus_cells')?.value === 4 && byId(csv, 'urine_pus_cells')?.valueText === '2-4');
+check('CSV high confidence', byId(csv, 'alt')?.confidence === 'high');
+const TSV = 'Test\tValue\tUnit\tLow\tHigh\nTSH\t5.2\tmIU/L\t0.4\t4.5\nVitamin D\t18\tng/mL\t30\t100\n';
+const tsv = parseCsvText(TSV, 'r.tsv');
+check('TSV low/high columns', byId(tsv, 'tsh')?.status === 'high' && byId(tsv, 'vitamin_d')?.status === 'low', JSON.stringify(tsv.measurements.map(m => [m.markerId, m.status])));
+check('TSV no date warning', tsv.warnings.some(w => /date/i.test(w)));
+
+/* ---------------- JSON ---------------- */
+section('JSON');
+const j1 = parseJsonText(JSON.stringify([{ test: 'LDL Cholesterol', result: '142', unit: 'mg/dL', reference: '<100', date: '2026-10-28' }, { test: 'TSH', result: 2.1, unit: 'µIU/mL' }]), 'a.json');
+check('JSON rows', j1.measurements.length === 2 && byId(j1, 'ldl')?.status === 'high', JSON.stringify(j1.measurements.map(m => m.markerId)));
+check('JSON typical range fallback', byId(j1, 'tsh')?.range?.source === 'typical' && byId(j1, 'tsh')?.status === 'normal');
+const j2 = parseJsonText(JSON.stringify({ date: '16 Jul 2026', results: [{ name: 'Ferritin', value: '12', units: 'ng/mL', range: '15 - 150' }] }), 'b.json');
+check('JSON {date, results}', byId(j2, 'ferritin')?.date === '2026-07-16' && byId(j2, 'ferritin')?.status === 'low');
+const exported = buildExport({ measurements: SAMPLE.measurements, scans: [] });
+const j3 = parseJsonText(JSON.stringify(exported), 'export.json');
+check('JSON own export round trip', j3.measurements.length === SAMPLE.measurements.length, `${j3.measurements.length} vs ${SAMPLE.measurements.length}`);
+check('JSON export statuses preserved', j3.measurements.every((m, i) => m.status === SAMPLE.measurements[i].status));
+check('JSON invalid warns', parseJsonText('{oops', 'x.json').warnings.length === 1);
+
+/* ---------------- sample + store ---------------- */
+section('sample + store');
+const sm = SAMPLE.measurements;
+const systems = new Set(sm.map(m => findMarker(m.markerId)?.system));
+check('sample ~45 rows', sm.length >= 40 && sm.length <= 50, String(sm.length));
+check('sample covers all systems', Object.keys(SYSTEM_LABELS).every(s => systems.has(s)), [...systems].join(','));
+check('sample 3 dates', eq(store.dates(sm), ['2026-03-14', '2026-07-02', '2026-10-20']));
+check('sample has out-of-range rows', sm.filter(m => m.status !== 'normal').length >= 5);
+check('sample all matched', sm.every(m => m.markerId && m.status !== 'unknown'), sm.filter(m => m.status === 'unknown').map(m => m.markerId).join(','));
+const latest = store.latestByMarker(sm);
+check('latestByMarker picks newest', latest.ldl.date === '2026-10-20' && latest.ldl.value === 112);
+const sum = store.organSummary(sm);
+check('organSummary heart has LDL high', sum.heart.high >= 1 && sum.heart.total >= 4, JSON.stringify(sum.heart));
+const liverRows = store.measurementsForOrgan({ measurements: sm }, 'liver');
+check('measurementsForOrgan liver history', liverRows.find(s => s.key === 'alt')?.history.length === 3);
+const s = store.useHealth.getState();
+s.loadSample();
+check('store loadSample', store.useHealth.getState().measurements.length === sm.length);
+store.useHealth.getState().loadSample();
+check('store dedupes on re-add', store.useHealth.getState().measurements.length === sm.length);
+const tshRow = store.useHealth.getState().measurements.find(m => m.markerId === 'tsh' && m.date === '2026-10-20');
+store.useHealth.getState().updateMeasurement(tshRow.id, { value: 6.1, valueText: '6.1' });
+check('updateMeasurement recomputes status', store.useHealth.getState().measurements.find(m => m.id === tshRow.id).status === 'high');
+store.useHealth.getState().updateMeasurement(tshRow.id, { markerId: 'ft4', unit: 'ng/dL', range: null });
+check('updateMeasurement marker change → typical range', store.useHealth.getState().measurements.find(m => m.id === tshRow.id).range?.source === 'typical');
+store.useHealth.getState().updateMeasurement(tshRow.id, { markerId: 'glucose_fasting', unit: 'mmol/L', value: 5.5, valueText: '5.5', range: null });
+const conv = store.useHealth.getState().measurements.find(m => m.id === tshRow.id);
+check('updateMeasurement converts alt unit', conv.unit === 'mg/dL' && Math.abs(conv.value - 99.1) < 0.2 && conv.status === 'normal', JSON.stringify(conv));
+store.useHealth.getState().removeMeasurement(tshRow.id);
+check('removeMeasurement', store.useHealth.getState().measurements.length === sm.length - 1);
+store.useHealth.getState().selectOrgan('liver');
+check('selectOrgan', store.useHealth.getState().selectedOrgan === 'liver');
+await store.hydrate();
+check('hydrate without IndexedDB keeps data', store.useHealth.getState().hydrated && store.useHealth.getState().measurements.length === sm.length - 1);
+store.useHealth.getState().clearAll();
+check('clearAll', store.useHealth.getState().measurements.length === 0);
+check('refreshMeasurement export', typeof refreshMeasurement === 'function');
+
+/* ---------------- PDF ---------------- */
+section('PDF');
+const pdfPath = join(fixtures, 'sample-lab-report.pdf');
+if (!existsSync(pdfPath)) execFileSync('python3', [join(here, 'make-fixtures.py')], { stdio: 'inherit' });
+const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+
+async function pagesOf(path) {
+  const task = pdfjs.getDocument({ data: new Uint8Array(readFileSync(path)), useSystemFonts: false, verbosity: 0 });
+  const doc = await task.promise;
+  const pages = [];
+  for (let p = 1; p <= doc.numPages; p++) {
+    const page = await doc.getPage(p);
+    const tc = await page.getTextContent();
+    pages.push({
+      items: tc.items.filter(i => 'str' in i).map(i => ({ str: i.str, x: i.transform[4], y: i.transform[5], width: i.width, height: i.height || Math.hypot(i.transform[2], i.transform[3]) })),
+    });
+  }
+  await task.destroy();
+  return pages;
+}
+
+const pages = await pagesOf(pdfPath);
+const lines0 = buildLines(pages[0].items, 0);
+check('PDF lines rebuilt', lines0.length > 15, String(lines0.length));
+const pdf = parseReportPages(pages, 'sample-lab-report.pdf');
+const EXPECT = {
+  hemoglobin: [12.1, 'low'], wbc: [7.8, 'normal'], rbc: [4.62, 'normal'], hematocrit: [39.8, 'low'], mcv: [86.1, 'normal'], mch: [26.2, 'low'],
+  mchc: [30.4, 'low'], neutrophils_pct: [62, 'normal'], lymphocytes_pct: [30, 'normal'], platelets: [245, 'normal'],
+  total_cholesterol: [214, 'high'], triglycerides: [168, 'high'], hdl: [38, 'low'], ldl: [142, 'high'], vldl: [34, 'high'], non_hdl: [176, 'high'],
+  tc_hdl_ratio: [5.6, 'high'], bilirubin_total: [0.82, 'normal'], bilirubin_direct: [0.21, 'normal'], ast: [32, 'normal'], alt: [48, 'high'],
+  alp: [88, 'normal'], albumin: [4.3, 'normal'], t3: [112, 'normal'], t4: [8.4, 'normal'], tsh: [4.82, 'high'],
+};
+let pdfOk = 0;
+for (const [id, [value, status]] of Object.entries(EXPECT)) {
+  const m = byId(pdf, id);
+  const ok = !!m && Math.abs(m.value - value) < 1e-6 && m.status === status && m.date === '2026-10-28';
+  check(`PDF ${id}`, ok, m ? `value ${m.value} ${m.unit} status ${m.status} date ${m.date} range ${JSON.stringify(m.range)}` : 'missing');
+  if (ok) pdfOk++;
+}
+const extra = pdf.measurements.filter(m => !(m.markerId in EXPECT));
+check('PDF no spurious rows', extra.length === 0, extra.map(m => `${m.markerId}:${m.rawName}=${m.valueText}`).join('; '));
+check('PDF detected date (collected, not reported/DOB)', pdf.detectedDate === '2026-10-28', String(pdf.detectedDate));
+const highConf = pdf.measurements.filter(m => m.confidence === 'high').length;
+console.log(`  PDF: ${pdfOk}/${Object.keys(EXPECT).length} expected rows correct, ${pdf.measurements.length} rows total, ${highConf} high-confidence, ${extra.length} spurious`);
+for (const m of pdf.measurements) console.log(`    ${m.markerId?.padEnd(18)} ${String(m.valueText).padEnd(7)} ${m.unit.padEnd(9)} ${String(m.range?.text ?? '').padEnd(14)} ${m.status.padEnd(7)} ${m.confidence}`);
+
+// Regression checks for column bleed (MCHC range swallowing the lipid column), units absorbing numbers
+// (platelets "lakhs/cumm 1.5"), and lost low bounds (WBC "4000 - 11000").
+const rowOf = id => byId(pdf, id);
+check('PDF MCHC range stops at its own column', rowOf('mchc')?.range?.text === '31.5 - 34.5', rowOf('mchc')?.range?.text);
+check('PDF platelets unit + range', rowOf('platelets')?.unit === '10^3/µL' && rowOf('platelets')?.range?.low === 150 && rowOf('platelets')?.range?.high === 410 && rowOf('platelets')?.range?.text === '1.5 - 4.1', JSON.stringify(rowOf('platelets')));
+check('PDF WBC range keeps low bound', rowOf('wbc')?.range?.low === 4 && rowOf('wbc')?.range?.high === 11 && rowOf('wbc')?.range?.text === '4000 - 11000', JSON.stringify(rowOf('wbc')?.range));
+check('PDF units never contain digits-only tokens', pdf.measurements.every(m => !/\s\d/.test(m.unit)), pdf.measurements.map(m => m.unit).join(','));
+// Same failure modes with merged cells (one text item for "unit + range", side-by-side tables in one cell).
+{
+  const mk = (y, cells) => ({ page: 0, y, height: 8, cells: cells.map(([t, x]) => ({ text: t, x0: x, x1: x + t.length * 4 })), text: cells.map(c => c[0]).join('  ') });
+  const lines = [
+    mk(700, [['Test Name', 40], ['Result', 150], ['Unit', 190], ['Bio. Ref. Interval', 230]]),
+    mk(686, [['MCHC 30.4 L g/dL 31.5 - 34.5 Chol/HDL Ratio 5.6 H 3.5 - 5.0', 40]]),
+    mk(672, [['Platelet Count', 40], ['2.45', 150], ['lakhs/cumm 1.5 - 4.1', 190]]),
+    mk(658, [['Total Leucocyte Count (TLC)', 40], ['7,800', 150], ['cells/cumm 4000 - 11000', 190]]),
+  ];
+  const merged = parseReportPages([{ items: [] }], 'x');
+  const rows = findRows(lines);
+  const r = id => rows.find(x => x.match.def.id === id);
+  check('merged: MCHC range', r('mchc')?.rangeText === '31.5 - 34.5', r('mchc')?.rangeText);
+  check('merged: second table row found', r('tc_hdl_ratio')?.valueText === '5.6' && r('tc_hdl_ratio')?.rangeText === '3.5 - 5.0', JSON.stringify(r('tc_hdl_ratio')?.rangeText));
+  check('merged: platelets unit/range', r('platelets')?.unit === 'lakhs/cumm' && r('platelets')?.rangeText === '1.5 - 4.1', `${r('platelets')?.unit} | ${r('platelets')?.rangeText}`);
+  check('merged: WBC unit/range', r('wbc')?.unit === 'cells/cumm' && r('wbc')?.rangeText === '4000 - 11000', `${r('wbc')?.unit} | ${r('wbc')?.rangeText}`);
+  check('empty page warns', merged.warnings.length === 1);
+  const more = findRows([
+    mk(640, [['Vitamin D 25 Hydroxy', 40], ['18.4', 150], ['ng/mL', 190], ['30 - 100', 230]]),
+    mk(626, [['Hemoglobin', 40], ['L', 140], ['12.1', 150], ['g/dL', 190], ['13.0 - 17.0', 230]]),
+    mk(612, [['Iron', 40], ['62', 150], ['Photometry', 170], ['µg/dL', 190], ['65 - 175', 230]]),
+    mk(598, [['Glucose, Fasting (Plasma)', 40], ['98', 150], ['mg/dL', 190], ['70-100', 230]]),
+    mk(584, [['Note: LDL above 160 mg/dL is considered high', 40]]),
+    mk(570, [['Desirable: < 200 mg/dL', 230]]),
+  ]);
+  const m2 = id => more.find(x => x.match.def.id === id);
+  check('name containing a number', m2('vitamin_d')?.valueText === '18.4', m2('vitamin_d')?.valueText);
+  check('flag before value', m2('hemoglobin')?.valueText === '12.1' && m2('hemoglobin')?.flag === 'L' && m2('hemoglobin')?.name === 'Hemoglobin');
+  check('method after value', m2('iron')?.valueText === '62' && m2('iron')?.unit === 'µg/dL' && m2('iron')?.rangeText === '65 - 175', `${m2('iron')?.unit} | ${m2('iron')?.rangeText}`);
+  check('plasma suffix', m2('glucose_fasting')?.valueText === '98');
+  check('note lines skipped', more.length === 4, more.map(r => r.match.def.id).join(','));
+}
+
+// Second layout: method column, per-word text items, separate flag column, multi-line ranges, urine section.
+const hard = parseReportPages(await pagesOf(join(fixtures, 'lab-report-method-column.pdf')), 'lab-report-method-column.pdf');
+const EXPECT2 = {
+  vitamin_d: [18.4, 'low'], vitamin_b12: [182, 'low'], hba1c: [6.1, 'high'], eag: [128, 'high'], glucose_fasting: [104, 'high'],
+  iron: [62, 'low'], tibc: [402, 'normal'], transferrin_sat: [15.4, 'normal'], ferritin: [21.3, 'low'], creatinine: [0.94, 'normal'],
+  uric_acid: [7.6, 'high'], egfr: [98, 'normal'], sodium: [139, 'normal'], hs_crp: [3.8, 'high'], urine_ph: [6, 'normal'], urine_sg: [1.02, 'normal'],
+  urine_protein: [null, 'normal'], urine_glucose: [null, 'normal'], urine_ketones: [null, 'normal'], urine_pus_cells: [6, 'high'],
+  urine_rbc: [null, 'normal'], urine_nitrite: [null, 'normal'],
+};
+let hardOk = 0;
+for (const [id, [value, status]] of Object.entries(EXPECT2)) {
+  const m = byId(hard, id);
+  const ok = !!m && (value == null ? m.value == null : Math.abs(m.value - value) < 1e-6) && m.status === status && m.date === '2026-07-16' && m.confidence === 'high';
+  check(`PDF2 ${id}`, ok, m ? `${m.rawName} = ${m.valueText} ${m.unit} [${m.range?.text}] ${m.status} ${m.confidence} ${m.date}` : 'missing');
+  if (ok) hardOk++;
+}
+const extra2 = hard.measurements.filter(m => !(m.markerId in EXPECT2));
+check('PDF2 no spurious rows', extra2.length === 0, extra2.map(m => `${m.markerId}:${m.rawName}=${m.valueText}`).join('; '));
+check('PDF2 method column stripped from names', hard.measurements.every(m => !/PHOTOMETRY|C\.L\.I\.A|CALCULATED|DIPSTICK|MICROSCOPY/.test(m.rawName)), hard.measurements.map(m => m.rawName).join(' | '));
+check('PDF2 multi-line vitamin D range', byId(hard, 'vitamin_d')?.range?.low === 30 && byId(hard, 'vitamin_d')?.range?.high === 100);
+check('PDF2 hs-CRP trailing labels → ≤3', byId(hard, 'hs_crp')?.range?.high === 3 && byId(hard, 'hs_crp')?.range?.low == null, JSON.stringify(byId(hard, 'hs_crp')?.range));
+check('PDF2 urine protein keeps printed NEGATIVE range', byId(hard, 'urine_protein')?.range?.text === 'NEGATIVE' && byId(hard, 'urine_protein')?.unit === '');
+console.log(`  PDF2: ${hardOk}/${Object.keys(EXPECT2).length} expected rows correct, ${hard.measurements.length} rows total`);
+
+const scanned = parseReportPages(await pagesOf(join(fixtures, 'scanned-report-no-text.pdf')), 'scanned.pdf');
+check('PDF without text warns', scanned.measurements.length === 0 && scanned.warnings.some(w => /scanned|image/i.test(w)));
+
+/* ---------------- DICOM ---------------- */
+section('DICOM');
+const dcm = readFileSync(join(fixtures, 'chest-xray-synthetic.dcm'));
+const dcmBytes = new Uint8Array(dcm.buffer, dcm.byteOffset, dcm.byteLength);
+check('DICM magic', hasDicmMagic(dcmBytes));
+const d = decodeDicom(dcmBytes);
+check('DICOM header modality/body/date', d.header.modality === 'CR' && d.header.bodyPart === 'CHEST' && d.header.studyDate === '2026-10-28', JSON.stringify(d.header));
+check('DICOM dims/bits', d.header.rows === 64 && d.header.columns === 80 && d.header.bitsAllocated === 16 && d.header.photometric === 'MONOCHROME2');
+check('DICOM uncompressed + pixels', !d.header.compressed && d.values?.length === 64 * 80, `compressed=${d.header.compressed}`);
+check('DICOM value range', d.min === 0 && d.max === 4000, `${d.min}..${d.max}`);
+const w = applyWindow(d);
+check('DICOM window from file', w.center === 2048 && w.window === 4096);
+check('DICOM rgba size', w.rgba.length === 64 * 80 * 4);
+const centre = (32 * 80 + 40) * 4, leftEdge = (2 * 80 + 0) * 4;
+check('DICOM disc bright / left edge dark', w.rgba[centre] > 240 && w.rgba[leftEdge] < 10, `${w.rgba[centre]} / ${w.rgba[leftEdge]}`);
+const narrow = applyWindow(d, 1000, 200);
+check('DICOM custom window saturates', narrow.rgba[centre] === 255 && narrow.center === 1000);
+check('DICOM meta has no patient name', !Object.values(headerMeta(d.header)).some(v => /ASHA|DEMO/.test(v)));
+if (dicomOrgan) check('DICOM organ CHEST → lungs', dicomOrgan(d.header, 'x.dcm') === 'lungs');
+if (displayModality) check('DICOM CR → XR', displayModality('CR') === 'XR');
+const ct = decodeDicom(new Uint8Array(readFileSync(join(fixtures, 'ct-abdomen-synthetic.dcm'))));
+check('DICOM signed CT + rescale', ct.header.pixelRepresentation === 1 && ct.min === -2048 && ct.max === 1952, `${ct.min}..${ct.max}`);
+if (dicomOrgan) check('DICOM organ ABDOMEN → liver', dicomOrgan(ct.header, 'y.dcm') === 'liver');
+const mrj = decodeDicom(new Uint8Array(readFileSync(join(fixtures, 'mri-brain-jpeg-synthetic.dcm'))));
+check('DICOM JPEG baseline detected as compressed', mrj.header.compressed && mrj.compressedFrame?.[0] === 0xff && mrj.compressedFrame?.[1] === 0xd8 && mrj.values === null);
+if (dicomOrgan) check('DICOM HEAD/MRI BRAIN → brain', dicomOrgan(mrj.header, 'z.dcm') === 'brain');
+check('DICOM JPEG applyWindow → null', applyWindow(mrj) === null);
+const ctw = applyWindow(ct);
+check('DICOM CT soft-tissue window', ctw.center === 40 && ctw.window === 400);
+
+/* ---------------- tabular fixtures ---------------- */
+section('tabular fixtures');
+const fcsv = parseCsvText(readFileSync(join(fixtures, 'results-export.csv'), 'utf8'), 'results-export.csv');
+check('fixture CSV 21 rows / 3 dates', fcsv.measurements.length === 21 && store.dates(fcsv.measurements).length === 3, `${fcsv.measurements.length}`);
+const fjson = parseJsonText(readFileSync(join(fixtures, 'results-export.json'), 'utf8'), 'results-export.json');
+check('fixture JSON platelets lakhs → 260', byId(fjson, 'platelets')?.value === 260 && byId(fjson, 'platelets')?.status === 'normal');
+check('fixture JSON glucose mmol → mg/dL', Math.abs((byId(fjson, 'glucose_fasting')?.value ?? 0) - 91.9) < 0.2);
+
+/* ---------------- image hints ---------------- */
+section('image hints');
+const ORGAN_HINTS = [['chest_xray_2026.jpg', 'lungs'], ['CXR-PA.png', 'lungs'], ['echo report.jpg', 'heart'], ['ECG.png', 'heart'], ['usg_abdomen.jpg', 'liver'],
+  ['KUB-ultrasound.png', 'kidneys'], ['MRI Brain.jpg', 'brain'], ['thyroid-usg.jpg', 'thyroid'], ['knee xray.jpeg', 'marrow'], ['DEXA_scan.png', 'marrow'],
+  ['IMG_2041.jpg', null], ['lumbarSpine.png', 'marrow']];
+for (const [f, want] of ORGAN_HINTS) check(`guessOrgan(${f})`, guessOrgan(f) === want, String(guessOrgan(f)));
+const MOD_HINTS = [['chest_xray.jpg', 'XR'], ['x-ray knee.png', 'XR'], ['CT abdomen.png', 'CT'], ['mri_brain.jpg', 'MR'], ['usg.jpg', 'US'], ['echo.png', 'Echo'], ['ecg.png', 'ECG'], ['photo.jpg', null]];
+for (const [f, want] of MOD_HINTS) check(`guessModality(${f})`, guessModality(f) === want, String(guessModality(f)));
+
+/* ---------------- summary ---------------- */
+console.log(`\n${pass} passed, ${fail} failed`);
+if (fail) { console.log('\nFailures:\n  ' + failures.join('\n  ')); process.exitCode = 1; }

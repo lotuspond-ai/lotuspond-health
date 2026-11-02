@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useHealth, getScanBlob } from '../lib/store';
 import { parseFile } from '../lib/parse';
 import { renderDicom } from '../lib/parse/dicom';
@@ -167,7 +167,7 @@ export function ScanViewer() {
     if (!wl) setWl({ center: r.center, width: r.width_ });
   }, [dicom, wl]);
   if (!scan) return null;
-  const style = { transform: `translate(calc(-50% + ${pan.x}px), calc(-50% + ${pan.y}px)) scale(${zoom})`, maxHeight: zoom === 1 ? '100%' : undefined, maxWidth: zoom === 1 ? '100%' : undefined };
+  const style: React.CSSProperties = { width: '100%', height: '100%', objectFit: 'contain', transform: `translate(calc(-50% + ${pan.x}px), calc(-50% + ${pan.y}px)) scale(${zoom})` };
   return (
     <div className="scrim" onClick={close}>
       <div className="viewer" role="dialog" aria-modal="true" aria-labelledby="sv-title" onClick={e => e.stopPropagation()}>

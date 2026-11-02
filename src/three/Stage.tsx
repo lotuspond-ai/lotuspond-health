@@ -12,7 +12,7 @@ import { useHealth, organSummary } from '../lib/store';
 import type { OrganId } from '../types';
 
 const POND = '#0c2528';
-const HOME = { pos: new THREE.Vector3(0.95, 1.22, 3.35), target: new THREE.Vector3(0, 0.98, 0) };
+const HOME = { pos: new THREE.Vector3(0.62, 1.24, 2.95), target: new THREE.Vector3(0, 1.04, 0) };
 
 function StudioLight() {
   const { gl, scene } = useThree();
@@ -38,9 +38,9 @@ function Pond({ quality }: { quality: 'high' | 'fast' }) {
       <mesh rotation-x={-Math.PI / 2} position-y={-0.001}>
         <circleGeometry args={[5, 96]} />
         {quality === 'high' ? (
-          <MeshReflectorMaterial blur={[420, 140]} resolution={1024} mixBlur={1} mixStrength={2.4} roughness={0.85} depthScale={0.9}
-            minDepthThreshold={0.35} maxDepthThreshold={1.3} color="#0a2124" metalness={0.55} mirror={0.55} />
-        ) : <meshStandardMaterial color="#0a2124" roughness={0.6} metalness={0.2} />}
+          <MeshReflectorMaterial blur={[360, 120]} resolution={1024} mixBlur={0.9} mixStrength={1.6} roughness={1} depthScale={0.6}
+            minDepthThreshold={0.3} maxDepthThreshold={1.2} color="#071c1f" metalness={0.15} mirror={0.4} />
+        ) : <meshStandardMaterial color="#071c1f" roughness={0.9} metalness={0} />}
       </mesh>
       {[0.34, 0.52, 0.78].map((r, i) => (
         <mesh key={r} rotation-x={-Math.PI / 2} position-y={0.002}>
@@ -73,7 +73,7 @@ function CameraRig() {
     if (section.on) dir = section.axis === 'coronal' ? new THREE.Vector3(0.05, 0.08, 1) : section.axis === 'transverse' ? new THREE.Vector3(0.05, 1, 0.35) : new THREE.Vector3(selected === 'liver' ? -1 : 1, 0.08, 0.05);
     dir.normalize();
     const radius = Math.max(size.x, size.y, size.z) * 0.62;
-    const dist = Math.max(0.16, radius / Math.sin(THREE.MathUtils.degToRad(camera.fov / 2)) * 1.05);
+    const dist = Math.max(0.2, radius / Math.sin(THREE.MathUtils.degToRad(camera.fov / 2)) * 1.6);
     c.setLookAt(center.x + dir.x * dist, center.y + dir.y * dist, center.z + dir.z * dist, center.x, center.y, center.z, true);
   }, [selected, section.on, section.axis, camera]);
   return <CameraControls ref={ref} makeDefault smoothTime={0.55} minDistance={0.12} maxDistance={6.5} dollyToCursor maxPolarAngle={Math.PI * 0.62} />;
@@ -87,19 +87,20 @@ function Pins() {
   const selected = useHealth(s => s.selectedOrgan);
   const selectOrgan = useHealth(s => s.selectOrgan);
   const summary = useMemo(() => organSummary(measurements), [measurements]);
-  if (!layers.labels || (selected && selected !== 'skin')) return null;
+  const hidden = !layers.labels || (selected && selected !== 'skin');
   return (
     <>
       {ORGANS.filter(o => o.id !== 'skin' && o.id !== 'airway' && o.id !== 'esophagus').map(o => {
         const s = summary[o.id as OrganId];
         const state = !s || s.total === 0 ? 'none' : s.out > 0 ? 'out' : 'ok';
+        const showLabel = hovered === o.id || state === 'out';
         return (
-          <Html key={o.id} position={o.pin} center zIndexRange={[20, 0]}>
+          <Html key={o.id} position={o.pin} center zIndexRange={[20, 0]} style={{ display: hidden ? 'none' : undefined }}>
             <button className={`pin pin--${state}${hovered === o.id ? ' is-hot' : ''}`} style={{ ['--pin' as string]: STATUS_COLOR[state] }}
               onClick={() => selectOrgan(o.id)} onPointerEnter={() => setHovered(o.id)} onPointerLeave={() => setHovered(null)}
               aria-label={`${o.name}${s?.total ? `, ${s.total} results, ${s.out} outside range` : ''}`}>
               <span className="pin__dot" />
-              <span className="pin__label">{o.short}{s?.out ? <em>{s.out}</em> : null}</span>
+              {showLabel && <span className="pin__label">{o.short}{s?.out ? <em>{s.out}</em> : null}</span>}
             </button>
           </Html>
         );
@@ -111,11 +112,10 @@ function Pins() {
 function Landmarks() {
   const selected = useHealth(s => s.selectedOrgan);
   const layers = useUI(s => s.layers);
-  if (!selected || !layers.labels) return null;
   return (
     <>
-      {ORGAN_BY_ID[selected].landmarks.map(l => (
-        <Html key={l.name} position={l.at} zIndexRange={[20, 0]} className="lm-wrap">
+      {ORGANS.flatMap(o => o.landmarks.map(l => ({ o, l }))).map(({ o, l }) => (
+        <Html key={o.id + l.name} position={l.at} zIndexRange={[20, 0]} className="lm-wrap" style={{ display: selected === o.id && layers.labels ? undefined : 'none' }}>
           <div className="landmark" tabIndex={0}>
             <span className="landmark__dot" />
             <span className="landmark__name">{l.name}</span>
@@ -134,7 +134,7 @@ function Loader() {
 
 function ToneFix({ quality }: { quality: 'high' | 'fast' }) {
   const gl = useThree(s => s.gl); const invalidate = useThree(s => s.invalidate);
-  useEffect(() => { gl.toneMapping = quality === 'high' ? THREE.NoToneMapping : THREE.AgXToneMapping; gl.toneMappingExposure = 1.05; invalidate(); }, [gl, quality, invalidate]);
+  useEffect(() => { gl.toneMapping = quality === 'high' ? THREE.NoToneMapping : THREE.NeutralToneMapping; gl.toneMappingExposure = 1.05; invalidate(); }, [gl, quality, invalidate]);
   return null;
 }
 
@@ -145,7 +145,7 @@ export default function Stage() {
     <Canvas className="stage-canvas" frameloop="demand" dpr={[1, 2]} camera={{ fov: 30, near: 0.02, far: 40, position: HOME.pos.toArray() }}
       gl={{ antialias: quality === 'fast', powerPreference: 'high-performance' }} onPointerMissed={(e) => { if (e.type === 'dblclick') selectOrgan(null); }}>
       <color attach="background" args={[POND]} />
-      <fog attach="fog" args={[POND, 4.2, 8.5]} />
+      <fog attach="fog" args={[POND, 3.2, 7.5]} />
       <ToneFix quality={quality} />
       <StudioLight />
       <Suspense fallback={<Loader />}>
@@ -162,7 +162,7 @@ export default function Stage() {
           <N8AO aoRadius={0.05} distanceFalloff={0.6} intensity={2.4} quality="medium" halfRes color="#06181b" />
           <Bloom mipmapBlur intensity={0.28} luminanceThreshold={0.86} luminanceSmoothing={0.2} />
           <Vignette offset={0.28} darkness={0.5} />
-          <ToneMapping mode={ToneMappingMode.AGX} />
+          <ToneMapping mode={ToneMappingMode.NEUTRAL} />
           <SMAA />
         </EffectComposer>
       )}
