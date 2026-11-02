@@ -1,0 +1,32 @@
+<!doctype html><html><body style="margin:0;background:#0c2528"><canvas id="c" style="width:100vw;height:100vh;display:block"></canvas>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
+import { ORGANS, TISSUE, MESH_TO_ORGAN, ORGAN_BY_ID } from '../src/anatomy/organs.ts';
+const r = new THREE.WebGLRenderer({ canvas: document.getElementById('c'), antialias: true }); r.setSize(innerWidth, innerHeight, false); r.toneMapping = THREE.AgXToneMapping; r.localClippingEnabled = true;
+const scene = new THREE.Scene(); scene.background = new THREE.Color('#0c2528');
+scene.environment = new THREE.PMREMGenerator(r).fromScene(new RoomEnvironment(), 0.04).texture; scene.environmentIntensity = 0.55;
+scene.add(new THREE.HemisphereLight('#dff3f1', '#0b2326', 0.55)); const k = new THREE.DirectionalLight('#fff4ea', 2.1); k.position.set(1.6, 3.2, 2.4); scene.add(k);
+const rim = new THREE.DirectionalLight('#f2a1b8', 1.3); rim.position.set(-2.2, 1.6, -1.8); scene.add(rim);
+const cam = new THREE.PerspectiveCamera(30, innerWidth / innerHeight, 0.01, 20);
+const q = new URLSearchParams(location.search); const organ = q.get('organ'); const clip = q.get('clip'); const xray = q.has('xray');
+const plane = new THREE.Plane(new THREE.Vector3(0, 0, -1), 0);
+const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
+loader.load('/models/anatomy.glb', g => {
+  const meshes = {};
+  const all = []; g.scene.traverse(o => o.isMesh && all.push(o)); all.forEach(o => { meshes[o.name] = o; const oid = MESH_TO_ORGAN[o.name]; const spec = ORGAN_BY_ID[oid].meshes.find(m => m.id === o.name); const t = TISSUE[spec.tissue];
+    const show = !organ || oid === organ; o.visible = show && oid !== 'skin';
+    const mat = new THREE.MeshPhysicalMaterial({ color: t.color, roughness: t.rough, clearcoat: t.clear, clearcoatRoughness: .32, sheen: t.sheen ? .55 : 0, sheenColor: t.sheen ?? '#fff', envMapIntensity: .9, transparent: !!t.opacity || (xray && spec.shell), opacity: xray && spec.shell ? .22 : (t.opacity ?? 1), depthWrite: !(t.opacity || (xray && spec.shell)) });
+    if (clip) mat.clippingPlanes = [plane]; o.material = mat;
+    if (spec.hollow || t.opacity) { const inner = new THREE.Mesh(o.geometry, new THREE.MeshPhysicalMaterial({ color: t.inner ?? t.color, roughness: .8, side: THREE.BackSide, clippingPlanes: clip ? [plane] : [], transparent: !!t.opacity, opacity: (t.opacity ?? 1) * .55 })); o.add(inner); } });
+  scene.add(g.scene);
+  const box = new THREE.Box3(); for (const id of (organ ? ORGAN_BY_ID[organ].focus : ['skin'])) box.union(new THREE.Box3().setFromObject(meshes[id]));
+  const c = box.getCenter(new THREE.Vector3()), s = box.getSize(new THREE.Vector3());
+  if (clip === 'z') { plane.normal.set(0, 0, -1); plane.constant = c.z; } if (clip === 'x') { plane.normal.set(-1, 0, 0); plane.constant = c.x; } if (clip === 'y') { plane.normal.set(0, -1, 0); plane.constant = c.y; }
+  const v = new THREE.Vector3(...(q.get('view') ? q.get('view').split(',').map(Number) : (organ ? ORGAN_BY_ID[organ].view : [0.3, 0.1, 1]))).normalize();
+  const d = Math.max(s.x, s.y, s.z) * 0.62 / Math.sin(THREE.MathUtils.degToRad(15)) * 1.05;
+  cam.position.copy(c).addScaledVector(v, d); cam.lookAt(c); r.render(scene, cam); document.title = 'ready';
+});
+</script></body></html>
