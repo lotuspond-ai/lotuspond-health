@@ -8,7 +8,7 @@
 //
 // Out-of-date reads (an older status fetched late) are caught by comparing the partner's status time
 // before this is called (orders/sync.ts); this module only judges whether a move is allowed.
-import type { OrderStatus } from '../../../shared/lab-bundle.ts';
+import type { OrderStatus } from '../../../../shared/lab-bundle.ts';
 
 export const FINAL_STATUSES: ReadonlySet<OrderStatus> = new Set(['delivered', 'expired', 'cancelled', 'failed']);
 export const isFinal = (s: OrderStatus): boolean => FINAL_STATUSES.has(s);

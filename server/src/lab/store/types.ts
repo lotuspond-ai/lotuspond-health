@@ -1,6 +1,7 @@
-// Storage interfaces (design doc §10). store/memory.ts implements them for development and tests; a Postgres
-// implementation follows the same contracts (apply() runs in one transaction, uniqueness rules become indexes).
-import type { OrderStatus, PartnerId } from '../../../shared/lab-bundle.ts';
+// Storage contracts for lab orders and the partner webhook inbox (design doc §10). store/drizzle.ts implements them on
+// the cell databases; store/memory.ts implements them in memory for fast domain tests. Both pass the same contract
+// tests (test/lab-store.test.ts). Accounts, sessions and profiles are main's (db/schema.ts).
+import type { OrderStatus, PartnerId } from '../../../../shared/lab-bundle.ts';
 
 /* ---------------- orders ---------------- */
 
@@ -13,6 +14,8 @@ export interface OrderItem {
 export interface OrderRecord {
   id: string;
   userId: string;
+  /** The family profile the test is for; results are saved to it. */
+  profileId: string;
   partner: PartnerId;
   /** Null until the partner has accepted the booking. */
   partnerRef: string | null;
@@ -31,8 +34,9 @@ export interface OrderRecord {
   /** Patient, phone and address, sealed. Wiped (null) when personal details are purged (design doc §11). */
   contactCt: Uint8Array | null;
   piiPurgedAt: number | null;
-  /** The device whose key results are encrypted to. */
-  deviceId: string | null;
+  /** The booking notice the user accepted (shared/lab-bundle.ts LAB_BOOKING_NOTICE_VERSION) and when. */
+  consentVersion: string | null;
+  consentedAt: number | null;
   /** Unique per user: a repeat of the same booking request returns this order. */
   idempotencyKey: string | null;
   /** Hash of the booking request, so a reused key with a different request is refused. */
@@ -47,11 +51,11 @@ export interface OrderRecord {
 }
 
 /** A record with defaults for everything not given; for the booking service, tests and the dev server. */
-export function newOrderRecord(fields: Pick<OrderRecord, 'id' | 'userId' | 'partner' | 'status' | 'createdAt'> & Partial<OrderRecord>): OrderRecord {
+export function newOrderRecord(fields: Pick<OrderRecord, 'id' | 'userId' | 'profileId' | 'partner' | 'status' | 'createdAt'> & Partial<OrderRecord>): OrderRecord {
   return {
     partnerRef: null, partnerStatus: null, partnerStatusAt: null, lastSyncedAt: null,
     items: [], slotStart: null, slotEnd: null, pricePaise: 0, payer: 'partner',
-    contactCt: null, piiPurgedAt: null, deviceId: null, idempotencyKey: null, requestHash: null,
+    contactCt: null, piiPurgedAt: null, consentVersion: null, consentedAt: null, idempotencyKey: null, requestHash: null,
     placementAttempts: 0, nextPlacementAt: null, failureReason: null, updatedAt: fields.createdAt,
     ...fields,
   };
@@ -94,8 +98,8 @@ export interface OrderStore {
   get(id: string): Promise<OrderRecord | null>;
   findByPartnerRef(partner: PartnerId, partnerRef: string): Promise<OrderRecord | null>;
   findByIdempotencyKey(userId: string, key: string): Promise<OrderRecord | null>;
-  /** Newest first. */
-  listByUser(userId: string, limit: number): Promise<OrderRecord[]>;
+  /** A profile's orders, newest first. */
+  listByProfile(profileId: string, limit: number): Promise<OrderRecord[]>;
   /**
    * Read-modify-write one order atomically with its events. `change` must not do I/O; it gets a copy.
    * Returns the order as stored afterwards, or null if there is no such order.
@@ -138,81 +142,4 @@ export interface WebhookInbox {
   markFailed(id: number, error: string, retryAt: number | null, at: number): Promise<void>;
   /** Delete processed and dead items received before `before` (raw bodies are kept 7 days, design doc §11). */
   purge(before: number): Promise<number>;
-}
-
-/* ---------------- accounts ---------------- */
-
-export interface UserRecord {
-  id: string;
-  /** E.164. */
-  phone: string;
-  createdAt: number;
-  deletedAt: number | null;
-}
-
-export interface OtpChallenge {
-  phone: string;
-  /** HMAC of the code; the code itself is never stored. */
-  codeHash: string;
-  createdAt: number;
-  expiresAt: number;
-  attempts: number;
-  consumedAt: number | null;
-}
-
-export interface SessionRecord {
-  /** SHA-256 of the bearer token; the token itself is never stored. */
-  tokenHash: string;
-  userId: string;
-  createdAt: number;
-  expiresAt: number;
-  lastUsedAt: number;
-  revokedAt: number | null;
-}
-
-export interface DeviceRecord {
-  id: string;
-  userId: string;
-  /** Public P-256 key as a JWK (kty, crv, x, y only). */
-  publicKey: { kty: 'EC'; crv: 'P-256'; x: string; y: string };
-  /** RFC 7638 thumbprint; unique per user. */
-  thumbprint: string;
-  createdAt: number;
-  revokedAt: number | null;
-}
-
-export interface ConsentRecord {
-  id: string;
-  userId: string;
-  orderId: string;
-  partner: PartnerId;
-  purpose: 'home_collection_booking';
-  noticeVersion: string;
-  acceptedAt: number;
-  withdrawnAt: number | null;
-}
-
-export interface AccountStore {
-  findUserByPhone(phone: string): Promise<UserRecord | null>;
-  getUser(id: string): Promise<UserRecord | null>;
-  /** Returns the existing user if the phone number is already registered. */
-  createUser(user: UserRecord): Promise<UserRecord>;
-
-  /** Replaces any earlier challenge for the phone number and records the send (for rate limits). */
-  putOtp(challenge: OtpChallenge): Promise<void>;
-  getOtp(phone: string): Promise<OtpChallenge | null>;
-  updateOtp(phone: string, change: (c: OtpChallenge) => OtpChallenge): Promise<OtpChallenge | null>;
-  /** OTPs sent to this number since `since`. */
-  otpSendsSince(phone: string, since: number): Promise<number[]>;
-
-  createSession(s: SessionRecord): Promise<void>;
-  getSession(tokenHash: string): Promise<SessionRecord | null>;
-  updateSession(tokenHash: string, change: (s: SessionRecord) => SessionRecord): Promise<void>;
-
-  findDevice(userId: string, thumbprint: string): Promise<DeviceRecord | null>;
-  getDevice(id: string): Promise<DeviceRecord | null>;
-  createDevice(d: DeviceRecord): Promise<DeviceRecord>;
-
-  addConsent(c: ConsentRecord): Promise<void>;
-  consents(userId: string): Promise<ConsentRecord[]>;
 }

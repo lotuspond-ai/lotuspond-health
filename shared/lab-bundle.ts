@@ -40,3 +40,10 @@ export interface LabResultBundle {
   sequence: number;
   results: ResultRow[];
 }
+
+/**
+ * Version of the booking notice the app shows before a lab booking: it names the lab and lists what is shared with
+ * it (name, age, sex, mobile number, address, tests) and why. Bookings accepted under another version are refused.
+ * Bump it whenever the notice text changes.
+ */
+export const LAB_BOOKING_NOTICE_VERSION = '2026-11-03';

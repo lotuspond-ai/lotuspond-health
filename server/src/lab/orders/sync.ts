@@ -1,7 +1,7 @@
 // Brings one order up to date with its partner (design doc §4.3, §5.2). The webhook processor and the
 // reconciliation poller both call syncOrder; neither trusts a webhook's payload. We always ask the partner
 // for the current status, drop out-of-date reads by the partner's status time, then apply the state machine.
-import type { OrderStatus } from '../../../shared/lab-bundle.ts';
+import type { OrderStatus } from '../../../../shared/lab-bundle.ts';
 import type { Logger } from '../log.ts';
 import type { PartnerRegistry, PartnerStatus } from '../partners/types.ts';
 import type { OrderChange, OrderRecord, OrderStore } from '../store/types.ts';

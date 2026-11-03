@@ -1,5 +1,6 @@
 // The booking service (design doc §5.1): catalogue and slots across partners, and our side of an order's life:
-// create it (with consent and the device key), place it with the partner, cancel, reschedule, list.
+// create it for a family profile (with the booking consent), place it with the partner, cancel, reschedule, list.
+// Orders live in the cell that holds the account; a partner only takes bookings from accounts in its region.
 //
 // Placing (§5.1 step 7). The partner call gets placeTimeoutMs.
 // - Success: the order is booked.
@@ -9,10 +10,10 @@
 //   sooner (webhooks/processor.ts), and a late reply to the timed-out call is still applied.
 // - A partner booking that turns up after we gave up is cancelled at the partner and raised as an alert, so
 //   no collector visits for an order we told the user had failed.
-import { createHash } from 'node:crypto';
-import type { OrderStatus, PartnerId } from '../../../shared/lab-bundle.ts';
-import { jwkThumbprint, newId } from '../crypto/keys.ts';
-import type { Sealer } from '../crypto/sealer.ts';
+import { createHash, randomUUID } from 'node:crypto';
+import type { OrderStatus, PartnerId } from '../../../../shared/lab-bundle.ts';
+import type { DataRegion } from '../../../../shared/regions.ts';
+import type { Sealer } from '../sealer.ts';
 import type { Logger } from '../log.ts';
 import { canCancel, canReschedule, checkMove } from '../orders/state.ts';
 import { syncOrder, type OrderHooks } from '../orders/sync.ts';
@@ -22,7 +23,7 @@ import {
 } from '../partners/types.ts';
 import {
   DuplicateIdempotencyKey, newOrderRecord,
-  type AccountStore, type EventSource, type NewOrderEvent, type OrderChange, type OrderRecord, type OrderStore,
+  type EventSource, type NewOrderEvent, type OrderChange, type OrderRecord, type OrderStore,
 } from '../store/types.ts';
 import { istIso } from '../time.ts';
 import { PINCODE_RE, type BookingInput } from './validate.ts';
@@ -30,12 +31,12 @@ import { PINCODE_RE, type BookingInput } from './validate.ts';
 export type BookingErrorCode =
   | 'invalid_request' | 'unknown_partner' | 'unknown_item' | 'not_serviceable' | 'slot_unavailable' | 'slot_in_past'
   | 'adults_only' | 'consent_required' | 'consent_outdated' | 'idempotency_key_reused' | 'not_found'
-  | 'not_cancellable' | 'not_reschedulable' | 'partner_unavailable';
+  | 'not_cancellable' | 'not_reschedulable' | 'partner_unavailable' | 'not_in_region';
 
 const HTTP_STATUS: Record<BookingErrorCode, number> = {
   invalid_request: 400, unknown_partner: 400, unknown_item: 422, not_serviceable: 422, slot_unavailable: 409, slot_in_past: 422,
   adults_only: 422, consent_required: 422, consent_outdated: 409, idempotency_key_reused: 422, not_found: 404,
-  not_cancellable: 409, not_reschedulable: 409, partner_unavailable: 503,
+  not_cancellable: 409, not_reschedulable: 409, partner_unavailable: 503, not_in_region: 422,
 };
 
 export class BookingError extends Error {
@@ -52,7 +53,6 @@ export class BookingError extends Error {
 
 export interface BookingDeps {
   orders: OrderStore;
-  accounts: AccountStore;
   partners: PartnerRegistry;
   /** Seals patient, phone and address at rest. */
   sealer: Sealer;
@@ -73,6 +73,11 @@ export interface BookingOptions {
 }
 
 interface Contact { patient: Patient; phone: string; address: Address }
+
+/** Who is asking: the signed-in account, its data region, and the profile the test is for. */
+export interface Owner { userId: string; region: DataRegion; profileId: string }
+
+const contactContext = (orderId: string) => `contact:${orderId}`;
 
 const MIN = 60_000;
 
@@ -96,11 +101,11 @@ export class BookingService {
   /* ---------------- catalogue and slots ---------------- */
 
   /** Packages from every partner serving the pincode. A partner that can't answer is listed in `unavailable`. */
-  async catalog(pincode: string): Promise<{ items: CatalogItem[]; unavailable: PartnerId[] }> {
+  async catalog(region: DataRegion, pincode: string): Promise<{ items: CatalogItem[]; unavailable: PartnerId[] }> {
     if (!PINCODE_RE.test(pincode)) throw new BookingError('invalid_request', 'pincode must be a 6-digit pincode');
     const items: CatalogItem[] = [];
     const unavailable: PartnerId[] = [];
-    await Promise.all([...this.deps.partners].map(async ([id, cfg]) => {
+    await Promise.all([...this.deps.partners].filter(([, cfg]) => cfg.region === region).map(async ([id, cfg]) => {
       try {
         items.push(...await this.partnerCatalog(id, cfg, pincode));
       } catch (e) {
@@ -112,8 +117,8 @@ export class BookingService {
     return { items, unavailable: unavailable.sort() };
   }
 
-  async slots(partner: string, pincode: string, date: string, items: string[]): Promise<Slot[]> {
-    const cfg = this.partner(partner);
+  async slots(region: DataRegion, partner: string, pincode: string, date: string, items: string[]): Promise<Slot[]> {
+    const cfg = this.partner(partner, region);
     if (!PINCODE_RE.test(pincode)) throw new BookingError('invalid_request', 'pincode must be a 6-digit pincode');
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new BookingError('invalid_request', 'date must be yyyy-mm-dd');
     try {
@@ -130,17 +135,18 @@ export class BookingService {
    * Book. A repeat with the same idempotency key and the same request returns the existing order
    * (`replayed: true`); the same key with a different request is refused.
    */
-  async createOrder(userId: string, input: BookingInput, idempotencyKey: string): Promise<{ order: OrderRecord; replayed: boolean }> {
-    const { orders, accounts, sealer, log } = this.deps;
+  async createOrder(owner: Owner, input: BookingInput, idempotencyKey: string): Promise<{ order: OrderRecord; replayed: boolean }> {
+    const { orders, sealer, log } = this.deps;
+    const { userId, profileId } = owner;
     const requestHash = createHash('sha256').update(JSON.stringify(input)).digest('hex');
     const replay = async (existing: OrderRecord) => {
-      if (existing.requestHash !== requestHash) throw new BookingError('idempotency_key_reused', 'This Idempotency-Key was used for a different booking');
+      if (existing.requestHash !== requestHash || existing.profileId !== profileId) throw new BookingError('idempotency_key_reused', 'This Idempotency-Key was used for a different booking');
       return { order: existing, replayed: true };
     };
     const existing = await orders.findByIdempotencyKey(userId, idempotencyKey);
     if (existing) return replay(existing);
 
-    const cfg = this.partner(input.partner);
+    const cfg = this.partner(input.partner, owner.region);
     if (!input.consent.accepted) throw new BookingError('consent_required', 'The booking needs consent to share these details with the lab');
     if (input.consent.noticeVersion !== this.noticeVersion) throw new BookingError('consent_outdated', 'The consent notice has changed; show the current one and ask again');
     // Under-18s need verifiable parental consent under the DPDP Act; not supported in v1 (design doc §13).
@@ -160,19 +166,14 @@ export class BookingService {
     const missing = input.items.filter((_, i) => !items[i]);
     if (missing.length) throw new BookingError('unknown_item', `Not offered at this pincode: ${missing.join(', ')}`);
 
-    const user = await accounts.getUser(userId);
-    if (!user || user.deletedAt != null) throw new BookingError('not_found', 'No such user');
-    const device = await accounts.createDevice({
-      id: newId('dev'), userId, publicKey: input.devicePublicKey, thumbprint: jwkThumbprint(input.devicePublicKey), createdAt: now, revokedAt: null,
-    });
-    const contact: Contact = { patient: input.patient, phone: user.phone, address: input.address };
-
+    const contact: Contact = { patient: input.patient, phone: input.phone, address: input.address };
+    const id = randomUUID();
     const order = newOrderRecord({
-      id: newId('ord'), userId, partner: input.partner, status: 'created', createdAt: now,
+      id, userId, profileId, partner: input.partner, status: 'created', createdAt: now,
       items: items.map(c => ({ code: c!.code, name: c!.name, pricePaise: c!.pricePaise })),
       slotStart, slotEnd, pricePaise: items.reduce((sum, c) => sum + c!.pricePaise, 0), payer: 'partner',
-      contactCt: sealer.seal(new Uint8Array(Buffer.from(JSON.stringify(contact), 'utf8'))),
-      deviceId: device.id, idempotencyKey, requestHash,
+      contactCt: sealer.seal(new Uint8Array(Buffer.from(JSON.stringify(contact), 'utf8')), contactContext(id)),
+      consentVersion: input.consent.noticeVersion, consentedAt: now, idempotencyKey, requestHash,
     });
     try {
       await orders.insert(order);
@@ -183,16 +184,12 @@ export class BookingService {
       }
       throw e;
     }
-    await accounts.addConsent({
-      id: newId('cns'), userId, orderId: order.id, partner: input.partner, purpose: 'home_collection_booking',
-      noticeVersion: input.consent.noticeVersion, acceptedAt: now, withdrawnAt: null,
-    });
     log.info('order created', { orderId: order.id, userId, partner: input.partner });
 
     // No payment step yet (payer: partner, design doc §16), so straight to placing.
     await this.localMove(order.id, 'placing', 'api', null, [{ orderId: order.id, status: 'created', partnerStatus: null, source: 'api', occurredAt: now, receivedAt: now }]);
     const placed = await this.place(order.id, cfg, {
-      orderId: order.id, items: input.items, slot: input.slot, patient: input.patient, phone: user.phone, address: input.address,
+      orderId: order.id, items: input.items, slot: input.slot, patient: input.patient, phone: input.phone, address: input.address,
     });
     return { order: placed, replayed: false };
   }
@@ -237,8 +234,8 @@ export class BookingService {
     return result;
   }
 
-  async cancel(userId: string, orderId: string, reason: string): Promise<OrderRecord> {
-    const o = await this.owned(userId, orderId);
+  async cancel(owner: Owner, orderId: string, reason: string): Promise<OrderRecord> {
+    const o = await this.owned(owner, orderId);
     if (o.status === 'cancelled') return o;
     if (o.status === 'placing') throw new BookingError('not_cancellable', 'The booking is still being confirmed with the lab; try again in a minute');
     if (!canCancel(o.status)) throw new BookingError('not_cancellable', `This order can no longer be cancelled (${o.status})`);
@@ -256,8 +253,8 @@ export class BookingService {
     return this.localMove(o.id, 'cancelled', 'user', 'cancelled by the user');
   }
 
-  async reschedule(userId: string, orderId: string, slot: Slot): Promise<OrderRecord> {
-    const o = await this.owned(userId, orderId);
+  async reschedule(owner: Owner, orderId: string, slot: Slot): Promise<OrderRecord> {
+    const o = await this.owned(owner, orderId);
     if (!canReschedule(o.status) || !o.partnerRef) throw new BookingError('not_reschedulable', `This visit can no longer be moved (${o.status})`);
     const now = this.deps.now();
     const start = Date.parse(slot.start), end = Date.parse(slot.end);
@@ -284,27 +281,28 @@ export class BookingService {
     return after!;
   }
 
-  async list(userId: string): Promise<OrderRecord[]> {
-    return this.deps.orders.listByUser(userId, 50);
+  async list(owner: Owner): Promise<OrderRecord[]> {
+    return (await this.deps.orders.listByProfile(owner.profileId, 50)).filter(o => o.userId === owner.userId);
   }
 
-  async get(userId: string, orderId: string) {
-    const order = await this.owned(userId, orderId);
+  async get(owner: Owner, orderId: string) {
+    const order = await this.owned(owner, orderId);
     return { order, events: await this.deps.orders.events(order.id) };
   }
 
   /* ---------------- internals ---------------- */
 
-  private partner(id: string): PartnerConfig {
+  private partner(id: string, region?: DataRegion): PartnerConfig {
     const cfg = this.deps.partners.get(id as PartnerId);
     if (!cfg) throw new BookingError('unknown_partner', `Unknown partner: ${id}`);
+    if (region && cfg.region !== region) throw new BookingError('not_in_region', 'This lab only takes bookings from accounts held in its region');
     return cfg;
   }
 
-  private async owned(userId: string, orderId: string): Promise<OrderRecord> {
-    const o = await this.deps.orders.get(orderId);
-    // Someone else's order looks exactly like a missing one.
-    if (!o || o.userId !== userId) throw new BookingError('not_found', 'No such order');
+  private async owned(owner: Owner, orderId: string): Promise<OrderRecord> {
+    const o = /^[0-9a-f-]{36}$/i.test(orderId) ? await this.deps.orders.get(orderId) : null;
+    // Someone else's order (or another profile's) looks exactly like a missing one.
+    if (!o || o.userId !== owner.userId || o.profileId !== owner.profileId) throw new BookingError('not_found', 'No such order');
     return o;
   }
 
@@ -331,7 +329,7 @@ export class BookingService {
   }
 
   private partnerInput(o: OrderRecord): PartnerOrderInput {
-    const contact = JSON.parse(Buffer.from(this.deps.sealer.open(o.contactCt!)).toString('utf8')) as Contact;
+    const contact = JSON.parse(Buffer.from(this.deps.sealer.open(o.contactCt!, contactContext(o.id))).toString('utf8')) as Contact;
     return {
       orderId: o.id, items: o.items.map(i => i.code), slot: { start: istIso(o.slotStart!), end: istIso(o.slotEnd!) },
       patient: contact.patient, phone: contact.phone, address: contact.address,

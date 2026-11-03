@@ -1,7 +1,7 @@
 // Adapter for the simulated lab (fake-lab.ts). It does what a real adapter does: maps the lab's statuses,
 // payloads and errors into ours, sends our order id as the client reference, and verifies signed webhooks.
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import type { OrderStatus } from '../../../shared/lab-bundle.ts';
+import type { OrderStatus } from '../../../../shared/lab-bundle.ts';
 import {
   FAKE_SIGNATURE_HEADER, FakeLabApiError, istDate,
   type FakeCreateOrderRequest, type FakeLabApi, type FakeResult, type FakeStatus,

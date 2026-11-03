@@ -1,6 +1,6 @@
 // Turns an adapter's report into the bundle the browser receives (design doc §4.2, §9).
 // The server never matches results to the biomarker catalog; the browser does that.
-import type { LabResultBundle, PartnerId } from '../../../shared/lab-bundle.ts';
+import type { LabResultBundle, PartnerId } from '../../../../shared/lab-bundle.ts';
 import type { PartnerReport } from '../partners/types.ts';
 
 const IST_OFFSET_MS = 330 * 60_000;

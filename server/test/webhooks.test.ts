@@ -3,21 +3,21 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac, randomBytes } from 'node:crypto';
-import type { Hono } from 'hono';
+import { Hono } from 'hono';
 import type { OrderStatus } from '../../shared/lab-bundle.ts';
-import { BookingService } from '../src/booking/service.ts';
-import { parseBookingInput } from '../src/booking/validate.ts';
-import { aesGcmSealer } from '../src/crypto/sealer.ts';
-import { createApp } from '../src/http/app.ts';
-import { memoryLogger } from '../src/log.ts';
-import { reconcile } from '../src/orders/reconcile.ts';
-import type { OrderHooks } from '../src/orders/sync.ts';
-import { FakeLab, FAKE_SIGNATURE_HEADER, type FakeTag } from '../src/partners/fake-lab.ts';
-import { FakeLabAdapter } from '../src/partners/fake.ts';
-import { PartnerError, type LabPartner, type PartnerConfig, type PartnerRegistry } from '../src/partners/types.ts';
-import { MemoryAccountStore, MemoryOrderStore, MemoryWebhookInbox } from '../src/store/memory.ts';
-import { newOrderRecord } from '../src/store/types.ts';
-import { WebhookProcessor } from '../src/webhooks/processor.ts';
+import { BookingService } from '../src/lab/booking/service.ts';
+import { LabOrderCreateBody, type BookingInput } from '../src/lab/booking/validate.ts';
+import { keyringSealer } from '../src/lab/sealer.ts';
+import { webhookRoutes } from '../src/lab/webhooks/receiver.ts';
+import { memoryLogger } from '../src/lab/log.ts';
+import { reconcile } from '../src/lab/orders/reconcile.ts';
+import type { OrderHooks } from '../src/lab/orders/sync.ts';
+import { FakeLab, FAKE_SIGNATURE_HEADER, type FakeTag } from '../src/lab/partners/fake-lab.ts';
+import { FakeLabAdapter } from '../src/lab/partners/fake.ts';
+import { PartnerError, type LabPartner, type PartnerConfig, type PartnerRegistry } from '../src/lab/partners/types.ts';
+import { MemoryOrderStore, MemoryWebhookInbox } from '../src/lab/store/memory.ts';
+import { newOrderRecord } from '../src/lab/store/types.ts';
+import { WebhookProcessor } from '../src/lab/webhooks/processor.ts';
 import { bookingBody, NOTICE_VERSION } from './lab-helpers.ts';
 
 const T0 = Date.parse('2026-11-03T07:30:00+05:30');
@@ -33,7 +33,7 @@ function setup(opts: SetupOptions = {}) {
   const log = memoryLogger();
   const orders = new MemoryOrderStore();
   const inbox = new MemoryWebhookInbox();
-  const sealer = aesGcmSealer(randomBytes(32));
+  const sealer = keyringSealer({ current: randomBytes(32), previous: [] });
   const responses: number[] = [];
   let app!: Hono;
 
@@ -51,7 +51,7 @@ function setup(opts: SetupOptions = {}) {
   const adapter: LabPartner = Object.create(real, {
     status: { value: async (ref: string) => { if (failures-- > 0) throw new PartnerError('unavailable', 'partner down'); return real.status(ref); } },
   });
-  const cfg: PartnerConfig = { adapter, hookSecret: HOOK, ...(opts.allowIps ? { allowIps: opts.allowIps } : {}) };
+  const cfg: PartnerConfig = { adapter, region: 'in', hookSecret: HOOK, ...(opts.allowIps ? { allowIps: opts.allowIps } : {}) };
   const partners: PartnerRegistry = new Map([['fake', cfg]]);
 
   const transitions: string[] = [];
@@ -62,14 +62,14 @@ function setup(opts: SetupOptions = {}) {
   };
   const deps = { orders, partners, now, log, hooks };
   const processor = new WebhookProcessor({ ...deps, inbox, sealer }, { maxAttempts: opts.maxAttempts ?? 10, baseDelayMs: 1000, maxDelayMs: 8000 });
-  app = createApp({ receiver: { partners, inbox, sealer, now, log, clientIp: c => c.req.header('x-test-ip') ?? '' }, log });
-  const accounts = new MemoryAccountStore();
-  const booking = new BookingService({ ...deps, accounts, sealer: aesGcmSealer(randomBytes(32)) }, { noticeVersion: NOTICE_VERSION });
+  app = new Hono();
+  app.route('/hooks', webhookRoutes({ partners, inbox, sealer, now, log, clientIp: c => c.req.header('x-test-ip') ?? '' }));
+  const booking = new BookingService({ ...deps, sealer: keyringSealer({ current: randomBytes(32), previous: [] }) }, { noticeVersion: NOTICE_VERSION });
 
   /** Move the clock, let the lab act and deliver, then process the inbox. */
   const step = async (ms = 1000) => { t += ms; await lab.tick(); await processor.runOnce(); };
   const setClock = (ms: number) => { t = ms; };
-  return { app, lab, adapter, orders, accounts, booking, inbox, sealer, log, responses, transitions, reportUpdates, deps, processor, step, now, setClock };
+  return { app, lab, adapter, orders, booking, inbox, sealer, log, responses, transitions, reportUpdates, deps, processor, step, now, setClock };
 }
 type Env = ReturnType<typeof setup>;
 
@@ -77,11 +77,9 @@ let keySeq = 0;
 
 /** Book through the booking service, as POST /v1/orders does (a lost reply leaves the order placing). */
 async function book(env: Env, { name = 'Asha Rao' }: { name?: string } = {}): Promise<string> {
-  await env.accounts.createUser({ id: 'usr_1', phone: '+919812345678', createdAt: env.now(), deletedAt: null });
   const slot = (await env.adapter.slots({ pincode: '560034', date: '2026-11-04', items: ['FL_ESSENTIAL'] }))[0];
-  const parsed = parseBookingInput(bookingBody(slot, { patient: { name, age: 34, sex: 'female' } }));
-  assert.ok(parsed.ok);
-  const { order } = await env.booking.createOrder('usr_1', parsed.value, `test-key-${++keySeq}`);
+  const input = LabOrderCreateBody.parse(bookingBody(slot, { patient: { name, age: 34, sex: 'female' } })) as BookingInput;
+  const { order } = await env.booking.createOrder({ userId: 'usr_1', region: 'in', profileId: 'prof_1' }, input, `test-key-${++keySeq}`);
   return order.id;
 }
 
@@ -297,7 +295,7 @@ describe('receiver', () => {
     assert.equal(items[0].headers.cookie, undefined);
     assert.ok(items[0].headers[FAKE_SIGNATURE_HEADER]);
     assert.ok(!Buffer.from(items[0].body).toString('latin1').includes('FL000001'), 'body is encrypted at rest');
-    assert.equal(Buffer.from(env.sealer.open(items[0].body)).toString('utf8'), validBody);
+    assert.equal(Buffer.from(env.sealer.open(items[0].body, 'webhook:fake:evt_1')).toString('utf8'), validBody);
   });
 
   test('without an event id, deduplicates on a hash of the body', async () => {
@@ -346,27 +344,29 @@ describe('receiver', () => {
     assert.equal((await from('10.0.0.9')).status, 200);
   });
 
-  test('health check and unknown routes', async () => {
+  test('only POST is served', async () => {
     const env = setup();
-    assert.equal((await env.app.request('/healthz')).status, 200);
-    assert.equal((await env.app.request('/nope')).status, 404);
     assert.equal((await env.app.request(`/hooks/fake/${HOOK}`)).status, 404);
   });
 });
 
 describe('storage pieces', () => {
-  test('the sealer round-trips and rejects altered data or another key', () => {
-    const key = randomBytes(32);
-    const s = aesGcmSealer(key);
+  test('the sealer round-trips with the keyring, follows key rotation, and rejects altered data, another context or key', () => {
+    const old = randomBytes(32), current = randomBytes(32);
+    const s = keyringSealer({ current: old, previous: [] });
     const plain = new Uint8Array(Buffer.from('{"order_ref":"FL000001"}'));
-    const sealed = s.seal(plain);
-    assert.deepEqual(s.open(sealed), plain);
-    assert.notDeepEqual(s.seal(plain), sealed, 'a fresh nonce each time');
+    const sealed = s.seal(plain, 'contact:ord_1');
+    assert.deepEqual(s.open(sealed, 'contact:ord_1'), plain);
+    assert.notDeepEqual(s.seal(plain, 'contact:ord_1'), sealed, 'a fresh nonce each time');
+    assert.deepEqual(keyringSealer({ current, previous: [old] }).open(sealed, 'contact:ord_1'), plain, 'readable after rotation');
     const altered = sealed.slice();
     altered[altered.length - 1] ^= 1;
-    assert.throws(() => s.open(altered));
-    assert.throws(() => aesGcmSealer(randomBytes(32)).open(sealed));
-    assert.throws(() => aesGcmSealer(randomBytes(16)));
+    assert.throws(() => s.open(altered, 'contact:ord_1'));
+    assert.throws(() => s.open(sealed, 'contact:ord_2'), 'bound to its context');
+    assert.throws(() => keyringSealer({ current, previous: [] }).open(sealed, 'contact:ord_1'));
+    const off = keyringSealer(null);
+    assert.deepEqual(off.open(off.seal(plain, 'x'), 'x'), plain, 'FILE_ENCRYPTION=off keeps data as is');
+    assert.throws(() => off.open(sealed, 'contact:ord_1'), 'but refuses to pretend encrypted data is plain');
   });
 
   test('inbox purge removes old finished items and keeps pending ones', async () => {
@@ -384,7 +384,7 @@ describe('storage pieces', () => {
 
   test('two orders cannot share a partner reference', async () => {
     const orders = new MemoryOrderStore();
-    const base = { userId: 'u', partner: 'fake' as const, status: 'booked' as const, createdAt: T0 };
+    const base = { userId: 'u', profileId: 'p', partner: 'fake' as const, status: 'booked' as const, createdAt: T0 };
     await orders.insert(newOrderRecord({ ...base, id: 'a', partnerRef: 'FL1' }));
     await orders.insert(newOrderRecord({ ...base, id: 'b' }));
     await assert.rejects(orders.apply('b', cur => ({ next: { ...cur, partnerRef: 'FL1' }, events: [] })));

@@ -1,6 +1,6 @@
 // Reconciliation poller (design doc §4.3, §12): asks partners about unfinished orders on a schedule that
 // depends on their status, so a missed webhook only delays an update. Partners without webhooks rely on it.
-import type { OrderStatus } from '../../../shared/lab-bundle.ts';
+import type { OrderStatus } from '../../../../shared/lab-bundle.ts';
 import { PartnerError } from '../partners/types.ts';
 import { syncOrder, type SyncDeps } from './sync.ts';
 

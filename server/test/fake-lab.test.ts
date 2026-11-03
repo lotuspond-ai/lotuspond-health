@@ -2,13 +2,18 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { OrderStatus } from '../../shared/lab-bundle.ts';
-import { FakeLab, istDate, type FakeTag, type FakeWebhookBody, type FakeWebhookRequest } from '../src/partners/fake-lab.ts';
-import { FakeLabAdapter } from '../src/partners/fake.ts';
-import { PartnerError, type PartnerOrderInput } from '../src/partners/types.ts';
-import { buildBundle } from '../src/results/bundle.ts';
+import { FakeLab, istDate, type FakeTag, type FakeWebhookBody, type FakeWebhookRequest } from '../src/lab/partners/fake-lab.ts';
+import { FakeLabAdapter } from '../src/lab/partners/fake.ts';
+import { PartnerError, type PartnerOrderInput } from '../src/lab/partners/types.ts';
+import { buildBundle } from '../src/lab/results/bundle.ts';
 // The browser's own parsers, to check that what the server delivers reads correctly in the app.
-import { parseJsonText } from '../../src/lib/parse/json.ts';
-import { parseReportPages } from '../../src/lib/parse/pdf-text.ts';
+// Loaded by computed path, as tools/test-parsers.mjs does, so the server's type check doesn't compile frontend code.
+import type { ParseResult } from '../../src/types.ts';
+
+interface PdfTextItem { str: string; x: number; y: number; width: number; height: number }
+const appLib = (p: string) => new URL(`../../src/lib/${p}`, import.meta.url).href;
+const { parseJsonText } = await import(appLib('parse/json.ts')) as { parseJsonText: (text: string, sourceFile: string) => ParseResult };
+const { parseReportPages } = await import(appLib('parse/pdf-text.ts')) as { parseReportPages: (pages: { items: PdfTextItem[] }[], sourceFile: string) => ParseResult };
 
 const SECRET = 'test-secret';
 const T0 = Date.parse('2026-11-03T07:30:00+05:30');
@@ -366,7 +371,7 @@ describe('delivered results read correctly in the app', () => {
       const bundle = buildBundle(report, { partner: 'fake', orderId: input.orderId, partnerRef, sequence: 1 });
       assert.ok(bundle);
       assert.equal(bundle.date, '2026-11-03');
-      const fromJson = parseJsonText(JSON.stringify(bundle), `Fake lab order ${partnerRef}`);
+      const fromJson: ParseResult = parseJsonText(JSON.stringify(bundle), `Fake lab order ${partnerRef}`);
       assert.deepEqual(fromJson.warnings, []);
       assert.equal(fromJson.detectedDate, '2026-11-03');
       for (const row of rows) {
@@ -378,7 +383,7 @@ describe('delivered results read correctly in the app', () => {
       }
 
       assert.ok(report.pdf);
-      const fromPdf = parseReportPages(await pdfPages(report.pdf), `${partnerRef}.pdf`);
+      const fromPdf: ParseResult = parseReportPages(await pdfPages(report.pdf), `${partnerRef}.pdf`);
       assert.equal(fromPdf.detectedDate, '2026-11-03');
       const byMarker = new Map(fromJson.measurements.map(m => [m.markerId, m]));
       const pdfMarkers = fromPdf.measurements.map(m => m.markerId);

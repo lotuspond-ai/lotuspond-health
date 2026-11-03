@@ -5,8 +5,8 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
-import type { PartnerId } from '../../../shared/lab-bundle.ts';
-import type { Sealer } from '../crypto/sealer.ts';
+import type { PartnerId } from '../../../../shared/lab-bundle.ts';
+import type { Sealer } from '../sealer.ts';
 import type { Logger } from '../log.ts';
 import type { PartnerRegistry, WebhookInfo } from '../partners/types.ts';
 import type { WebhookInbox } from '../store/types.ts';
@@ -27,6 +27,9 @@ export interface ReceiverDeps {
 
 /** Never stored: credentials some partners send alongside (or instead of) a signature. */
 const DROP_HEADERS = new Set(['authorization', 'proxy-authorization', 'cookie', 'x-api-key']);
+
+/** What a sealed inbox body is bound to. */
+export const inboxContext = (partner: string, dedupeKey: string) => `webhook:${partner}:${dedupeKey}`;
 
 const digest = (s: string) => createHash('sha256').update(s).digest();
 const sameSecret = (expected: string, given: string) => timingSafeEqual(digest(expected), digest(given));
@@ -66,7 +69,7 @@ export function webhookRoutes(deps: ReceiverDeps): Hono {
 
     const headers = Object.fromEntries(Object.entries(allHeaders).filter(([k]) => !DROP_HEADERS.has(k)));
     const dedupeKey = info.eventId ?? `sha256:${createHash('sha256').update(rawBody).digest('hex')}`;
-    const { id, duplicate } = await deps.inbox.add({ partner, dedupeKey, headers, body: deps.sealer.seal(rawBody), receivedAt: deps.now() });
+    const { id, duplicate } = await deps.inbox.add({ partner, dedupeKey, headers, body: deps.sealer.seal(rawBody, inboxContext(partner, dedupeKey)), receivedAt: deps.now() });
     deps.log.info('webhook stored', { partner, inboxId: id, duplicate });
     if (!duplicate) deps.onStored?.();
     // A duplicate still gets 200, so the partner stops retrying.

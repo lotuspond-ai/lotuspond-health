@@ -1,5 +1,5 @@
 // What the API shows of an order: no personal details (the app already has them) and no internal fields.
-import type { OrderStatus, PartnerId } from '../../../shared/lab-bundle.ts';
+import type { OrderStatus, PartnerId } from '../../../../shared/lab-bundle.ts';
 import { canCancel, canReschedule } from '../orders/state.ts';
 import type { OrderEvent, OrderItem, OrderRecord } from '../store/types.ts';
 import { istIso } from '../time.ts';

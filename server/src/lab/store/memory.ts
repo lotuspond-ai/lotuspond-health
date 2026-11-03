@@ -1,13 +1,9 @@
-// In-memory stores for development and tests. Single-threaded JS makes apply() atomic as long as the
+// In-memory stores for domain tests (the server uses store/drizzle.ts). Single-threaded JS makes apply() atomic as long as the
 // callback does no I/O, which the OrderStore contract already requires. Records are copied in and out
 // (structuredClone) so callers can't change stored state by mutating what they were given.
-import type { OrderStatus, PartnerId } from '../../../shared/lab-bundle.ts';
+import type { OrderStatus, PartnerId } from '../../../../shared/lab-bundle.ts';
 import { isFinal } from '../orders/state.ts';
-import {
-  DuplicateIdempotencyKey,
-  type AccountStore, type ConsentRecord, type DeviceRecord, type InboxItem, type OrderChange, type OrderEvent, type OrderRecord,
-  type OrderStore, type OtpChallenge, type SessionRecord, type UserRecord, type WebhookInbox,
-} from './types.ts';
+import { DuplicateIdempotencyKey, type InboxItem, type OrderChange, type OrderEvent, type OrderRecord, type OrderStore, type WebhookInbox } from './types.ts';
 
 const copy = structuredClone;
 
@@ -40,9 +36,9 @@ export class MemoryOrderStore implements OrderStore {
     return null;
   }
 
-  async listByUser(userId: string, limit: number): Promise<OrderRecord[]> {
+  async listByProfile(profileId: string, limit: number): Promise<OrderRecord[]> {
     return [...this.orders.values()]
-      .filter(o => o.userId === userId)
+      .filter(o => o.profileId === profileId)
       .sort((a, b) => b.createdAt - a.createdAt || b.id.localeCompare(a.id))
       .slice(0, limit)
       .map(x => copy(x));
@@ -144,92 +140,5 @@ export class MemoryWebhookInbox implements WebhookInbox {
     const i = this.items.find(x => x.id === id);
     if (!i) throw new Error(`No inbox item ${id}`);
     return i;
-  }
-}
-
-export class MemoryAccountStore implements AccountStore {
-  private readonly users = new Map<string, UserRecord>();
-  private readonly otps = new Map<string, OtpChallenge>();
-  private readonly otpSends: { phone: string; at: number }[] = [];
-  private readonly sessions = new Map<string, SessionRecord>();
-  private readonly devices = new Map<string, DeviceRecord>();
-  private readonly consentLog: ConsentRecord[] = [];
-
-  async findUserByPhone(phone: string): Promise<UserRecord | null> {
-    for (const u of this.users.values()) if (u.phone === phone && u.deletedAt == null) return copy(u);
-    return null;
-  }
-
-  async getUser(id: string): Promise<UserRecord | null> {
-    const u = this.users.get(id);
-    return u ? copy(u) : null;
-  }
-
-  async createUser(user: UserRecord): Promise<UserRecord> {
-    const existing = await this.findUserByPhone(user.phone);
-    if (existing) return existing;
-    this.users.set(user.id, copy(user));
-    return copy(user);
-  }
-
-  async putOtp(challenge: OtpChallenge): Promise<void> {
-    this.otps.set(challenge.phone, copy(challenge));
-    this.otpSends.push({ phone: challenge.phone, at: challenge.createdAt });
-  }
-
-  async getOtp(phone: string): Promise<OtpChallenge | null> {
-    const c = this.otps.get(phone);
-    return c ? copy(c) : null;
-  }
-
-  async updateOtp(phone: string, change: (c: OtpChallenge) => OtpChallenge): Promise<OtpChallenge | null> {
-    const c = this.otps.get(phone);
-    if (!c) return null;
-    const next = change(copy(c));
-    this.otps.set(phone, copy(next));
-    return copy(next);
-  }
-
-  async otpSendsSince(phone: string, since: number): Promise<number[]> {
-    return this.otpSends.filter(s => s.phone === phone && s.at >= since).map(s => s.at);
-  }
-
-  async createSession(s: SessionRecord): Promise<void> {
-    this.sessions.set(s.tokenHash, copy(s));
-  }
-
-  async getSession(tokenHash: string): Promise<SessionRecord | null> {
-    const s = this.sessions.get(tokenHash);
-    return s ? copy(s) : null;
-  }
-
-  async updateSession(tokenHash: string, change: (s: SessionRecord) => SessionRecord): Promise<void> {
-    const s = this.sessions.get(tokenHash);
-    if (s) this.sessions.set(tokenHash, copy(change(copy(s))));
-  }
-
-  async findDevice(userId: string, thumbprint: string): Promise<DeviceRecord | null> {
-    for (const d of this.devices.values()) if (d.userId === userId && d.thumbprint === thumbprint) return copy(d);
-    return null;
-  }
-
-  async getDevice(id: string): Promise<DeviceRecord | null> {
-    const d = this.devices.get(id);
-    return d ? copy(d) : null;
-  }
-
-  async createDevice(d: DeviceRecord): Promise<DeviceRecord> {
-    const existing = await this.findDevice(d.userId, d.thumbprint);
-    if (existing) return existing;
-    this.devices.set(d.id, copy(d));
-    return copy(d);
-  }
-
-  async addConsent(c: ConsentRecord): Promise<void> {
-    this.consentLog.push(copy(c));
-  }
-
-  async consents(userId: string): Promise<ConsentRecord[]> {
-    return this.consentLog.filter(c => c.userId === userId).map(x => copy(x));
   }
 }

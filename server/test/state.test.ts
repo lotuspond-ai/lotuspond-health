@@ -2,9 +2,9 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ORDER_STATUSES, type OrderStatus } from '../../shared/lab-bundle.ts';
-import { canCancel, canReschedule, checkMove, FINAL_STATUSES, PARTNER_STATUSES, type MoveSource } from '../src/orders/state.ts';
-import { decideSync } from '../src/orders/sync.ts';
-import { newOrderRecord, type OrderRecord } from '../src/store/types.ts';
+import { canCancel, canReschedule, checkMove, FINAL_STATUSES, PARTNER_STATUSES, type MoveSource } from '../src/lab/orders/state.ts';
+import { decideSync } from '../src/lab/orders/sync.ts';
+import { newOrderRecord, type OrderRecord } from '../src/lab/store/types.ts';
 
 const ok = (from: OrderStatus, to: OrderStatus, source: MoveSource) => checkMove(from, to, source).ok;
 const reason = (from: OrderStatus, to: OrderStatus, source: MoveSource) => {
@@ -97,7 +97,7 @@ test('finished orders do not move, and a repeat is unchanged', () => {
 describe('decideSync', () => {
   const T = Date.parse('2026-11-03T10:00:00+05:30');
   const order = (over: Partial<OrderRecord> = {}): OrderRecord => newOrderRecord({
-    id: 'ord_1', userId: 'u1', partner: 'fake', partnerRef: 'FL000001', status: 'booked',
+    id: 'ord_1', userId: 'u1', profileId: 'p1', partner: 'fake', partnerRef: 'FL000001', status: 'booked',
     partnerStatus: 'ORDER_PLACED', partnerStatusAt: T, lastSyncedAt: T, createdAt: T, ...over,
   });
   const at = (minutes: number) => new Date(T + minutes * 60_000).toISOString();

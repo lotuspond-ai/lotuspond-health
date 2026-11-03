@@ -5,8 +5,9 @@
 // - an order we can't find yet (its booking reply may still be on the way) is retried;
 // - a partner timeout or outage is retried;
 // - a body we can't read or a partner error that won't change on retry goes straight to dead letter.
-import type { PartnerId } from '../../../shared/lab-bundle.ts';
-import type { Sealer } from '../crypto/sealer.ts';
+import type { PartnerId } from '../../../../shared/lab-bundle.ts';
+import type { Sealer } from '../sealer.ts';
+import { inboxContext } from './receiver.ts';
 import { syncOrder, type SyncDeps } from '../orders/sync.ts';
 import { PartnerError, type PartnerConfig, type WebhookInfo } from '../partners/types.ts';
 import type { InboxItem, OrderRecord, WebhookInbox } from '../store/types.ts';
@@ -88,7 +89,7 @@ export class WebhookProcessor {
 
     let info: WebhookInfo;
     try {
-      info = cfg.adapter.parseWebhook(JSON.parse(Buffer.from(this.deps.sealer.open(item.body)).toString('utf8')));
+      info = cfg.adapter.parseWebhook(JSON.parse(Buffer.from(this.deps.sealer.open(item.body, inboxContext(item.partner, item.dedupeKey))).toString('utf8')));
     } catch {
       throw new Dead('unreadable_body');
     }

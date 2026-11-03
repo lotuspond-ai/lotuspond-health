@@ -1,5 +1,6 @@
 // The interface every lab partner adapter implements (design doc §8), plus the shapes it trades in.
-import type { OrderStatus, PartnerId, ResultRow } from '../../../shared/lab-bundle.ts';
+import type { DataRegion } from '../../../../shared/regions.ts';
+import type { OrderStatus, PartnerId, ResultRow } from '../../../../shared/lab-bundle.ts';
 
 export interface CatalogItem {
   partner: PartnerId;
@@ -122,6 +123,8 @@ export class PartnerError extends Error {
 /** A configured partner: its adapter and its webhook endpoint settings. */
 export interface PartnerConfig {
   adapter: LabPartner;
+  /** Data region the partner serves. Its orders and webhooks live in that region's cell; only accounts held there can book. */
+  region: DataRegion;
   /** The secret path segment in /hooks/:partner/:hookSecret. Rotatable; compared in constant time. */
   hookSecret: string;
   /** If set, webhooks are accepted only from these addresses. */
