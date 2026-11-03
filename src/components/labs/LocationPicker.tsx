@@ -27,6 +27,8 @@ export function LocationPicker({ onPick, variant = 'inline', autoFocus = false, 
   const [query, setQuery] = useState('');
   const [found, setFound] = useState<{ q: string; items: GeoCandidate[]; error?: string } | null>(null);
   const [open, setOpen] = useState(false);
+  const closeTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(closeTimer.current), []);
   const [active, setActive] = useState(0);
   const [locating, setLocating] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
@@ -104,7 +106,11 @@ export function LocationPicker({ onPick, variant = 'inline', autoFocus = false, 
             role="combobox" aria-expanded={showList} aria-controls={listId} aria-autocomplete="list"
             aria-activedescendant={showList && items[active] ? `${listId}-${active}` : undefined}
             onChange={e => { setQuery(e.target.value); setOpen(true); setActive(0); }}
-            onFocus={() => setOpen(true)} onBlur={() => setOpen(false)} onKeyDown={onKey} />
+            onFocus={() => { window.clearTimeout(closeTimer.current); setOpen(true); }}
+            // Close a moment after focus leaves: closing at once moves whatever sits below the list (on the large picker it
+            // is in the page flow), so a click on a button there would land elsewhere and be lost.
+            onBlur={() => { closeTimer.current = window.setTimeout(() => setOpen(false), 180); }}
+            onKeyDown={onKey} />
         </div>
         {showList && (
           <ul className="lpick__list" id={listId} role="listbox" aria-label="Places">

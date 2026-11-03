@@ -29,6 +29,8 @@ page.on('console', m => {
   if (expectNotFound && m.text().includes('status of 404')) return;
   // Third-party map tiles (the development fallback) may be unreachable where this runs; the map copes.
   if (/^https:\/\/tile\.openstreetmap\.org\//.test(m.location()?.url ?? '')) return;
+  // Without internet access (and without FACILITY_PROVIDER=fixture) area and nearby search answer 503; the app explains it.
+  if (m.text().includes('status of 503') && /\/api\/(geo|facilities)\b/.test(m.location()?.url ?? '')) return;
   problems.push(`console (${page.url()}): ${m.text().slice(0, 300)}`);
 });
 page.on('pageerror', e => problems.push(`page error (${page.url()}): ${e.message}`));
@@ -210,6 +212,13 @@ await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name:
 await page.getByRole('heading', { name: 'Find a lab', exact: true }).waitFor();
 if (areaFound) {
   expect((await text('.lbar__place')).includes('Indiranagar, Bengaluru'), 'labs page searches the saved home area');
+}
+if (areaFound && !hasSite) {
+  // The preview has no server: it keeps the area (offline city list) and explains that nearby search needs the server.
+  await page.getByRole('heading', { name: 'Nearby search needs the server' }).waitFor({ timeout: 15000 });
+  expect(true, 'the preview explains that nearby search needs the server');
+  await shot('labs-preview');
+} else if (areaFound) {
   await page.locator('.fcard').first().waitFor({ timeout: 15000 });
   const cards = await page.locator('.fcard').count();
   expect(cards >= 5, `nearby facilities are listed (${cards})`);
@@ -284,7 +293,7 @@ await page.getByLabel('New password', { exact: true }).fill('a brand new lily pa
 await page.getByLabel('Repeat new password').fill('a brand new lily pad');
 await page.getByRole('button', { name: 'Change password' }).click();
 await page.locator('.toast').filter({ hasText: 'Password changed' }).waitFor();
-expect((await text('.where__lead')) === 'Your records are stored on servers in India.', 'account page says where records are stored');
+expect((await text('.where__lead')) === (hasSite ? 'Your records are stored on servers in India.' : 'Your records are stored in this browser only.'), 'account page says where records are stored');
 const consentList = await text('.consent-list');
 expect(consentList.includes('Processing your health data') && consentList.includes('version'), `consents are listed with version (${consentList.slice(0, 80)})`);
 await page.getByRole('radio', { name: /International \(SI/ }).click();

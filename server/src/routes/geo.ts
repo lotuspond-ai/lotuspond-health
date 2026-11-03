@@ -26,7 +26,7 @@ export function geoRoutes(deps: FacilityDeps) {
     try {
       return c.json(await facilityService(deps).search(q, requestLanguage(c)));
     } catch (e) {
-      return unavailable(c, e);
+      return unavailable(c, e, 'Area search');
     }
   });
 
@@ -37,7 +37,7 @@ export function geoRoutes(deps: FacilityDeps) {
     try {
       return c.json(await facilityService(deps).reverse(lat, lon, requestLanguage(c)));
     } catch (e) {
-      return unavailable(c, e);
+      return unavailable(c, e, 'Area search');
     }
   });
 

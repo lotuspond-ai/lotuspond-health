@@ -315,7 +315,7 @@ describe('area search', () => {
     geocoder.fail = true;
     const res = await c.call('GET', '/api/geo/search?q=koramangala');
     assert.equal(res.status, 503);
-    assert.match((await res.json() as { error: { message: string } }).error.message, /Nearby search is unavailable/);
+    assert.match((await res.json() as { error: { message: string } }).error.message, /Area search is unavailable/);
   });
 });
 

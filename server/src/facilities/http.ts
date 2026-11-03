@@ -31,8 +31,9 @@ export function requestLanguage(c: Ctx): string {
 }
 
 /** Provider problems answer 503 with a message the interface shows as is; anything else is rethrown. */
-export function unavailable(c: Ctx, e: unknown): Response {
+/** A 503 the interface can show. `subject` names the feature in the message ("Area search" for the geocoder). */
+export function unavailable(c: Ctx, e: unknown, subject = 'Nearby search'): Response {
   if (!(e instanceof FacilityError)) throw e;
   c.header('Retry-After', e.code === 'busy' ? '5' : '60');
-  return c.json({ error: { code: e.code, message: e.message } }, 503);
+  return c.json({ error: { code: e.code, message: e.message.replace(/^Nearby search/, subject) } }, 503);
 }
