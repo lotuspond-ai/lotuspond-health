@@ -54,6 +54,17 @@ p { margin: 0; }
 .privacy > span { white-space: nowrap; }
 .tabbar { display: none; }
 .app__warn { margin: 0 20px 12px; }
+.toggle:disabled { opacity: 0.5; cursor: default; }
+.inline-select { border: 1px solid var(--line); background: var(--paper); border-radius: 8px; padding: 5px 8px; color: var(--ink); }
+
+/* app lock */
+.lock { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; background: var(--pond); color: #e6f3f1; padding: calc(24px + var(--sat)) 24px calc(24px + var(--sab)); -webkit-user-select: none; user-select: none; }
+.lock__card { display: grid; justify-items: center; gap: 14px; max-width: 340px; text-align: center; }
+.lock__card svg { width: 76px; height: 76px; }
+.lock__card h1 { font-size: 28px; line-height: 1.15; }
+.lock__card p { color: #9cc0bc; }
+.lock__card .btn { margin-top: 8px; min-width: 220px; padding: 12px 18px; font-size: 15px; }
+.lock__msg { color: var(--pollen-bright) !important; font-size: 14px; }
 .app:has(> .app__warn) { grid-template-rows: auto auto minmax(0, 1fr); }
 .only-touch { display: none !important; }
 @media (hover: none) and (pointer: coarse) { .only-fine { display: none !important; } .only-touch { display: revert !important; } .btn.only-touch { display: inline-flex !important; } }

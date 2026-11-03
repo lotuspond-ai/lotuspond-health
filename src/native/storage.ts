@@ -11,7 +11,7 @@ import type { StorageBackend } from '../lib/storage';
 // WebView data); on Android it is the app's files folder, which data_extraction_rules.xml keeps out of cloud backup.
 const directory = Directory.Library;
 
-const fileOps: FileOps = {
+export const fileOps: FileOps = {
   async ensureDir(path) {
     try { await Filesystem.mkdir({ path, directory, recursive: true }); } catch { /* already there; list() reports real failures */ }
   },

@@ -26,6 +26,8 @@
 	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Unlock LotusPond Health with Face ID so only you can open your results.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Take a photo of a lab report or scan to add it to your body map. Photos stay on this device.</string>
 	<key>NSPhotoLibraryUsageDescription</key>

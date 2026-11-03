@@ -7,6 +7,8 @@ import { MarkerDrawer, ScanViewer, UploadDialog } from './components/Overlays';
 import { Icon, Logo } from './components/ui';
 import { useUI, type View } from './state/ui';
 import { hydrate, useHealth } from './lib/store';
+import { LockScreen } from './components/AppLock';
+import { useLock } from './native/lock';
 
 const NAV: { id: View; label: string; short: string; icon: ReactNode }[] = [
   { id: 'body', label: 'Body map', short: 'Body', icon: Icon.body },
@@ -18,6 +20,7 @@ const NAV: { id: View; label: string; short: string; icon: ReactNode }[] = [
 export default function App() {
   const { view, setView, setUploadOpen } = useUI();
   const saveBlocked = useHealth(s => s.saveBlocked);
+  const locked = useLock(s => s.status !== 'open');
   useEffect(() => { void hydrate(); }, []);
   useEffect(() => {
     const fromHash = () => { const h = location.hash.slice(1) as View; if (NAV.some(n => n.id === h)) setView(h); };
@@ -29,7 +32,8 @@ export default function App() {
     <button key={n.id} aria-current={view === n.id ? 'page' : undefined} onClick={() => setView(n.id)}>{n.icon}<span>{n.short}</span></button>
   );
   return (
-    <div className="app">
+    <>
+    <div className="app" inert={locked}>
       <header className="topbar">
         <a className="brand" href="#body" onClick={() => setView('body')}><Logo /><b>LotusPond <span>Health</span></b></a>
         <nav className="nav" aria-label="Main">
@@ -56,5 +60,7 @@ export default function App() {
       <UploadDialog />
       <ScanViewer />
     </div>
+    {locked && <LockScreen />}
+    </>
   );
 }

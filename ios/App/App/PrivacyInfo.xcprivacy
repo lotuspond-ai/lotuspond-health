@@ -10,7 +10,8 @@
   - File timestamps: @capacitor/filesystem (via IONFilesystemLib) reads creation / modification dates when it
     lists a folder or stats a file. The app lists its own storage folder in Library/lotuspond on every launch
     (src/native/storage.ts), so only files inside the app container: reason C617.1.
-  The other plugins (app, haptics, share, splash-screen) use none of the listed APIs.
+  The other plugins (app, haptics, share, splash-screen, privacy-screen, @aparajita/capacitor-biometric-auth)
+  use none of the listed APIs.
   Re-check this when adding a plugin or native code.
 -->
 <plist version="1.0">

@@ -5,6 +5,7 @@ import { formatDate } from '../lib/derive';
 import { saveExport } from '../native/save';
 import { isNative } from '../native/platform';
 import { Icon } from '../components/ui';
+import { AppLockSettings } from '../components/AppLock';
 
 export default function DataPage() {
   const measurements = useHealth(s => s.measurements), scans = useHealth(s => s.scans);
@@ -36,6 +37,8 @@ export default function DataPage() {
         <div><b>{scans.length}</b><span>scans</span></div>
         <div><b>{sampleDates.length}</b><span>{sampleDates.length ? `report dates, latest ${formatDate(sampleDates[sampleDates.length - 1], { month: 'short', year: 'numeric' })}` : 'report dates'}</span></div>
       </div>
+
+      <AppLockSettings />
 
       <div className="section">
         <h3>Back up</h3>

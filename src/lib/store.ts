@@ -160,6 +160,10 @@ export const useHealth = create<HealthState>()((set, getState) => ({
 
 let writeTimer: ReturnType<typeof setTimeout> | null = null;
 let hydrating: Promise<void> | null = null;
+let gate: Promise<unknown> = Promise.resolve();
+
+/** Keep saved data out of memory until `until` resolves (the apps pass the app lock's unlock). Call before hydrate(). */
+export function holdHydration(until: Promise<unknown>): void { gate = until; }
 
 function writeNow(): Promise<void> {
   const { measurements, scans } = useHealth.getState();
@@ -197,6 +201,7 @@ function isPersisted(v: unknown): v is Persisted {
 /** Load saved data from IndexedDB (safe to call more than once). Data added before hydration is kept. */
 export function hydrate(): Promise<void> {
   hydrating ??= (async () => {
+    await gate;
     let stored: Persisted | null = null;
     try {
       const v: unknown = await backend.loadPayload();
