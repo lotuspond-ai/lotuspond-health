@@ -46,7 +46,10 @@ jobs:
           java-version: 21
           cache: gradle
       - run: npm ci
+      # Test build: the sign-in screen can switch servers (docs/mobile.md). Release builds leave this unset.
       - run: npm run build:mobile
+        env:
+          VITE_SERVER_PICKER: '1'
       - name: Assemble debug APK
         working-directory: android
         run: ./gradlew assembleDebug --no-daemon --stacktrace
@@ -71,6 +74,8 @@ jobs:
           xcode-version: latest-stable
       - run: npm ci
       - run: npm run build:mobile
+        env:
+          VITE_SERVER_PICKER: '1'
       - name: Build for the iOS Simulator (unsigned)
         working-directory: ios/App
         run: |

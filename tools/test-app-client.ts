@@ -17,7 +17,7 @@ import type { AppEnv } from '../server/src/http.ts';
 import { registration } from '../server/test/helpers.ts';
 import { HttpBackend } from '../src/api/http.ts';
 import { ApiError } from '../src/api/backend.ts';
-import { AppSession, type StoredSession, type TokenStore } from '../src/api/appSession.ts';
+import { AppSession, serverOrigin, type StoredSession, type TokenStore } from '../src/api/appSession.ts';
 
 const ORIGIN = 'capacitor://localhost';
 const API = 'https://health.lotuspond.test';
@@ -202,6 +202,30 @@ describe('app client', () => {
       assert.ok(seen.some(u => u.startsWith(`${OTHER}/api/auth/me`)), 'later requests go to the account\'s host');
     } finally {
       app.request = realRequest;
+    }
+  });
+});
+
+describe('server picker addresses (test builds)', () => {
+  it('turns what a tester types into an API origin', () => {
+    assert.equal(serverOrigin('192.168.1.20:8787'), 'http://192.168.1.20:8787');
+    assert.equal(serverOrigin(' http://192.168.1.20:8787/app#body '), 'http://192.168.1.20:8787');
+    assert.equal(serverOrigin('localhost:8787'), 'http://localhost:8787');
+    assert.equal(serverOrigin('my-laptop.local:8787'), 'http://my-laptop.local:8787');
+    assert.equal(serverOrigin('health.lotuspond.ai'), 'https://health.lotuspond.ai');
+    assert.equal(serverOrigin('https://staging.example.org/'), 'https://staging.example.org');
+    assert.equal(serverOrigin('HTTPS://Health.LotusPond.ai'), 'https://health.lotuspond.ai');
+  });
+
+  it('the picker\'s server check passes the web view\'s CORS', async () => {
+    const res = await fetch(`${API}/api/auth/config`, { credentials: 'omit', headers: { 'X-LotusPond-Client': 'app' } });
+    assert.equal(res.status, 200);
+    assert.ok(await res.json());
+  });
+
+  it('refuses what is not an http(s) address', () => {
+    for (const bad of ['', '   ', 'ftp://example.org', 'javascript:alert(1)', 'http://', 'http:// spaces .org']) {
+      assert.equal(serverOrigin(bad), null, bad);
     }
   });
 });

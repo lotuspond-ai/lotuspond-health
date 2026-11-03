@@ -4,7 +4,7 @@
 // The token is kept in the Keychain / Android Keystore (src/native/tokens.ts) with the server that issued it:
 // with regional hosts an account lives on one of them (README, "Mobile apps (iOS and Android)").
 //
-// No platform imports here, so this is tested in Node (tools/test-parsers.mjs).
+// No platform imports here, so this is tested in Node (tools/test-app-client.ts).
 
 export interface StoredSession {
   token: string;
@@ -25,6 +25,28 @@ export type Region = 'in' | 'eu' | 'us' | 'global';
 export const APP_CLIENT_HEADER = 'X-LotusPond-Client';
 
 const trimOrigin = (o: string) => o.replace(/\/+$/, '');
+
+/**
+ * The API origin for an address typed into the server picker of test builds, or null if it is not one.
+ * "192.168.1.20:8787" becomes http://192.168.1.20:8787 (local addresses default to http), "example.org" becomes
+ * https://example.org; any path is dropped.
+ */
+export function serverOrigin(input: string): string | null {
+  let text = input.trim();
+  if (!text) return null;
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(text)) {
+    const host = text.split(/[/:]/)[0].toLowerCase();
+    const local = host === 'localhost' || host.endsWith('.local') || /^\d{1,3}(\.\d{1,3}){3}$/.test(host) || !host.includes('.');
+    text = `${local ? 'http' : 'https'}://${text}`;
+  }
+  try {
+    const url = new URL(text);
+    if ((url.protocol !== 'http:' && url.protocol !== 'https:') || !url.hostname) return null;
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
 
 export class AppSession {
   /** Origin requests go to: the one that issued the token, else the default. */
