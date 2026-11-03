@@ -11,16 +11,22 @@ import type { Logger } from '../log.ts';
 import type { PartnerRegistry, WebhookInfo } from '../partners/types.ts';
 import type { WebhookInbox } from '../store/types.ts';
 
-export interface ReceiverDeps {
-  partners: PartnerRegistry;
+/** Where a partner's webhooks go: its region cell's inbox and sealer. */
+export interface WebhookTarget {
   inbox: WebhookInbox;
   sealer: Sealer;
+  /** Called after a new webhook is stored, to wake the processor. */
+  onStored?: () => void;
+}
+
+export interface ReceiverDeps {
+  partners: PartnerRegistry;
+  /** The inbox for a partner, or null if it has none (not enabled here). */
+  target: (partner: PartnerId) => WebhookTarget | null;
   now: () => number;
   log: Logger;
   /** The client's address as this deployment sees it (behind a proxy, from its trusted header). */
   clientIp?: (c: Context) => string;
-  /** Called after a new webhook is stored, to wake the processor. */
-  onStored?: () => void;
   /** Default 256 KiB. */
   maxBodyBytes?: number;
 }
@@ -41,8 +47,9 @@ export function webhookRoutes(deps: ReceiverDeps): Hono {
   app.post('/:partner/:hookSecret', bodyLimit({ maxSize: deps.maxBodyBytes ?? 256 * 1024, onError: tooLarge }), async c => {
     const partner = c.req.param('partner') as PartnerId;
     const cfg = deps.partners.get(partner);
+    const target = cfg ? deps.target(partner) : null;
     // Same reply for an unknown partner and a wrong secret, so neither can be probed.
-    if (!cfg || !sameSecret(cfg.hookSecret, c.req.param('hookSecret'))) return c.json({ error: 'not_found' }, 404);
+    if (!cfg || !target || !sameSecret(cfg.hookSecret, c.req.param('hookSecret') ?? '')) return c.json({ error: 'not_found' }, 404);
 
     const ip = deps.clientIp?.(c) ?? '';
     if (cfg.allowIps && !cfg.allowIps.includes(ip)) {
@@ -69,9 +76,9 @@ export function webhookRoutes(deps: ReceiverDeps): Hono {
 
     const headers = Object.fromEntries(Object.entries(allHeaders).filter(([k]) => !DROP_HEADERS.has(k)));
     const dedupeKey = info.eventId ?? `sha256:${createHash('sha256').update(rawBody).digest('hex')}`;
-    const { id, duplicate } = await deps.inbox.add({ partner, dedupeKey, headers, body: deps.sealer.seal(rawBody, inboxContext(partner, dedupeKey)), receivedAt: deps.now() });
+    const { id, duplicate } = await target.inbox.add({ partner, dedupeKey, headers, body: target.sealer.seal(rawBody, inboxContext(partner, dedupeKey)), receivedAt: deps.now() });
     deps.log.info('webhook stored', { partner, inboxId: id, duplicate });
-    if (!duplicate) deps.onStored?.();
+    if (!duplicate) target.onStored?.();
     // A duplicate still gets 200, so the partner stops retrying.
     return c.json({ received: true }, 200);
   });

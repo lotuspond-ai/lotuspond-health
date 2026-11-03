@@ -63,7 +63,7 @@ function setup(opts: SetupOptions = {}) {
   const deps = { orders, partners, now, log, hooks };
   const processor = new WebhookProcessor({ ...deps, inbox, sealer }, { maxAttempts: opts.maxAttempts ?? 10, baseDelayMs: 1000, maxDelayMs: 8000 });
   app = new Hono();
-  app.route('/hooks', webhookRoutes({ partners, inbox, sealer, now, log, clientIp: c => c.req.header('x-test-ip') ?? '' }));
+  app.route('/hooks', webhookRoutes({ partners, target: () => ({ inbox, sealer }), now, log, clientIp: c => c.req.header('x-test-ip') ?? '' }));
   const booking = new BookingService({ ...deps, sealer: keyringSealer({ current: randomBytes(32), previous: [] }) }, { noticeVersion: NOTICE_VERSION });
 
   /** Move the clock, let the lab act and deliver, then process the inbox. */

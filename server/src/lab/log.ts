@@ -8,11 +8,13 @@ export interface Logger {
   error(msg: string, fields?: LogFields): void;
 }
 
-/** One JSON object per line on stdout/stderr. */
+const line = (msg: string, fields?: LogFields) => `[lab] ${msg}${fields && Object.keys(fields).length ? ` ${JSON.stringify(fields)}` : ''}`;
+
+/** "[lab] message {fields}" lines, in the style of the rest of the server's logs. */
 export const consoleLogger: Logger = {
-  info: (msg, fields) => console.log(JSON.stringify({ level: 'info', msg, ...fields })),
-  warn: (msg, fields) => console.warn(JSON.stringify({ level: 'warn', msg, ...fields })),
-  error: (msg, fields) => console.error(JSON.stringify({ level: 'error', msg, ...fields })),
+  info: (msg, fields) => console.log(line(msg, fields)),
+  warn: (msg, fields) => console.warn(line(msg, fields)),
+  error: (msg, fields) => console.error(line(msg, fields)),
 };
 
 export interface LogLine { level: 'info' | 'warn' | 'error'; msg: string; fields: LogFields }

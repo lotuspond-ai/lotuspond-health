@@ -47,3 +47,25 @@ export interface LabResultBundle {
  * Bump it whenever the notice text changes.
  */
 export const LAB_BOOKING_NOTICE_VERSION = '2026-11-03';
+
+/** A lab order as the API shows it (GET /api/profiles/:pid/lab-orders...). No personal details, no internal fields. */
+export interface LabOrderView {
+  id: string;
+  profileId: string;
+  partner: PartnerId;
+  partnerRef: string | null;
+  status: OrderStatus;
+  items: { code: string; name: string; pricePaise: number }[];
+  /** ISO 8601 with the IST offset. */
+  slot: { start: string; end: string } | null;
+  pricePaise: number;
+  /** Who takes payment: 'partner' means pay at collection. */
+  payer: 'partner' | 'lotuspond';
+  failureReason: string | null;
+  canCancel: boolean;
+  canReschedule: boolean;
+  createdAt: string;
+  updatedAt: string;
+  /** Status changes, oldest first; only when reading one order. */
+  timeline?: { status: OrderStatus; at: string }[];
+}

@@ -2,7 +2,7 @@
 // Every route below /:pid first checks that the profile belongs to the signed-in account.
 // All of it is personal data, so every query goes to the account's cell (c.var.cell), never to deps.db.
 import { createHash } from 'node:crypto';
-import { Hono } from 'hono';
+import { Hono, type MiddlewareHandler } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { and, asc, count, desc, eq, inArray } from 'drizzle-orm';
 import { LIMITS } from '../../../shared/constants.ts';
@@ -40,6 +40,19 @@ function contentDisposition(kind: 'inline' | 'attachment', fileName: string): st
   return `${kind}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(fileName)}`;
 }
 
+/** After requireAuth: load the :pid profile if it belongs to the signed-in account (else 404) into c.var.profile. */
+export function requireProfile(): MiddlewareHandler<AppEnv> {
+  return async (c, next) => {
+    const pid = c.req.param('pid');
+    if (!pid || !UUID.test(pid)) throw notFound('That profile');
+    const { db } = c.var.cell;
+    const [row] = await db.select().from(profiles).where(and(eq(profiles.id, pid), eq(profiles.userId, c.var.user.id))).limit(1);
+    if (!row) throw notFound('That profile');
+    c.set('profile', row);
+    await next();
+  };
+}
+
 export function profileRoutes(deps: Deps) {
   const { config } = deps;
   const app = new Hono<AppEnv>();
@@ -66,15 +79,7 @@ export function profileRoutes(deps: Deps) {
   /* ---------- one profile (ownership check) ---------- */
 
   // Matches '/:pid' as well as everything below it.
-  app.use('/:pid/*', async (c, next) => {
-    const pid = c.req.param('pid');
-    if (!pid || !UUID.test(pid)) throw notFound('That profile');
-    const { db } = c.var.cell;
-    const [row] = await db.select().from(profiles).where(and(eq(profiles.id, pid), eq(profiles.userId, c.var.user.id))).limit(1);
-    if (!row) throw notFound('That profile');
-    c.set('profile', row);
-    await next();
-  });
+  app.use('/:pid/*', requireProfile());
   app.get('/:pid', c => c.json(toProfile(c.var.profile)));
 
   app.patch('/:pid', async c => {

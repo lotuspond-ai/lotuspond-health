@@ -124,6 +124,8 @@ export interface FakeLabOptions {
   defaultTags?: FakeTag[];
   /** Bookings allowed per pincode, date and slot. Default 2. */
   slotCapacity?: number;
+  /** Start of every order number (default "FL"). Give each lab instance its own when they share a database. */
+  refPrefix?: string;
 }
 
 /** The lab's API surface, as an adapter sees it. */
@@ -216,6 +218,7 @@ export class FakeLab {
   private readonly onWebhook: FakeLabOptions['onWebhook'];
   private readonly defaultTags: FakeTag[];
   private readonly slotCapacity: number;
+  private readonly refPrefix: string;
   private readonly orders = new Map<string, Order>();
   private readonly byClientRef = new Map<string, string>();
   private readonly lostResponseSent = new Set<string>();
@@ -230,6 +233,7 @@ export class FakeLab {
     this.onWebhook = opts.onWebhook;
     this.defaultTags = opts.defaultTags ?? [];
     this.slotCapacity = opts.slotCapacity ?? 2;
+    this.refPrefix = opts.refPrefix ?? 'FL';
   }
 
   /* ---------------- API ---------------- */
@@ -289,7 +293,7 @@ export class FakeLab {
     if (!slot.available || tags.has('slot-full')) throw new FakeLabApiError(409, 'SLOT_FULL', 'This slot is no longer available');
 
     const now = this.now();
-    const ref = `FL${String(++this.seq).padStart(6, '0')}`;
+    const ref = `${this.refPrefix}${String(++this.seq).padStart(6, '0')}`;
     const order: Order = {
       ref, clientRef: req.client_ref, packages: [...req.package_codes], pincode, date: req.collection_date, slotId: req.slot_id,
       patient: { ...patient, name: patient.name.replace(/#[a-z-]+/g, '').replace(/\s+/g, ' ').trim() }, tags,

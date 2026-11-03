@@ -13,6 +13,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { OrderStatus, PartnerId } from '../../../../shared/lab-bundle.ts';
 import type { DataRegion } from '../../../../shared/regions.ts';
+import { HttpError } from '../../lib/errors.ts';
 import type { Sealer } from '../sealer.ts';
 import type { Logger } from '../log.ts';
 import { canCancel, canReschedule, checkMove } from '../orders/state.ts';
@@ -33,21 +34,19 @@ export type BookingErrorCode =
   | 'adults_only' | 'consent_required' | 'consent_outdated' | 'idempotency_key_reused' | 'not_found'
   | 'not_cancellable' | 'not_reschedulable' | 'partner_unavailable' | 'not_in_region';
 
-const HTTP_STATUS: Record<BookingErrorCode, number> = {
+const HTTP_STATUS: Record<BookingErrorCode, HttpError['status']> = {
   invalid_request: 400, unknown_partner: 400, unknown_item: 422, not_serviceable: 422, slot_unavailable: 409, slot_in_past: 422,
   adults_only: 422, consent_required: 422, consent_outdated: 409, idempotency_key_reused: 422, not_found: 404,
   not_cancellable: 409, not_reschedulable: 409, partner_unavailable: 503, not_in_region: 422,
 };
 
-export class BookingError extends Error {
-  readonly code: BookingErrorCode;
-  readonly status: number;
+/** An HttpError, so main's error handler sends it as { error: { code, message } } with its status. */
+export class BookingError extends HttpError {
+  declare readonly code: BookingErrorCode;
 
   constructor(code: BookingErrorCode, message: string) {
-    super(message);
+    super(HTTP_STATUS[code], code, message);
     this.name = 'BookingError';
-    this.code = code;
-    this.status = HTTP_STATUS[code];
   }
 }
 

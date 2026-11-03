@@ -16,6 +16,7 @@ import { facilityRoutes } from './routes/facilities.ts';
 import { geoRoutes } from './routes/geo.ts';
 import { configRoutes, mapFileRoutes } from './routes/config.ts';
 import { addCspSources, mapCspSources } from './facilities/index.ts';
+import { hookRoutes, labOrderRoutes, labRoutes } from './lab/routes.ts';
 
 const UNSAFE = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
@@ -115,6 +116,11 @@ export function createApp(input: DepsInput): Hono<AppEnv> {
 
   app.get('/api/health', c => c.json({ ok: true }));
   app.route('/api/auth', authRoutes(deps));
+  if (deps.labs) {
+    // Before /api/profiles, so lab-order requests are answered here (with the same session and profile checks).
+    app.route('/api/lab', labRoutes(deps, deps.labs));
+    app.route('/api/profiles/:pid/lab-orders', labOrderRoutes(deps, deps.labs));
+  }
   app.route('/api/profiles', profileRoutes(deps));
   app.route('/api/facilities', facilityRoutes(deps));
   app.route('/api/geo', geoRoutes(deps));
@@ -127,6 +133,9 @@ export function createApp(input: DepsInput): Hono<AppEnv> {
     console.error('[api] unhandled error', err);
     return c.json({ error: { code: 'server_error', message: 'Something went wrong on the server. Try again.' } }, 500);
   });
+
+  // Lab partner webhooks: server to server, so outside /api (no browser checks, no CORS).
+  if (deps.labs) app.route('/hooks', hookRoutes(deps, deps.labs));
 
   if (config.staticDir && fs.existsSync(path.join(config.staticDir, 'index.html'))) serveSite(app, config.staticDir, appCsp);
 

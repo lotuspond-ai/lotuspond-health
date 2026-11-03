@@ -1,30 +1,15 @@
 // What the API shows of an order: no personal details (the app already has them) and no internal fields.
-import type { OrderStatus, PartnerId } from '../../../../shared/lab-bundle.ts';
+import type { LabOrderView, OrderStatus } from '../../../../shared/lab-bundle.ts';
 import { canCancel, canReschedule } from '../orders/state.ts';
-import type { OrderEvent, OrderItem, OrderRecord } from '../store/types.ts';
+import type { OrderEvent, OrderRecord } from '../store/types.ts';
 import { istIso } from '../time.ts';
 
-export interface OrderView {
-  id: string;
-  partner: PartnerId;
-  partnerRef: string | null;
-  status: OrderStatus;
-  items: OrderItem[];
-  slot: { start: string; end: string } | null;
-  pricePaise: number;
-  payer: 'partner' | 'lotuspond';
-  failureReason: string | null;
-  canCancel: boolean;
-  canReschedule: boolean;
-  createdAt: string;
-  updatedAt: string;
-  /** Status changes, oldest first; only on single-order reads. */
-  timeline?: { status: OrderStatus; at: string }[];
-}
+export type OrderView = LabOrderView;
 
 export function orderView(o: OrderRecord, events?: OrderEvent[]): OrderView {
   const view: OrderView = {
     id: o.id,
+    profileId: o.profileId,
     partner: o.partner,
     partnerRef: o.partnerRef,
     status: o.status,
