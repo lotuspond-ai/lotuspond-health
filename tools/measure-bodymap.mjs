@@ -12,8 +12,10 @@ import path from 'node:path';
 
 const { chromium } = createRequire(import.meta.url)('playwright');
 const args = process.argv.slice(2);
-const url = args.find(a => !a.startsWith('--')) ?? 'http://localhost:8831/';
+const base = args.find(a => !a.startsWith('--')) ?? 'http://localhost:8831/';
 const opt = k => args.find(a => a.startsWith(`--${k}=`))?.split('=')[1];
+// --tier=N opens the page with ?tier=N: the 3D stage stays at that tier (no adaptation).
+const url = opt('tier') ? `${base}?tier=${opt('tier')}` : base;
 const want3d = args.includes('--3d');
 const studio = args.includes('--studio');
 // --cores=8 makes the page see a desktop-class CPU (the app picks its default quality from the core count).
@@ -29,7 +31,7 @@ const browser = await chromium.launch({ args: ['--use-angle=swiftshader', '--ena
 {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
-  await page.goto(url, { waitUntil: 'domcontentloaded' });
+  await page.goto(base, { waitUntil: 'domcontentloaded' });
   const api = (path, body) => page.evaluate(async ([p, b]) => {
     const r = await fetch(`api/${p}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(b) });
     return r.status;
@@ -46,7 +48,8 @@ const browser = await chromium.launch({ args: ['--use-angle=swiftshader', '--ena
 }
 
 // 2. First view in a fresh profile (empty HTTP cache, no service worker).
-const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: dpr, storageState: stateFile });
+// Service workers only with --repeat: responses they serve report no transfer size, which would hide downloads.
+const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: dpr, storageState: stateFile, serviceWorkers: args.includes('--repeat') ? 'allow' : 'block' });
 if (cores) await ctx.addInitScript(n => Object.defineProperty(Navigator.prototype, 'hardwareConcurrency', { get: () => n }), cores);
 await ctx.addInitScript(() => {
   const st = { frames: [], cur: null, programs: 0, fb: null, fbDirty: true };
@@ -73,7 +76,7 @@ const page = await ctx.newPage();
 const net = [];
 page.on('requestfinished', async req => {
   const res = await req.response(); const sz = await req.sizes().catch(() => null);
-  net.push({ url: req.url().replace(url, ''), type: req.resourceType(), status: res?.status(), bytes: sz ? sz.responseBodySize + sz.responseHeadersSize : 0, sw: res?.fromServiceWorker() ?? false });
+  net.push({ url: req.url().replace(base, ''), type: req.resourceType(), status: res?.status(), bytes: sz ? sz.responseBodySize + sz.responseHeadersSize : 0, sw: res?.fromServiceWorker() ?? false });
 });
 const errors = [];
 page.on('pageerror', e => errors.push(e.message));
