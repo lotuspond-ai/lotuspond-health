@@ -7,7 +7,7 @@ import type { Db } from './db/client.ts';
 import type { ProfileRow, UserRow } from './db/schema.ts';
 import type { FileStore } from './lib/files.ts';
 import { badRequest, unauthorized } from './lib/errors.ts';
-import { findSession, readSessionCookie } from './auth/sessions.ts';
+import { findSession, readSessionToken } from './auth/sessions.ts';
 import type { Cell, CellRegistry } from './cells.ts';
 import type { Secrets } from './compliance/secrets.ts';
 
@@ -64,11 +64,11 @@ export function clientIp(c: Ctx, trustProxy: boolean): string {
   }
 }
 
-/** Require a signed-in user; sets `user`, `sessionId` and the account's `cell`. */
+/** Require a signed-in user (session cookie or `Authorization: Bearer`); sets `user`, `sessionId` and the account's `cell`. */
 export function requireAuth(deps: Deps): MiddlewareHandler<AppEnv> {
   return async (c, next) => {
-    const token = readSessionCookie(c);
-    const session = token ? await findSession(deps.cells, token, deps.config.sessionTtlMs) : null;
+    const presented = readSessionToken(c);
+    const session = presented ? await findSession(deps.cells, presented.token, deps.config.sessionTtlMs) : null;
     if (!session) throw unauthorized();
     c.set('user', session.user);
     c.set('sessionId', session.id);

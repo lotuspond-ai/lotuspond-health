@@ -208,6 +208,8 @@ export interface RegisterInput {
 export interface ServiceInfo {
   /** Data regions this server holds records for. Sign-up for other regions is refused. */
   servedRegions: ('in' | 'eu' | 'us' | 'global')[];
+  /** API origin for each region, when regions are served by separate regional hosts (REGION_API_ORIGINS). */
+  apiOrigins: Partial<Record<'in' | 'eu' | 'us' | 'global', string>>;
   consentVersion: string;
   contacts: {
     /** Grievance officer (India, DPDP Act). */

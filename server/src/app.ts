@@ -7,6 +7,7 @@ import { secureHeaders } from 'hono/secure-headers';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { APP_FILE, APP_PATHS, NOT_FOUND_FILE, SITE_PAGES } from '../../shared/site.ts';
 import { forbidden, HttpError } from './lib/errors.ts';
+import { isAppRequest } from './auth/sessions.ts';
 import type { AppEnv } from './http.ts';
 import { completeDeps, type DepsInput } from './cells.ts';
 import { authRoutes } from './routes/auth.ts';
@@ -63,10 +64,31 @@ export function createApp(input: DepsInput): Hono<AppEnv> {
     referrerPolicy: 'same-origin',
   }));
 
+  // The mobile apps (capacitor://localhost, https://localhost) call the API cross-origin with bearer tokens.
+  // CORS for those origins only, without credentials: cookies are never shared with them.
+  app.use('/api/*', async (c, next) => {
+    const origin = c.req.header('origin');
+    if (!origin || !config.appClientOrigins.includes(origin)) return next();
+    if (c.req.method === 'OPTIONS') {
+      return c.body(null, 204, {
+        'Access-Control-Allow-Origin': origin,
+        'Access-Control-Allow-Methods': 'GET, POST, PATCH, PUT, DELETE',
+        'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-LotusPond-Client',
+        'Access-Control-Max-Age': '600',
+        Vary: 'Origin',
+      });
+    }
+    await next();
+    c.res.headers.set('Access-Control-Allow-Origin', origin);
+    c.res.headers.set('Access-Control-Expose-Headers', 'Content-Disposition');
+    c.res.headers.append('Vary', 'Origin');
+  });
+
   // Cross-site request protection: changes must come from this site (or an origin listed in APP_ORIGINS).
   // Browsers send Sec-Fetch-Site; older ones send Origin. Requests with neither are not from a browser page.
+  // App requests (no session cookie; a bearer token or the X-LotusPond-Client header) are exempt; see isAppRequest.
   app.use('/api/*', async (c, next) => {
-    if (UNSAFE.has(c.req.method)) {
+    if (UNSAFE.has(c.req.method) && !isAppRequest(c)) {
       const site = c.req.header('sec-fetch-site');
       const origin = c.req.header('origin');
       const listed = !!origin && config.allowedOrigins.includes(origin);
@@ -98,7 +120,7 @@ export function createApp(input: DepsInput): Hono<AppEnv> {
   app.all('/api/*', c => c.json({ error: { code: 'not_found', message: 'No such API route.' } }, 404));
 
   app.onError((err, c) => {
-    if (err instanceof HttpError) return c.json({ error: { code: err.code, message: err.message } }, err.status);
+    if (err instanceof HttpError) return c.json({ error: { ...err.details, code: err.code, message: err.message } }, err.status);
     console.error('[api] unhandled error', err);
     return c.json({ error: { code: 'server_error', message: 'Something went wrong on the server. Try again.' } }, 500);
   });

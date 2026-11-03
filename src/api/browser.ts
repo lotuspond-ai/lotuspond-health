@@ -189,7 +189,7 @@ export class BrowserBackend implements Backend {
   /* ---------------- accounts ---------------- */
 
   async service(): Promise<ServiceInfo> {
-    return { servedRegions: ALL_REGIONS, consentVersion: CONSENT_VERSION, contacts: { grievance: null, dpo: null } };
+    return { servedRegions: ALL_REGIONS, consentVersion: CONSENT_VERSION, contacts: { grievance: null, dpo: null }, apiOrigins: {} };
   }
 
   async me(): Promise<SessionInfo | null> {

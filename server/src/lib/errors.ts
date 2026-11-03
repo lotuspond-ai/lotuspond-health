@@ -2,10 +2,13 @@
 export class HttpError extends Error {
   readonly status: 400 | 401 | 403 | 404 | 409 | 413 | 415 | 429 | 500;
   readonly code: string;
-  constructor(status: HttpError['status'], code: string, message: string) {
+  /** Extra fields for the client, sent next to code and message (for example where to sign in instead). */
+  readonly details?: Record<string, unknown>;
+  constructor(status: HttpError['status'], code: string, message: string, details?: Record<string, unknown>) {
     super(message);
     this.status = status;
     this.code = code;
+    this.details = details;
   }
 }
 

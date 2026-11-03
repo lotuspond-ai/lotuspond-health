@@ -10,7 +10,7 @@ import type { Db } from '../db/client.ts';
 import type { Cell } from '../cells.ts';
 import { hashPassword, verifyAgainstDummy, verifyPassword } from '../auth/password.ts';
 import {
-  clearSessionCookie, createSession, deleteSession, deleteUserSessions, findSession, readSessionCookie, writeSessionCookie,
+  clearSessionCookie, createSession, deleteSession, deleteUserSessions, findSession, readSessionToken, wantsTokenSession, writeSessionCookie,
 } from '../auth/sessions.ts';
 import { eventContext, eraseHistory, recentActivity, recordEvent } from '../compliance/audit.ts';
 import { currentConsents, listConsents, recordConsents, REQUIRED_CONSENTS } from '../compliance/consents.ts';
@@ -41,9 +41,15 @@ export function authRoutes(deps: Deps) {
   const registerByIp = new RateLimiter(config.env === 'production' ? 10 : 500, 60 * MINUTE);
   const auth = requireAuth(deps);
 
-  async function startSession(c: Ctx, cell: Cell, user: UserRow) {
+  /**
+   * Start a session. Browsers get an HttpOnly cookie. Apps (X-LotusPond-Client: app) get the token in the response
+   * instead, to send as `Authorization: Bearer`; it is stored and expires exactly like a cookie session.
+   */
+  async function startSession(c: Ctx, cell: Cell, user: UserRow): Promise<{ token: string; expiresAt: string } | null> {
     const { token, expiresAt } = await createSession(cell.db, user.region, user.id, config.sessionTtlMs, c.req.header('user-agent'));
+    if (wantsTokenSession(c)) return { token, expiresAt: expiresAt.toISOString() };
     writeSessionCookie(c, token, expiresAt, config.cookieSecure);
+    return null;
   }
 
   /** Public facts for sign-up and the Account page. */
@@ -51,6 +57,7 @@ export function authRoutes(deps: Deps) {
     servedRegions: cells.servedRegions,
     consentVersion: CONSENT_VERSION,
     contacts: { grievance: config.grievanceContact ?? null, dpo: config.dpoContact ?? null },
+    apiOrigins: config.regionApiOrigins,
   }));
 
   app.post('/register', async c => {
@@ -93,8 +100,8 @@ export function authRoutes(deps: Deps) {
       throw e;
     }
     await recordEvent(cell.db, eventContext(c, deps), user.id, 'account_created');
-    await startSession(c, cell, user);
-    return c.json(await sessionInfo(cell.db, user), 201);
+    const appSession = await startSession(c, cell, user);
+    return c.json({ ...(await sessionInfo(cell.db, user)), ...appSession }, 201);
   });
 
   app.post('/login', async c => {
@@ -105,7 +112,8 @@ export function authRoutes(deps: Deps) {
     if (wait) throw tooMany(`Too many sign-in attempts. Try again in ${Math.ceil(wait / 60)} minutes.`);
     const found = await locate(deps, body.email);
     if (found && !found.cell) {
-      throw new HttpError(403, 'wrong_region', `This account's records are kept on ${REGIONS[found.region].storage}, and this server does not hold them. Sign in through LotusPond Health for that region.`);
+      throw new HttpError(403, 'wrong_region', `This account's records are kept on ${REGIONS[found.region].storage}, and this server does not hold them. Sign in through LotusPond Health for that region.`,
+        { region: found.region, apiOrigin: config.regionApiOrigins[found.region] ?? null });
     }
     const ok = found ? await verifyPassword(found.user.passwordHash, body.password) : await verifyAgainstDummy(body.password);
     if (!found || !ok) {
@@ -114,13 +122,13 @@ export function authRoutes(deps: Deps) {
     }
     loginByEmail.reset(body.email);
     await recordEvent(found.cell.db, eventContext(c, deps), found.user.id, 'sign_in');
-    await startSession(c, found.cell, found.user);
-    return c.json(await sessionInfo(found.cell.db, found.user));
+    const appSession = await startSession(c, found.cell, found.user);
+    return c.json({ ...(await sessionInfo(found.cell.db, found.user)), ...appSession });
   });
 
   app.post('/logout', async c => {
-    const token = readSessionCookie(c);
-    const session = token ? await findSession(cells, token, config.sessionTtlMs) : null;
+    const presented = readSessionToken(c);
+    const session = presented ? await findSession(cells, presented.token, config.sessionTtlMs) : null;
     if (session) {
       await deleteSession(session.cell.db, session.id);
       await recordEvent(session.cell.db, eventContext(c, deps), session.user.id, 'sign_out');
@@ -131,10 +139,10 @@ export function authRoutes(deps: Deps) {
 
   /** The current session, or null when signed out (a normal state for the app's first request, so not a 401). */
   app.get('/me', async c => {
-    const token = readSessionCookie(c);
-    const session = token ? await findSession(cells, token, config.sessionTtlMs) : null;
+    const presented = readSessionToken(c);
+    const session = presented ? await findSession(cells, presented.token, config.sessionTtlMs) : null;
     if (!session) {
-      if (token) clearSessionCookie(c, config.cookieSecure);
+      if (presented?.via === 'cookie') clearSessionCookie(c, config.cookieSecure);
       return c.json(null);
     }
     return c.json(await sessionInfo(session.cell.db, session.user));

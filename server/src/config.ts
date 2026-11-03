@@ -33,6 +33,10 @@ const Env = z.object({
   STATIC_DIR: z.string().optional(),
   /** Extra origins allowed to make changes, comma-separated (for a frontend on another host). */
   APP_ORIGINS: z.string().default(''),
+  /** Origins of the iOS and Android apps. They may call the API with bearer tokens (CORS, no cookies). */
+  APP_CLIENT_ORIGINS: z.string().default('capacitor://localhost,https://localhost'),
+  /** API origin of each region when regions run on separate hosts, e.g. "in=https://in.health.lotuspond.ai,eu=https://eu.health.lotuspond.ai". */
+  REGION_API_ORIGINS: z.string().default(''),
   /** Send cookies over HTTPS only. Defaults to true in production. */
   COOKIE_SECURE: bool.optional(),
   /** Read the client address from X-Forwarded-For (set when running behind a reverse proxy). */
@@ -109,6 +113,8 @@ export interface Config {
   dataDir: string;
   staticDir: string | undefined;
   allowedOrigins: string[];
+  appClientOrigins: string[];
+  regionApiOrigins: Partial<Record<DataRegion, string>>;
   cookieSecure: boolean;
   trustProxy: boolean;
   sessionTtlMs: number;
@@ -136,6 +142,19 @@ export function decodeKey(s: string): Buffer | null {
 }
 
 const list = (s: string | undefined) => (s ?? '').split(',').map(x => x.trim()).filter(Boolean);
+
+/** "in=https://in.example,eu=https://eu.example" → { in: 'https://in.example', eu: 'https://eu.example' }. */
+function parseRegionOrigins(raw: string): Partial<Record<DataRegion, string>> {
+  const out: Partial<Record<DataRegion, string>> = {};
+  for (const pair of list(raw)) {
+    const [region, url] = pair.split('=').map(x => x?.trim());
+    if (!DATA_REGIONS.includes(region as DataRegion) || !url || !/^https?:\/\/[^/]+$/.test(url.replace(/\/$/, ''))) {
+      throw new Error(`Invalid configuration: REGION_API_ORIGINS: "${pair}" should look like in=https://in.health.lotuspond.ai`);
+    }
+    out[region as DataRegion] = url.replace(/\/$/, '');
+  }
+  return out;
+}
 
 function parseRegions(raw: string): DataRegion[] {
   const v = raw.trim().toLowerCase();
@@ -197,6 +216,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     dataDir: e.DATA_DIR,
     staticDir: e.STATIC_DIR,
     allowedOrigins: e.APP_ORIGINS.split(',').map(s => s.trim().replace(/\/$/, '')).filter(Boolean),
+    appClientOrigins: e.APP_CLIENT_ORIGINS.split(',').map(s => s.trim().replace(/\/$/, '')).filter(Boolean),
+    regionApiOrigins: parseRegionOrigins(e.REGION_API_ORIGINS),
     cookieSecure: e.COOKIE_SECURE ?? e.NODE_ENV === 'production',
     trustProxy: e.TRUST_PROXY,
     sessionTtlMs: e.SESSION_DAYS * 24 * 60 * 60 * 1000,

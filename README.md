@@ -178,6 +178,20 @@ All routes are under `/api` and use JSON unless noted.
 | `POST /profiles/:id/documents` (multipart), `GET …/documents/:did/file`, `DELETE …/documents/:did` | Store, fetch or delete original files |
 | `POST /profiles/:id/scans`, `PATCH`/`DELETE …/scans/:sid` | Save, edit or delete scans |
 
+## Mobile apps (iOS and Android)
+
+The apps load the same build in a native shell, from `capacitor://localhost` (iOS) and `https://localhost` (Android). Every API call is therefore cross-site, and cookies are not sent, so the apps use **token sessions**:
+
+1. **Sign in or sign up** with the header `X-LotusPond-Client: app` on `POST /api/auth/login` or `/api/auth/register`. The response is the usual session (account and profiles) plus `token` and `expiresAt`, and no cookie is set. The token is stored and expires like a browser session; the database holds only its SHA-256. Keep it in the platform's secure storage (Keychain or Keystore).
+2. **Authenticate every request** with `Authorization: Bearer <token>`. This works wherever the session cookie works: profile and record routes, file downloads, exports, `GET /api/auth/me`, `POST /api/auth/logout` (revokes that token), `POST /api/auth/password` and `DELETE /api/auth/sessions` (both keep only the current session).
+3. **Cross-site check and CORS.**
+   - Requests with no session cookie and either a bearer token or `X-LotusPond-Client: app` pass the cross-site check; cookie requests are checked exactly as before.
+   - CORS is answered only for `APP_CLIENT_ORIGINS` (default `capacitor://localhost,https://localhost`). It allows the `Authorization`, `Content-Type` and `X-LotusPond-Client` headers, exposes `Content-Disposition` so downloads keep their names, and never sends `Access-Control-Allow-Credentials`.
+4. **Which server to call.** With one deployment serving every region (the default), the app always calls `https://health.lotuspond.ai/api`; tokens carry their region (for example `in.…`), so requests reach the right cell. When regions run on separate hosts, set `REGION_API_ORIGINS`, for example `in=https://in.health.lotuspond.ai,eu=https://eu.health.lotuspond.ai`.
+   - Before signing in, read `GET /api/auth/config`: `apiOrigins` lists each region's origin.
+   - Sign-up: use the origin for the region of the chosen country (`countryPolicy(country).region` in `shared/regions.ts`).
+   - Sign-in on a host that does not hold the account returns `403` with `error.code` `wrong_region`, plus `error.region` and `error.apiOrigin`. Retry there and keep using that origin for the session; `GET /api/auth/me` also returns `account.region`.
+
 ## Public website
 
 The product's own site, **https://health.lotuspond.ai**, is built by the same Vite build as the app (a multi-page build):

@@ -73,6 +73,40 @@ export function readSessionCookie(c: Context): string | undefined {
   return getCookie(c, SESSION_COOKIE);
 }
 
+/**
+ * The mobile apps (iOS and Android) run on capacitor://localhost and https://localhost, so every API call is cross-site
+ * and cookies are not sent. They ask for a token session with this header and then send `Authorization: Bearer <token>`.
+ */
+export const APP_CLIENT_HEADER = 'x-lotuspond-client';
+
+/** The client asked for a token session instead of a cookie. */
+export function wantsTokenSession(c: Context): boolean {
+  return c.req.header(APP_CLIENT_HEADER)?.trim().toLowerCase() === 'app';
+}
+
+function bearerToken(c: Context): string | undefined {
+  const m = /^Bearer\s+(\S+)\s*$/i.exec(c.req.header('authorization') ?? '');
+  return m?.[1];
+}
+
+/** The session token: `Authorization: Bearer` (apps) first, then the session cookie (browsers). */
+export function readSessionToken(c: Context): { token: string; via: 'bearer' | 'cookie' } | null {
+  const bearer = bearerToken(c);
+  if (bearer) return { token: bearer, via: 'bearer' };
+  const cookie = readSessionCookie(c);
+  return cookie ? { token: cookie, via: 'cookie' } : null;
+}
+
+/**
+ * An app request: no session cookie, and either a bearer token or the X-LotusPond-Client header (sign-up and sign-in,
+ * which return the token). Such requests are exempt from the cross-site check. That is safe because a browser never
+ * attaches either header by itself: another site can only send them after a CORS preflight, and preflights succeed
+ * only for the app origins. Token sign-ins set no cookie, so they cannot plant a session in someone's browser.
+ */
+export function isAppRequest(c: Context): boolean {
+  return !readSessionCookie(c) && (!!bearerToken(c) || wantsTokenSession(c));
+}
+
 export function writeSessionCookie(c: Context, token: string, expiresAt: Date, secure: boolean): void {
   setCookie(c, SESSION_COOKIE, token, { httpOnly: true, sameSite: 'Lax', secure, path: '/', expires: expiresAt });
 }
