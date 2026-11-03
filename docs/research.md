@@ -61,10 +61,10 @@ Each region (`in`, `eu`, `us`, `global`) is a **cell**: its own PostgreSQL datab
 
 Rendering happens on the person's device, so hosting the files on our server makes downloads fast but cannot by itself remove lag. The plan:
 
-1. **Pre-rendered body map as the default view.** The high-quality 3D scene is rendered once at build time from several angles into small WebP images. A matching "ID map" image per angle records which organ is at each pixel. Hover, click, organ highlights and result pins then work on any device with no WebGL cost, and dragging switches between angles.
+1. **Pre-rendered body map as the default view.** The high-quality 3D scene is rendered once at build time, for each body (female and male), from several angles into small WebP images. A matching "ID map" image per angle records which organ is at each pixel. Hover, click, organ highlights and result pins then work on any device with no WebGL cost, and dragging switches between angles.
 2. **Interactive 3D on request** ("Explore in 3D") for x-ray and cross-sections, with a cheaper default:
    - no screen-space ambient occlusion and no reflective floor;
    - standard instead of physical materials on low tiers;
    - device pixel ratio capped and adapted to measured frame rate;
    - landmark labels mounted only for the open organ.
-3. **Download once, keep on the device.** A service worker caches the app shell, the pre-rendered images and the 3D model. Assets have content hashes and are served with `immutable` caching and Brotli/gzip compression; meshopt-compressed models compress further.
+3. **Download once, keep on the device.** A service worker caches the app shell, the pre-rendered images and the 3D model of the body on screen (each profile shows one of the two bodies, and only that body's files are fetched). Assets have content hashes and are served with `immutable` caching and Brotli/gzip compression; meshopt-compressed models compress further.

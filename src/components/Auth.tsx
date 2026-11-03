@@ -161,6 +161,7 @@ export function AuthScreen({ initialMode = 'in' }: { initialMode?: AuthMode }) {
             <a href={siteHref('/privacy/')} {...siteLinkProps}>Privacy</a>
             <a href={siteHref('/terms/')} {...siteLinkProps}>Terms</a>
             <a href={siteHref('/trust/')} {...siteLinkProps}>Trust and compliance</a>
+            <a href={siteHref('/credits/')} {...siteLinkProps}>Credits</a>
           </nav>
         </form>
         <ServerPicker />

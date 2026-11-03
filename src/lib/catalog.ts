@@ -401,7 +401,7 @@ const THYROID: BiomarkerDef[] = [
 ];
 
 const HORMONES: BiomarkerDef[] = [
-  def('testosterone', 'Testosterone (total)', 'ng/dL', 'hormones', ['brain'],
+  def('testosterone', 'Testosterone (total)', 'ng/dL', 'hormones', ['reproductive', 'brain'],
     ['testosterone', 'total testosterone', 'testosterone total', 'serum testosterone', 'testosterone serum'],
     'A sex hormone made mainly by the testes or ovaries, under control of the pituitary gland in the brain. Ranges differ a lot by sex.',
     { altUnits: [{ unit: 'ng/mL', factor: 100 }, { unit: 'nmol/L', factor: 28.84 }] }),

@@ -1,14 +1,17 @@
-import { preload, suspend } from 'suspend-react';
+import { clear, preload, suspend } from 'suspend-react';
 import { Vector3, type BufferGeometry, type Mesh } from 'three';
 import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
-import { MANIFEST } from '../components/bodymap2d/manifest';
+import type { Body } from '../lib/body';
 
-/** Binary .glb by default; hosts that cannot serve binary models get a base64 text copy (see tools/build-artifact.mjs).
- *  The query carries the model's content hash (recorded by tools/render-bodymap.mjs), so the service worker can keep
- *  it on the device and fetch it again only when it changes. */
-export const MODEL_URL = `${import.meta.env.BASE_URL}${import.meta.env.VITE_MODEL_PATH ?? 'models/anatomy.glb'}?v=${MANIFEST.model.sha}`;
+/** models/anatomy-<body>.glb, or a base64 text copy for hosts that cannot serve binary models (see
+ *  tools/build-artifact.mjs). The query carries the model's content hash (vite.config.ts), so the service worker keeps
+ *  it on the device and fetches it again only when it changes. */
+export function modelUrl(body: Body) {
+  const ext = import.meta.env.VITE_MODEL_FORMAT === 'b64' ? 'b64.txt' : 'glb';
+  return `${import.meta.env.BASE_URL}models/anatomy-${body}.${ext}?v=${__MODEL_SHA__[body]}`;
+}
 
 async function load(url: string): Promise<GLTF> {
   const res = await fetch(url);
@@ -26,11 +29,13 @@ async function load(url: string): Promise<GLTF> {
   return gltf;
 }
 
-/** A few vertices of the generated brain have zero-length normals, which turn into NaN pixels in the lighting (and
- *  bloom spreads them over the whole frame). Point those outward from the mesh centre instead. */
+/** Points zero-length normals outward from the mesh centre (they turn into NaN pixels in the lighting, which bloom
+ *  spreads over the whole frame). Adds normals if a mesh has none. */
 function repairNormals(g: BufferGeometry) {
-  const n = g.getAttribute('normal'), p = g.getAttribute('position');
-  if (!n || !p) return;
+  const p = g.getAttribute('position');
+  if (!p) return;
+  if (!g.getAttribute('normal')) g.computeVertexNormals();
+  const n = g.getAttribute('normal');
   g.computeBoundingBox();
   const c = g.boundingBox!.getCenter(new Vector3()), v = new Vector3();
   let fixed = 0;
@@ -43,6 +48,8 @@ function repairNormals(g: BufferGeometry) {
   if (fixed) n.needsUpdate = true;
 }
 
-const KEY = ['lotuspond-anatomy'];
-export const useAnatomyModel = () => suspend(() => load(MODEL_URL), KEY);
-export const preloadAnatomyModel = () => preload(() => load(MODEL_URL), KEY);
+const key = (body: Body) => ['lotuspond-anatomy', modelUrl(body)];
+export const useAnatomyModel = (body: Body) => suspend(() => load(modelUrl(body)), key(body));
+export const preloadAnatomyModel = (body: Body) => preload(() => load(modelUrl(body)), key(body));
+/** Forget a loaded (or failed) model, so the next render downloads it again. */
+export const clearAnatomyModel = (body: Body) => clear(key(body));

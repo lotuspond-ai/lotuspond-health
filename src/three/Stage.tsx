@@ -5,9 +5,11 @@ import { Bvh, CameraControls, Html, MeshReflectorMaterial } from '@react-three/d
 import { EffectComposer, Bloom, ToneMapping, SMAA } from '@react-three/postprocessing';
 import { ToneMappingMode } from 'postprocessing';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
-import { Anatomy, meshRegistry } from './Anatomy';
+import { Anatomy } from './Anatomy';
 import { AdaptiveQuality } from './AdaptiveQuality';
-import { ORGAN_BY_ID } from '../anatomy/organs';
+import { organOrNull } from '../anatomy/organs';
+import { RIGS, focusOf, homeFraming, landmarksOf, pinOf } from '../anatomy/bodies';
+import type { Body } from '../lib/body';
 import { useUI } from '../state/ui';
 import { useHealth, organSummary } from '../lib/store';
 import { useStage, type Tier } from '../components/stage/stageSettings';
@@ -15,7 +17,12 @@ import { PINNED, STATUS_COLOR, pinLabel, pinState } from '../components/stage/st
 import type { OrganId } from '../types';
 
 export const POND = '#0c2528';
-const HOME = { pos: new THREE.Vector3(0.62, 1.24, 2.95), target: new THREE.Vector3(0, 1.04, 0) };
+/** Whole-body view: in front and a little to the left of the body, scaled to its height. */
+function homeFor(body: Body) {
+  const { target, distance } = homeFraming(body);
+  const t = new THREE.Vector3(...target);
+  return { target: t, pos: t.clone().addScaledVector(new THREE.Vector3(0.62, 0.2, 2.95).normalize(), distance), distance };
+}
 
 /** Pixel-ratio cap per tier. Above 1.5 the cost grows faster than anyone can see. */
 const DPR_CAP: Record<Tier, number> = { 0: 1, 1: 1.25, 2: 1.5, 3: 1.5 };
@@ -74,13 +81,19 @@ function Pond({ reflective, resolution = 512 }: { reflective: boolean; resolutio
   );
 }
 
-function boxOf(ids: string[]) {
+/** Bounds of these parts of a body, from its rig: known before its model has loaded, so a camera move made while the
+ *  other body is still on stage (or the new one is downloading) frames the right body. The rig's bounds are the
+ *  nodes' world bounds (the model has no node transforms). */
+function boxOf(body: Body, ids: string[]) {
   const box = new THREE.Box3();
-  for (const id of ids) { const m = meshRegistry.get(id); if (m) box.union(new THREE.Box3().setFromObject(m)); }
+  for (const id of ids) {
+    const b = RIGS[body].parts[id]?.bounds;
+    if (b) box.union(new THREE.Box3(new THREE.Vector3(...b[0]), new THREE.Vector3(...b[1])));
+  }
   return box;
 }
 
-function CameraRig() {
+function CameraRig({ body }: { body: Body }) {
   const ref = useRef<CameraControls>(null);
   const selected = useHealth(s => s.selectedOrgan);
   const section = useUI(s => s.section);
@@ -88,17 +101,18 @@ function CameraRig() {
   useEffect(() => {
     const c = ref.current; if (!c) return;
     const fly = !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-    if (!selected || selected === 'skin') { c.setLookAt(...HOME.pos.toArray(), ...HOME.target.toArray(), fly); return; }
-    const o = ORGAN_BY_ID[selected];
-    const box = boxOf(o.focus); if (box.isEmpty()) return;
+    const home = homeFor(body);
+    const o = organOrNull(selected);
+    if (!o || o.id === 'skin') { c.setLookAt(...home.pos.toArray(), ...home.target.toArray(), fly); return; }
+    const box = boxOf(body, focusOf(body, o.id)); if (box.isEmpty()) return;
     const center = box.getCenter(new THREE.Vector3()); const size = box.getSize(new THREE.Vector3());
     let dir = new THREE.Vector3(...o.view);
-    if (section.on) dir = section.axis === 'coronal' ? new THREE.Vector3(0.05, 0.08, 1) : section.axis === 'transverse' ? new THREE.Vector3(0.05, 1, 0.35) : new THREE.Vector3(selected === 'liver' ? -1 : 1, 0.08, 0.05);
+    if (section.on) dir = section.axis === 'coronal' ? new THREE.Vector3(0.05, 0.08, 1) : section.axis === 'transverse' ? new THREE.Vector3(0.05, 1, 0.35) : new THREE.Vector3(o.id === 'liver' ? -1 : 1, 0.08, 0.05);
     dir.normalize();
     const radius = Math.max(size.x, size.y, size.z) * 0.62;
     const dist = Math.max(0.2, radius / Math.sin(THREE.MathUtils.degToRad(camera.fov / 2)) * 1.6);
     c.setLookAt(center.x + dir.x * dist, center.y + dir.y * dist, center.z + dir.z * dist, center.x, center.y, center.z, fly);
-  }, [selected, section.on, section.axis, camera]);
+  }, [selected, section.on, section.axis, camera, body]);
   return <CameraControls ref={ref} makeDefault smoothTime={0.55} minDistance={0.12} maxDistance={6.5} dollyToCursor maxPolarAngle={Math.PI * 0.62} />;
 }
 
@@ -107,22 +121,24 @@ function CameraRig() {
  *  the final teardown throws "removeChild … not a child of this node". A stable container avoids that. */
 type Portal = RefObject<HTMLElement>;
 
-function Pins({ portal }: { portal: Portal }) {
+function Pins({ portal, body }: { portal: Portal; body: Body }) {
   const { layers, hovered, setHovered } = useUI();
   const measurements = useHealth(s => s.measurements);
   const selected = useHealth(s => s.selectedOrgan);
   const selectOrgan = useHealth(s => s.selectOrgan);
   const summary = useMemo(() => organSummary(measurements), [measurements]);
   // Each <Html> re-projects itself every frame, so hidden pins are unmounted rather than hidden.
-  if (!layers.labels || (selected && selected !== 'skin')) return null;
+  if (!layers.labels || (selected && selected !== 'skin' && organOrNull(selected))) return null;
   return (
     <>
       {PINNED.map(o => {
+        const at = pinOf(body, o.id);
+        if (!at) return null;
         const s = summary[o.id as OrganId];
         const state = pinState(s);
         const showLabel = hovered === o.id || state === 'out';
         return (
-          <Html key={o.id} portal={portal} position={o.pin} center zIndexRange={[20, 0]}>
+          <Html key={o.id} portal={portal} position={at} center zIndexRange={[20, 0]}>
             <button className={`pin pin--${state}${hovered === o.id ? ' is-hot' : ''}`} style={{ ['--pin' as string]: STATUS_COLOR[state] }}
               onClick={() => selectOrgan(o.id)} onPointerEnter={() => setHovered(o.id)} onPointerLeave={() => setHovered(null)}
               aria-label={pinLabel(o.name, s)}>
@@ -137,17 +153,17 @@ function Pins({ portal }: { portal: Portal }) {
 }
 
 /** Landmark labels of the open organ only (all of them mounted at once cost a projection each per frame). */
-function Landmarks({ portal }: { portal: Portal }) {
+function Landmarks({ portal, body }: { portal: Portal; body: Body }) {
   const selected = useHealth(s => s.selectedOrgan);
   const labels = useUI(s => s.layers.labels);
   // Notes open on hover / keyboard focus, and on tap for touch screens (no hover there).
   const [open, setOpen] = useState<string | null>(null);
-  if (!selected || !labels) return null;
-  const o = ORGAN_BY_ID[selected];
+  const o = organOrNull(selected);
+  if (!o || !labels) return null;
   const toggle = (key: string) => setOpen(v => (v === key ? null : key));
   return (
     <>
-      {o.landmarks.map(l => (
+      {landmarksOf(body, o.id).map(l => (
         <Html key={o.id + l.name} portal={portal} position={l.at} zIndexRange={[20, 0]} className="lm-wrap">
           <div className={`landmark${open === o.id + l.name ? ' is-open' : ''}`} tabIndex={0} role="button" aria-expanded={open === o.id + l.name}
             onClick={() => toggle(o.id + l.name)} onKeyDown={e => e.key === 'Enter' && toggle(o.id + l.name)}>
@@ -230,7 +246,7 @@ function Resume({ active }: { active: boolean }) {
  * The interactive 3D stage. `active` is false while the stage is hidden (2D mode, another page, signed out, background
  * tab or scrolled away): the canvas then stops rendering altogether.
  */
-export default function Stage({ active = true }: { active?: boolean }) {
+export default function Stage({ active = true, body }: { active?: boolean; body: Body }) {
   const tier = useStage(s => s.tier);
   const selectOrgan = useHealth(s => s.selectOrgan);
   const labelLayer = useRef<HTMLDivElement>(null);
@@ -241,25 +257,27 @@ export default function Stage({ active = true }: { active?: boolean }) {
   // capped pixel ratio. (A context attribute, fixed when the canvas is created.)
   const msaa = screenDpr < 1.5;
   const studio = tier === 3;
+  const home = homeFor(body);
+  const fog = home.distance / 3.02; // fog distances were tuned for a 3.02 m home view
   return (
     <>
-    <Canvas className="stage-canvas" frameloop={active ? 'demand' : 'never'} dpr={dpr} camera={{ fov: 30, near: 0.02, far: 40, position: HOME.pos.toArray() }}
+    <Canvas className="stage-canvas" frameloop={active ? 'demand' : 'never'} dpr={dpr} camera={{ fov: 30, near: 0.02, far: 40, position: home.pos.toArray() }}
       gl={{ antialias: msaa, powerPreference: 'high-performance' }} onPointerMissed={(e) => { if (e.type === 'dblclick') selectOrgan(null); }}>
       <color attach="background" args={[POND]} />
-      <fog attach="fog" args={[POND, 3.2, 7.5]} />
+      <fog attach="fog" args={[POND, 3.2 * fog, 7.5 * fog]} />
       <ToneFix composer={studio} />
       <StudioLight />
       <Suspense fallback={<Loader portal={labels} />}>
-        <Bvh firstHitOnly={false}>
-          <Anatomy tier={tier >= 2 ? 'physical' : 'standard'} depth={tier >= 1} />
+        <Bvh key={body} firstHitOnly={false}>
+          <Anatomy body={body} tier={tier >= 2 ? 'physical' : 'standard'} depth={tier >= 1} />
         </Bvh>
-        <Pins portal={labels} />
-        <Landmarks portal={labels} />
+        <Pins portal={labels} body={body} />
+        <Landmarks portal={labels} body={body} />
         <AdaptiveQuality active={active} />
       </Suspense>
       <Pond reflective={studio} />
       <ViewInset />
-      <CameraRig />
+      <CameraRig body={body} />
       <Resume active={active} />
       {studio && <StudioEffects />}
     </Canvas>

@@ -1,18 +1,18 @@
 # LotusPond Health
 
-A personal health record. Create an account, keep a profile for yourself and each family member, upload lab reports and scans, and see every result on a detailed 3D model of the body, organ by organ. Results, scans and the original files are stored in your account.
+A personal health record. Create an account, keep a profile for yourself and each family member, upload lab reports and scans, and see every result on a 3D model of a female or male body built from real anatomical data, organ by organ. Results, scans and the original files are stored in your account.
 
 ## What it does
 
 - **Accounts and profiles.** Sign up with email, password and the country you live in, which decides where your records are stored and which rules apply (see [Data residency](#data-residency)). One account holds your own profile plus any family members you add (children, partner, parents). Each profile keeps date of birth, sex, height, weight (with BMI), blood type, conditions, medications, allergies and notes. Switch between people from the menu at the top.
 - **Upload** lab report PDFs (text-based), CSV/JSON exports, DICOM files (`.dcm`) and scan photos. Files are read in the browser and every value is shown for review before it is saved. The original file is kept with the values read from it.
-- **Body map**: a 3D anatomy with 33 structures, including:
-  - a four-chambered heart with valves and coronary vessels
-  - lungs with their fissures and a bronchial tree
-  - kidneys with cortex, medullary pyramids and calyces
-  - a brain with gyri and ventricles
-  - liver vessels and bile ducts
-  - skeleton and diaphragm
+- **Body map**: the Visible Human female or male body (from the profile's sex; a profile can be shown with the other body on Profile), modelled structure by structure (see [Anatomy models](#anatomy-models)), including:
+  - a heart with its four chambers, valves, papillary muscles, coronary arteries and cardiac veins
+  - lungs in five lobes, with the bronchial tree
+  - kidneys with cortex, medullary pyramids, calyces, pelvis and ureters
+  - a brain in atlas regions, with ventricles, pituitary, spinal cord and eyes
+  - the liver with its ligaments, hepatic and portal veins, gallbladder and bile ducts
+  - a full skeleton with discs, cartilage and joints, the diaphragm, glands and reproductive organs
 
   Organs with results get a status dot. Open an organ to fly in, read labelled landmarks, switch to x-ray, or cut a cross-section (front, side or top).
 - **Biomarkers**: latest value of each marker grouped by body system, with its position in the reference range and its trend over time.
@@ -212,13 +212,14 @@ The product's own site, **https://health.lotuspond.ai**, is built by the same Vi
 | --- | --- | --- |
 | `/` | `index.html` | Landing page: static HTML and CSS, no JavaScript |
 | `/privacy/`, `/terms/`, `/trust/` | `privacy/index.html`, `terms/index.html`, `trust/index.html` | Privacy Policy (with the Consumer Health Data Privacy Policy), Terms of Use, Trust and compliance |
+| `/credits/` | `credits/index.html` | Credits and licences: the sources of the anatomy models, what we changed, how to reuse them (CC BY-SA 4.0), map data and fonts |
 | `/app`, `/login`, `/signup` | `app.html` (entry `src/main.tsx`) | The app. `/signup` and `/login` open the auth screen in that mode; after sign-in the address becomes `/app` (views stay in the hash, e.g. `/app#markers`); signing out goes to `/login` |
 | anything else | `404.html` | Not-found page, sent with a 404 status |
 
 - **Shared pieces** live in `src/site/`: `site.css` (styles, using the app's colour tokens), `fonts.css` with self-hosted Newsreader and Hanken Grotesk (SIL OFL; no third-party requests), and HTML partials in `src/site/partials/` included with `<!-- @include header -->`.
 - **Region tables** on the landing, Privacy and Trust pages are rendered at build time from `shared/regions.ts` with markers such as `<!-- @regions storage-table -->` (see `tools/site/regions.ts`), so the pages always match sign-up.
 - **`SITE_URL`** (build-time, default `https://health.lotuspond.ai`) sets canonical and social URLs (`%SITE_URL%` in HTML), and the generated `robots.txt` and `sitemap.xml`. Build for another host with `SITE_URL=https://staging.example.com npm run build`.
-- **Imagery**: `public/site/*.webp` are real screenshots of the app, and `public/site/og.png` (1200×630) is the social preview, rendered from `tools/site/og.html`. Regenerate both after visible app changes, with the dev stack running: `node tools/site/shots.mjs http://localhost:5173/`.
+- **Imagery**: `public/site/*.webp` are real screenshots of the app, and `public/site/og.png` (1200×630) is the social preview, rendered from `tools/site/og.html`. Regenerate both after visible app changes, with the dev stack running: `node tools/site/shots.mjs http://localhost:5173/`. Its demo profile is female, so the pictures show the female body; the body in them is CC BY-SA 4.0, credited in the footer of every page.
 - **Legal text** has placeholders in the form `[Legal entity name — to be completed by LotusPond]` for details only LotusPond can supply (entity, address, officers, contacts, periods). Search for `to be completed` before launch, and have each market's text reviewed.
 - **Serving** (`server/src/app.ts`): pages get their own Content Security Policy (the website allows no WebAssembly and no inline styles; the app shell adds `'wasm-unsafe-eval'` for the model decoder), hashed files in `/assets/` are cached for a year as immutable, and the build writes `.br` and `.gz` copies of text files that the server sends when the browser accepts them. `vite` and `vite preview` follow the same routes (`tools/site/vite-plugin.ts`).
 
@@ -228,42 +229,57 @@ The product's own site, **https://health.lotuspond.ai**, is built by the same Vi
 | --- | --- |
 | `src/three/` | React Three Fiber stage: tissue materials, pond floor, camera, x-ray and cross-sections, adaptive quality |
 | `src/components/bodymap2d/`, `public/bodymap/` | Pre-rendered body map (default view) and its images |
-| `src/anatomy/organs.ts` | Organ metadata: meshes, tissues, landmarks, linked body systems |
+| `src/anatomy/` | `organs.ts`: organ text (names, summaries, facts, landmark notes), tissues and linked body systems; `bodies.ts` and `bodies/<body>.json`: each model's parts, landmarks and pins, written by the model build |
 | `src/lib/` | Biomarker catalog, file parsers, the records store |
 | `src/api/` | Data access: `http.ts` talks to the API, `browser.ts` keeps everything in IndexedDB for server-less previews |
 | `src/state/` | Session (account, profiles, open profile), interface state, toasts |
 | `src/pages/`, `src/components/` | Interface |
-| `index.html`, `privacy/`, `terms/`, `trust/`, `404.html`, `src/site/` | Public website (see above); `app.html` is the app shell |
+| `index.html`, `privacy/`, `terms/`, `trust/`, `credits/`, `404.html`, `src/site/` | Public website (see above); `app.html` is the app shell |
 | `tools/site/` | Build plugin for the website, region tables, screenshot and social-image tool |
 | `server/src/` | API: routes, auth, database schema, file storage, cells (`cells.ts`) and compliance records (`compliance/`: directory, consents, audit log, secrets) |
 | `server/drizzle/` | SQL migrations (generate with `npm run db:generate` after changing `server/src/db/schema.ts`) |
 | `shared/` | Types and limits used by both sides |
-| `tools/anatomy/` | Python generator for `public/models/anatomy.glb` (signed-distance modelling, surface nets, quadric decimation) |
+| `tools/anatomy/` | Builds `public/models/anatomy-female.glb` and `anatomy-male.glb` from pinned real-anatomy sources (see [Anatomy models](#anatomy-models)) |
 
-## Rebuilding the anatomy model
+## Anatomy models
 
-Requires Python 3 with NumPy.
+There are two bodies, female and male. Each is the Visible Human body of the U.S. National Library of Medicine as modelled by the [HuBMAP Human Reference Atlas](https://humanatlas.io/3d-reference-library) (3D Reference Object Library v2.0, CC BY 4.0), with the structures the atlas lacks taken from [Z-Anatomy](https://github.com/LluisV/Z-Anatomy) (CC BY-SA 4.0, based on BodyParts3D) and fitted into that body: the skull and teeth, the ribs, sternum and discs, the bones of the arms, hands and feet, the stomach, esophagus and diaphragm, the thyroid, parathyroid, pituitary and adrenal glands, the testes, the muscles of the female larynx, and the vessels of the head, neck and limbs. The models, and the body maps rendered from them, are shared under CC BY-SA 4.0: see `/credits/` and `public/models/LICENSE.txt`. The app shows the credit in the stage and on Account, because the iOS, Android and preview builds ship the models without the website.
+
+The app picks the body from the profile's sex (`src/lib/body.ts`: female for Intersex or Not set), unless a body was chosen for that profile on Profile, which is kept on the device (`lotuspond.stage` in local storage).
+
+### Rebuilding them
+
+Requires git, Python 3 with NumPy, SciPy and py7zr, and Node. Everything downloaded or computed goes to `tools/anatomy/.cache/` (about 1 GB, not committed).
 
 ```bash
 cd tools/anatomy
-python3 gen_body.py && python3 gen_organs.py && python3 gen_gut.py && python3 gen_skel.py
-python3 gen_organs.py kidneys && python3 gen_detail.py     # high-detail structures (overrides heart, brain, kidneys)
-python3 build_glb.py decimate $(python3 -c "from build_glb import T; print(' '.join(T))")
-python3 build_glb.py write anatomy_raw.glb
-cd ../.. && npx gltf-transform meshopt tools/anatomy/anatomy_raw.glb public/models/anatomy.glb --level medium
+python3 fetch.py            # the sources pinned in sources.json (commits and SHA-256), about 170 MB each
+node extract.mjs            # their meshes, in metres, into .cache/raw/
+python3 fit/arms.py && python3 fit/skull.py && python3 fit/foot.py && python3 fit/ribcage.py && python3 fit/organs.py && python3 fit/repro.py && python3 fit/larynx.py
+python3 fit/vessels.py      # after arms and foot: it uses their limb deformations
+python3 assemble.py         # parts, landmarks and pins per body
+node build.mjs              # public/models/anatomy-<body>.glb and src/anatomy/bodies/<body>.json
+cd ../..
+node tools/render-bodymap.mjs && npm run test:anatomy
 ```
 
-Model coordinates are metres with `+x` toward the person's left, `+y` up and `+z` toward the front.
+- `catalog.py` lists the parts of each model (organ, tissue, triangle budget) and the structures used to register the two sources; `fit/CONTRACT.md` describes the fitting modules. Each fit writes `report.json` with its acceptance measurements (joint gaps, clearances, contacts, levels) and QA renders to `.cache/fit/<body>/<group>/`.
+- `assemble.py` takes the atlas parts, rebuilds some organs as closed surfaces, adds the fitted structures and places the landmarks and pins; `build.mjs` simplifies each structure to its share of the part's budget and writes one glTF node per part, meshopt-compressed, with the credit in the file's metadata.
+- The female Visible Human has six lumbar vertebrae (L1–L6), a normal variant, and the model keeps them.
+- `npm run test:anatomy` checks that each model, its rig, the organ text and its body map agree, and fails when a body map is older than its model.
+
+Model coordinates are metres with `+x` toward the person's left, `+y` up and `+z` toward the front, the soles at `y = 0`.
 
 ### Pre-rendered body map
 
-The body map opens as images rendered ahead of time, so it needs no WebGL; "Explore in 3D" loads the interactive model on request. After changing the model or the look of the stage, render the images again (headless Chromium, a few minutes) and commit `public/bodymap/` and `src/components/bodymap2d/manifest.json`:
+The body map opens as images rendered ahead of time, so it needs no WebGL; "Explore in 3D" loads the interactive model on request. After changing a model or the look of the stage, render the images again (headless Chromium, several minutes per body) and commit `public/bodymap/` and `src/components/bodymap2d/manifest.<body>.json`. Each body has its own set, named with its letter (`f-…`, `m-…`) in one folder, and its own manifest, which records the model file and hash it was rendered from:
 
 ```bash
-node tools/render-bodymap.mjs              # 16 angles + a close-up per organ, two sizes, ID maps, manifest
+node tools/render-bodymap.mjs              # both bodies: 16 angles + a close-up per organ, two sizes, ID maps, manifests
+node tools/render-bodymap.mjs --body=male  # one body
 node tools/measure-bodymap.mjs http://localhost:8787/ --3d   # first-view downloads and 3D frame cost
 ```
 
 ## Server-less preview
 
-`npm run build:artifact` writes `dist-artifact/`: the app alone (`vite build --mode artifact`, relative paths) built with `VITE_BACKEND=browser`, which keeps accounts, profiles, records and files in the visitor's browser (IndexedDB) instead of on a server. It is meant for static hosts such as a Claude artifact. Such hosts have no server routes and only pass a `#hash` into the page, so the preview's `index.html` is the app: it opens sign-in, or sign-up with `#signup`, and its links to the website (home, Privacy, Terms, Trust) open the live site in a new tab. The 3D model ships as base64 text (`models/anatomy.b64.txt`) for hosts that don't serve `.glb` files, and `index.html` is body-only. Check it locally with `npx vite preview --outDir dist-artifact` and the browser walk-through.
+`npm run build:artifact` writes `dist-artifact/`: the app alone (`vite build --mode artifact`, relative paths) built with `VITE_BACKEND=browser`, which keeps accounts, profiles, records and files in the visitor's browser (IndexedDB) instead of on a server. It is meant for static hosts such as a Claude artifact. Such hosts have no server routes and only pass a `#hash` into the page, so the preview's `index.html` is the app: it opens sign-in, or sign-up with `#signup`, and its links to the website (home, Privacy, Terms, Trust, Credits) open the live site in a new tab. The 3D models ship as base64 text (`models/anatomy-<body>.b64.txt`, each under the 16 MB text-file limit) for hosts that don't serve `.glb` files, and `index.html` is body-only. Check it locally with `npx vite preview --outDir dist-artifact` and the browser walk-through.

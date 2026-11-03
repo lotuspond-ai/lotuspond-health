@@ -2,7 +2,9 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useHealth } from '../../lib/store';
 import { useUI } from '../../state/ui';
-import { ORGAN_BY_ID } from '../../anatomy/organs';
+import { ORGAN_BY_ID, organOrNull } from '../../anatomy/organs';
+import { landmarksOf } from '../../anatomy/bodies';
+import { useBody } from '../../state/body';
 import { formatDate, seriesForOrgan, type Series } from '../../lib/derive';
 import { Icon, SegBar, StatusChip, StatusRing } from '../ui';
 import { ArrowIcon, ModalityBadge, SystemIcon, UiIcon } from '../icons';
@@ -243,6 +245,8 @@ function Overview({ series }: { series: Series[] }) {
 
 function OrganPanel({ organ, series }: { organ: OrganId; series: Series[] }) {
   const o = ORGAN_BY_ID[organ];
+  const body = useBody();
+  const marks = landmarksOf(body, organ);
   const list = seriesForOrgan(series, organ);
   const scans = useHealth(s => s.scans).filter(s => s.organ === organ);
   const c = statusCounts(list);
@@ -278,8 +282,8 @@ function OrganPanel({ organ, series }: { organ: OrganId; series: Series[] }) {
       </div>
       <div className="section">
         <details className="org-landmarks">
-          <summary><span>Anatomy in this view</span><small>{o.landmarks.length} landmark{o.landmarks.length === 1 ? '' : 's'}</small><span className="chev">{Icon.chevron}</span></summary>
-          <ul>{o.landmarks.map(l => <li key={l.name}><b>{l.name}</b><span>{l.note}</span></li>)}</ul>
+          <summary><span>Anatomy in this view</span><small>{marks.length} landmark{marks.length === 1 ? '' : 's'}</small><span className="chev">{Icon.chevron}</span></summary>
+          <ul>{marks.map(l => <li key={l.name}><b>{l.name}</b><span>{l.note}</span></li>)}</ul>
         </details>
       </div>
     </>
@@ -291,6 +295,7 @@ export function ContextPanel({ series }: { series: Series[] }) {
   const selected = useHealth(s => s.selectedOrgan);
   const loading = useHealth(s => s.loading);
   if (loading) return <p className="note loading-note" role="status">Loading records…</p>;
-  if (selected) return <OrganPanel organ={selected} series={series} />;
+  // an organ id this version does not know (sent by a newer app) falls back to the overview
+  if (selected && organOrNull(selected)) return <OrganPanel organ={selected} series={series} />;
   return series.length ? <Overview series={series} /> : <Welcome />;
 }

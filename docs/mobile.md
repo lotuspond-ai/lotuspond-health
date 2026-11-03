@@ -135,6 +135,8 @@ Plugins: `@capacitor/app`, `filesystem`, `geolocation`, `haptics`, `privacy-scre
    - Play *Data safety*: the matching types (personal info, health and fitness, photos, files and docs, approximate location, app info and performance). Mark them collected, not shared, encrypted in transit, and deletable on request (Account → *Delete account*).
    - Both stores have health-app policies. Fill in Play's health apps declaration, and keep the "explains results, does not diagnose" wording in listings.
    - The App Store requires in-app account deletion. Account → *Delete account* does this.
+7. **Age rating and content.** The body map shows real anatomy: the Visible Human skin, the breasts and the reproductive organs, in the default view and in the store screenshots. Answer the App Store age-rating questions (medical or treatment information; nudity) and Play's content rating questionnaire with that in mind, and check the screenshots against each store's rules.
+8. **Licences.** Both bodies, and the body map images made from them, are CC BY-SA 4.0 (see `/credits/` on the website). The apps carry the attribution themselves (the credit line on the stage and Account → *Credits and licences*), because they ship the model files without the website. CC BY-SA 4.0 does not allow technical measures that restrict reuse, which app-store encryption may count as, so keep the model files downloadable without DRM from the credits page (`/models/anatomy-<body>.glb`).
 
 ## App lock
 
@@ -159,4 +161,4 @@ Turned on from **Account → App lock**, in the apps only. Turning it on or off 
 - **Self-hosted map tiles.** With `MAP_PMTILES_URL` the apps fetch the `.pmtiles` file from the API host in byte ranges, across origins. The server's CORS answer allows `Range` and exposes `Content-Range` and `ETag` for this, but it hasn't been tried in the iOS and Android web views yet.
 - **Later features:**
   - "Open in LotusPond" from Files, Mail and other apps (document types and intent filters)
-  - 3D performance tuning on older phones
+  - 3D performance tuning on older phones (each body is about 1.2 million triangles; both bodies and both body map sets ship in every app)

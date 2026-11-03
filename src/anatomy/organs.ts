@@ -1,39 +1,30 @@
 import type { OrganId, SystemId } from '../types';
 
-/** Coordinates are metres in the model: +x = the person's left, +y = up, +z = front. */
+/** Coordinates are metres in each body model: +x = the person's left, +y = up (soles at y = 0), +z = front, with the
+ *  body centred on x = z = 0. The geometry itself (parts, pins, landmark positions) is per body: src/anatomy/bodies. */
 export type Vec3 = [number, number, number];
 
 export type Tissue =
-  | 'myocardium' | 'valve' | 'artery' | 'vein' | 'portal' | 'brain' | 'lung' | 'cartilage' | 'liver' | 'bile'
+  | 'myocardium' | 'valve' | 'artery' | 'vein' | 'portal' | 'brain' | 'csf' | 'lung' | 'cartilage' | 'liver' | 'bile'
   | 'gallbladder' | 'stomach' | 'spleen' | 'pancreas' | 'cortex' | 'medulla' | 'urothelium' | 'adrenal' | 'bladder'
-  | 'smallgut' | 'colon' | 'thyroid' | 'esophagus' | 'bone' | 'diaphragm' | 'skin';
+  | 'smallgut' | 'colon' | 'thyroid' | 'parathyroid' | 'pituitary' | 'esophagus' | 'bone' | 'marrow' | 'tooth' | 'ligament'
+  | 'muscle' | 'diaphragm' | 'spinal' | 'eye' | 'thymus' | 'reproductive' | 'breast' | 'skin';
 
-export interface MeshSpec {
-  id: string;          // node name in anatomy.glb
-  tissue: Tissue;
-  /** Shell whose inside should be visible in cross-sections (renders its back faces as cut tissue). */
-  hollow?: boolean;
-  /** Part that becomes see-through in x-ray mode so inner structures show. */
-  shell?: boolean;
-}
-
-export interface Landmark { name: string; at: Vec3; note: string }
+export interface LandmarkText { name: string; note: string }
 
 export interface OrganSpec {
   id: OrganId;
   name: string;
   short: string;
-  meshes: MeshSpec[];
-  /** Meshes used to frame the camera when the organ is opened. */
+  /** Parts (node names in models/anatomy-<body>.glb) used to frame the camera when the organ is opened. */
   focus: string[];
-  /** Where the status pin sits on the overview. */
-  pin: Vec3;
   /** Camera direction to view from when opened (unit-ish vector from target toward camera). */
   view: Vec3;
   systems: SystemId[];
   summary: string;
   facts: { label: string; value: string }[];
-  landmarks: Landmark[];
+  /** Landmark labels, in display order. Each body places the ones it has (tools/anatomy/assemble.py LANDMARKS). */
+  landmarks: LandmarkText[];
 }
 
 export const TISSUE: Record<Tissue, { color: string; rough: number; clear: number; sheen?: string; inner?: string; opacity?: number }> = {
@@ -43,6 +34,7 @@ export const TISSUE: Record<Tissue, { color: string; rough: number; clear: numbe
   vein: { color: '#3d5cb3', rough: 0.35, clear: 0.7, sheen: '#8aa4ff' },
   portal: { color: '#6a4ea6', rough: 0.35, clear: 0.7 },
   brain: { color: '#e4b0a8', rough: 0.62, clear: 0.25, sheen: '#ffd6cf', inner: '#c98a83' },
+  csf: { color: '#9cc9e6', rough: 0.3, clear: 0.6 },
   lung: { color: '#efa7b2', rough: 0.55, clear: 0.2, opacity: 0.42 },
   cartilage: { color: '#efe4d2', rough: 0.45, clear: 0.35 },
   liver: { color: '#7a2b20', rough: 0.3, clear: 0.85, sheen: '#c2584a', inner: '#4e1912' },
@@ -59,184 +51,245 @@ export const TISSUE: Record<Tissue, { color: string; rough: number; clear: numbe
   smallgut: { color: '#e2a294', rough: 0.45, clear: 0.6, sheen: '#ffd0c4' },
   colon: { color: '#c39270', rough: 0.5, clear: 0.45, sheen: '#e8bc98' },
   thyroid: { color: '#b4534a', rough: 0.4, clear: 0.6, sheen: '#e88a7d' },
+  parathyroid: { color: '#c98652', rough: 0.45, clear: 0.5 },
+  pituitary: { color: '#d4917a', rough: 0.45, clear: 0.5, sheen: '#f6c0ad' },
   esophagus: { color: '#c7867d', rough: 0.45, clear: 0.5 },
   bone: { color: '#ebe1cc', rough: 0.55, clear: 0.15 },
+  marrow: { color: '#a3383a', rough: 0.6, clear: 0.2 },
+  tooth: { color: '#f6f1df', rough: 0.3, clear: 0.6 },
+  ligament: { color: '#e6dccb', rough: 0.5, clear: 0.3 },
+  muscle: { color: '#a8433d', rough: 0.5, clear: 0.35, sheen: '#e07a70' },
   diaphragm: { color: '#a8473f', rough: 0.5, clear: 0.3, opacity: 0.22 },
+  spinal: { color: '#f0e2b6', rough: 0.5, clear: 0.3 },
+  eye: { color: '#f2efe9', rough: 0.25, clear: 0.9 },
+  thymus: { color: '#d9a99c', rough: 0.55, clear: 0.3 },
+  reproductive: { color: '#d59a9a', rough: 0.45, clear: 0.5, sheen: '#f4c4c0', inner: '#a8605e' },
+  breast: { color: '#e9c79c', rough: 0.55, clear: 0.3 },
   skin: { color: '#8fd3dc', rough: 1, clear: 0 },
 };
 
 export const ORGANS: OrganSpec[] = [
   {
-    id: 'brain', name: 'Brain', short: 'Brain',
-    meshes: [{ id: 'brain', tissue: 'brain', hollow: true }], focus: ['brain'], pin: [0.035, 1.725, 0.02], view: [0.55, 0.25, 0.8],
-    systems: [], summary: 'Two cerebral hemispheres, the cerebellum and the brainstem. Routine blood tests do not measure brain structure.',
+    id: 'brain', name: 'Brain', short: 'Brain', focus: ['brain'], view: [0.55, 0.25, 0.8],
+    systems: [], summary: 'Two cerebral hemispheres, the cerebellum and the brainstem, with the pituitary gland hanging beneath. The pituitary makes TSH and the hormones that control the adrenal glands, ovaries and testes. Routine blood tests do not measure brain structure.',
     facts: [{ label: 'Weight', value: 'about 1.3–1.4 kg' }, { label: 'Blood flow', value: 'about 15% of cardiac output' }],
     landmarks: [
-      { name: 'Frontal lobe', at: [0.03, 1.70, 0.06], note: 'Planning, decision-making and voluntary movement.' },
-      { name: 'Longitudinal fissure', at: [0, 1.735, 0.0], note: 'Deep groove separating the left and right hemispheres.' },
-      { name: 'Temporal lobe', at: [0.068, 1.640, 0.012], note: 'Hearing, language and memory.' },
-      { name: 'Cerebellum', at: [0.03, 1.615, -0.085], note: 'Balance and coordination; note the fine folia.' },
-      { name: 'Brainstem', at: [0, 1.585, -0.03], note: 'Connects the brain to the spinal cord; controls breathing and heart rate.' },
-      { name: 'Lateral ventricles', at: [0.015, 1.69, -0.01], note: 'Fluid-filled spaces; visible in cross-section.' },
+      { name: 'Frontal lobe', note: 'Planning, decision-making and voluntary movement.' },
+      { name: 'Motor cortex', note: 'The precentral gyrus: starts voluntary movement on the opposite side of the body.' },
+      { name: 'Sensory cortex', note: 'The postcentral gyrus: receives touch, pain and position sense from the opposite side.' },
+      { name: 'Temporal lobe', note: 'Hearing, language and memory.' },
+      { name: 'Occipital lobe', note: 'Vision.' },
+      { name: 'Cerebellum', note: 'Balance and coordination.' },
+      { name: 'Brainstem', note: 'Midbrain, pons and medulla: connect the brain to the spinal cord and control breathing and heart rate.' },
+      { name: 'Hypothalamus', note: 'Controls hunger, thirst and temperature, and tells the pituitary gland what to release.' },
+      { name: 'Pituitary gland', note: 'Makes TSH, which sets how hard the thyroid works, and the hormones that steer the adrenal glands, ovaries and testes.' },
+      { name: 'Lateral ventricles', note: 'Fluid-filled spaces; visible in cross-section.' },
+      { name: 'Corpus callosum', note: 'The band of nerve fibres linking the two hemispheres.' },
     ],
   },
   {
-    id: 'thyroid', name: 'Thyroid gland', short: 'Thyroid',
-    meshes: [{ id: 'thyroid', tissue: 'thyroid' }], focus: ['thyroid', 'airway'], pin: [0.026, 1.465, 0.027], view: [0.25, 0.1, 1],
-    systems: ['thyroid'], summary: 'A butterfly-shaped gland wrapped around the front of the windpipe. TSH, T3 and T4 reflect how its hormone output is regulated.',
+    id: 'thyroid', name: 'Thyroid gland', short: 'Thyroid', focus: ['thyroid', 'parathyroids'], view: [0.25, 0.1, 1],
+    systems: ['thyroid'], summary: 'A butterfly-shaped gland wrapped around the front of the windpipe. TSH, T3 and T4 reflect how its hormone output is regulated. The four parathyroid glands behind it control calcium.',
     facts: [{ label: 'Weight', value: 'about 15–25 g' }, { label: 'Hormones', value: 'T4, T3, calcitonin' }],
     landmarks: [
-      { name: 'Right lobe', at: [-0.022, 1.468, 0.022], note: 'Each lobe sits beside the trachea.' },
-      { name: 'Left lobe', at: [0.022, 1.468, 0.022], note: 'Each lobe sits beside the trachea.' },
-      { name: 'Isthmus', at: [0, 1.450, 0.031], note: 'Bridge of tissue crossing in front of the trachea.' },
-      { name: 'Larynx', at: [0, 1.512, 0.045], note: 'Voice box, just above the gland.' },
+      { name: 'Right lobe', note: 'Each lobe sits beside the larynx and trachea.' },
+      { name: 'Left lobe', note: 'Each lobe sits beside the larynx and trachea.' },
+      { name: 'Isthmus', note: 'Bridge of tissue crossing in front of the trachea.' },
+      { name: 'Parathyroid glands', note: 'Four rice-sized glands behind the thyroid that control calcium.' },
+      { name: 'Thyroid cartilage', note: 'Front of the voice box (the Adam’s apple), just above the gland.' },
     ],
   },
   {
-    id: 'airway', name: 'Larynx & trachea', short: 'Airway',
-    meshes: [{ id: 'airway', tissue: 'cartilage' }], focus: ['airway'], pin: [0, 1.40, 0.0], view: [0.3, 0.1, 1],
+    id: 'airway', name: 'Larynx & trachea', short: 'Airway', focus: ['airway'], view: [0.3, 0.1, 1],
     systems: [], summary: 'The airway from the voice box down to the two main bronchi.', facts: [{ label: 'Trachea length', value: 'about 10–12 cm' }],
-    landmarks: [{ name: 'Carina', at: [0, 1.345, -0.022], note: 'Where the trachea splits into left and right bronchi.' }],
+    landmarks: [
+      { name: 'Epiglottis', note: 'Flap that closes over the larynx when you swallow.' },
+      { name: 'Thyroid cartilage', note: 'The largest cartilage of the voice box (the Adam’s apple).' },
+      { name: 'Cricoid cartilage', note: 'Ring of cartilage at the bottom of the larynx, where the trachea begins.' },
+      { name: 'Trachea', note: 'The windpipe, held open by C-shaped rings of cartilage.' },
+      { name: 'Carina', note: 'Where the trachea splits into left and right bronchi.' },
+      { name: 'Right main bronchus', note: 'Shorter, wider and steeper than the left, so inhaled objects tend to go right.' },
+      { name: 'Left main bronchus', note: 'Longer and more horizontal, passing under the aortic arch.' },
+    ],
   },
   {
-    id: 'lungs', name: 'Lungs', short: 'Lungs',
-    meshes: [{ id: 'lung_r', tissue: 'lung', shell: true }, { id: 'lung_l', tissue: 'lung', shell: true }, { id: 'bronchi', tissue: 'cartilage' }, { id: 'diaphragm', tissue: 'diaphragm' }],
-    focus: ['lung_r', 'lung_l'], pin: [-0.095, 1.37, 0.045], view: [0.2, 0.15, 1],
+    id: 'lungs', name: 'Lungs', short: 'Lungs', focus: ['lung_r_upper', 'lung_r_middle', 'lung_r_lower', 'lung_l_upper', 'lung_l_lower'], view: [0.2, 0.15, 1],
     systems: [], summary: 'The right lung has three lobes and the left has two, making room for the heart. Blood tests rarely measure the lungs directly; imaging and breathing tests do.',
     facts: [{ label: 'Lobes', value: '3 right, 2 left' }, { label: 'Surface for gas exchange', value: 'about 70 m²' }],
     landmarks: [
-      { name: 'Upper lobe', at: [-0.085, 1.42, 0.03], note: 'Separated from the lower lobe by the oblique fissure.' },
-      { name: 'Middle lobe', at: [-0.10, 1.29, 0.055], note: 'Right lung only, below the horizontal fissure.' },
-      { name: 'Lower lobe', at: [-0.11, 1.26, -0.06], note: 'The largest lobe, resting on the diaphragm.' },
-      { name: 'Cardiac notch', at: [0.06, 1.28, 0.06], note: 'Indent in the left lung where the heart sits.' },
-      { name: 'Bronchial tree', at: [0.07, 1.33, -0.02], note: 'Airways branch about 23 times before reaching the air sacs.' },
-      { name: 'Diaphragm', at: [0.03, 1.20, 0.06], note: 'The main breathing muscle, domed under the lungs.' },
+      { name: 'Right upper lobe', note: 'Separated from the middle lobe by the horizontal fissure.' },
+      { name: 'Right middle lobe', note: 'Right lung only, between the horizontal and oblique fissures.' },
+      { name: 'Right lower lobe', note: 'Below the oblique fissure, resting on the diaphragm.' },
+      { name: 'Left upper lobe', note: 'Includes the lingula; the left lung has no middle lobe.' },
+      { name: 'Lingula', note: 'Tongue-shaped part of the left upper lobe beside the heart.' },
+      { name: 'Left lower lobe', note: 'Below the oblique fissure, resting on the diaphragm.' },
+      { name: 'Bronchial tree', note: 'Airways branch about 23 times before reaching the air sacs.' },
+      { name: 'Diaphragm', note: 'The main breathing muscle, domed under the lungs.' },
     ],
   },
   {
-    id: 'heart', name: 'Heart & vessels', short: 'Heart',
-    meshes: [
-      { id: 'heart', tissue: 'myocardium', hollow: true, shell: true }, { id: 'valves', tissue: 'valve' }, { id: 'coronary', tissue: 'artery' },
-      { id: 'cardiac_veins', tissue: 'vein' }, { id: 'arteries', tissue: 'artery' }, { id: 'veins', tissue: 'vein' },
-    ],
-    focus: ['heart'], pin: [0.065, 1.27, 0.062], view: [0.35, 0.12, 1],
+    id: 'heart', name: 'Heart & vessels', short: 'Heart', focus: ['heart', 'valves', 'coronary'], view: [0.35, 0.12, 1],
     systems: ['heart', 'metabolic', 'inflammation'], summary: 'A four-chambered muscular pump with its own coronary blood supply. Lipids, apolipoproteins, troponins, NT-proBNP and hs-CRP relate to the heart and arteries but are not images of them.',
     facts: [{ label: 'Size', value: 'about a closed fist' }, { label: 'Output at rest', value: 'about 5 L per minute' }, { label: 'Wall of left ventricle', value: 'about 1 cm thick' }],
     landmarks: [
-      { name: 'Left ventricle', at: [0.078, 1.276, 0.010], note: 'Thickest chamber; pumps blood to the whole body.' },
-      { name: 'Right ventricle', at: [0.005, 1.282, 0.052], note: 'Pumps blood to the lungs.' },
-      { name: 'Right atrium', at: [-0.055, 1.305, 0.01], note: 'Receives blood from the body via the venae cavae.' },
-      { name: 'Left atrium', at: [0.02, 1.338, -0.035], note: 'Receives oxygenated blood from the lungs.' },
-      { name: 'Aortic arch', at: [0.006, 1.410, -0.018], note: 'Main artery leaving the heart, curving over to the left.' },
-      { name: 'Pulmonary trunk', at: [0.02, 1.352, 0.040], note: 'Carries blood from the right ventricle to the lungs.' },
-      { name: 'Coronary arteries', at: [0.028, 1.302, 0.066], note: 'Supply the heart muscle itself; the LAD runs down the front.' },
-      { name: 'Superior vena cava', at: [-0.036, 1.40, 0.004], note: 'Returns blood from the head and arms.' },
-      { name: 'Apex', at: [0.078, 1.243, 0.058], note: 'Tip of the heart, pointing down and to the left.' },
+      { name: 'Left ventricle', note: 'Thickest chamber; pumps blood to the whole body.' },
+      { name: 'Right ventricle', note: 'Pumps blood to the lungs.' },
+      { name: 'Right atrium', note: 'Receives blood from the body via the venae cavae.' },
+      { name: 'Left atrium', note: 'Receives oxygenated blood from the lungs.' },
+      { name: 'Interventricular septum', note: 'The muscular wall between the two ventricles.' },
+      { name: 'Mitral valve', note: 'Two leaflets between the left atrium and left ventricle.' },
+      { name: 'Tricuspid valve', note: 'Three leaflets between the right atrium and right ventricle.' },
+      { name: 'Aortic valve', note: 'Opens to let the left ventricle push blood into the aorta.' },
+      { name: 'Pulmonary valve', note: 'Opens to let the right ventricle push blood toward the lungs.' },
+      { name: 'Aortic arch', note: 'Main artery leaving the heart, curving over to the left.' },
+      { name: 'Pulmonary trunk', note: 'Carries blood from the right ventricle to the lungs.' },
+      { name: 'Superior vena cava', note: 'Returns blood from the head and arms.' },
+      { name: 'Coronary arteries', note: 'Supply the heart muscle itself; the left anterior descending artery runs down the front.' },
+      { name: 'Apex', note: 'Tip of the heart, pointing down, forward and to the left.' },
     ],
   },
   {
-    id: 'esophagus', name: 'Esophagus', short: 'Esophagus',
-    meshes: [{ id: 'esophagus', tissue: 'esophagus' }], focus: ['esophagus'], pin: [0.004, 1.38, -0.04], view: [0.8, 0.1, 0.6],
-    systems: [], summary: 'Muscular tube carrying food from the throat, behind the heart, to the stomach.', facts: [{ label: 'Length', value: 'about 25 cm' }],
-    landmarks: [{ name: 'Gastro-oesophageal junction', at: [0.03, 1.212, -0.01], note: 'Where the esophagus joins the stomach below the diaphragm.' }],
+    id: 'esophagus', name: 'Esophagus', short: 'Esophagus', focus: ['esophagus'], view: [0.8, 0.1, 0.6],
+    systems: [], summary: 'Muscular tube carrying food from the throat, behind the trachea and heart, to the stomach.', facts: [{ label: 'Length', value: 'about 25 cm' }],
+    landmarks: [
+      { name: 'Esophagus', note: 'Moves food down by waves of contraction.' },
+      { name: 'Gastro-esophageal junction', note: 'Where the esophagus joins the stomach, just below the diaphragm.' },
+    ],
   },
   {
-    id: 'liver', name: 'Liver & gallbladder', short: 'Liver',
-    meshes: [
-      { id: 'liver', tissue: 'liver', shell: true }, { id: 'gallbladder', tissue: 'gallbladder' }, { id: 'hepatic_veins', tissue: 'vein' },
-      { id: 'portal_vein', tissue: 'portal' }, { id: 'bile_ducts', tissue: 'bile' },
-    ],
-    focus: ['liver'], pin: [-0.10, 1.19, 0.05], view: [-0.45, 0.1, 1],
+    id: 'liver', name: 'Liver & gallbladder', short: 'Liver', focus: ['liver', 'gallbladder'], view: [-0.45, 0.1, 1],
     systems: ['liver'], summary: 'The largest internal organ, under the right ribs. ALT, AST, ALP, GGT, bilirubin and blood proteins relate to how it is working.',
     facts: [{ label: 'Weight', value: 'about 1.5 kg' }, { label: 'Blood supply', value: '75% portal vein, 25% hepatic artery' }],
     landmarks: [
-      { name: 'Right lobe', at: [-0.10, 1.20, 0.04], note: 'Much the larger lobe.' },
-      { name: 'Left lobe', at: [0.04, 1.225, 0.05], note: 'Thinner lobe extending across the midline over the stomach.' },
-      { name: 'Gallbladder', at: [-0.068, 1.108, 0.075], note: 'Stores bile; its tip peeks below the liver edge.' },
-      { name: 'Hepatic veins', at: [-0.03, 1.238, -0.005], note: 'Drain the liver into the inferior vena cava.' },
-      { name: 'Portal vein', at: [-0.02, 1.13, 0.004], note: 'Brings nutrient-rich blood from the gut.' },
-      { name: 'Common bile duct', at: [-0.05, 1.095, 0.014], note: 'Carries bile down to the small intestine.' },
+      { name: 'Right lobe', note: 'Much the larger lobe.' },
+      { name: 'Left lobe', note: 'Thinner lobe extending across the midline over the stomach.' },
+      { name: 'Caudate lobe', note: 'Small lobe at the back, beside the inferior vena cava.' },
+      { name: 'Quadrate lobe', note: 'Small lobe on the underside, between the gallbladder and the round ligament.' },
+      { name: 'Falciform ligament', note: 'Fold that attaches the liver to the front of the abdomen and marks the left lobe.' },
+      { name: 'Gallbladder', note: 'Stores bile, under the liver’s right lobe.' },
+      { name: 'Porta hepatis', note: 'Doorway on the underside where the portal vein, hepatic artery and bile ducts pass.' },
+      { name: 'Hepatic artery', note: 'Brings oxygen-rich blood from the aorta: about a quarter of the liver’s supply.' },
+      { name: 'Hepatic veins', note: 'Drain the liver into the inferior vena cava.' },
+      { name: 'Portal vein', note: 'Brings nutrient-rich blood from the gut.' },
+      { name: 'Common bile duct', note: 'Carries bile down to the small intestine.' },
     ],
   },
   {
-    id: 'stomach', name: 'Stomach', short: 'Stomach',
-    meshes: [{ id: 'stomach', tissue: 'stomach' }], focus: ['stomach'], pin: [0.092, 1.15, 0.045], view: [0.5, 0.1, 1],
+    id: 'stomach', name: 'Stomach', short: 'Stomach', focus: ['stomach'], view: [0.5, 0.1, 1],
     systems: ['nutrition'], summary: 'J-shaped muscular sac below the left dome of the diaphragm. Its lining makes the intrinsic factor needed to absorb vitamin B12.',
     facts: [{ label: 'Capacity', value: 'about 1–1.5 L' }],
     landmarks: [
-      { name: 'Fundus', at: [0.062, 1.236, -0.02], note: 'Dome-shaped top under the diaphragm.' },
-      { name: 'Body', at: [0.10, 1.16, 0.02], note: 'Main part where food is churned.' },
-      { name: 'Pylorus', at: [-0.03, 1.11, 0.045], note: 'Valve into the duodenum.' },
+      { name: 'Fundus', note: 'Dome-shaped top under the diaphragm.' },
+      { name: 'Body', note: 'Main part where food is churned.' },
+      { name: 'Greater curvature', note: 'The long outer border of the stomach.' },
+      { name: 'Pylorus', note: 'Valve into the duodenum.' },
     ],
   },
   {
-    id: 'spleen', name: 'Spleen', short: 'Spleen',
-    meshes: [{ id: 'spleen', tissue: 'spleen' }], focus: ['spleen'], pin: [0.122, 1.17, -0.04], view: [1, 0.15, -0.3],
+    id: 'spleen', name: 'Spleen', short: 'Spleen', focus: ['spleen'], view: [1, 0.15, -0.3],
     systems: ['blood'], summary: 'Filters ageing red blood cells and stores platelets, tucked behind the stomach on the left.',
-    facts: [{ label: 'Length', value: 'about 11–12 cm' }], landmarks: [{ name: 'Hilum', at: [0.085, 1.16, -0.03], note: 'Where its artery and vein enter.' }],
+    facts: [{ label: 'Length', value: 'about 11–12 cm' }],
+    landmarks: [
+      { name: 'Hilum', note: 'Where its artery and vein enter.' },
+      { name: 'Splenic artery', note: 'Winds along the top of the pancreas from the coeliac trunk.' },
+      { name: 'Splenic vein', note: 'Runs behind the pancreas to join the portal vein.' },
+    ],
   },
   {
-    id: 'pancreas', name: 'Pancreas', short: 'Pancreas',
-    meshes: [{ id: 'pancreas', tissue: 'pancreas' }], focus: ['pancreas'], pin: [0.046, 1.115, 0.008], view: [0.1, 0.4, 1],
+    id: 'pancreas', name: 'Pancreas', short: 'Pancreas', focus: ['pancreas'], view: [0.1, 0.4, 1],
     systems: ['metabolic'], summary: 'Lies behind the stomach. It makes insulin and digestive enzymes; fasting glucose and HbA1c reflect blood-sugar control.',
     facts: [{ label: 'Length', value: 'about 15 cm' }],
     landmarks: [
-      { name: 'Head', at: [-0.045, 1.07, 0.024], note: 'Sits inside the C-shaped loop of the duodenum.' },
-      { name: 'Body', at: [0.02, 1.105, 0.012], note: 'Crosses in front of the aorta.' },
-      { name: 'Tail', at: [0.085, 1.14, -0.04], note: 'Reaches toward the spleen.' },
+      { name: 'Head', note: 'Sits inside the C-shaped loop of the duodenum.' },
+      { name: 'Neck', note: 'Narrow part in front of the portal vein.' },
+      { name: 'Body', note: 'Crosses in front of the aorta.' },
+      { name: 'Tail', note: 'Reaches toward the spleen.' },
+      { name: 'Uncinate process', note: 'Hook of the head that tucks behind the superior mesenteric vessels.' },
+      { name: 'Pancreatic duct', note: 'Carries digestive enzymes to the duodenum, joining the bile duct.' },
     ],
   },
   {
-    id: 'kidneys', name: 'Kidneys & urinary tract', short: 'Kidneys',
-    meshes: [
-      { id: 'kidneys', tissue: 'cortex', hollow: true, shell: true }, { id: 'kidney_medulla', tissue: 'medulla' }, { id: 'kidney_pelvis', tissue: 'urothelium' },
-      { id: 'adrenals', tissue: 'adrenal' }, { id: 'bladder', tissue: 'bladder' },
-    ],
-    focus: ['kidneys'], pin: [-0.085, 1.09, -0.07], view: [-0.15, 0.1, -1],
-    systems: ['kidney', 'urine'], summary: 'Two bean-shaped filters against the back wall of the abdomen. Creatinine, eGFR, urea, electrolytes and urine tests relate to them.',
+    id: 'kidneys', name: 'Kidneys & urinary tract', short: 'Kidneys', focus: ['kidneys'], view: [-0.15, 0.1, -1],
+    systems: ['kidney', 'urine'], summary: 'Two bean-shaped filters against the back wall of the abdomen, each capped by an adrenal gland. Creatinine, eGFR, urea, electrolytes and urine tests relate to the kidneys; cortisol comes from the adrenal glands.',
     facts: [{ label: 'Length', value: 'about 10–12 cm each' }, { label: 'Filtration', value: 'about 180 L of plasma a day' }],
     landmarks: [
-      { name: 'Renal cortex', at: [0.09, 1.11, -0.07], note: 'Outer layer containing the filtering glomeruli.' },
-      { name: 'Medullary pyramids', at: [0.075, 1.12, -0.064], note: 'Cone-shaped tissue that concentrates urine; see cross-section.' },
-      { name: 'Renal pelvis', at: [0.042, 1.098, -0.05], note: 'Funnel collecting urine into the ureter.' },
-      { name: 'Adrenal gland', at: [0.05, 1.165, -0.066], note: 'Hormone gland capping each kidney.' },
-      { name: 'Ureter', at: [0.04, 1.0, -0.042], note: 'Carries urine down to the bladder.' },
-      { name: 'Bladder', at: [0, 0.93, 0.03], note: 'Stores urine; urinalysis samples what it collects.' },
+      { name: 'Renal cortex', note: 'Outer layer containing the filtering glomeruli.' },
+      { name: 'Medullary pyramids', note: 'Cone-shaped tissue that concentrates urine; see cross-section.' },
+      { name: 'Renal pelvis', note: 'Funnel collecting urine into the ureter.' },
+      { name: 'Ureter', note: 'Carries urine down to the bladder.' },
+      { name: 'Adrenal gland', note: 'Hormone gland capping each kidney; makes cortisol and adrenaline.' },
+      { name: 'Renal artery', note: 'Branch of the aorta; the kidneys receive about a fifth of the heart’s output.' },
+      { name: 'Renal vein', note: 'Returns filtered blood to the inferior vena cava.' },
+      { name: 'Bladder', note: 'Stores urine; urinalysis samples what it collects.' },
     ],
   },
   {
-    id: 'intestine', name: 'Small intestine', short: 'Small intestine',
-    meshes: [{ id: 'small_int', tissue: 'smallgut' }], focus: ['small_int'], pin: [-0.02, 0.99, 0.06], view: [0.1, 0.2, 1],
+    id: 'intestine', name: 'Small intestine', short: 'Small intestine', focus: ['small_int'], view: [0.1, 0.2, 1],
     systems: ['nutrition'], summary: 'Coiled tube where most nutrients are absorbed, including vitamin B12 in its last section.',
     facts: [{ label: 'Length', value: 'about 6 m' }],
-    landmarks: [{ name: 'Duodenum', at: [-0.06, 1.07, 0.01], note: 'First C-shaped part wrapping the pancreas.' }, { name: 'Jejunum & ileum', at: [0.02, 1.0, 0.055], note: 'The long coiled middle and final parts.' }],
-  },
-  {
-    id: 'colon', name: 'Large intestine', short: 'Colon',
-    meshes: [{ id: 'colon', tissue: 'colon' }], focus: ['colon'], pin: [-0.095, 1.04, 0.045], view: [0, 0.15, 1],
-    systems: [], summary: 'Frames the small intestine; absorbs water and salts.', facts: [{ label: 'Length', value: 'about 1.5 m' }],
-    landmarks: [{ name: 'Caecum & appendix', at: [-0.07, 0.93, 0.03], note: 'Start of the colon, lower right.' }, { name: 'Haustra', at: [0.0, 1.05, 0.085], note: 'The pouches along the colon wall.' }],
-  },
-  {
-    id: 'marrow', name: 'Skeleton & bone marrow', short: 'Bone marrow',
-    meshes: [{ id: 'skel_axial', tissue: 'bone' }, { id: 'skel_limbs', tissue: 'bone' }, { id: 'ribs', tissue: 'bone' }, { id: 'cartilage', tissue: 'cartilage' }],
-    focus: ['skel_axial'], pin: [0.125, 1.025, 0.02], view: [0.3, 0.1, 1],
-    systems: ['blood'], summary: 'In adults, red marrow in the spine, ribs, sternum and pelvis makes red cells, white cells and platelets. Blood counts sample the blood, not the marrow.',
-    facts: [{ label: 'Bones', value: '206 in adults' }, { label: 'Blood cells made', value: 'hundreds of billions a day' }],
     landmarks: [
-      { name: 'Sternum', at: [0, 1.33, 0.095], note: 'A key site of red marrow.' },
-      { name: 'Iliac crest', at: [0.12, 1.035, 0.0], note: 'Common site for marrow samples.' },
-      { name: 'Vertebral column', at: [0, 1.25, -0.09], note: 'Vertebral bodies contain red marrow.' },
-      { name: 'Femur', at: [0.11, 0.70, 0.01], note: 'Upper end holds red marrow in adults.' },
+      { name: 'Duodenum', note: 'First C-shaped part, wrapping the head of the pancreas.' },
+      { name: 'Duodenal papilla', note: 'Where bile and pancreatic juice enter the intestine.' },
+      { name: 'Jejunum', note: 'Upper coils, where most nutrients are absorbed.' },
+      { name: 'Ileum', note: 'Lower coils; absorbs vitamin B12 and bile salts.' },
+      { name: 'Terminal ileum', note: 'Last part, joining the colon at the ileocaecal valve.' },
     ],
   },
   {
-    id: 'skin', name: 'Skin', short: 'Skin',
-    meshes: [{ id: 'skin', tissue: 'skin' }], focus: ['skin'], pin: [0, 1.6, 0.1], view: [0, 0, 1],
+    id: 'colon', name: 'Large intestine', short: 'Colon', focus: ['colon'], view: [0, 0.15, 1],
+    systems: [], summary: 'Frames the small intestine; absorbs water and salts.', facts: [{ label: 'Length', value: 'about 1.5 m' }],
+    landmarks: [
+      { name: 'Caecum', note: 'Start of the colon, lower right.' },
+      { name: 'Appendix', note: 'Narrow pouch hanging from the caecum.' },
+      { name: 'Ascending colon', note: 'Rises up the right side.' },
+      { name: 'Hepatic flexure', note: 'Bend under the liver.' },
+      { name: 'Transverse colon', note: 'Crosses the abdomen below the stomach.' },
+      { name: 'Splenic flexure', note: 'Bend under the spleen, higher than the hepatic flexure.' },
+      { name: 'Descending colon', note: 'Runs down the left side.' },
+      { name: 'Sigmoid colon', note: 'S-shaped loop leading into the rectum.' },
+      { name: 'Rectum', note: 'Final part before the anal canal.' },
+    ],
+  },
+  {
+    // the breasts are only in the female body (focusOf drops parts a body does not have)
+    id: 'reproductive', name: 'Reproductive organs', short: 'Reproductive', focus: ['reproductive', 'breasts'], view: [0.2, 0.1, 1],
+    systems: ['hormones'], summary: 'The organs that make sex cells and most sex hormones: the testes and prostate in men, the ovaries and uterus in women. Testosterone and other sex hormones relate to them.',
+    facts: [{ label: 'Hormones', value: 'testosterone (testes); estradiol and progesterone (ovaries)' }],
+    landmarks: [
+      { name: 'Prostate', note: 'Walnut-sized gland below the bladder; it makes PSA and part of semen.' },
+      { name: 'Seminal vesicles', note: 'Glands behind the bladder that add fluid to semen.' },
+      { name: 'Vas deferens', note: 'Duct carrying sperm from the testes.' },
+      { name: 'Testes', note: 'Make sperm and most of the body’s testosterone.' },
+      { name: 'Uterus', note: 'Muscular organ in which a pregnancy grows.' },
+      { name: 'Cervix', note: 'Lower end of the uterus, opening into the vagina; checked by cervical screening.' },
+      { name: 'Ovaries', note: 'Make eggs, estradiol and progesterone.' },
+      { name: 'Fallopian tubes', note: 'Carry eggs from the ovaries to the uterus.' },
+      { name: 'Vagina', note: 'Muscular passage from the cervix to the outside.' },
+      { name: 'Breast tissue', note: 'Milk-producing lobes and ducts inside each breast.' },
+    ],
+  },
+  {
+    id: 'marrow', name: 'Skeleton & bone marrow', short: 'Bone marrow', focus: ['skel_spine', 'skel_pelvis', 'skel_thorax'], view: [0.3, 0.1, 1],
+    systems: ['blood'], summary: 'In adults, red marrow in the spine, ribs, sternum, skull and pelvis makes red cells, white cells and platelets. Blood counts sample the blood, not the marrow.',
+    facts: [{ label: 'Bones', value: '206 in adults' }, { label: 'Blood cells made', value: 'hundreds of billions a day' }],
+    landmarks: [
+      { name: 'Skull', note: 'Protects the brain; its flat bones hold red marrow.' },
+      { name: 'Sternum', note: 'A key site of red marrow.' },
+      { name: 'Ribs', note: 'Twelve pairs; red marrow fills their spongy bone.' },
+      { name: 'Vertebral column', note: 'Vertebral bodies contain red marrow.' },
+      { name: 'Iliac crest', note: 'Common site for marrow samples.' },
+      { name: 'Red marrow', note: 'Spongy bone of the pelvis, where blood cells are made; see cross-section.' },
+      { name: 'Femur', note: 'Upper end holds red marrow in adults.' },
+      { name: 'Thymus', note: 'Where T cells mature; it shrinks after puberty.' },
+    ],
+  },
+  {
+    id: 'skin', name: 'Skin', short: 'Skin', focus: ['skin'], view: [0, 0, 1],
     systems: [], summary: 'Makes most of the body’s vitamin D with sunlight.', facts: [], landmarks: [],
   },
 ];
 
 export const ORGAN_BY_ID = Object.fromEntries(ORGANS.map(o => [o.id, o])) as Record<OrganId, OrganSpec>;
-export const MESH_TO_ORGAN: Record<string, OrganId> = Object.fromEntries(ORGANS.flatMap(o => o.meshes.map(m => [m.id, o.id])));
 export const PICKABLE: OrganId[] = ORGANS.filter(o => o.id !== 'skin').map(o => o.id);
+/** Organ spec, or null for an id this version does not know (sent by a newer app). */
+export const organOrNull = (id: string | null | undefined): OrganSpec | null => (id && (ORGAN_BY_ID as Record<string, OrganSpec>)[id]) || null;

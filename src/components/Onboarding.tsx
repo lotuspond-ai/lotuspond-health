@@ -41,11 +41,11 @@ export function Onboarding() {
         <div className="auth__brand auth__brand--ink"><Logo /><b>LotusPond <span>Health</span></b></div>
         <p className="eyebrow">Step 2 of 3 · About you</p>
         <h1>Welcome, {firstName(profile)}.</h1>
-        <p className="lede">These details help LotusPond describe your results. All of them are optional, and you can change them later in your profile.</p>
+        <p className="lede">These details help LotusPond describe your results and choose the body on your map. All of them are optional, and you can change them later in your profile.</p>
         <div className="form-grid">
           <Field label="Date of birth" error={errors.dateOfBirth}>{id => <input id={id} type="date" value={draft.dateOfBirth} max={todayIso()} onChange={e => patch({ dateOfBirth: e.target.value })} />}</Field>
           <Field label="Blood type">{id => <BloodTypeSelect id={id} value={draft.bloodType} onChange={v => patch({ bloodType: v })} />}</Field>
-          <Field label="Sex assigned at birth" hint="Some reference ranges differ by sex." wide>{id => <SexChoice id={id} value={draft.sex} onChange={v => patch({ sex: v })} />}</Field>
+          <Field label="Sex assigned at birth" hint="Chooses the body on the map. Some reference ranges differ by sex." wide>{id => <SexChoice id={id} value={draft.sex} onChange={v => patch({ sex: v })} />}</Field>
           <Field label="Height" error={errors.heightCm}>{id => <div className="unit"><input id={id} inputMode="decimal" value={draft.heightCm} onChange={e => patch({ heightCm: e.target.value })} placeholder="168" /><span>cm</span></div>}</Field>
           <Field label="Weight" error={errors.weightKg}>{id => <div className="unit"><input id={id} inputMode="decimal" value={draft.weightKg} onChange={e => patch({ weightKg: e.target.value })} placeholder="62" /><span>kg</span></div>}</Field>
         </div>

@@ -9,6 +9,7 @@ import { countryInSentence, countryName, countryPolicy, storageSentence, type Un
 import type { ActivityEvent, AuditKind, ConsentKind, ConsentRecord, Profile } from '../types';
 import { ConfirmButton, Field } from '../components/forms';
 import { AppLockSettings } from '../components/AppLock';
+import { siteHref, siteLinkProps } from '../site/links';
 import '../styles/compliance.css';
 
 const focusDeletePassword = () => document.querySelector<HTMLInputElement>('#delete-account input[type=password]')?.focus();
@@ -39,6 +40,7 @@ export default function AccountPage() {
         {!isPreview && <ContactsPanel />}
         <PasswordPanel onChange={reload} />
         {!isPreview && <DevicesPanel onChange={reload} />}
+        <CreditsPanel />
         <DeletePanel />
       </div>
     </main>
@@ -335,6 +337,36 @@ function ContactsPanel() {
           <dd>{dpo ? <Contact text={dpo} /> : 'Not published by this server yet.'}</dd>
         </div>
       </dl>
+    </section>
+  );
+}
+
+/* ---------------- credits ---------------- */
+
+const CC_BY_SA = 'https://creativecommons.org/licenses/by-sa/4.0/';
+
+/** Attribution for the anatomy, map data and fonts. The apps and the preview ship the models without the website, so
+ *  the credit has to be here as well as on the credits page. */
+function CreditsPanel() {
+  return (
+    <section className="panel" aria-labelledby="credits-h">
+      <h2 id="credits-h">Credits and licences</h2>
+      <p className="note panel__intro">The body on the map is adapted from openly licensed anatomical data, and you may reuse it under the same licence.</p>
+      <dl className="contacts">
+        <div>
+          <dt>3D anatomy</dt>
+          <dd>
+            Adapted from the HuBMAP Human Reference Atlas (Kristen Browne, Heidi Schlehlein and colleagues, CC BY 4.0), made with data
+            from the Visible Human Project of the U.S. National Library of Medicine, and from Z-Anatomy (Gauthier Kervyn, Lluís Vinent,
+            CC BY-SA 4.0), based on BodyParts3D, © The Database Center for Life Science (CC BY-SA 2.1 Japan). We fitted the sources
+            together, simplified and coloured them. Our models and the body map pictures are shared
+            under <a href={CC_BY_SA} target="_blank" rel="noopener">CC BY-SA 4.0</a>.
+          </dd>
+        </div>
+        <div><dt>Map data</dt><dd>© OpenStreetMap contributors, under the Open Database Licence.</dd></div>
+        <div><dt>Fonts</dt><dd>Newsreader and Hanken Grotesk, under the SIL Open Font License 1.1.</dd></div>
+      </dl>
+      <p className="note"><a href={siteHref('/credits/')} {...siteLinkProps}>Sources, what we changed and model downloads</a></p>
     </section>
   );
 }

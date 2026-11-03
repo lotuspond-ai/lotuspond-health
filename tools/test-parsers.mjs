@@ -444,7 +444,8 @@ check('fixture JSON glucose mmol → mg/dL', Math.abs((byId(fjson, 'glucose_fast
 section('image hints');
 const ORGAN_HINTS = [['chest_xray_2026.jpg', 'lungs'], ['CXR-PA.png', 'lungs'], ['echo report.jpg', 'heart'], ['ECG.png', 'heart'], ['usg_abdomen.jpg', 'liver'],
   ['KUB-ultrasound.png', 'kidneys'], ['MRI Brain.jpg', 'brain'], ['thyroid-usg.jpg', 'thyroid'], ['knee xray.jpeg', 'marrow'], ['DEXA_scan.png', 'marrow'],
-  ['IMG_2041.jpg', null], ['lumbarSpine.png', 'marrow']];
+  ['IMG_2041.jpg', null], ['lumbarSpine.png', 'marrow'], ['prostate_mri.png', 'reproductive'], ['TVS ultrasound.jpg', 'reproductive'],
+  ['mammogram-2026.png', 'reproductive'], ['scrotal doppler.jpg', 'reproductive'], ['KUB-ultrasound-2.png', 'kidneys']];
 for (const [f, want] of ORGAN_HINTS) check(`guessOrgan(${f})`, guessOrgan(f) === want, String(guessOrgan(f)));
 const MOD_HINTS = [['chest_xray.jpg', 'XR'], ['x-ray knee.png', 'XR'], ['CT abdomen.png', 'CT'], ['mri_brain.jpg', 'MR'], ['usg.jpg', 'US'], ['echo.png', 'Echo'], ['ecg.png', 'ECG'], ['photo.jpg', null]];
 for (const [f, want] of MOD_HINTS) check(`guessModality(${f})`, guessModality(f) === want, String(guessModality(f)));

@@ -23,13 +23,11 @@ dist-ssr
 *.sln
 *.sw?
 
-# anatomy build intermediates
-tools/anatomy/parts/
-tools/anatomy/dec/
+# anatomy build: downloaded sources, extracted meshes, fits and QA renders (tools/anatomy/README.md)
+tools/anatomy/.cache/
 tools/anatomy/*.glb
 tools/anatomy/*.log
-tools/anatomy/job*
-tools/anatomy/__pycache__/
+**/__pycache__/
 shots/
 dist-artifact
 

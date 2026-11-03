@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useHealth } from '../lib/store';
 import { SYSTEM_LABELS } from '../lib/catalog';
 import { useUI } from '../state/ui';
-import { ORGANS, ORGAN_BY_ID } from '../anatomy/organs';
+import { ORGANS, organOrNull } from '../anatomy/organs';
 import { buildSeries, seriesForOrgan, systemCounts, type Series } from '../lib/derive';
 import type { OrganId, SystemId } from '../types';
 import { StagePanel } from '../components/stage/StagePanel';
@@ -92,7 +92,7 @@ function BodySheet({ series }: { series: Series[] }) {
   const onCover = useCallback((px: number) => setStageInset(px), [setStageInset]);
   useEffect(() => () => setStageInset(0), [setStageInset]); // back to the full stage when the sheet goes away
 
-  const organ = selected ? ORGAN_BY_ID[selected] : null;
+  const organ = organOrNull(selected);
   const list = selected ? seriesForOrgan(series, selected) : [];
   const outside = (l: Series[]) => l.filter(s => s.latest.status === 'high' || s.latest.status === 'low').length;
   const sub = organ

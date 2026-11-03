@@ -7,11 +7,12 @@ export type MaterialTier = 'physical' | 'standard';
 
 export type TissueMaterial = THREE.MeshPhysicalMaterial | THREE.MeshStandardMaterial;
 
-export function tissueMaterial(t: Tissue, tier: MaterialTier, inner = false): TissueMaterial {
+/** `double`: thin sheets such as valve leaflets and ligaments, drawn from both sides. */
+export function tissueMaterial(t: Tissue, tier: MaterialTier, inner = false, double = false): TissueMaterial {
   const d = TISSUE[t];
   const common = {
     color: inner ? d.inner ?? d.color : d.color, roughness: inner ? 0.8 : d.rough,
-    side: inner ? THREE.BackSide : THREE.FrontSide, envMapIntensity: 0.9,
+    side: inner ? THREE.BackSide : double ? THREE.DoubleSide : THREE.FrontSide, envMapIntensity: 0.9,
   };
   const m = tier === 'physical'
     ? new THREE.MeshPhysicalMaterial({

@@ -114,7 +114,7 @@ export function AddProfileDialog() {
             </select>
           )}</Field>
           <Field label="Date of birth" error={errors.dateOfBirth}>{id => <input id={id} type="date" value={draft.dateOfBirth} max={todayIso()} onChange={e => patch({ dateOfBirth: e.target.value })} />}</Field>
-          <Field label="Sex assigned at birth" wide>{id => <SexChoice id={id} value={draft.sex} onChange={v => patch({ sex: v })} />}</Field>
+          <Field label="Sex assigned at birth" hint="Chooses the body on the map. Some reference ranges differ by sex." wide>{id => <SexChoice id={id} value={draft.sex} onChange={v => patch({ sex: v })} />}</Field>
         </div>
         {error && <p className="form-error" role="alert">{error}</p>}
         <div className="dialog__actions">

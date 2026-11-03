@@ -1,0 +1,1898 @@
+{
+ "sex": "female",
+ "height": 1.6663,
+ "offset": [
+  0.00584,
+  0.79476,
+  0.05798
+ ],
+ "bounds": [
+  [
+   -0.4837,
+   0,
+   -0.1646
+  ],
+  [
+   0.4837,
+   1.6663,
+   0.1646
+  ]
+ ],
+ "parts": {
+  "skin": {
+   "organ": "skin",
+   "tissue": "skin",
+   "flags": [],
+   "double": false,
+   "bounds": [
+    [
+     -0.4837,
+     0,
+     -0.1646
+    ],
+    [
+     0.4837,
+     1.6663,
+     0.1646
+    ]
+   ],
+   "tris": 70000,
+   "sources": [
+    "HRA"
+   ]
+  },
+  "brain": {
+   "organ": "brain",
+   "tissue": "brain",
+   "flags": [
+    "hollow"
+   ],
+   "double": false,
+   "bounds": [
+    [
+     -0.0688,
+     1.5062,
+     -0.0901
+    ],
+    [
+     0.0675,
+     1.6519,
+     0.0769
+    ]
+   ],
+   "tris": 111658,
+   "sources": [
+    "HRA"
+   ]
+  },
+  "ventricles": {
+   "organ": "brain",
+   "tissue": "csf",
+   "flags": [],
+   "double": false,
+   "bounds": [
+    [
+     -0.0378,
+     1.5058,
+     -0.0656
+    ],
+    [
+     0.0371,
+     1.6076,
+     0.0629
+    ]
+   ],
+   "tris": 5980,
+   "sources": [
+    "HRA"
+   ]
+  },
+  "spinal_cord": {
+   "organ": "brain",
+   "tissue": "spinal",
+   "flags": [],
+   "double": false,
+   "bounds": [
+    [
+     -0.0103,
+     1.0967,
+     -0.0877
+    ],
+    [
+     0.0076,
+     1.5055,
+     -0.0058
+    ]
+   ],
+   "tris": 8030,
+   "sources": [
+    "HRA"
+   ]
+  },
+  "eyes": {
+   "organ": "brain",
+   "tissue": "eye",
+   "flags": [],
+   "double": false,
+   "bounds": [
+    [
+     -0.0478,
+     1.5475,
+     0.0258
+    ],
+    [
+     0.0496,
+     1.5723,
+     0.0912
+    ]
+   ],
+   "tris": 13048,
+   "sources": [
+    "HRA"
+   ]
+  },
+  "eye_muscles": {
+   "organ": "brain",
+   "tissue": "muscle",
+   "flags": [],
+   "double": false,
+   "bounds": [
+    [
+     -0.0487,
+     1.544,
+     0.0374
+    ],
+    [
+     0.0508,
+     1.5737,
+     0.0861
+    ]
+   ],
+   "tris": 6000,
+   "sources": [
+    "HRA"
+   ]
+  },
+  "airway": {
+   "organ": "airway",
+   "tissue": "cartilage",
+   "flags": [],
+   "double": false,
+   "bounds": [
+    [
+     -0.0407,
+     1.2757,
+     -0.0464
+    ],
+    [
+     0.0521,
+     1.4586,
+     0.0547
+    ]
+   ],
+   "tris": 29282,
+   "sources": [
+    "HRA"
+   ]
+  },
+  "bronchi": {
+   "organ": "lungs",
+   "tissue": "cartilage",
+   "flags": [],
+   "double": false,
+   "bounds": [
+    [
+     -0.0977,
+     1.2217,
+     -0.0779
+    ],
+    [
+     0.1055,
+     1.3519,
+     0.0357
+    ]
+   ],
+   "tris": 29975,
+   "sources": [
+    "HRA"
+   ]
+  },
+  "lung_r_upper": {
+   "organ": "lungs",
+   "tissue": "lung",
+   "flags": [
+    "shell"
+   ],
+   "double": false,
+   "bounds": [
+    [
+     -0.1212,
+     1.2414,
+     -0.074
+    ],
+    [
+     0.0068,
+     1.3829,
+     0.0545
+    ]
+   ],
+   "tris": 9000,
+   "sources": [
+    "HRA"
+   ]
+  },
+  "lung_r_middle": {
+   "organ": "lungs",
+   "tissue": "lung",
+   "flags": [
+    "shell"
+   ],
+   "double": false,
+   "bounds": [
+    [
+     -0.1205,
+     1.1819,
+     -0.045
+    ],
+    [
+     -0.0224,
+     1.2932,
+     0.0533
+    ]
+   ],
+   "tris": 6000,
+   "sources": [
+    "HRA"
+   ]
+  },
+  "lung_r_lower": {
+   "organ": "lungs",
+   "tissue": "lung",
+   "flags": [
+    "shell"
+   ],
+   "double": false,
+   "bounds": [
+    [
+     -0.1253,
+     1.1762,
+     -0.0977
+    ],
+    [
+     -0.0077,
+     1.3584,
+     0.0404
+    ]
+   ],
+   "tris": 10000,
+   "sources": [
+    "HRA"
+   ]
+  },
+  "lung_l_upper": {
+   "organ": "lungs",
+   "tissue": "lung",
+   "flags": [
+    "shell"
+   ],
+   "double": false,
+   "bounds": [
+    [
+     0.0151,
+     1.2313,
+     -0.0817
+    ],
+    [
+     0.1262,
+     1.3856,
+     0.055
+    ]
+   ],
+   "tris": 10000,
+   "sources": [
+    "HRA"
+   ]
+  },
+  "lung_l_lower": {
+   "organ": "lungs",
+   "tissue": "lung",
+   "flags": [
+    "shell"
+   ],
+   "double": false,
+   "bounds": [
+    [
+     0.0202,
+     1.1614,
+     -0.0991
+    ],
+    [
+     0.127,
+     1.3436,
+     0.0229
+    ]
+   ],
+   "tris": 10000,
+   "sources": [
+    "HRA"
+   ]
+  },
+  "heart": {
+   "organ": "heart",
+   "tissue": "myocardium",
+   "flags": [
+    "hollow",
+    "shell"
+   ],
+   "double": false,
+   "bounds": [
+    [
+     -0.0291,
+     1.1838,
+     -0.0486
+    ],
+    [
+     0.1134,
+     1.2938,
+     0.0529
+    ]
+   ],
+   "tris": 44997,
+   "sources": [
+    "HRA"
+   ]
+  },
+  "valves": {
+   "organ": "heart",
+   "tissue": "valve",
+   "flags": [],
+   "double": true,
+   "bounds": [
+    [
+     0.0016,
+     1.1975,
+     -0.0252
+    ],
+    [
+     0.0462,
+     1.2878,
+     0.0357
+    ]
+   ],
+   "tris": 11996,
+   "sources": [
+    "HRA"
+   ]
+  },
+  "papillary": {
+   "organ": "heart",
+   "tissue": "myocardium",
+   "flags": [],
+   "double": false,
+   "bounds": [
+    [
+     0.0276,
+     1.1992,
+     -0.0196
+    ],
+    [
+     0.0891,
+     1.2508,
+     0.0451
+    ]
+   ],
+   "tris": 5215,
+   "sources": [
+    "HRA"
+   ]
+  },
+  "coronary": {
+   "organ": "heart",
+   "tissue": "artery",
+   "flags": [],
+   "double": false,
+   "bounds": [
+    [
+     -0.0025,
+     1.1865,
+     -0.0496
+    ],
+    [
+     0.0966,
+     1.2787,
+     0.0464
+    ]
+   ],
+   "tris": 11996,
+   "sources": [
+    "HRA"
+   ]
+  },
+  "cardiac_veins": {
+   "organ": "heart",
+   "tissue": "vein",
+   "flags": [],
+   "double": false,
+   "bounds": [
+    [
+     -0.0034,
+     1.1871,
+     -0.0498
+    ],
+    [
+     0.0924,
+     1.2742,
+     0.0526
+    ]
+   ],
+   "tris": 8998,
+   "sources": [
+    "HRA"
+   ]
+  },
+  "arteries": {
+   "organ": "heart",
+   "tissue": "artery",
+   "flags": [],
+   "double": false,
+   "bounds": [
+    [
+     -0.0718,
+     0.8148,
+     -0.0789
+    ],
+    [
+     0.1091,
+     1.568,
+     0.0864
+    ]
+   ],
+   "tris": 58976,
+   "sources": [
+    "HRA"
+   ]
+  },
+  "veins": {
+   "organ": "heart",
+   "tissue": "vein",
+   "flags": [],
+   "double": false,
+   "bounds": [
+    [
+     -0.0687,
+     0.779,
+     -0.0933
+    ],
+    [
+     0.0701,
+     1.5782,
+     0.0916
+    ]
+   ],
+   "tris": 46989,
+   "sources": [
+    "HRA"
+   ]
+  },
+  "hepatic_artery": {
+   "organ": "liver",
+   "tissue": "artery",
+   "flags": [],
+   "double": false,
+   "bounds": [
+    [
+     -0.0795,
+     1.0624,
+     -0.0545
+    ],
+    [
+     0.0314,
+     1.1553,
+     0.03
+    ]
+   ],
+   "tris": 4952,
+   "sources": [
+    "HRA"
+   ]
+  },
+  "liver": {
+   "organ": "liver",
+   "tissue": "liver",
+   "flags": [
+    "shell",
+    "hollow"
+   ],
+   "double": false,
+   "bounds": [
+    [
+     -0.129,
+     1.0573,
+     -0.0958
+    ],
+    [
+     0.1181,
+     1.2273,
+     0.0704
+    ]
+   ],
+   "tris": 30000,
+   "sources": [
+    "HRA"
+   ]
+  },
+  "liver_ligaments": {
+   "organ": "liver",
+   "tissue": "ligament",
+   "flags": [],
+   "double": true,
+   "bounds": [
+    [
+     -0.1177,
+     1.081,
+     -0.0854
+    ],
+    [
+     0.0723,
+     1.2171,
+     0.0658
+    ]
+   ],
+   "tris": 3976,
+   "sources": [
+    "HRA"
+   ]
+  },
+  "gallbladder": {
+   "organ": "liver",
+   "tissue": "gallbladder",
+   "flags": [],
+   "double": false,
+   "bounds": [
+    [
+     -0.0835,
+     1.051,
+     -0.0137
+    ],
+    [
+     -0.0426,
+     1.0889,
+     0.0383
+    ]
+   ],
+   "tris": 2396,
+   "sources": [
+    "HRA"
+   ]
+  },
+  "bile_ducts": {
+   "organ": "liver",
+   "tissue": "bile",
+   "flags": [],
+   "double": false,
+   "bounds": [
+    [
+     -0.0468,
+     1.0402,
+     -0.0479
+    ],
+    [
+     0.1176,
+     1.1407,
+     0.0155
+    ]
+   ],
+   "tris": 5996,
+   "sources": [
+    "HRA"
+   ]
+  },
+  "hepatic_veins": {
+   "organ": "liver",
+   "tissue": "vein",
+   "flags": [],
+   "double": false,
+   "bounds": [
+    [
+     -0.0837,
+     1.1454,
+     -0.0413
+    ],
+    [
+     0.0217,
+     1.1948,
+     0.0183
+    ]
+   ],
+   "tris": 2518,
+   "sources": [
+    "HRA"
+   ]
+  },
+  "portal_vein": {
+   "organ": "liver",
+   "tissue": "portal",
+   "flags": [],
+   "double": false,
+   "bounds": [
+    [
+     -0.0774,
+     0.8722,
+     -0.0828
+    ],
+    [
+     0.1052,
+     1.1508,
+     0.0366
+    ]
+   ],
+   "tris": 11991,
+   "sources": [
+    "HRA"
+   ]
+  },
+  "spleen": {
+   "organ": "spleen",
+   "tissue": "spleen",
+   "flags": [],
+   "double": false,
+   "bounds": [
+    [
+     0.0427,
+     1.0803,
+     -0.0952
+    ],
+    [
+     0.1322,
+     1.1826,
+     -0.0243
+    ]
+   ],
+   "tris": 6000,
+   "sources": [
+    "HRA"
+   ]
+  },
+  "pancreas": {
+   "organ": "pancreas",
+   "tissue": "pancreas",
+   "flags": [],
+   "double": false,
+   "bounds": [
+    [
+     -0.0481,
+     1.0323,
+     -0.0541
+    ],
+    [
+     0.1239,
+     1.09,
+     0.0302
+    ]
+   ],
+   "tris": 10000,
+   "sources": [
+    "HRA"
+   ]
+  },
+  "kidneys": {
+   "organ": "kidneys",
+   "tissue": "cortex",
+   "flags": [
+    "hollow",
+    "shell"
+   ],
+   "double": false,
+   "bounds": [
+    [
+     -0.1029,
+     0.9705,
+     -0.0813
+    ],
+    [
+     0.119,
+     1.0954,
+     -0.0038
+    ]
+   ],
+   "tris": 21982,
+   "sources": [
+    "HRA"
+   ]
+  },
+  "kidney_medulla": {
+   "organ": "kidneys",
+   "tissue": "medulla",
+   "flags": [],
+   "double": false,
+   "bounds": [
+    [
+     -0.0962,
+     0.9776,
+     -0.074
+    ],
+    [
+     0.1119,
+     1.0876,
+     -0.0096
+    ]
+   ],
+   "tris": 13994,
+   "sources": [
+    "HRA"
+   ]
+  },
+  "kidney_pelvis": {
+   "organ": "kidneys",
+   "tissue": "urothelium",
+   "flags": [],
+   "double": false,
+   "bounds": [
+    [
+     -0.0804,
+     0.9936,
+     -0.0589
+    ],
+    [
+     0.098,
+     1.0699,
+     -0.0188
+    ]
+   ],
+   "tris": 11986,
+   "sources": [
+    "HRA"
+   ]
+  },
+  "ureters": {
+   "organ": "kidneys",
+   "tissue": "urothelium",
+   "flags": [],
+   "double": false,
+   "bounds": [
+    [
+     -0.0639,
+     0.8039,
+     -0.0313
+    ],
+    [
+     0.0689,
+     1.0303,
+     0.0068
+    ]
+   ],
+   "tris": 4000,
+   "sources": [
+    "HRA"
+   ]
+  },
+  "bladder": {
+   "organ": "kidneys",
+   "tissue": "bladder",
+   "flags": [],
+   "double": false,
+   "bounds": [
+    [
+     -0.0347,
+     0.7768,
+     -0.0013
+    ],
+    [
+     0.0173,
+     0.821,
+     0.0604
+    ]
+   ],
+   "tris": 6000,
+   "sources": [
+    "HRA"
+   ]
+  },
+  "small_int": {
+   "organ": "intestine",
+   "tissue": "smallgut",
+   "flags": [],
+   "double": false,
+   "bounds": [
+    [
+     -0.0813,
+     0.8736,
+     -0.0202
+    ],
+    [
+     0.0803,
+     1.0909,
+     0.0798
+    ]
+   ],
+   "tris": 38214,
+   "sources": [
+    "HRA"
+   ]
+  },
+  "colon": {
+   "organ": "colon",
+   "tissue": "colon",
+   "flags": [],
+   "double": false,
+   "bounds": [
+    [
+     -0.1206,
+     0.7815,
+     -0.0885
+    ],
+    [
+     0.1227,
+     1.0764,
+     0.1049
+    ]
+   ],
+   "tris": 20421,
+   "sources": [
+    "HRA"
+   ]
+  },
+  "reproductive": {
+   "organ": "reproductive",
+   "tissue": "reproductive",
+   "flags": [],
+   "double": true,
+   "bounds": [
+    [
+     -0.0856,
+     0.7427,
+     -0.1027
+    ],
+    [
+     0.0615,
+     0.9017,
+     0.0679
+    ]
+   ],
+   "tris": 19985,
+   "sources": [
+    "HRA"
+   ]
+  },
+  "breasts": {
+   "organ": "reproductive",
+   "tissue": "breast",
+   "flags": [],
+   "double": false,
+   "bounds": [
+    [
+     -0.1356,
+     1.1529,
+     0.0787
+    ],
+    [
+     0.1352,
+     1.2655,
+     0.1468
+    ]
+   ],
+   "tris": 11978,
+   "sources": [
+    "HRA"
+   ]
+  },
+  "skel_spine": {
+   "organ": "marrow",
+   "tissue": "bone",
+   "flags": [],
+   "double": false,
+   "bounds": [
+    [
+     -0.0552,
+     0.9192,
+     -0.1165
+    ],
+    [
+     0.0494,
+     1.5127,
+     0.0167
+    ]
+   ],
+   "tris": 59986,
+   "sources": [
+    "HRA"
+   ]
+  },
+  "skel_pelvis": {
+   "organ": "marrow",
+   "tissue": "bone",
+   "flags": [],
+   "double": false,
+   "bounds": [
+    [
+     -0.1612,
+     0.7479,
+     -0.1245
+    ],
+    [
+     0.1557,
+     0.9594,
+     0.0583
+    ]
+   ],
+   "tris": 29998,
+   "sources": [
+    "HRA"
+   ]
+  },
+  "marrow": {
+   "organ": "marrow",
+   "tissue": "marrow",
+   "flags": [],
+   "double": false,
+   "bounds": [
+    [
+     -0.16,
+     0.7493,
+     -0.1064
+    ],
+    [
+     0.1545,
+     0.9581,
+     0.057
+    ]
+   ],
+   "tris": 14998,
+   "sources": [
+    "HRA"
+   ]
+  },
+  "skel_legs": {
+   "organ": "marrow",
+   "tissue": "bone",
+   "flags": [],
+   "double": false,
+   "bounds": [
+    [
+     -0.1845,
+     0.0617,
+     -0.0653
+    ],
+    [
+     0.1753,
+     0.8335,
+     0.0489
+    ]
+   ],
+   "tris": 26164,
+   "sources": [
+    "HRA"
+   ]
+  },
+  "joints": {
+   "organ": "marrow",
+   "tissue": "ligament",
+   "flags": [],
+   "double": false,
+   "bounds": [
+    [
+     -0.1831,
+     0.3375,
+     -0.0622
+    ],
+    [
+     0.1739,
+     0.4539,
+     0.0442
+    ]
+   ],
+   "tris": 8140,
+   "sources": [
+    "HRA"
+   ]
+  },
+  "thymus": {
+   "organ": "marrow",
+   "tissue": "thymus",
+   "flags": [],
+   "double": false,
+   "bounds": [
+    [
+     -0.0148,
+     1.2389,
+     0.0076
+    ],
+    [
+     0.0712,
+     1.3625,
+     0.0613
+    ]
+   ],
+   "tris": 2998,
+   "sources": [
+    "HRA"
+   ]
+  },
+  "larynx_muscles": {
+   "organ": "airway",
+   "tissue": "muscle",
+   "flags": [],
+   "double": false,
+   "bounds": [
+    [
+     -0.0216,
+     1.4007,
+     0.0071
+    ],
+    [
+     0.0122,
+     1.4533,
+     0.0512
+    ]
+   ],
+   "tris": 4992,
+   "sources": [
+    "Z-Anatomy"
+   ]
+  }
+ },
+ "missing": [
+  "pituitary",
+  "thyroid",
+  "parathyroids",
+  "diaphragm",
+  "esophagus",
+  "stomach",
+  "adrenals",
+  "skel_skull",
+  "teeth",
+  "discs",
+  "skel_thorax",
+  "costal_cartilage",
+  "skel_arms",
+  "skel_hands",
+  "skel_feet"
+ ],
+ "landmarks": {
+  "brain": [
+   {
+    "name": "Frontal lobe",
+    "at": [
+     0.0002,
+     1.623,
+     0.0633
+    ]
+   },
+   {
+    "name": "Motor cortex",
+    "at": [
+     -0.029,
+     1.614,
+     0.0071
+    ]
+   },
+   {
+    "name": "Sensory cortex",
+    "at": [
+     -0.0303,
+     1.6152,
+     -0.0186
+    ]
+   },
+   {
+    "name": "Temporal lobe",
+    "at": [
+     -0.0465,
+     1.5621,
+     0.0195
+    ]
+   },
+   {
+    "name": "Occipital lobe",
+    "at": [
+     -0.0136,
+     1.5631,
+     -0.0892
+    ]
+   },
+   {
+    "name": "Cerebellum",
+    "at": [
+     -0.0186,
+     1.5258,
+     -0.0649
+    ]
+   },
+   {
+    "name": "Brainstem",
+    "at": [
+     -0.0066,
+     1.5487,
+     0.0063
+    ]
+   },
+   {
+    "name": "Hypothalamus",
+    "at": [
+     0.0001,
+     1.5615,
+     0.0158
+    ]
+   },
+   {
+    "name": "Lateral ventricles",
+    "at": [
+     -0.0142,
+     1.6061,
+     -0.0077
+    ]
+   },
+   {
+    "name": "Corpus callosum",
+    "at": [
+     -0.0089,
+     1.6109,
+     0.0045
+    ]
+   }
+  ],
+  "thyroid": [
+   {
+    "name": "Thyroid cartilage",
+    "at": [
+     -0.0052,
+     1.4269,
+     0.0547
+    ]
+   }
+  ],
+  "airway": [
+   {
+    "name": "Epiglottis",
+    "at": [
+     -0.003,
+     1.4586,
+     0.038
+    ]
+   },
+   {
+    "name": "Thyroid cartilage",
+    "at": [
+     -0.0052,
+     1.4269,
+     0.0547
+    ]
+   },
+   {
+    "name": "Cricoid cartilage",
+    "at": [
+     -0.0055,
+     1.4037,
+     0.0393
+    ]
+   },
+   {
+    "name": "Trachea",
+    "at": [
+     -0.0034,
+     1.3887,
+     0.0272
+    ]
+   },
+   {
+    "name": "Carina",
+    "at": [
+     0.0005,
+     1.3097,
+     -0.0251
+    ]
+   },
+   {
+    "name": "Right main bronchus",
+    "at": [
+     -0.0407,
+     1.2841,
+     -0.0368
+    ]
+   },
+   {
+    "name": "Left main bronchus",
+    "at": [
+     0.0521,
+     1.2927,
+     -0.0386
+    ]
+   }
+  ],
+  "lungs": [
+   {
+    "name": "Right upper lobe",
+    "at": [
+     -0.0333,
+     1.2983,
+     0.048
+    ]
+   },
+   {
+    "name": "Right middle lobe",
+    "at": [
+     -0.0584,
+     1.2295,
+     0.0533
+    ]
+   },
+   {
+    "name": "Right lower lobe",
+    "at": [
+     -0.1088,
+     1.1854,
+     0.0298
+    ]
+   },
+   {
+    "name": "Left upper lobe",
+    "at": [
+     0.0703,
+     1.2947,
+     0.0467
+    ]
+   },
+   {
+    "name": "Lingula",
+    "at": [
+     0.0532,
+     1.2637,
+     0.0542
+    ]
+   },
+   {
+    "name": "Left lower lobe",
+    "at": [
+     0.1255,
+     1.1987,
+     -0.0333
+    ]
+   },
+   {
+    "name": "Bronchial tree",
+    "at": [
+     0.0096,
+     1.3159,
+     -0.0181
+    ]
+   }
+  ],
+  "heart": [
+   {
+    "name": "Left ventricle",
+    "at": [
+     0.0947,
+     1.2218,
+     0.0382
+    ]
+   },
+   {
+    "name": "Right ventricle",
+    "at": [
+     0.0653,
+     1.2295,
+     0.0471
+    ]
+   },
+   {
+    "name": "Right atrium",
+    "at": [
+     -0.0291,
+     1.2295,
+     0.0108
+    ]
+   },
+   {
+    "name": "Left atrium",
+    "at": [
+     -0.0126,
+     1.2595,
+     -0.0461
+    ]
+   },
+   {
+    "name": "Interventricular septum",
+    "at": [
+     0.0717,
+     1.2251,
+     0.0407
+    ]
+   },
+   {
+    "name": "Mitral valve",
+    "at": [
+     0.0351,
+     1.2291,
+     -0.0023
+    ]
+   },
+   {
+    "name": "Tricuspid valve",
+    "at": [
+     0.0264,
+     1.2125,
+     0.0309
+    ]
+   },
+   {
+    "name": "Aortic valve",
+    "at": [
+     0.0231,
+     1.2583,
+     0.018
+    ]
+   },
+   {
+    "name": "Pulmonary valve",
+    "at": [
+     0.0322,
+     1.2787,
+     0.0354
+    ]
+   },
+   {
+    "name": "Aortic arch",
+    "at": [
+     0.017,
+     1.3431,
+     -0.0208
+    ]
+   },
+   {
+    "name": "Pulmonary trunk",
+    "at": [
+     0.0261,
+     1.2877,
+     0.0303
+    ]
+   },
+   {
+    "name": "Superior vena cava",
+    "at": [
+     -0.0381,
+     1.3337,
+     -0.0019
+    ]
+   },
+   {
+    "name": "Coronary arteries",
+    "at": [
+     0.077,
+     1.2386,
+     0.0408
+    ]
+   },
+   {
+    "name": "Apex",
+    "at": [
+     0.0997,
+     1.1992,
+     0.0282
+    ]
+   }
+  ],
+  "liver": [
+   {
+    "name": "Right lobe",
+    "at": [
+     -0.1117,
+     1.1178,
+     0.0224
+    ]
+   },
+   {
+    "name": "Left lobe",
+    "at": [
+     0.1162,
+     1.1467,
+     0.0081
+    ]
+   },
+   {
+    "name": "Caudate lobe",
+    "at": [
+     -0.0318,
+     1.1256,
+     -0.0587
+    ]
+   },
+   {
+    "name": "Quadrate lobe",
+    "at": [
+     -0.0591,
+     1.0607,
+     0.0388
+    ]
+   },
+   {
+    "name": "Falciform ligament",
+    "at": [
+     -0.02,
+     1.1102,
+     0.0658
+    ]
+   },
+   {
+    "name": "Gallbladder",
+    "at": [
+     -0.0736,
+     1.051,
+     0.0143
+    ]
+   },
+   {
+    "name": "Porta hepatis",
+    "at": [
+     -0.0467,
+     1.0916,
+     -0.0023
+    ]
+   },
+   {
+    "name": "Hepatic artery",
+    "at": [
+     -0.0213,
+     1.1245,
+     0.0049
+    ]
+   },
+   {
+    "name": "Hepatic veins",
+    "at": [
+     -0.0456,
+     1.1948,
+     -0.0372
+    ]
+   },
+   {
+    "name": "Portal vein",
+    "at": [
+     -0.0015,
+     1.0686,
+     0.0072
+    ]
+   },
+   {
+    "name": "Common bile duct",
+    "at": [
+     -0.0141,
+     1.0844,
+     -0.0003
+    ]
+   }
+  ],
+  "spleen": [
+   {
+    "name": "Hilum",
+    "at": [
+     0.0951,
+     1.1203,
+     -0.0445
+    ]
+   },
+   {
+    "name": "Splenic artery",
+    "at": [
+     0.1058,
+     1.1013,
+     -0.0377
+    ]
+   },
+   {
+    "name": "Splenic vein",
+    "at": [
+     0.1051,
+     1.102,
+     -0.0388
+    ]
+   }
+  ],
+  "pancreas": [
+   {
+    "name": "Head",
+    "at": [
+     -0.0143,
+     1.0619,
+     0.0159
+    ]
+   },
+   {
+    "name": "Neck",
+    "at": [
+     -0.0028,
+     1.065,
+     0.023
+    ]
+   },
+   {
+    "name": "Body",
+    "at": [
+     0.0249,
+     1.0684,
+     0.0266
+    ]
+   },
+   {
+    "name": "Tail",
+    "at": [
+     0.1239,
+     1.0798,
+     -0.0509
+    ]
+   },
+   {
+    "name": "Uncinate process",
+    "at": [
+     -0.0216,
+     1.0323,
+     0.0017
+    ]
+   },
+   {
+    "name": "Pancreatic duct",
+    "at": [
+     0.0199,
+     1.0746,
+     0.0148
+    ]
+   }
+  ],
+  "kidneys": [
+   {
+    "name": "Renal cortex",
+    "at": [
+     0.0518,
+     1.048,
+     -0.0543
+    ]
+   },
+   {
+    "name": "Medullary pyramids",
+    "at": [
+     0.0677,
+     1.0718,
+     -0.0696
+    ]
+   },
+   {
+    "name": "Renal pelvis",
+    "at": [
+     0.0713,
+     1.0333,
+     -0.0375
+    ]
+   },
+   {
+    "name": "Ureter",
+    "at": [
+     0.049,
+     0.8724,
+     -0.0201
+    ]
+   },
+   {
+    "name": "Renal artery",
+    "at": [
+     0.0501,
+     1.0641,
+     -0.0228
+    ]
+   },
+   {
+    "name": "Renal vein",
+    "at": [
+     0.0131,
+     1.0691,
+     -0.0113
+    ]
+   },
+   {
+    "name": "Bladder",
+    "at": [
+     -0.0226,
+     0.8034,
+     0.0002
+    ]
+   }
+  ],
+  "intestine": [
+   {
+    "name": "Duodenum",
+    "at": [
+     -0.0463,
+     1.0675,
+     0.0045
+    ]
+   },
+   {
+    "name": "Duodenal papilla",
+    "at": [
+     -0.0159,
+     1.0448,
+     0.0638
+    ]
+   },
+   {
+    "name": "Jejunum",
+    "at": [
+     0.005,
+     0.9789,
+     0.049
+    ]
+   },
+   {
+    "name": "Ileum",
+    "at": [
+     0.0221,
+     0.9596,
+     0.0793
+    ]
+   },
+   {
+    "name": "Terminal ileum",
+    "at": [
+     -0.0576,
+     0.9333,
+     0.0296
+    ]
+   }
+  ],
+  "colon": [
+   {
+    "name": "Caecum",
+    "at": [
+     -0.083,
+     0.9331,
+     0.0551
+    ]
+   },
+   {
+    "name": "Appendix",
+    "at": [
+     -0.0732,
+     0.8891,
+     0.0534
+    ]
+   },
+   {
+    "name": "Ascending colon",
+    "at": [
+     -0.0871,
+     0.9779,
+     0.0192
+    ]
+   },
+   {
+    "name": "Hepatic flexure",
+    "at": [
+     -0.0678,
+     1.0329,
+     0.054
+    ]
+   },
+   {
+    "name": "Transverse colon",
+    "at": [
+     0.0078,
+     0.9944,
+     0.1042
+    ]
+   },
+   {
+    "name": "Splenic flexure",
+    "at": [
+     0.0839,
+     1.0358,
+     0.0679
+    ]
+   },
+   {
+    "name": "Descending colon",
+    "at": [
+     0.0743,
+     0.8923,
+     0.0555
+    ]
+   },
+   {
+    "name": "Sigmoid colon",
+    "at": [
+     -0.0168,
+     0.8625,
+     0.0604
+    ]
+   },
+   {
+    "name": "Rectum",
+    "at": [
+     -0.0031,
+     0.8562,
+     -0.0264
+    ]
+   }
+  ],
+  "marrow": [
+   {
+    "name": "Vertebral column",
+    "at": [
+     -0.0006,
+     1.2133,
+     -0.1165
+    ]
+   },
+   {
+    "name": "Iliac crest",
+    "at": [
+     0.1169,
+     0.9588,
+     -0.0361
+    ]
+   },
+   {
+    "name": "Red marrow",
+    "at": [
+     0.1312,
+     0.8907,
+     0.0554
+    ]
+   },
+   {
+    "name": "Femur",
+    "at": [
+     0.1369,
+     0.6603,
+     0.0087
+    ]
+   },
+   {
+    "name": "Thymus",
+    "at": [
+     0.0444,
+     1.2486,
+     0.0613
+    ]
+   }
+  ],
+  "reproductive": [
+   {
+    "name": "Uterus",
+    "at": [
+     -0.0067,
+     0.848,
+     0.015
+    ]
+   },
+   {
+    "name": "Cervix",
+    "at": [
+     -0.0028,
+     0.8131,
+     -0.004
+    ]
+   },
+   {
+    "name": "Ovaries",
+    "at": [
+     0.0519,
+     0.8543,
+     0.0167
+    ]
+   },
+   {
+    "name": "Fallopian tubes",
+    "at": [
+     0.0525,
+     0.8551,
+     0.0239
+    ]
+   },
+   {
+    "name": "Vagina",
+    "at": [
+     0.0031,
+     0.7796,
+     -0.0038
+    ]
+   },
+   {
+    "name": "Breast tissue",
+    "at": [
+     0.1071,
+     1.1851,
+     0.1468
+    ]
+   }
+  ]
+ },
+ "pins": {
+  "brain": [
+   0.0162,
+   1.6159,
+   0.0692
+  ],
+  "airway": [
+   -0.0021,
+   1.4093,
+   0.041
+  ],
+  "lungs": [
+   -0.0333,
+   1.2983,
+   0.048
+  ],
+  "heart": [
+   0.0947,
+   1.2218,
+   0.0382
+  ],
+  "liver": [
+   -0.0999,
+   1.1183,
+   0.0344
+  ],
+  "spleen": [
+   0.1255,
+   1.1383,
+   -0.0573
+  ],
+  "pancreas": [
+   0.015,
+   1.0675,
+   0.03
+  ],
+  "kidneys": [
+   -0.0723,
+   1.0635,
+   -0.0763
+  ],
+  "intestine": [
+   0.005,
+   0.9789,
+   0.049
+  ],
+  "colon": [
+   -0.0871,
+   0.9779,
+   0.0192
+  ],
+  "marrow": [
+   0.1169,
+   0.9588,
+   -0.0361
+  ],
+  "reproductive": [
+   -0.0035,
+   0.8161,
+   0.0596
+  ],
+  "skin": [
+   -0.1349,
+   0.0254,
+   0.1646
+  ]
+ },
+ "landmarks_missing": [
+  "brain/Pituitary gland",
+  "thyroid/Right lobe",
+  "thyroid/Left lobe",
+  "thyroid/Isthmus",
+  "thyroid/Parathyroid glands",
+  "lungs/Diaphragm",
+  "esophagus/Esophagus",
+  "esophagus/Gastro-esophageal junction",
+  "stomach/Fundus",
+  "stomach/Body",
+  "stomach/Greater curvature",
+  "stomach/Pylorus",
+  "kidneys/Adrenal gland",
+  "marrow/Skull",
+  "marrow/Sternum",
+  "marrow/Ribs",
+  "reproductive/Prostate",
+  "reproductive/Seminal vesicles",
+  "reproductive/Vas deferens",
+  "reproductive/Testes"
+ ],
+ "triangles": 881805,
+ "license": "CC-BY-SA-4.0"
+}

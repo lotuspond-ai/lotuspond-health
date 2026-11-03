@@ -5,8 +5,9 @@ dist-artifact
 server/dist
 server/.data
 shots
-tools/anatomy/parts
-tools/anatomy/dec
+tools/anatomy/.cache
+tools/anatomy/*.glb
+**/__pycache__
 .git
 .env
 server/.data-*

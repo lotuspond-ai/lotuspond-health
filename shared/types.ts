@@ -3,7 +3,7 @@
 /** Anatomy groups rendered in the 3D model (one clickable unit each). */
 export type OrganId =
   | 'brain' | 'thyroid' | 'airway' | 'lungs' | 'heart' | 'esophagus' | 'liver' | 'stomach'
-  | 'spleen' | 'pancreas' | 'kidneys' | 'intestine' | 'colon' | 'marrow' | 'skin';
+  | 'spleen' | 'pancreas' | 'kidneys' | 'intestine' | 'colon' | 'reproductive' | 'marrow' | 'skin';
 
 /** Body systems used to group biomarkers in the UI. */
 export type SystemId =
@@ -100,7 +100,7 @@ export interface Profile {
   relationship: Relationship;
   displayName: string;
   dateOfBirth: string | null; // yyyy-mm-dd
-  sex: Sex | null;            // sex assigned at birth; used to pick typical ranges
+  sex: Sex | null;            // sex assigned at birth; used to pick typical ranges and the body the map shows
   heightCm: number | null;
   weightKg: number | null;
   bloodType: BloodType | null;

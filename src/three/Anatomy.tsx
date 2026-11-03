@@ -1,16 +1,16 @@
 import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { useFrame, useThree, type ThreeEvent } from '@react-three/fiber';
-import { useAnatomyModel, preloadAnatomyModel } from './model';
-import { TISSUE, MESH_TO_ORGAN, ORGAN_BY_ID, type MeshSpec } from '../anatomy/organs';
+import { useAnatomyModel } from './model';
+import { TISSUE, organOrNull } from '../anatomy/organs';
+import { focusOf, meshSpecs, type MeshSpec } from '../anatomy/bodies';
 import { GHOSTS, tissueMaterial, type MaterialTier, type TissueMaterial } from './materials';
 import type { OrganId } from '../types';
+import type { Body } from '../lib/body';
 import { useUI } from '../state/ui';
 import { useHealth } from '../lib/store';
+import { meshOrgan, meshRegistry } from './registry';
 import { ORGAN_SYSTEMS } from '../components/stage/status';
-
-/** Shared lookup so the camera rig can frame meshes by name. */
-export const meshRegistry = new Map<string, THREE.Mesh>();
 
 interface MaterialSet { solid: TissueMaterial; glass: TissueMaterial; inner?: TissueMaterial }
 
@@ -25,20 +25,22 @@ interface Part {
 }
 
 function materialSet(spec: MeshSpec, tier: MaterialTier, inner: boolean): MaterialSet {
-  const solid = tissueMaterial(spec.tissue, tier);
-  const glass = tissueMaterial(spec.tissue, tier); glass.transparent = true; glass.opacity = 0.2; glass.depthWrite = false;
+  const solid = tissueMaterial(spec.tissue, tier, false, spec.double);
+  const glass = tissueMaterial(spec.tissue, tier, false, spec.double); glass.transparent = true; glass.opacity = 0.2; glass.depthWrite = false;
   return { solid, glass, inner: inner ? tissueMaterial(spec.tissue, tier, true) : undefined };
 }
 
 export interface AnatomyProps {
+  /** Which body model to show. */
+  body: Body;
   /** Physical (clearcoat, sheen) or standard materials. */
   tier?: MaterialTier;
   /** Draw the inside of see-through tissue (lungs) as a second layer. Off on the cheapest tiers. */
   depth?: boolean;
 }
 
-export function Anatomy({ tier = 'physical', depth = true }: AnatomyProps) {
-  const { scene } = useAnatomyModel();
+export function Anatomy({ body, tier = 'physical', depth = true }: AnatomyProps) {
+  const { scene } = useAnatomyModel(body);
   const { gl, invalidate } = useThree();
   const selected = useHealth(s => s.selectedOrgan);
   const activeSystem = useHealth(s => s.activeSystem);
@@ -53,24 +55,31 @@ export function Anatomy({ tier = 'physical', depth = true }: AnatomyProps) {
 
   const parts = useMemo(() => {
     const list: Part[] = [];
-    scene.traverse(obj => {
-      const mesh = obj as THREE.Mesh;
-      if (!mesh.isMesh) return;
-      const organ = MESH_TO_ORGAN[mesh.name];
-      if (!organ) return;
-      const spec = ORGAN_BY_ID[organ].meshes.find(m => m.id === mesh.name)!;
-      meshRegistry.set(mesh.name, mesh);
+    const specs = meshSpecs(body);
+    // this model replaces whatever was on stage before
+    meshRegistry.clear(); meshOrgan.clear();
+    const stale: THREE.Object3D[] = [];
+    scene.traverse(o => { if (o.userData.lpInner) stale.push(o); });
+    for (const o of stale) o.removeFromParent();
+    // collect first: the loop below adds inner-layer children, which a running traverse would visit too
+    const meshes: THREE.Mesh[] = [];
+    scene.traverse(obj => { if ((obj as THREE.Mesh).isMesh) meshes.push(obj as THREE.Mesh); });
+    for (const mesh of meshes) {
+      const spec = specs.get(mesh.name);
+      if (!spec) { mesh.visible = false; console.warn(`anatomy: no part named ${mesh.name} in the ${body} body`); continue; }
+      const organ = spec.organ;
+      meshRegistry.set(mesh.name, mesh); meshOrgan.set(mesh.name, organ);
       mesh.geometry.computeBoundingSphere(); mesh.geometry.computeBoundingBox();
-      if (organ === 'skin') { mesh.material = skinGhost; mesh.raycast = () => {}; mesh.renderOrder = 10; return; }
+      if (organ === 'skin') { mesh.material = skinGhost; mesh.raycast = () => {}; mesh.renderOrder = 10; continue; }
       const seeThrough = !!TISSUE[spec.tissue].opacity;
-      const hasInner = !!spec.hollow || (seeThrough && spec.tissue !== 'diaphragm');
+      const hasInner = spec.inner;
       const sets = { physical: materialSet(spec, 'physical', hasInner), standard: materialSet(spec, 'standard', hasInner) };
       const { solid, glass } = sets.physical;
       mesh.material = solid;
       let inner: THREE.Mesh | undefined;
       if (hasInner) {
         inner = new THREE.Mesh(mesh.geometry, sets.physical.inner);
-        inner.raycast = () => {}; inner.renderOrder = seeThrough ? 1 : 0; inner.visible = false;
+        inner.raycast = () => {}; inner.renderOrder = seeThrough ? 1 : 0; inner.visible = false; inner.userData.lpInner = true;
         mesh.add(inner);
       }
       if (seeThrough) mesh.renderOrder = 2;
@@ -78,16 +87,18 @@ export function Anatomy({ tier = 'physical', depth = true }: AnatomyProps) {
       const hsl = { h: 0, s: 0, l: 0 }; base.getHSL(hsl);
       const dimmed = new THREE.Color().setHSL(hsl.h, hsl.s * 0.18, Math.min(hsl.l, 0.5) * 0.42);
       list.push({ mesh, organ, spec, sets, solid, glass, inner, seeThrough, base, dimmed, dim: 0, dimT: 0, baseOpacity: solid.opacity });
-    });
+    }
     return list;
-  }, [scene, skinGhost]);
+  }, [scene, skinGhost, body]);
 
   useEffect(() => { gl.localClippingEnabled = true; }, [gl]);
 
-  // Release GPU programs and materials if the stage is ever torn down.
+  // Release GPU programs, materials and vertex buffers when this body leaves the stage (another body, or teardown). The
+  // parsed model stays cached, so showing this body again only uploads its buffers again.
   useEffect(() => () => {
     for (const p of parts) for (const set of Object.values(p.sets)) { set.solid.dispose(); set.glass.dispose(); set.inner?.dispose(); }
-  }, [parts]);
+    scene.traverse(o => { if ((o as THREE.Mesh).isMesh) (o as THREE.Mesh).geometry.dispose(); });
+  }, [parts, scene]);
 
   // Apply state: material tier (the adaptive quality monitor may change it), focus, system highlight, x-ray, layers, cross-section.
   useEffect(() => {
@@ -96,12 +107,14 @@ export function Anatomy({ tier = 'physical', depth = true }: AnatomyProps) {
       p.solid = set.solid; p.glass = set.glass;
       if (p.inner && set.inner) p.inner.material = set.inner;
     }
-    const focus = selected && selected !== 'skin' ? selected : null;
+    // an organ id this version does not know (a scan saved by a newer app) shows the whole body, as the panels do
+    const focus = selected && selected !== 'skin' && organOrNull(selected) ? selected : null;
     const bonesSolid = focus === 'marrow' || (!focus && activeSystem === 'blood');
     let box: THREE.Box3 | null = null;
     if (focus) {
       box = new THREE.Box3();
-      for (const id of ORGAN_BY_ID[focus].focus) { const m = meshRegistry.get(id); if (m) box.union(new THREE.Box3().setFromObject(m)); }
+      for (const id of focusOf(body, focus)) { const m = meshRegistry.get(id); if (m) box.union(new THREE.Box3().setFromObject(m)); }
+      if (box.isEmpty()) box = null;
     }
     for (const p of parts) {
       const isFocus = focus === p.organ;
@@ -119,7 +132,7 @@ export function Anatomy({ tier = 'physical', depth = true }: AnatomyProps) {
       if (p.inner) (p.inner.material as THREE.Material).clippingPlanes = clip;
       p.dimT = !focus && activeSystem && !ORGAN_SYSTEMS[p.organ]?.has(activeSystem) ? 1 : 0;
     }
-    const skin = meshRegistry.get('skin'); if (skin) skin.visible = layers.skin && !focus;
+    for (const [name, organ] of meshOrgan) if (organ === 'skin') meshRegistry.get(name)!.visible = layers.skin && !focus;
     if (box && section.on) {
       const t = section.depth;
       if (section.axis === 'coronal') { clipPlane.normal.set(0, 0, -1); clipPlane.constant = THREE.MathUtils.lerp(box.max.z, box.min.z, t); }
@@ -127,7 +140,7 @@ export function Anatomy({ tier = 'physical', depth = true }: AnatomyProps) {
       else { clipPlane.normal.set(0, -1, 0); clipPlane.constant = THREE.MathUtils.lerp(box.max.y, box.min.y, t); }
     }
     animating.current = true; invalidate();
-  }, [parts, tier, depth, selected, activeSystem, xray, layers, section, boneGhost, contextGhost, clipPlane, invalidate]);
+  }, [parts, body, tier, depth, selected, activeSystem, xray, layers, section, boneGhost, contextGhost, clipPlane, invalidate]);
 
   useEffect(() => { animating.current = true; invalidate(); }, [hovered, invalidate]);
 
@@ -149,14 +162,16 @@ export function Anatomy({ tier = 'physical', depth = true }: AnatomyProps) {
   });
 
   const pick = (e: ThreeEvent<PointerEvent | MouseEvent>): OrganId | null => {
-    const hits = e.intersections.filter(h => (h.object as THREE.Mesh).isMesh && MESH_TO_ORGAN[h.object.name] && h.object.visible);
+    // shown on screen: the mesh and every parent (the previous body stays mounted, hidden, while the next one loads)
+    const shown = (o: THREE.Object3D | null) => { for (; o; o = o.parent) if (!o.visible) return false; return true; };
+    const hits = e.intersections.filter(h => (h.object as THREE.Mesh).isMesh && meshOrgan.has(h.object.name) && shown(h.object));
     const rank = (h: THREE.Intersection) => {
       const mat = (h.object as THREE.Mesh).material as THREE.Material;
       if (mat === boneGhost || mat === contextGhost) return 3;
       return mat.transparent ? 2 : 1;
     };
     hits.sort((a, b) => rank(a) - rank(b) || a.distance - b.distance);
-    return hits.length ? MESH_TO_ORGAN[hits[0].object.name] : null;
+    return hits.length ? meshOrgan.get(hits[0].object.name) ?? null : null;
   };
 
   return (
@@ -169,4 +184,3 @@ export function Anatomy({ tier = 'physical', depth = true }: AnatomyProps) {
   );
 }
 
-preloadAnatomyModel();

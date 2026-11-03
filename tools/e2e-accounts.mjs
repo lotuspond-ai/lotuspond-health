@@ -67,7 +67,7 @@ if (hasSite) {
   const robots = await (await page.request.get(at('/robots.txt'))).text();
   expect(/Sitemap: https?:\/\/\S+\/sitemap\.xml/.test(robots), 'robots.txt names the sitemap');
   const sitemap = await (await page.request.get(at('/sitemap.xml'))).text();
-  expect(['/', '/privacy/', '/terms/', '/trust/'].every(p => sitemap.includes(`${p}</loc>`)), 'sitemap.xml lists the public pages');
+  expect(['/', '/privacy/', '/terms/', '/trust/', '/credits/'].every(p => sitemap.includes(`${p}</loc>`)), 'sitemap.xml lists the public pages');
 
   // Keyboard: the first Tab reaches the skip link, which shows with a focus outline.
   await page.keyboard.press('Tab');
@@ -79,6 +79,7 @@ if (hasSite) {
     { path: '/privacy/', name: 'privacy', h1: /Privacy Policy/ },
     { path: '/terms/', name: 'terms', h1: /Terms of Use/ },
     { path: '/trust/', name: 'trust', h1: /look after your records/ },
+    { path: '/credits/', name: 'credits', h1: /Credits and licences/ },
     { path: '/no-such-page', name: '404', h1: /drifted off/, status: 404 },
   ];
   for (const width of [1440, 390]) {

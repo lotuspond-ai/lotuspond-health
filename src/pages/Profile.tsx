@@ -15,6 +15,9 @@ import { HomeAreaPanel } from '../components/labs/HomeAreaPanel';
 import { shareBlob } from '../native/share';
 import { HeightInput, WeightInput } from '../components/MeasureInputs';
 import { IMPERIAL_ERRORS } from '../lib/measures';
+import { useStage } from '../components/stage/stageSettings';
+import { useBodyChoice } from '../state/body';
+import { bodyFor, type BodyChoice } from '../lib/body';
 
 const FAMILY: Relationship[] = ['partner', 'child', 'parent', 'sibling', 'other'];
 
@@ -77,7 +80,7 @@ function ProfileEditor({ profile }: { profile: Profile }) {
                 )}</Field>
               )}
               <Field label="Date of birth" error={errors.dateOfBirth}>{id => <input id={id} type="date" value={draft.dateOfBirth} max={todayIso()} onChange={e => patch({ dateOfBirth: e.target.value })} />}</Field>
-              <Field label="Sex assigned at birth" hint="Some reference ranges differ by sex.">{id => <SexChoice id={id} value={draft.sex} onChange={v => patch({ sex: v })} />}</Field>
+              <Field label="Sex assigned at birth" hint="Chooses the body on the map. Some reference ranges differ by sex.">{id => <SexChoice id={id} value={draft.sex} onChange={v => patch({ sex: v })} />}</Field>
               <Field label="Blood type">{id => <BloodTypeSelect id={id} value={draft.bloodType} onChange={v => patch({ bloodType: v })} />}</Field>
             </div>
           </section>
@@ -104,6 +107,7 @@ function ProfileEditor({ profile }: { profile: Profile }) {
 
         <aside className="stack">
           <RecordsPanel profile={profile} />
+          <BodyMapPanel profile={profile} isSelf={isSelf} />
           <HomeAreaPanel profile={profile} locked={dirty} />
           <FamilyPanel />
           {!isSelf && <RemovePanel profile={profile} />}
@@ -213,6 +217,36 @@ function RemovePanel({ profile }: { profile: Profile }) {
         onConfirm={async () => { try { await deleteProfile(profile.id); toast.info(`${profile.displayName} was removed.`); } catch (e) { toast.error(errorMessage(e)); } }}>
         Remove profile
       </ConfirmButton>
+    </section>
+  );
+}
+
+/* ---------------- body map ---------------- */
+
+const BODY_CHOICES: { id: BodyChoice; label: string }[] = [{ id: 'profile', label: 'Match profile' }, { id: 'female', label: 'Female' }, { id: 'male', label: 'Male' }];
+
+/** Which body the map shows for this profile. Kept on this device only, like the other body map settings. */
+function BodyMapPanel({ profile, isSelf }: { profile: Profile; isSelf: boolean }) {
+  const choice = useBodyChoice(profile.id);
+  const setBody = useStage(s => s.setBody);
+  function pick(c: BodyChoice) {
+    if (c === choice) return;
+    setBody(profile.id, c);
+    toast.info(c === 'profile' ? 'The body map now matches the profile.' : `The body map now shows a ${bodyFor(profile.sex, c)} body.`);
+  }
+  const who = isSelf ? 'you' : profile.displayName.split(/\s+/)[0];
+  return (
+    <section className="panel" aria-labelledby="bodymap-h">
+      <h2 id="bodymap-h">Body map</h2>
+      <p className="note panel__intro">Which body the map shows for {who}. Match profile follows the sex assigned at birth. This choice is kept on this device.</p>
+      <div className="seg" role="radiogroup" aria-labelledby="bodymap-h">
+        {BODY_CHOICES.map(o => (
+          <button key={o.id} type="button" role="radio" aria-checked={choice === o.id} aria-pressed={choice === o.id} onClick={() => pick(o.id)}>{o.label}</button>
+        ))}
+      </div>
+      {choice === 'profile' && profile.sex !== 'female' && profile.sex !== 'male' && (
+        <p className="note">{profile.sex === 'intersex' ? 'For intersex profiles the map shows a female body.' : 'Sex assigned at birth is not set, so the map shows a female body.'} Choose one here to change it.</p>
+      )}
     </section>
   );
 }

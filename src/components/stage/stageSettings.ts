@@ -1,6 +1,7 @@
 // Stage preferences: which view of the body map is shown, and how the interactive 3D view renders.
 // Kept free of three.js so the default (2D) view never loads it.
 import { create } from 'zustand';
+import { isBody, type Body, type BodyChoice } from '../../lib/body.ts';
 
 export type StageMode = 'map' | '3d';
 
@@ -17,16 +18,19 @@ export type Tier = 0 | 1 | 2 | 3;
 
 const KEY = 'lotuspond.stage';
 
-interface Stored { mode?: StageMode; studio?: boolean }
+/** bodies: per profile id, the body chosen on this device instead of following the profile's sex. */
+interface Stored { mode?: StageMode; studio?: boolean; bodies?: Record<string, Body> }
 
 function load(): Stored {
   try {
     const v = JSON.parse(localStorage.getItem(KEY) ?? '{}') as Stored;
-    return { mode: v.mode === '3d' ? '3d' : 'map', studio: v.studio === true };
+    const bodies: Record<string, Body> = {};
+    if (v.bodies && typeof v.bodies === 'object') for (const [id, b] of Object.entries(v.bodies)) if (isBody(b)) bodies[id] = b;
+    return { mode: v.mode === '3d' ? '3d' : 'map', studio: v.studio === true, bodies };
   } catch { return {}; }
 }
 
-function save(v: Stored) {
+function save(v: Required<Stored>) {
   try { localStorage.setItem(KEY, JSON.stringify(v)); } catch { /* private mode or storage blocked: keep the choice for this visit */ }
 }
 
@@ -42,7 +46,10 @@ interface StageSettings {
   tier: Tier;
   /** Highest tier the device has kept up with; the stage does not climb above it again. */
   ceiling: Tier;
+  /** Body chosen on this device per profile id; a missing entry follows the profile's sex. */
+  bodies: Record<string, Body>;
   setMode: (m: StageMode) => void;
+  setBody: (profileId: string, choice: BodyChoice) => void;
   setStudio: (on: boolean) => void;
   setTier: (t: Tier, ceiling?: Tier) => void;
 }
@@ -57,16 +64,26 @@ export const tierPinned = pinned !== null;
 const stored = load();
 const startTier = (studio: boolean): Tier => pinned ?? (studio ? 3 : lowPowerDevice ? 1 : 2);
 
-export const useStage = create<StageSettings>((set, get) => ({
-  mode: stored.mode ?? 'map',
-  studio: stored.studio ?? false,
-  tier: startTier(stored.studio ?? false),
-  ceiling: 3,
-  setMode: mode => { set({ mode }); save({ mode, studio: get().studio }); },
-  setStudio: studio => {
-    const { ceiling } = get();
-    set({ studio, tier: Math.min(startTier(studio), studio ? 3 : ceiling) as Tier });
-    save({ mode: get().mode, studio });
-  },
-  setTier: (tier, ceiling) => set(s => ({ tier, ceiling: ceiling ?? s.ceiling })),
-}));
+export const useStage = create<StageSettings>((set, get) => {
+  // one writer for every persisted field, so changing one setting never drops another
+  const persist = () => { const { mode, studio, bodies } = get(); save({ mode, studio, bodies }); };
+  return {
+    mode: stored.mode ?? 'map',
+    studio: stored.studio ?? false,
+    tier: startTier(stored.studio ?? false),
+    ceiling: 3,
+    bodies: stored.bodies ?? {},
+    setMode: mode => { set({ mode }); persist(); },
+    setStudio: studio => {
+      const { ceiling } = get();
+      set({ studio, tier: Math.min(startTier(studio), studio ? 3 : ceiling) as Tier });
+      persist();
+    },
+    setBody: (profileId, choice) => {
+      const bodies = { ...get().bodies };
+      if (choice === 'profile') delete bodies[profileId]; else bodies[profileId] = choice;
+      set({ bodies }); persist();
+    },
+    setTier: (tier, ceiling) => set(s => ({ tier, ceiling: ceiling ?? s.ceiling })),
+  };
+});

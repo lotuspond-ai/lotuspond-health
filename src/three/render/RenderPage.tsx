@@ -7,9 +7,12 @@ import * as THREE from 'three';
 import { Canvas, useThree } from '@react-three/fiber';
 import { EffectComposer, Bloom, ToneMapping, SMAA, N8AO } from '@react-three/postprocessing';
 import { ToneMappingMode } from 'postprocessing';
-import { Anatomy, meshRegistry } from '../Anatomy';
+import { Anatomy } from '../Anatomy';
+import { meshOrgan, meshRegistry } from '../registry';
 import { POND, StudioLight } from '../Stage';
-import { ORGANS, ORGAN_BY_ID, MESH_TO_ORGAN, TISSUE, type Vec3 } from '../../anatomy/organs';
+import { ORGANS, ORGAN_BY_ID, TISSUE, type Vec3 } from '../../anatomy/organs';
+import { RIGS, focusOf, landmarksOf, meshSpecs, pinOf } from '../../anatomy/bodies';
+import { isBody, type Body } from '../../lib/body';
 import { useHealth } from '../../lib/store';
 import type { OrganId } from '../../types';
 
@@ -22,8 +25,21 @@ const PALETTE: [number, number, number][] = [[0, 0, 0], ...ID_ORGANS.map((_, i) 
 })];
 
 const FOV = 30;
-/** Whole-body framing: the camera circles the body's vertical axis. */
-const BODY = { target: new THREE.Vector3(0, 1.19, 0), distance: 2.7, elevation: 4 };
+const params = new URLSearchParams(location.search);
+const BODY_ID: Body = isBody(params.get('body')) ? (params.get('body') as Body) : 'female';
+/** Whole-body framing: the camera circles the body's vertical axis, close enough for the body to fill the 2:3 frame
+ *  with the raised hands inside it (cropping around mid-shin), and 7% of the frame above the head, clear of the
+ *  stage's title and tools. */
+const BODY = (() => {
+  const rig = RIGS[BODY_ID], [lo, hi] = rig.bounds;
+  const halfWidth = Math.max(-lo[0], hi[0]);
+  const tanV = Math.tan(THREE.MathUtils.degToRad(FOV / 2)), tanH = tanV * (2 / 3);
+  const distance = (halfWidth / tanH) * 1.06;
+  const half = distance * tanV;
+  return { target: new THREE.Vector3(0, rig.height + 0.14 * half - half, 0), distance, elevation: 4 };
+})();
+/** Fog was tuned for a 2.7 m whole-body view. */
+const FOG = BODY.distance / 2.7;
 
 type View = { kind: 'body'; deg: number } | { kind: 'organ'; organ: OrganId };
 /** sizes: [width, height, WebP quality] per output image; id: size of the ID map (body views only). */
@@ -37,10 +53,11 @@ interface Shot {
   boxes?: Record<string, [number, number, number, number]>;
   pins?: Record<string, P3>;
   landmarks?: P3[];
+  /** Names of the landmarks, in the same order. */
+  names?: string[];
   camera: { position: P3; target: P3 };
 }
 
-const params = new URLSearchParams(location.search);
 const ao = params.get('ao') !== '0';
 const bloom = params.get('bloom') !== '0';
 const r4 = (n: number) => Math.round(n * 10000) / 10000;
@@ -67,14 +84,15 @@ function Bridge({ setAo }: { setAo: (on: boolean) => void }) {
     // wins, as the 3D picker ranks hits: bones first, then see-through tissue, then solid organs over both.
     const idScene = new THREE.Scene();
     const idMeshes: { mesh: THREE.Mesh; layer: number }[] = [];
+    const specs = meshSpecs(BODY_ID);
     for (const [name, orig] of meshRegistry) {
-      const organ = MESH_TO_ORGAN[name];
+      const organ = meshOrgan.get(name);
       if (!organ || organ === 'skin') continue;
       const [r, g, b] = PALETTE[ID_ORGANS.indexOf(organ) + 1];
       const mat = new THREE.MeshBasicMaterial({ color: new THREE.Color().setRGB(r / 255, g / 255, b / 255, THREE.LinearSRGBColorSpace), toneMapped: false, fog: false, side: THREE.DoubleSide });
       const mesh = new THREE.Mesh(orig.geometry, mat);
       mesh.matrixAutoUpdate = false; orig.updateWorldMatrix(true, false); mesh.matrix.copy(orig.matrixWorld); mesh.updateMatrixWorld(true);
-      const spec = ORGAN_BY_ID[organ].meshes.find(m => m.id === name)!;
+      const spec = specs.get(name)!;
       idMeshes.push({ mesh, layer: organ === 'marrow' ? 0 : TISSUE[spec.tissue].opacity ? 1 : 2 });
       idScene.add(mesh);
     }
@@ -87,9 +105,11 @@ function Bridge({ setAo }: { setAo: (on: boolean) => void }) {
       } else {
         // Frame the organ's own meshes plus its landmarks (the 3D rig's focus list can include neighbours).
         const o = ORGAN_BY_ID[view.organ];
-        const own = o.focus.filter(id => MESH_TO_ORGAN[id] === o.id);
-        const box = boxOf(own.length ? own : o.focus);
-        for (const l of o.landmarks) box.expandByPoint(new THREE.Vector3(...l.at));
+        const focus = focusOf(BODY_ID, o.id);
+        const own = focus.filter(id => meshOrgan.get(id) === o.id);
+        const box = boxOf(own.length ? own : focus);
+        for (const l of landmarksOf(BODY_ID, o.id)) box.expandByPoint(new THREE.Vector3(...l.at));
+        if (box.isEmpty()) console.error(`render: nothing to frame for ${o.id} in the ${BODY_ID} body`);
         box.getCenter(target);
         const size = box.getSize(new THREE.Vector3());
         const radius = Math.max(size.x, size.y, size.z) * 0.62;
@@ -169,6 +189,7 @@ function Bridge({ setAo }: { setAo: (on: boolean) => void }) {
     const api = {
       palette: () => ({ organs: ID_ORGANS, colors: PALETTE }),
       framing: () => ({ fov: FOV, body: { target: BODY.target.toArray(), distance: BODY.distance, elevation: BODY.elevation } }),
+      body: () => BODY_ID,
       async shot(view: View, opts: ShotOptions): Promise<Shot> {
         useHealth.setState({ selectedOrgan: view.kind === 'organ' ? view.organ : null });
         await new Promise(r => setTimeout(r, 50)); // React commits; Anatomy applies the focus materials
@@ -183,10 +204,11 @@ function Bridge({ setAo }: { setAo: (on: boolean) => void }) {
         const out: Shot = { images: await encode(opts.sizes), background: background(), camera: { position: cam.position.toArray() as P3, target: target.toArray() as P3 } };
         if (ao) { setAo(true); await new Promise(r => setTimeout(r, 50)); }
         if (view.kind === 'body') {
-          out.pins = Object.fromEntries(ORGANS.filter(o => o.id !== 'skin').map(o => [o.id, project(o.pin)]));
+          out.pins = Object.fromEntries(ORGANS.flatMap(o => { const p = o.id !== 'skin' && pinOf(BODY_ID, o.id); return p ? [[o.id, project(p)]] : []; }));
           if (opts.id) { const { boxes, ...id } = idPass(...opts.id); out.id = id; out.boxes = boxes; }
         } else {
-          out.landmarks = ORGAN_BY_ID[view.organ].landmarks.map(l => project(l.at));
+          const marks = landmarksOf(BODY_ID, view.organ);
+          out.landmarks = marks.map(l => project(l.at)); out.names = marks.map(l => l.name);
         }
         return out;
       },
@@ -202,10 +224,10 @@ export function RenderScene() {
   return (
     <Canvas flat frameloop="demand" dpr={1} camera={{ fov: FOV, near: 0.02, far: 40 }} gl={{ preserveDrawingBuffer: true, antialias: false }}>
       <color attach="background" args={[POND]} />
-      <fog attach="fog" args={[POND, 3.2, 7.5]} />
+      <fog attach="fog" args={[POND, 3.2 * FOG, 7.5 * FOG]} />
       <StudioLight />
       <Suspense fallback={null}>
-        <Anatomy tier="physical" depth />
+        <Anatomy body={BODY_ID} tier="physical" depth />
         <Bridge setAo={setAo} />
       </Suspense>
       <EffectComposer multisampling={4} enableNormalPass={false}>

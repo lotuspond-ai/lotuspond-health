@@ -13,7 +13,7 @@ declare const __SITE_URL__: string;
 export const SITE_URL: string = __SITE_URL__;
 
 export type AuthMode = 'in' | 'up';
-export type SitePath = '/' | '/privacy/' | '/terms/' | '/trust/';
+export type SitePath = '/' | '/privacy/' | '/terms/' | '/trust/' | '/credits/';
 
 const TITLE = 'LotusPond Health';
 const AUTH_PATH = /^\/(login|signup)\/?$/;

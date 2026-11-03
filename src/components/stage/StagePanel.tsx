@@ -1,10 +1,13 @@
 // The body map's visual stage and its controls. Owned separately from the side panels so each can evolve on its own.
 // Default view: the pre-rendered body map (no WebGL). "Explore in 3D" loads three.js and the model on first use.
-import { lazy, Suspense, useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { Component, lazy, Suspense, useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { useHealth } from '../../lib/store';
 import { useUI, type SectionAxis } from '../../state/ui';
-import { ORGAN_BY_ID } from '../../anatomy/organs';
+import { organOrNull } from '../../anatomy/organs';
 import { possessive, useActiveProfile } from '../../state/session';
+import { useBody } from '../../state/body';
+import type { Body } from '../../lib/body';
+import { siteHref, siteLinkProps } from '../../site/links';
 import { Icon } from '../ui';
 import { BodyMap2D } from '../bodymap2d/BodyMap2D';
 import { Glyph, type GlyphName } from './Glyph';
@@ -13,7 +16,7 @@ import { useStage, type StageMode } from './stageSettings';
 import '../../styles/stage.css';
 
 // Loaded only when the 3D view is first chosen (it also starts the model download).
-const Stage = lazy(() => import('../../three/Stage'));
+const loadStage = () => import('../../three/Stage');
 
 /** False while the stage cannot be seen: another page, signed out (hidden shell), scrolled away, or a background tab. */
 function useSeen(ref: RefObject<HTMLElement | null>) {
@@ -34,23 +37,52 @@ function useSeen(ref: RefObject<HTMLElement | null>) {
   return onScreen && tab;
 }
 
+/** Catches a failed model or 3D-code download (offline, interrupted) and offers to try again. */
+class StageBoundary extends Component<{ body: Body; onRetry: () => void; children: ReactNode }, { failed: boolean; body: Body }> {
+  state = { failed: false, body: this.props.body };
+  static getDerivedStateFromError() { return { failed: true }; }
+  // another body is another download: try it even if the last one failed
+  static getDerivedStateFromProps(props: { body: Body }, state: { body: Body }) { return props.body !== state.body ? { failed: false, body: props.body } : null; }
+  retry = () => {
+    // forget the failed model download (the loader caches errors) and the failed 3D code, then render again
+    import('../../three/model').then(m => m.clearAnatomyModel(this.props.body)).catch(() => {})
+      .finally(() => { this.props.onRetry(); this.setState({ failed: false }); });
+  };
+  render() {
+    if (!this.state.failed) return this.props.children;
+    return (
+      <div className="stage-loading stage3d__wait" role="alert">
+        The 3D model could not be loaded. <button className="btn" onClick={this.retry}>Try again</button>
+      </div>
+    );
+  }
+}
+
 /** The stage area of the body map: the anatomy view plus its overlay controls. */
 export function StagePanel() {
   const mode = useStage(s => s.mode), tier = useStage(s => s.tier);
   const ref = useRef<HTMLElement>(null);
   const seen = useSeen(ref);
+  const body = useBody();
   // Once opened, the 3D stage stays mounted (paused while hidden): switching back is instant, and the WebGL
-  // teardown path is avoided (see App.tsx).
+  // teardown path is avoided (see App.tsx). It changes body only while shown, so switching profiles in the 2D view
+  // does not download the other model in the background.
+  // React.lazy keeps a failed import, so "Try again" needs a new lazy component as well as a new download
+  const [Stage, setStage] = useState(() => lazy(loadStage));
   const [opened3d, setOpened3d] = useState(mode === '3d');
+  const [body3d, setBody3d] = useState(body);
   if (mode === '3d' && !opened3d) setOpened3d(true);
+  if (mode === '3d' && body3d !== body) setBody3d(body);
   return (
-    <section ref={ref} className={`stage stage--${mode}`} aria-label="Body map">
-      {mode === 'map' && <BodyMap2D />}
+    <section ref={ref} className={`stage stage--${mode}`} aria-label="Body map" data-body={body}>
+      {mode === 'map' && <BodyMap2D key={body} body={body} />}
       {opened3d && (
         <div className="stage3d" data-off={mode !== '3d' || undefined} data-tier={tier} aria-hidden={mode !== '3d' || undefined}>
-          <Suspense fallback={<div className="stage-loading stage3d__wait">Loading the 3D model…</div>}>
-            <Stage active={mode === '3d' && seen} />
-          </Suspense>
+          <StageBoundary body={body3d} onRetry={() => setStage(() => lazy(loadStage))}>
+            <Suspense fallback={<div className="stage-loading stage3d__wait">Loading the 3D model…</div>}>
+              <Stage active={mode === '3d' && seen} body={body3d} />
+            </Suspense>
+          </StageBoundary>
         </div>
       )}
       <StageOverlay mode={mode} />
@@ -80,7 +112,7 @@ function StageOverlay({ mode }: { mode: StageMode }) {
   const selected = useHealth(s => s.selectedOrgan), selectOrgan = useHealth(s => s.selectOrgan);
   const { layers, toggleLayer } = useUI();
   const studio = useStage(s => s.studio), tier = useStage(s => s.tier), setStudio = useStage(s => s.setStudio);
-  const organ = selected && selected !== 'skin' ? ORGAN_BY_ID[selected] : null;
+  const organ = selected && selected !== 'skin' ? organOrNull(selected) : null;
   const profile = useActiveProfile();
   const in3d = mode === '3d';
   const held = studio && tier < 3;
@@ -108,6 +140,9 @@ function StageOverlay({ mode }: { mode: StageMode }) {
           <span><i style={{ background: STATUS_COLOR.none }} />No results</span>
         </div>
       )}
+      <p className="stage__credit">
+        <a href={siteHref('/credits/')} {...siteLinkProps}><span className="stage__credit-long">Anatomy: HuBMAP Human Reference Atlas and Z-Anatomy, CC BY-SA 4.0</span><span className="stage__credit-short">Anatomy credits</span></a>
+      </p>
       <div className="stage__hint" aria-hidden>
         {in3d
           ? <><Glyph name="orbit" /><span>drag</span><Glyph name="zoom" /><span>scroll</span>{!organ && <><Glyph name="reset" /><span>double-click</span></>}</>

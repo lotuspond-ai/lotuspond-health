@@ -107,3 +107,4 @@ docker compose exec -T db pg_restore -U lotuspond -d lotuspond --clean --if-exis
 - **Map tiles:** self-hosted map tiles are optional; see `tools/maps/README.md`.
 - **Rotating the file key:** see the main README, "Rotating the file key".
 - **Before inviting real users,** fill in the marked placeholders on the Privacy, Terms and Trust pages and have them reviewed for each market you open.
+- **3D anatomy licence:** the models in `public/models/` and the body map images made from them are CC BY-SA 4.0 (see `/credits/` and `public/models/LICENSE.txt`). Keep the credits page, the footer credit and the in-app credits wherever the app ships, and keep the model files downloadable from the website.

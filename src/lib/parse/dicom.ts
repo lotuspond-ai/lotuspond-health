@@ -15,7 +15,7 @@ export function displayModality(code: string | null | undefined): string | undef
   return c;
 }
 
-const MODALITY_ORGAN: Record<string, OrganId> = { MG: 'skin', ECG: 'heart', IVUS: 'heart', BMD: 'marrow' };
+const MODALITY_ORGAN: Record<string, OrganId> = { MG: 'reproductive', ECG: 'heart', IVUS: 'heart', BMD: 'marrow' };
 
 /** Map DICOM tags (and the file name) to an organ. */
 export function dicomOrgan(d: { bodyPart: string | null; studyDescription: string | null; seriesDescription: string | null; modality: string | null }, fileName: string): OrganId | null {
@@ -24,7 +24,7 @@ export function dicomOrgan(d: { bodyPart: string | null; studyDescription: strin
   const bp = (d.bodyPart ?? '').toUpperCase();
   if (/SPINE|PELVIS|HIP|EXTREMITY|KNEE|ANKLE|SHOULDER|ELBOW|WRIST|HAND|FOOT|LEG|ARM|FEMUR|SKULL/.test(bp)) return /SKULL/.test(bp) ? 'brain' : 'marrow';
   if (/ABDOMEN|ABD/.test(bp)) return 'liver';
-  if (/BREAST/.test(bp)) return 'skin';
+  if (/BREAST/.test(bp)) return 'reproductive';
   return d.modality ? MODALITY_ORGAN[d.modality.toUpperCase()] ?? null : null;
 }
 

@@ -1,4 +1,4 @@
-// LotusPond Health service worker: keeps the app shell, the pre-rendered body map and the 3D model on the device.
+// LotusPond Health service worker: keeps the app shell, the pre-rendered body maps and the 3D models on the device.
 // Registered by src/sw-register.ts (production builds served by our server only) as
 //   sw.js?v=<entry bundle name>&shell=<path of the app page>
 // so each deploy installs a new worker with its own shell cache and deletes the previous one.
@@ -10,7 +10,9 @@ const params = new URL(self.location.href).searchParams;
 const VERSION = params.get('v') || 'dev';
 const SHELL_URL = new URL(params.get('shell') || './', self.registration.scope).href;
 const APP = `lotuspond-app-${VERSION}`;   // app page plus its hashed scripts, styles and fonts (one per deploy)
-const MEDIA = 'lotuspond-media-v1';        // body-map images (content-hashed names) and the 3D model (versioned URL)
+// Body-map images (content-hashed names) and the 3D models (versioned URLs). v2: the female and male bodies replaced
+// the single model, so the old model and images are dropped from every device.
+const MEDIA = 'lotuspond-media-v2';
 const OURS = /^lotuspond-/;
 
 const isApi = url => /^\/api(\/|$)/.test(url.pathname) || url.pathname.includes('/api/');

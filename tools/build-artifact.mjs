@@ -2,13 +2,18 @@
 // Accounts and records are kept in the viewer's browser (VITE_BACKEND=browser). Only the app is built (`--mode
 // artifact`): the host has no server routes and passes only a #hash into the page, so the app opens sign-in, or
 // sign-up with #signup, and its website links (Privacy, Terms, home) go to the live site in a new tab.
-// The model ships as base64 text, raw ESC bytes in scripts are escaped, and index.html is body-only.
+// The models ship as base64 text, raw ESC bytes in scripts are escaped, and index.html is body-only.
 import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 const out = 'dist-artifact';
-execSync(`npx vite build --mode artifact --outDir ${out} --emptyOutDir`, { stdio: 'inherit', env: { ...process.env, VITE_MODEL_PATH: 'models/anatomy.b64.txt', VITE_BACKEND: 'browser' } });
-fs.writeFileSync(`${out}/models/anatomy.b64.txt`, fs.readFileSync('public/models/anatomy.glb').toString('base64'));
-fs.rmSync(`${out}/models/anatomy.glb`);
+execSync(`npx vite build --mode artifact --outDir ${out} --emptyOutDir`, { stdio: 'inherit', env: { ...process.env, VITE_MODEL_FORMAT: 'b64', VITE_BACKEND: 'browser' } });
+// Every body model becomes models/<name>.b64.txt. The host accepts text files up to 16 MB.
+for (const f of fs.readdirSync(`${out}/models`).filter(n => n.endsWith('.glb'))) {
+  const text = fs.readFileSync(`${out}/models/${f}`).toString('base64');
+  if (text.length > 16e6) throw new Error(`${f}: ${(text.length / 1e6).toFixed(1)} MB as base64, over the host's 16 MB limit`);
+  fs.writeFileSync(`${out}/models/${f.replace(/\.glb$/, '.b64.txt')}`, text);
+  fs.rmSync(`${out}/models/${f}`);
+}
 // Website imagery from public/site is not used by the app, and the preview never registers the service worker.
 fs.rmSync(`${out}/site`, { recursive: true, force: true });
 fs.rmSync(`${out}/sw.js`, { force: true });
