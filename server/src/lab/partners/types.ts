@@ -1,41 +1,12 @@
 // The interface every lab partner adapter implements (design doc §8), plus the shapes it trades in.
 import type { DataRegion } from '../../../../shared/regions.ts';
-import type { OrderStatus, PartnerId, ResultRow } from '../../../../shared/lab-bundle.ts';
+import type { LabAddress, LabCatalogItem, LabPatient, LabSlot, OrderStatus, PartnerId, ResultRow } from '../../../../shared/lab-bundle.ts';
 
-export interface CatalogItem {
-  partner: PartnerId;
-  /** Partner's package code; what createOrder takes in `items`. */
-  code: string;
-  name: string;
-  /** Plain names of what the package measures, for display. */
-  tests: string[];
-  pricePaise: number;
-  /** List price before any discount, when the partner shows one. */
-  mrpPaise?: number;
-  fasting: boolean;
-  /** Typical hours from collection to report. */
-  reportHours: number;
-}
-
-/** A collection window. Times are ISO 8601 with the IST offset, e.g. 2026-11-08T07:00:00+05:30. */
-export interface Slot {
-  start: string;
-  end: string;
-}
-
-export interface Patient {
-  name: string;
-  age: number;
-  sex: 'female' | 'male' | 'other';
-}
-
-export interface Address {
-  line1: string;
-  line2?: string;
-  landmark?: string;
-  city: string;
-  pincode: string;
-}
+// Shapes the app sees too live in shared/lab-bundle.ts; these are the server's names for them.
+export type CatalogItem = LabCatalogItem;
+export type Slot = LabSlot;
+export type Patient = LabPatient;
+export type Address = LabAddress;
 
 export interface PartnerOrderInput {
   /** Our order id. Adapters must send it as the partner's client reference (see findOrderByClientRef). */

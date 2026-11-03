@@ -95,3 +95,70 @@ export interface LabResultView {
   /** The rows as printed, for the app's review screen; only while pending. */
   bundle?: LabResultBundle;
 }
+
+/* ---------------- booking (GET /api/lab/catalog, /api/lab/slots, POST /api/profiles/:pid/lab-orders) ---------------- */
+
+/** A package a partner offers at a pincode. */
+export interface LabCatalogItem {
+  partner: PartnerId;
+  /** The partner's package code; what a booking lists in `items`. */
+  code: string;
+  name: string;
+  /** Plain names of what the package measures, for display. */
+  tests: string[];
+  pricePaise: number;
+  /** List price before any discount, when the partner shows one. */
+  mrpPaise?: number;
+  fasting: boolean;
+  /** Typical hours from collection to report. */
+  reportHours: number;
+}
+
+export interface LabCatalog {
+  pincode: string;
+  items: LabCatalogItem[];
+  /** Partners that could not answer just now. */
+  unavailable: PartnerId[];
+}
+
+/** A collection window. ISO 8601 with the IST offset, e.g. 2026-11-08T07:00:00+05:30. */
+export interface LabSlot {
+  start: string;
+  end: string;
+}
+
+export interface LabPatient {
+  name: string;
+  age: number;
+  sex: 'female' | 'male' | 'other';
+}
+
+export interface LabAddress {
+  line1: string;
+  line2?: string;
+  landmark?: string;
+  city: string;
+  pincode: string;
+}
+
+/** The body of POST /api/profiles/:pid/lab-orders. */
+export interface LabBookingInput {
+  partner: PartnerId;
+  items: string[];
+  slot: LabSlot;
+  patient: LabPatient;
+  /** Indian mobile number as +91 and 10 digits: the number the collector calls. */
+  phone: string;
+  address: LabAddress;
+  consent: { noticeVersion: string; accepted: boolean };
+}
+
+/** What POST /api/profiles/:pid/lab-results/:rid/save answers. */
+export interface LabResultSaved {
+  result: LabResultView;
+  /** The document the report PDF became, if it had one. */
+  documentId: string | null;
+  saved: number;
+  /** Measurements from an earlier delivery of the same order that this one replaced. */
+  replaced: number;
+}

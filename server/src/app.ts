@@ -77,14 +77,15 @@ export function createApp(input: DepsInput): Hono<AppEnv> {
         'Access-Control-Allow-Origin': origin,
         'Access-Control-Allow-Methods': 'GET, POST, PATCH, PUT, DELETE',
         // Range: map tiles (.pmtiles) are read in byte ranges; some web views preflight it.
-        'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-LotusPond-Client, Range',
+        // Idempotency-Key: lab bookings (lab/routes.ts) need one, so a retried booking can't book twice.
+        'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-LotusPond-Client, Range, Idempotency-Key',
         'Access-Control-Max-Age': '600',
         Vary: 'Origin',
       });
     }
     await next();
     c.res.headers.set('Access-Control-Allow-Origin', origin);
-    c.res.headers.set('Access-Control-Expose-Headers', 'Content-Disposition, Content-Range, ETag');
+    c.res.headers.set('Access-Control-Expose-Headers', 'Content-Disposition, Content-Range, ETag, Idempotent-Replayed');
     c.res.headers.append('Vary', 'Origin');
   });
 
