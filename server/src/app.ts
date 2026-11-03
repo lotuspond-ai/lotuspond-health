@@ -84,7 +84,7 @@ export function createApp(deps: Deps): Hono<AppEnv> {
           c.header('Content-Security-Policy', PAGE_CSP);
           c.header('Cache-Control', 'no-cache');
         } else {
-          c.header('Cache-Control', /[\\/]assets[\\/]/.test(file) ? 'public, max-age=31536000, immutable' : 'public, max-age=3600');
+          c.header('Cache-Control', /[\\/]assets[\\/]|[\\/]bodymap[\\/][^\\/]+\.[0-9a-f]{10}\.(webp|png)$/.test(file) ? 'public, max-age=31536000, immutable' : 'public, max-age=3600');
         }
       },
     }));
