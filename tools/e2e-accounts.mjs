@@ -192,7 +192,7 @@ expect((await text('.tally')).includes('markers tracked'), 'sample results are s
 
 // 4. Upload a lab report PDF and a DICOM scan
 await page.getByRole('button', { name: 'Upload', exact: true }).click();
-await page.locator('input[type=file]').setInputFiles([path.join(fixtures, 'sample-lab-report.pdf'), path.join(fixtures, 'chest-xray-synthetic.dcm')]);
+await page.locator('input[type=file][multiple]').setInputFiles([path.join(fixtures, 'sample-lab-report.pdf'), path.join(fixtures, 'chest-xray-synthetic.dcm')]);
 await page.getByRole('heading', { name: 'Check what was read' }).waitFor({ timeout: 60000 });
 await shot('upload-review');
 await page.getByRole('button', { name: /^Add \d+ results/ }).click();
@@ -329,7 +329,8 @@ await page.getByRole('menuitem', { name: 'Profile details' }).click();
 await page.waitForTimeout(400);
 expect(!(await sideScroll()), 'profile page has no sideways scroll at phone width');
 await shot('profile-phone', true);
-await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Find a lab' }).click();
+// On phones the top navigation becomes a bottom tab bar, where this page is the "Labs" tab.
+await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: /^(Find a lab|Labs)$/ }).click();
 await page.getByRole('heading', { name: 'Find a lab', exact: true }).waitFor();
 await page.waitForTimeout(1200);
 expect(!(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1)), 'labs page has no sideways scroll at phone width');
