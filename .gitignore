@@ -36,6 +36,7 @@ dist-artifact
 # API server
 server/.data/
 server/.data-local/
+server/.data-*/
 server/dist/
 .env
 
