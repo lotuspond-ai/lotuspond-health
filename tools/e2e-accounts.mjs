@@ -200,7 +200,7 @@ expect((await text('.toast')).match(/Added \d+ results? and 1 scan/) !== null, `
 // 5. Files page
 await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Files' }).click();
 await page.getByRole('heading', { name: 'Files', exact: true }).waitFor();
-const rows = await page.locator('table.files tbody tr').count();
+const rows = await page.locator('main.page [data-file]').count(); // file cards, or rows in the table layout
 expect(rows === 2, `files page lists the report and the scan (${rows})`);
 await shot('files');
 
