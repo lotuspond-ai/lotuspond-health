@@ -36,7 +36,7 @@ npm run build      # static site in dist/ (relative paths, host anywhere)
 | `src/lib/` | Biomarker catalog, file parsers, persistence (IndexedDB) |
 | `src/pages/`, `src/components/` | Interface |
 | `tools/anatomy/` | Python generator for `public/models/anatomy.glb` (signed-distance modelling, surface nets, quadric decimation) |
-| `server/`, `shared/` | Lab booking backend, in progress: partner interface and a simulated lab (see `server/README.md`) |
+| `server/`, `shared/` | Lab booking backend, in progress: booking API, webhooks and a simulated lab (see `server/README.md`) |
 
 ## Rebuilding the anatomy model
 

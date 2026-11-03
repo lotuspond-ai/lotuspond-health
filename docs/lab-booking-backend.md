@@ -122,6 +122,9 @@ Every partner sits behind one `LabPartner` interface (§8). The first adapter is
    - On success, the order becomes `booked` and stores the partner's reference.
    - On timeout, the order becomes `placing` and the worker retries. Each retry first calls `findOrderByClientRef`, so a slow request never becomes a double booking.
    - If the partner rejects the order (e.g. the slot was taken), it becomes `failed` and any payment is refunded automatically.
+   - Retries follow 30 seconds, then 1, 2, 5, 10 and 20 minutes. After the last one, or once the slot has started, the order fails with an alert. A reply to a timed-out call that arrives later is still applied. A partner booking that turns up after we gave up is cancelled at the partner, so no collector visits an order the user was told had failed.
+
+As built (`server/src/booking/service.ts`), there is no payment step yet: orders are recorded with `payer: 'partner'` (pay at collection) and go straight from `created` to `placing`.
 
 ### 5.2 Status updates
 
@@ -186,6 +189,25 @@ Client to server. All endpoints require a bearer token except the OTP pair. CORS
 | `DELETE /v1/account` | Erase account (§11) |
 
 Inbound: `POST /hooks/:partner/:hookSecret` (partners) and `POST /hooks/razorpay`.
+
+**Built so far** (`server/src/http/api.ts`): sign-in (`/v1/auth/otp`, `/v1/auth/verify`, plus `/v1/auth/logout`), catalogue, slots, and the order endpoints. Catalogue and slots don't need sign-in. How they behave:
+
+- **Sign-in.** Only Indian mobile numbers in E.164 (`+91…`).
+  - A code is 6 digits, lasts 5 minutes and allows 5 tries. Codes for one number are at least 30 seconds apart and at most 5 an hour; each address gets at most 20 code requests an hour.
+  - Codes are stored only as an HMAC, and session tokens only as their SHA-256. Sessions last 30 days.
+- **`POST /v1/orders`** replies:
+  - `201` when the partner confirmed the booking;
+  - `202` while it is still `placing` (the app shows "confirming" and polls `GET /v1/orders/:id`);
+  - `409` if the slot was just taken, or `422` if the partner refused for another reason, with the order recorded as `failed`.
+
+  The `Idempotency-Key` header is required. A repeat of the same request returns the same order with `Idempotent-Replayed: true`; the same key with a different request gets `422`.
+- **Refused before any order is created:**
+  - under-18 patients (DPDP parental consent isn't supported in v1);
+  - consent to an older notice version (`409`, so the app shows the current notice);
+  - a device key that isn't a valid P-256 public key, or that includes the private part;
+  - packages not offered at the pincode, unserved pincodes, and slots that have started.
+- **Storage.** Patient, phone and address are sealed at rest. A consent record and the device key are stored with each order.
+- **Responses.** Order views carry no personal details, and every `/v1` response is `Cache-Control: no-store`. Someone else's order looks exactly like a missing one (`404`).
 
 ```json
 POST /v1/orders

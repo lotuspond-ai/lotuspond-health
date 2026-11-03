@@ -5,17 +5,20 @@ import assert from 'node:assert/strict';
 import { createHmac, randomBytes } from 'node:crypto';
 import type { Hono } from 'hono';
 import type { OrderStatus } from '../../shared/lab-bundle.ts';
+import { BookingService } from '../src/booking/service.ts';
+import { parseBookingInput } from '../src/booking/validate.ts';
 import { aesGcmSealer } from '../src/crypto/sealer.ts';
 import { createApp } from '../src/http/app.ts';
 import { memoryLogger } from '../src/log.ts';
 import { reconcile } from '../src/orders/reconcile.ts';
-import { checkMove } from '../src/orders/state.ts';
 import type { OrderHooks } from '../src/orders/sync.ts';
 import { FakeLab, FAKE_SIGNATURE_HEADER, type FakeTag } from '../src/partners/fake-lab.ts';
 import { FakeLabAdapter } from '../src/partners/fake.ts';
 import { PartnerError, type LabPartner, type PartnerConfig, type PartnerRegistry } from '../src/partners/types.ts';
-import { MemoryOrderStore, MemoryWebhookInbox } from '../src/store/memory.ts';
+import { MemoryAccountStore, MemoryOrderStore, MemoryWebhookInbox } from '../src/store/memory.ts';
+import { newOrderRecord } from '../src/store/types.ts';
 import { WebhookProcessor } from '../src/webhooks/processor.ts';
+import { bookingBody, NOTICE_VERSION } from './helpers.ts';
 
 const T0 = Date.parse('2026-11-03T07:30:00+05:30');
 const HOOK = 'hook-path-secret-1';
@@ -59,37 +62,27 @@ function setup(opts: SetupOptions = {}) {
   };
   const deps = { orders, partners, now, log, hooks };
   const processor = new WebhookProcessor({ ...deps, inbox, sealer }, { maxAttempts: opts.maxAttempts ?? 10, baseDelayMs: 1000, maxDelayMs: 8000 });
-  app = createApp({ receiver: { partners, inbox, sealer, now, log, clientIp: c => c.req.header('x-test-ip') ?? '' } });
+  app = createApp({ receiver: { partners, inbox, sealer, now, log, clientIp: c => c.req.header('x-test-ip') ?? '' }, log });
+  const accounts = new MemoryAccountStore();
+  const booking = new BookingService({ ...deps, accounts, sealer: aesGcmSealer(randomBytes(32)) }, { noticeVersion: NOTICE_VERSION });
 
   /** Move the clock, let the lab act and deliver, then process the inbox. */
   const step = async (ms = 1000) => { t += ms; await lab.tick(); await processor.runOnce(); };
   const setClock = (ms: number) => { t = ms; };
-  return { app, lab, adapter, orders, inbox, sealer, log, responses, transitions, reportUpdates, deps, processor, step, now, setClock };
+  return { app, lab, adapter, orders, accounts, booking, inbox, sealer, log, responses, transitions, reportUpdates, deps, processor, step, now, setClock };
 }
 type Env = ReturnType<typeof setup>;
 
-/** What the booking service will do: record the order, place it, mark it booked (or leave it placing if the reply was lost). */
-async function book(env: Env, { id = 'ord_1', name = 'Asha Rao' }: { id?: string; name?: string } = {}): Promise<string> {
-  const now = env.now();
-  await env.orders.insert({
-    id, userId: 'user_1', partner: 'fake', partnerRef: null, status: 'placing',
-    partnerStatus: null, partnerStatusAt: null, lastSyncedAt: null, createdAt: now, updatedAt: now,
-  });
-  const items = ['FL_ESSENTIAL'];
-  const slot = (await env.adapter.slots({ pincode: '560034', date: '2026-11-04', items }))[0];
-  try {
-    const { partnerRef } = await env.adapter.createOrder({
-      orderId: id, items, slot, patient: { name, age: 34, sex: 'female' }, phone: '+919812345678',
-      address: { line1: '12 Lake Road', city: 'Bengaluru', pincode: '560034' },
-    });
-    await env.orders.apply(id, cur => checkMove(cur.status, 'booked', 'local').ok ? {
-      next: { ...cur, partnerRef, status: 'booked', lastSyncedAt: now, updatedAt: now },
-      events: [{ orderId: id, status: 'booked', partnerStatus: null, source: 'api', occurredAt: now, receivedAt: now }],
-    } : null);
-  } catch (e) {
-    if (!(e instanceof PartnerError && e.retryable)) throw e;
-  }
-  return id;
+let keySeq = 0;
+
+/** Book through the booking service, as POST /v1/orders does (a lost reply leaves the order placing). */
+async function book(env: Env, { name = 'Asha Rao' }: { name?: string } = {}): Promise<string> {
+  await env.accounts.createUser({ id: 'usr_1', phone: '+919812345678', createdAt: env.now(), deletedAt: null });
+  const slot = (await env.adapter.slots({ pincode: '560034', date: '2026-11-04', items: ['FL_ESSENTIAL'] }))[0];
+  const parsed = parseBookingInput(bookingBody(slot, { patient: { name, age: 34, sex: 'female' } }));
+  assert.ok(parsed.ok);
+  const { order } = await env.booking.createOrder('usr_1', parsed.value, `test-key-${++keySeq}`);
+  return order.id;
 }
 
 async function statusOf(env: Env, id: string): Promise<OrderStatus | undefined> {
@@ -110,7 +103,10 @@ describe('webhooks drive orders', () => {
     const id = await book(env);
     for (let i = 0; i < 6; i++) await env.step();
     assert.equal(await statusOf(env, id), 'report_ready');
-    assert.deepEqual(env.transitions, ['booked>collector_assigned', 'collector_assigned>sample_collected', 'sample_collected>processing', 'processing>report_ready']);
+    assert.deepEqual(env.transitions, [
+      'created>placing', 'placing>booked',
+      'booked>collector_assigned', 'collector_assigned>sample_collected', 'sample_collected>processing', 'processing>report_ready',
+    ]);
     assert.deepEqual(env.reportUpdates, [{ status: 'report_ready', partnerStatus: 'REPORT_READY' }]);
     assert.ok(env.responses.every(s => s === 200));
 
@@ -118,7 +114,7 @@ describe('webhooks drive orders', () => {
     // The first tick delivers ORDER_PLACED and PHLEBO_ASSIGNED together. Processing the first one asks the
     // lab for the current status (already PHLEBO_ASSIGNED), so the second is a duplicate: no ORDER_PLACED event.
     assert.deepEqual(events.map(e => `${e.source}:${e.status}:${e.partnerStatus ?? ''}`), [
-      'api:booked:', 'webhook:collector_assigned:PHLEBO_ASSIGNED',
+      'api:created:', 'api:placing:', 'api:booked:', 'webhook:collector_assigned:PHLEBO_ASSIGNED',
       'webhook:sample_collected:SAMPLE_COLLECTED', 'webhook:processing:IN_LAB', 'webhook:report_ready:REPORT_READY',
     ]);
     const items = env.inbox.all();
@@ -388,10 +384,10 @@ describe('storage pieces', () => {
 
   test('two orders cannot share a partner reference', async () => {
     const orders = new MemoryOrderStore();
-    const base = { userId: 'u', partner: 'fake' as const, status: 'booked' as const, partnerStatus: null, partnerStatusAt: null, lastSyncedAt: null, createdAt: T0, updatedAt: T0 };
-    await orders.insert({ ...base, id: 'a', partnerRef: 'FL1' });
-    await orders.insert({ ...base, id: 'b', partnerRef: null });
+    const base = { userId: 'u', partner: 'fake' as const, status: 'booked' as const, createdAt: T0 };
+    await orders.insert(newOrderRecord({ ...base, id: 'a', partnerRef: 'FL1' }));
+    await orders.insert(newOrderRecord({ ...base, id: 'b' }));
     await assert.rejects(orders.apply('b', cur => ({ next: { ...cur, partnerRef: 'FL1' }, events: [] })));
-    await assert.rejects(orders.insert({ ...base, id: 'a', partnerRef: null }));
+    await assert.rejects(orders.insert(newOrderRecord({ ...base, id: 'a' })));
   });
 });

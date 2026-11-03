@@ -19,6 +19,7 @@
 import { createHmac } from 'node:crypto';
 import { PACKAGES, PANELS, SERVED_PIN_PREFIXES, SLOT_HOURS, type FixtureRow, type Panel } from './fake-lab-data.ts';
 import { buildReportPdf, type PdfPanel } from './fake-pdf.ts';
+import { istDate, istIso } from '../time.ts';
 
 export const FAKE_TAGS = [
   'partial', 'amended', 'recollect', 'pdf-only', 'slot-full', 'lost-response', 'no-webhooks', 'duplicate-webhooks', 'out-of-order',
@@ -162,10 +163,7 @@ const MIN_LEAD_MS = 2 * 3600_000;
 const BOOKING_WINDOW_DAYS = 7;
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-/** yyyy-mm-dd in IST. */
-export const istDate = (ms: number): string => new Date(ms + IST_OFFSET_MS).toISOString().slice(0, 10);
-/** ISO 8601 with the IST offset, e.g. 2026-11-03T08:12:00+05:30. */
-export const istIso = (ms: number): string => `${new Date(ms + IST_OFFSET_MS).toISOString().slice(0, 19)}+05:30`;
+export { istDate, istIso };
 
 function istPrintable(ms: number): string {
   const d = new Date(ms + IST_OFFSET_MS);
