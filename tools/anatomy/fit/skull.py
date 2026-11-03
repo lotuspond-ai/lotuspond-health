@@ -590,6 +590,28 @@ def shape_metrics(Z, P, P_warp=None):
     return out
 
 
+def load_field(sex):
+    """The cached collision-refinement field of a body (MultiField), or None."""
+    fpath = os.path.join(work_dir(sex), 'field.npz')
+    if not os.path.exists(fpath): return None
+    d = np.load(fpath, allow_pickle=True)
+    D = MultiField()
+    for k in range(int(d['n'])):
+        f_ = G.Correction(d[f'c{k}'], sigma=float(d[f's{k}'])); f_.w = d[f'w{k}']; D.fields.append(f_)
+    return D
+
+
+def head_map(sex):
+    """Callable mapping Z-Anatomy points (metres) to this body's head as the skull was placed: the head warp followed by
+    the skull's collision-refinement field (falls back to the warp alone when no field is cached). For structures that
+    must follow the fitted skull (vessels through the skull base foramina, cranial nerves, facial muscles). The mandible
+    was additionally seated by a small rigid move (report.json: mandible_seating), not included here."""
+    W, _ = build_head_warp(sex)
+    D = load_field(sex)
+    if D is None: return W
+    return lambda x: (lambda y: y + D(y))(W(np.asarray(x, float)))
+
+
 def place_all(Z, Wfull):
     return {n: (Wfull(v), f, part) for n, (v, f, part, _) in Z.items()}
 
@@ -616,11 +638,7 @@ def run(sex, argv, L, zsk):
         Wfull = W
     else:
         if '--reuse' in argv and os.path.exists(fpath):
-            d = np.load(fpath, allow_pickle=True)
-            D = MultiField()
-            for k in range(int(d['n'])):
-                f_ = G.Correction(d[f'c{k}'], sigma=float(d[f's{k}'])); f_.w = d[f'w{k}']; D.fields.append(f_)
-            hist = list(d['hist'])
+            D = load_field(sex); hist = list(np.load(fpath, allow_pickle=True)['hist'])
         else:
             D, hist = refine(sex, W, Z, T, L, M, zsk)
             np.savez(fpath, n=len(D.fields), hist=np.array(hist, dtype=object), **{f'c{k}': f_.c for k, f_ in enumerate(D.fields)},

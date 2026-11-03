@@ -119,10 +119,12 @@ def smoothstep(x):
 
 
 def seat(rg, v, verts, lung):
-    """Rigid motion of the posterior segment that seats the articular facets on the HRA vertebrae.
-    v: the warped rib (HRA space); verts: {'T5': Target, ...}. Returns (new vertices, info).
-    Ribs 2-9: the head's two facets on T(n-1) and T(n); ribs 1, 10, 11, 12: the head on T(n) alone, with its centre
-    nearer T(n) than the vertebra above; ribs 1-10: the tubercle on the transverse process of T(n)."""
+    """Seat the rib's articular facets on the HRA vertebrae. v: the warped rib (HRA space); verts: {'T5': Target}.
+    Ribs 2-9: the head's two facets on T(n-1) and T(n); ribs 1, 10, 11, 12: the head on T(n) alone, its centre
+    nearer T(n) than the vertebra above; ribs 1-10: the tubercle on the transverse process of T(n).
+    The motion: a rigid rotation (about axes across the neck) and translation of the posterior segment, faded out
+    along the shaft over FADE; plus a roll of the head about the neck axis that untwists to zero at the tubercle (a
+    torsion of the neck), so seating the head's demifacets does not swing the shaft. Returns (vertices, info)."""
     n = rg.n
     own = verts[f'T{n}']; up = verts.get(f'T{n - 1}') or (verts.get('C7') if n == 1 else None)
     two = 2 <= n <= 9
@@ -133,54 +135,62 @@ def seat(rg, v, verts, lung):
     if 'tub' in rg.facets:
         i, g = rg.facets['tub']; terms.append((i, own, g, 1.0))
     head_idx = np.concatenate([rg.facets[k][0] for k in ('head_lo', 'head_up') if k in rg.facets])
-    post = np.flatnonzero(rg.s <= rg.s_rigid + 0.01)
-    post_s = post[::3]
-    # lung clearance is asked of the neck and the part past the tubercle, not of the head: where the HRA lung
-    # overlaps the vertebral body itself the head cannot leave it without leaving its joint
-    s_free = (rg.s_tub + 0.004) if rg.s_tub is not None else rg.s_head + 0.025
-    neck = np.flatnonzero((rg.s >= s_free) & (rg.s <= rg.s_rigid + 0.03))[::3]
-    w_neck = 1 - smoothstep((rg.s[neck] - rg.s_rigid) / FADE)
-    near = [verts[k] for k in (f'T{n - 1}', f'T{n}', f'T{n + 1}', 'C7' if n == 1 else 'L1' if n == 12 else None) if k in verts]
     c = v[head_idx].mean(0)
-    # the rib's neck axis (head to tubercle; for 11 and 12 the first 2.5 cm of the rib): turning about it is the
-    # rib's elevation, which the rest of the rib (already placed by the warp) decides, so it is held tightly
+    s_end = rg.s_tub if rg.s_tub is not None else rg.s_head + 0.025       # where the neck torsion has untwisted
     if 'tub' in rg.facets:
         na = v[rg.facets['tub'][0]].mean(0) - c
     else:
         na = v[(rg.s > rg.s_head + 0.015) & (rg.s < rg.s_head + 0.03)].mean(0) - c
     na /= np.linalg.norm(na)
+    w_fade = 1 - smoothstep((rg.s - rg.s_rigid) / FADE)
+    w_roll = 1 - smoothstep((rg.s - (rg.s_head + 0.006)) / max(s_end - rg.s_head - 0.006, 0.004))
+    post = np.flatnonzero(rg.s <= rg.s_rigid + 0.01)
+    post_s = post[::3]
+    s_free = (rg.s_tub + 0.004) if rg.s_tub is not None else rg.s_head + 0.025
+    neck = np.flatnonzero((rg.s >= s_free) & (rg.s <= rg.s_rigid + 0.03))[::3]
+    near = [verts[k] for k in (f'T{n - 1}', f'T{n}', f'T{n + 1}', 'C7' if n == 1 else 'L1' if n == 12 else None) if k in verts]
 
-    def apply(x, p):
-        R = Rotation.from_rotvec(x[:3]).as_matrix()
-        return (p - c) @ R.T + c + x[3:]
+    def apply(x, idx):
+        p = v[idx]
+        wn = x[:3] @ na
+        Rp = Rotation.from_rotvec(x[:3] - wn * na).as_matrix()
+        moved = (p - c) @ Rp.T + c + x[3:]
+        q = p + w_fade[idx, None] * (moved - p)
+        # neck torsion: roll about the (moved) neck axis, full at the head, none from the tubercle on
+        ax = Rp @ na; c2 = c + x[3:]
+        ang = wn * w_roll[idx]
+        if np.any(ang != 0):
+            k = ax; r = q - c2
+            cs, sn = np.cos(ang)[:, None], np.sin(ang)[:, None]
+            q = c2 + r * cs + np.cross(k, r) * sn + np.outer(r @ k, k) * (1 - cs)
+        return q
 
     def resid(x):
         r = []
         for idx, tgt, gap, w in terms:
-            d = tgt.sdf(apply(x, v[idx]))
+            d = tgt.sdf(apply(x, idx))
             ww = w / (1 + gap / 0.0015)
             r.append(ww * (d - np.clip(gap, 0.0005, 0.002)) / 0.0005 / np.sqrt(len(idx)) * 4)
         if not two and up is not None:
             # level: the head centre sits on its own vertebra, at least 1.5 mm nearer it than the one above
-            hc = apply(x, v[head_idx].mean(0)[None])
+            hc = apply(x, head_idx).mean(0)[None]
             r.append(np.maximum(own.sdf(hc) - up.sdf(hc) + 0.0015, 0) / 0.0005 * 2)
-        P = apply(x, v[post_s])
+        P = apply(x, post_s)
         for tgt in near:
             r.append(np.maximum(0.0003 - tgt.sdf(P), 0) / 0.0002 / np.sqrt(len(P)) * 6)
-        Pn = v[neck] + w_neck[:, None] * (apply(x, v[neck]) - v[neck])
+        Pn = apply(x, neck)
         r.append(np.maximum(LUNG_CLEAR - lung.sdf(Pn), 0) / 0.0005 / np.sqrt(len(Pn)) * 2)
         wn = x[:3] @ na
-        r.append(np.array([wn / np.radians(2.0)]))
-        r.append((x[:3] - wn * na) / np.radians(5.0))
+        r.append(np.array([wn / np.radians(12.0)]))              # neck torsion: a few degrees are anatomical
+        r.append((x[:3] - wn * na) / np.radians(4.0))
         r.append(x[3:] / 0.004)
         return np.concatenate(r)
 
     sol = optimize.least_squares(resid, np.zeros(6), method='trf', x_scale=np.array([0.02] * 3 + [0.002] * 3), max_nfev=400)
     x = sol.x
-    w = 1 - smoothstep((rg.s - rg.s_rigid) / FADE)
-    moved = apply(x, v)
-    out = v + w[:, None] * (moved - v)
-    info = dict(rot_deg=float(np.degrees(np.linalg.norm(x[:3]))), neck_rot_deg=float(np.degrees(x[:3] @ na)), shift_mm=float(np.linalg.norm(x[3:]) * 1000), cost=float(sol.cost))
+    out = apply(x, np.arange(len(v)))
+    wn = x[:3] @ na
+    info = dict(rot_deg=float(np.degrees(np.linalg.norm(x[:3] - wn * na))), neck_torsion_deg=float(np.degrees(wn)), shift_mm=float(np.linalg.norm(x[3:]) * 1000), cost=float(sol.cost))
     return out, info
 
 
