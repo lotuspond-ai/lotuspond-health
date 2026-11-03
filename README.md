@@ -42,7 +42,7 @@ npm run ios        # build, sync and open Xcode (needs macOS with Xcode 26+)
 | --- | --- |
 | `src/three/` | React Three Fiber stage: tissue materials, pond floor, camera, x-ray and cross-sections |
 | `src/anatomy/organs.ts` | Organ metadata: meshes, tissues, landmarks, linked body systems |
-| `src/lib/` | Biomarker catalog, file parsers, persistence (IndexedDB) |
+| `src/lib/` | Biomarker catalog, file parsers, persistence (`storage/`: IndexedDB in the browser, app files in the iOS / Android apps) |
 | `src/pages/`, `src/components/` | Interface |
 | `tools/anatomy/` | Python generator for `public/models/anatomy.glb` (signed-distance modelling, surface nets, quadric decimation) |
 | `src/native/`, `android/`, `ios/` | Native app shell and the Android Studio / Xcode projects (see [docs/mobile.md](docs/mobile.md)) |

@@ -6,7 +6,7 @@ import DataPage from './pages/Data';
 import { MarkerDrawer, ScanViewer, UploadDialog } from './components/Overlays';
 import { Icon, Logo } from './components/ui';
 import { useUI, type View } from './state/ui';
-import { hydrate } from './lib/store';
+import { hydrate, useHealth } from './lib/store';
 
 const NAV: { id: View; label: string; short: string; icon: ReactNode }[] = [
   { id: 'body', label: 'Body map', short: 'Body', icon: Icon.body },
@@ -17,6 +17,7 @@ const NAV: { id: View; label: string; short: string; icon: ReactNode }[] = [
 
 export default function App() {
   const { view, setView, setUploadOpen } = useUI();
+  const saveBlocked = useHealth(s => s.saveBlocked);
   useEffect(() => { void hydrate(); }, []);
   useEffect(() => {
     const fromHash = () => { const h = location.hash.slice(1) as View; if (NAV.some(n => n.id === h)) setView(h); };
@@ -39,6 +40,9 @@ export default function App() {
           <button className="btn btn--primary topbar__upload" onClick={() => setUploadOpen(true)}>{Icon.upload} Upload</button>
         </div>
       </header>
+      {saveBlocked && (
+        <p className="warn app__warn" role="alert">LotusPond couldn't open your saved results, so nothing you add now will be saved. Close and reopen the app to try again.</p>
+      )}
       <BodyMap hidden={view !== 'body'} />
       {view === 'markers' && <Biomarkers />}
       {view === 'scans' && <Scans />}

@@ -53,6 +53,8 @@ p { margin: 0; }
 .topbar { display: flex; align-items: center; gap: 28px; padding: calc(14px + var(--sat)) 24px 14px; }
 .privacy > span { white-space: nowrap; }
 .tabbar { display: none; }
+.app__warn { margin: 0 20px 12px; }
+.app:has(> .app__warn) { grid-template-rows: auto auto minmax(0, 1fr); }
 .only-touch { display: none !important; }
 @media (hover: none) and (pointer: coarse) { .only-fine { display: none !important; } .only-touch { display: revert !important; } .btn.only-touch { display: inline-flex !important; } }
 .btn:disabled { opacity: 0.5; cursor: default; }
@@ -260,6 +262,8 @@ p { margin: 0; }
 @media (max-width: 760px) {
   input, select, textarea { font-size: 16px; } /* iOS zooms into fields smaller than 16px */
   .app { grid-template-rows: auto minmax(0, 1fr) auto; }
+  .app:has(> .app__warn) { grid-template-rows: auto auto minmax(0, 1fr) auto; }
+  .app__warn { margin: 0 16px 8px; font-size: 13.5px; }
   .topbar { gap: 10px; padding: calc(8px + var(--sat)) 16px 8px; }
   .brand svg { width: 26px; height: 26px; }
   .brand b { font-size: 19px; }

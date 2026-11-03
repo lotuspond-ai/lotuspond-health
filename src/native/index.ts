@@ -3,10 +3,11 @@ import { SystemBars, SystemBarsStyle } from '@capacitor/core';
 import { App } from '@capacitor/app';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import { SplashScreen } from '@capacitor/splash-screen';
-import { hydrate, useHealth } from '../lib/store';
+import { flushPersist, hydrate, setStorageBackend, useHealth } from '../lib/store';
 import { useUI } from '../state/ui';
 import { goBack } from '../state/navigation';
 import { isNative, platform } from './platform';
+import { createNativeStorage } from './storage';
 
 const quiet = (p: Promise<unknown>) => void p.catch(() => {});
 
@@ -16,6 +17,11 @@ export const tick = () => { if (isNative) quiet(Haptics.impact({ style: ImpactSt
 export function initNative(): void {
   if (!isNative) return;
   document.documentElement.classList.add('native', `native--${platform}`);
+
+  // Save to app files rather than the WebView's IndexedDB (moved over on first launch).
+  setStorageBackend(createNativeStorage());
+  // Write any pending change at once when the app leaves the screen; it may not get another chance.
+  quiet(App.addListener('pause', () => void flushPersist()));
 
   // Status bar icons: dark over the light interface, light over the dark full-screen scan viewer.
   const setBars = () => quiet(SystemBars.setStyle({ style: useUI.getState().scanOpen ? SystemBarsStyle.Dark : SystemBarsStyle.Light }));
@@ -29,7 +35,7 @@ export function initNative(): void {
   // Android back: close the top layer, then step out to the whole body, then leave the app (kept in memory).
   quiet(App.addListener('backButton', () => { if (!goBack()) quiet(App.minimizeApp()); }));
 
-  // Ask the OS not to evict saved results when the device runs low on space.
+  // Data left in IndexedDB (scan files a migration could not copy) should survive low-storage clean-up too.
   if (navigator.storage?.persist) quiet(navigator.storage.persist());
 
   // Keep the launch screen up until saved data is loaded, so the first frame already shows it.

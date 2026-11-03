@@ -1,14 +1,15 @@
-// App state (zustand) with IndexedDB persistence via idb-keyval.
+// App state (zustand), saved through a storage backend: IndexedDB in the browser, app files in the
+// iOS / Android apps (see src/lib/storage/ and src/native/storage.ts).
 import { create } from 'zustand';
-import { del, delMany, get, keys, set as idbSet } from 'idb-keyval';
 import type { BiomarkerDef, Measurement, OrganId, ParseResult, ScanItem, SystemId } from '../types';
 import { findMarker } from './catalog.ts';
 import { refreshMeasurement } from './status.ts';
 import { SAMPLE } from './sample.ts';
 import { uid } from './id.ts';
+import type { Persisted, StorageBackend } from './storage/index.ts';
+import { idbBackend } from './storage/idb.ts';
 
-export const STORAGE_KEY = 'lotuspond:v1';
-export const BLOB_PREFIX = 'lotuspond:blob:';
+export { STORAGE_KEY, BLOB_PREFIX } from './storage/idb.ts';
 
 export interface HealthState {
   measurements: Measurement[];
@@ -16,8 +17,10 @@ export interface HealthState {
   selectedOrgan: OrganId | null;
   selectedMarkerId: string | null;
   activeSystem: SystemId | null;
-  /** True once stored data has been loaded from IndexedDB. */
+  /** True once saved data has been loaded from storage. */
   hydrated: boolean;
+  /** Saved data exists but could not be read, so nothing is being saved this session. */
+  saveBlocked: boolean;
 
   addResult: (r: ParseResult) => void;
   updateMeasurement: (id: string, patch: Partial<Measurement>) => void;
@@ -31,9 +34,14 @@ export interface HealthState {
   setActiveSystem: (system: SystemId | null) => void;
 }
 
-interface Persisted { version: 1; measurements: Measurement[]; scans: ScanItem[] }
+/* ---------------- storage backend + blob cache ---------------- */
 
-/* ---------------- blob cache + persistence helpers ---------------- */
+let backend: StorageBackend = idbBackend;
+/** Set when saved data exists but could not be read: this session then stays in memory instead of overwriting it. */
+let readOnly = false;
+
+/** Choose where data is saved (the apps switch to native files). Call before hydrate(). */
+export function setStorageBackend(b: StorageBackend): void { backend = b; }
 
 const blobCache = new Map<string, Blob>();
 
@@ -41,24 +49,21 @@ function safe(p: Promise<unknown>): void {
   p.catch(err => { if (typeof console !== 'undefined') console.warn('[lotuspond] storage error', err); });
 }
 
-const hasIDB = () => typeof indexedDB !== 'undefined';
-
 function persistBlobs(blobs: Record<string, Blob>): void {
   for (const [k, b] of Object.entries(blobs)) {
     blobCache.set(k, b);
-    if (hasIDB()) safe(idbSet(BLOB_PREFIX + k, b));
+    if (!readOnly) safe(backend.saveBlob(k, b));
   }
 }
 
-/** Original file for a scan, from memory or IndexedDB. */
+/** Original file for a scan, from memory or storage. */
 export async function getScanBlob(key: string): Promise<Blob | null> {
   const cached = blobCache.get(key);
   if (cached) return cached;
-  if (!hasIDB()) return null;
   try {
-    const b = await get<Blob>(BLOB_PREFIX + key);
-    if (b instanceof Blob) { blobCache.set(key, b); return b; }
-  } catch { /* unavailable (private mode etc.) */ }
+    const b = await backend.loadBlob(key);
+    if (b) { blobCache.set(key, b); return b; }
+  } catch (err) { if (typeof console !== 'undefined') console.warn('[lotuspond] could not read scan file', err); }
   return null;
 }
 
@@ -105,6 +110,7 @@ export const useHealth = create<HealthState>()((set, getState) => ({
   selectedMarkerId: null,
   activeSystem: null,
   hydrated: false,
+  saveBlocked: false,
 
   addResult: r => {
     const { measurements, scans } = getState();
@@ -133,16 +139,14 @@ export const useHealth = create<HealthState>()((set, getState) => ({
     const scan = getState().scans.find(x => x.id === id);
     if (scan) {
       blobCache.delete(scan.blobKey);
-      if (hasIDB()) safe(del(BLOB_PREFIX + scan.blobKey));
+      if (!readOnly) safe(backend.deleteBlob(scan.blobKey));
     }
     set(s => ({ scans: s.scans.filter(x => x.id !== id) }));
   },
 
   clearAll: () => {
     blobCache.clear();
-    if (hasIDB()) {
-      safe(keys().then(all => delMany(all.filter(k => typeof k === 'string' && k.startsWith(BLOB_PREFIX)))));
-    }
+    if (!readOnly) safe(backend.clearBlobs());
     set({ measurements: [], scans: [], selectedOrgan: null, selectedMarkerId: null, activeSystem: null });
   },
 
@@ -157,15 +161,26 @@ export const useHealth = create<HealthState>()((set, getState) => ({
 let writeTimer: ReturnType<typeof setTimeout> | null = null;
 let hydrating: Promise<void> | null = null;
 
+function writeNow(): Promise<void> {
+  const { measurements, scans } = useHealth.getState();
+  const payload: Persisted = { version: 1, measurements, scans };
+  const p = backend.savePayload(payload);
+  safe(p);
+  return p.catch(() => {});
+}
+
 function scheduleWrite(): void {
-  if (!hasIDB()) return;
+  if (readOnly) return;
   if (writeTimer) clearTimeout(writeTimer);
-  writeTimer = setTimeout(() => {
-    writeTimer = null;
-    const { measurements, scans } = useHealth.getState();
-    const payload: Persisted = { version: 1, measurements, scans };
-    safe(idbSet(STORAGE_KEY, payload));
-  }, 250);
+  writeTimer = setTimeout(() => { writeTimer = null; void writeNow(); }, 250);
+}
+
+/** Save a pending change right away (the apps call this when they go to the background). */
+export function flushPersist(): Promise<void> {
+  if (!writeTimer) return Promise.resolve();
+  clearTimeout(writeTimer);
+  writeTimer = null;
+  return writeNow();
 }
 
 useHealth.subscribe((state, prev) => {
@@ -183,16 +198,17 @@ function isPersisted(v: unknown): v is Persisted {
 export function hydrate(): Promise<void> {
   hydrating ??= (async () => {
     let stored: Persisted | null = null;
-    if (hasIDB()) {
-      try {
-        const v: unknown = await get(STORAGE_KEY);
-        if (isPersisted(v)) stored = v;
-      } catch { /* storage unavailable: run in memory */ }
+    try {
+      const v: unknown = await backend.loadPayload();
+      if (isPersisted(v)) stored = v;
+    } catch (err) {
+      readOnly = true;
+      if (typeof console !== 'undefined') console.warn(`[lotuspond] saved data could not be read (${backend.name}); changes this session are not saved`, err);
     }
     const cur = useHealth.getState();
     const measurements = stored ? mergeMeasurements(stored.measurements, cur.measurements) : cur.measurements;
     const scans = stored ? mergeScans(stored.scans, cur.scans).scans : cur.scans;
-    useHealth.setState({ measurements, scans, hydrated: true });
+    useHealth.setState({ measurements, scans, hydrated: true, saveBlocked: readOnly });
   })();
   return hydrating;
 }

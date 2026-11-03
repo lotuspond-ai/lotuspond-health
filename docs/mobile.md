@@ -18,6 +18,7 @@ The iOS and Android apps are the LotusPond web app running in a native shell ([C
   - status bar icons that turn light over the dark scan viewer
   - light haptics when you pick an organ or a tab
   - Android back button that steps back in order: closes the top layer, returns to the body map, closes the open organ, then sends the app to the background
+- **Storage in app files.** Results and original scan files are saved as files in the app's private Library folder rather than in the WebView's IndexedDB, which the OS may clear when the phone runs low on space. See [Storage](#storage).
 - **Privacy defaults:**
   - Fonts are bundled, so there are no third-party requests.
   - Android cloud backup of app data is off (`android:allowBackup="false"` plus `data_extraction_rules.xml`), so results never reach Google Drive unless the user exports a backup there themselves. Device-to-device transfer still works.
@@ -69,7 +70,8 @@ Debug builds can be inspected with Chrome (`chrome://inspect`) for Android, or S
 | --- | --- |
 | `capacitor.config.ts` | App id `ai.lotuspond.health`, name, launch screen and system bar settings |
 | `android/`, `ios/` | The Android Studio and Xcode projects. They are source; the copied site (`public/`) and generated config are git-ignored and written by `cap sync`. |
-| `src/native/` | The native bridge: platform detection, status bar, back button, launch screen, haptics, backup export |
+| `src/native/` | The native bridge: platform detection, status bar, back button, launch screen, haptics, backup export, file storage |
+| `src/lib/storage/` | Storage backends: `idb.ts` (browser) and `files.ts` (apps; tested in `tools/test-parsers.mjs` against an in-memory file system) |
 | `src/components/Sheet.tsx` | The draggable bottom sheet |
 | `src/lib/useMedia.ts` | `COMPACT`, the phone-layout breakpoint shared with `src/index.css` |
 | `assets/`, `tools/mobile-assets.mjs` | Icon and launch screen sources. `npm run mobile:assets` regenerates every size (needs Playwright with Chromium). Android's adaptive icon is a vector in `res/drawable/ic_launcher_foreground.xml`. |
@@ -93,10 +95,26 @@ Debug builds can be inspected with Chrome (`chrome://inspect`) for Android, or S
    - Play *Data safety*: no data collected or shared.
    - Both stores have health-app policies. Fill in Play's health apps declaration, and keep the "explains results, does not diagnose" wording in listings.
 
+## Storage
+
+In the browser, data stays in IndexedDB. In the apps, `src/native/storage.ts` switches the store to app files under `Library/lotuspond/` (Capacitor `Directory.Library`: the Library folder on iOS, the app's files folder on Android):
+
+| File | Holds |
+| --- | --- |
+| `data-0.json`, `data-1.json` | Results and scan details. Saves alternate between the two files with a rising sequence number, and loading takes the newest one that reads cleanly, so a crash mid-save loses at most that save. |
+| `scans/<id>.<ext>` | Original scan files. They are written in chunks to a `.part` file and renamed when complete; leftover `.part` files are deleted on the next launch. They are read back through the WebView's local file server, not as base64 over the bridge. |
+
+Other safeguards:
+
+- **Migration.** On the first launch after updating, data in IndexedDB is copied into these files and then removed from IndexedDB. A scan file that fails to copy stays there and is still found.
+- **Unreadable data.** If the folder holding saved data can't be read, the app shows a warning and saves nothing for that session instead of writing over it.
+- **Backgrounding.** A pending save is written at once when the app goes to the background.
+- **Backups.** iOS device backups include the Library folder. Android's backup rules keep the files folder out of cloud backup.
+
 ## Not done yet
 
 - **Device testing.** The apps were built and checked in CI and in a phone-sized browser; they have not been run on physical devices yet.
-- **Durable storage.** Data lives in the WebView's IndexedDB, and the app asks the OS to keep it (`navigator.storage.persist()`). Moving results and scan files to native storage (Capacitor Filesystem or SQLite) would protect them from WebView data clean-up under severe storage pressure. Until then, the backup export is the safety net.
+- **Storage on devices.** The file storage above is covered by tests in Node against an in-memory file system. Migration from IndexedDB, large DICOM files and backgrounding still need checking on real iPhones and Android phones.
 - **iOS privacy manifest.** Add `PrivacyInfo.xcprivacy` for the app target before the first App Store submission.
 - **Later features:**
   - app lock with Face ID or fingerprint
