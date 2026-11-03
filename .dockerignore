@@ -1,0 +1,11 @@
+node_modules
+server/node_modules
+dist
+dist-artifact
+server/dist
+server/.data
+shots
+tools/anatomy/parts
+tools/anatomy/dec
+.git
+.env

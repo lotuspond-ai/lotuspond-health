@@ -1,0 +1,61 @@
+{
+  "labs": [
+    {
+      "slug": "demo-diagnostics-indiranagar",
+      "brand": "Demo Diagnostics",
+      "name": "Demo Diagnostics, Indiranagar (example)",
+      "address": "Example building, 100 Feet Road, Indiranagar",
+      "locality": "Bengaluru",
+      "region": "Karnataka",
+      "postalCode": "560038",
+      "country": "IN",
+      "latitude": 12.9727,
+      "longitude": 77.6418,
+      "phone": "+91 80 0000 0000",
+      "website": "https://example.com/demo-diagnostics",
+      "bookingUrl": "https://example.com/demo-diagnostics/book",
+      "services": ["blood", "urine", "home_collection", "health_checkup"],
+      "openingHours": "Mo-Sa 07:00-20:00; Su 07:00-12:00",
+      "accreditation": "NABL",
+      "active": true
+    },
+    {
+      "slug": "example-path-lab-koramangala",
+      "brand": "Example Path Lab",
+      "name": "Example Path Lab, Koramangala (example)",
+      "address": "Example street, 5th Block, Koramangala",
+      "locality": "Bengaluru",
+      "region": "Karnataka",
+      "postalCode": "560095",
+      "country": "IN",
+      "latitude": 12.9345,
+      "longitude": 77.6265,
+      "phone": "+91 80 0000 0001",
+      "website": "https://example.com/example-path-lab",
+      "bookingUrl": "https://example.com/example-path-lab/book",
+      "services": ["blood", "urine", "ecg"],
+      "openingHours": "Mo-Su 06:30-21:00",
+      "accreditation": "NABL",
+      "active": true
+    },
+    {
+      "slug": "sample-imaging-hsr-layout",
+      "brand": "Sample Imaging",
+      "name": "Sample Imaging Centre, HSR Layout (example)",
+      "address": "Example road, Sector 2, HSR Layout",
+      "locality": "Bengaluru",
+      "region": "Karnataka",
+      "postalCode": "560102",
+      "country": "IN",
+      "latitude": 12.9116,
+      "longitude": 77.6474,
+      "phone": "+91 80 0000 0002",
+      "website": "https://example.com/sample-imaging",
+      "bookingUrl": "https://example.com/sample-imaging/book",
+      "services": ["imaging"],
+      "openingHours": "Mo-Sa 08:00-20:00",
+      "accreditation": null,
+      "active": true
+    }
+  ]
+}

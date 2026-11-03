@@ -1,0 +1,7 @@
+/* Auth screen links to the public website: the brand goes home, small links to the legal pages. */
+a.auth__brand { color: inherit; text-decoration: none; align-self: flex-start; border-radius: 8px; }
+a.auth__brand:hover b { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 4px; }
+a.auth__brand:focus-visible { outline-color: #f2b3c4; outline-offset: 4px; }
+.auth__site { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 18px; font-size: 13px; }
+.auth__site a { color: var(--ink-2); text-decoration: none; }
+.auth__site a:hover { color: var(--lotus-deep); text-decoration: underline; text-underline-offset: 3px; }
