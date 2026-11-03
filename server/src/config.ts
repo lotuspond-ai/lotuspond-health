@@ -21,7 +21,39 @@ const Env = z.object({
   TRUST_PROXY: bool.default(false),
   SESSION_DAYS: z.coerce.number().positive().max(365).default(30),
   MAX_UPLOAD_MB: z.coerce.number().positive().max(1024).default(50),
+  /* Nearby labs and facilities (see server/src/facilities/). */
+  FACILITY_SEARCH: z.enum(['on', 'off', 'true', 'false', '1', '0']).default('on'),
+  /** 'fixture' answers from recorded responses in server/data/fixtures (development and tests only). */
+  FACILITY_PROVIDER: z.enum(['http', 'fixture']).default('http'),
+  OVERPASS_URL: z.string().url().default('https://overpass-api.de/api/interpreter'),
+  GEOCODER_URL: z.string().url().default('https://nominatim.openstreetmap.org'),
+  /** Contact address sent to OpenStreetMap services (Nominatim usage policy asks for one). */
+  GEO_CONTACT_EMAIL: z.string().email().optional(),
+  GEO_TIMEOUT_MS: z.coerce.number().int().min(1000).max(120_000).default(20_000),
+  /** Map tiles: a self-hosted Protomaps .pmtiles file (URL or path), or a MapLibre style URL. Otherwise OpenStreetMap raster tiles. */
+  MAP_PMTILES_URL: z.string().optional(),
+  MAP_STYLE_URL: z.string().url().optional(),
+  /** Fonts and sprites for the Protomaps style; self-host them next to the .pmtiles file for no third-party requests. */
+  MAP_ASSETS_URL: z.string().default('https://protomaps.github.io/basemaps-assets'),
+  /** Directory whose .pmtiles files are served at /api/map/files/<name>. */
+  MAP_TILES_DIR: z.string().optional(),
 });
+
+export interface FacilityConfig {
+  search: boolean;
+  provider: 'http' | 'fixture';
+  overpassUrl: string;
+  geocoderUrl: string;
+  contactEmail: string | undefined;
+  timeoutMs: number;
+}
+
+export interface MapConfig {
+  pmtilesUrl: string | undefined;
+  styleUrl: string | undefined;
+  assetsUrl: string;
+  tilesDir: string | undefined;
+}
 
 export interface Config {
   env: 'development' | 'production' | 'test';
@@ -35,6 +67,8 @@ export interface Config {
   trustProxy: boolean;
   sessionTtlMs: number;
   maxUploadBytes: number;
+  facilities: FacilityConfig;
+  map: MapConfig;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -44,6 +78,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     throw new Error(`Invalid configuration: ${issues}`);
   }
   const e = parsed.data;
+  if (e.FACILITY_PROVIDER === 'fixture' && e.NODE_ENV === 'production') {
+    throw new Error('Invalid configuration: FACILITY_PROVIDER=fixture is for development only.');
+  }
   return {
     env: e.NODE_ENV,
     port: e.PORT,
@@ -56,5 +93,19 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     trustProxy: e.TRUST_PROXY,
     sessionTtlMs: e.SESSION_DAYS * 24 * 60 * 60 * 1000,
     maxUploadBytes: Math.round(e.MAX_UPLOAD_MB * 1024 * 1024),
+    facilities: {
+      search: !['off', 'false', '0'].includes(e.FACILITY_SEARCH),
+      provider: e.FACILITY_PROVIDER,
+      overpassUrl: e.OVERPASS_URL,
+      geocoderUrl: e.GEOCODER_URL.replace(/\/$/, ''),
+      contactEmail: e.GEO_CONTACT_EMAIL,
+      timeoutMs: e.GEO_TIMEOUT_MS,
+    },
+    map: {
+      pmtilesUrl: e.MAP_PMTILES_URL || undefined,
+      styleUrl: e.MAP_STYLE_URL,
+      assetsUrl: e.MAP_ASSETS_URL.replace(/\/$/, ''),
+      tilesDir: e.MAP_TILES_DIR,
+    },
   };
 }

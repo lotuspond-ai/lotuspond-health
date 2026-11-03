@@ -1,8 +1,8 @@
 import { create } from 'zustand';
 import type { OrganId } from '../types';
 
-export type View = 'body' | 'markers' | 'scans' | 'files' | 'profile' | 'account';
-export const VIEWS: View[] = ['body', 'markers', 'scans', 'files', 'profile', 'account'];
+export type View = 'body' | 'markers' | 'scans' | 'files' | 'profile' | 'account' | 'labs';
+export const VIEWS: View[] = ['body', 'markers', 'scans', 'files', 'profile', 'account', 'labs'];
 export type SectionAxis = 'coronal' | 'sagittal' | 'transverse';
 export type Quality = 'high' | 'fast';
 

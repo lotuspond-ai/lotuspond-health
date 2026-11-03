@@ -1,5 +1,7 @@
 // Backend that talks to the LotusPond API on the same origin (/api).
 import type { DocumentKind, Measurement, MeasurementInput, Profile, ProfileInput, ProfileRecords, ScanInput, ScanItem, SessionInfo, StoredDocument } from '../types';
+import type { FacilityQuery, FacilitySearchResult, GeoCandidate, GeoReverse, PublicConfig } from '../types';
+import { roundCoord } from '../../shared/facilities';
 import { ApiError, type Backend, type ScanPatch } from './backend';
 
 const BASE = '/api';
@@ -78,4 +80,16 @@ export class HttpBackend implements Backend {
   addScans(pid: string, scans: ScanInput[]) { return this.request<ScanItem[]>('POST', `/profiles/${pid}/scans`, { scans }); }
   updateScan(pid: string, id: string, patch: ScanPatch) { return this.request<ScanItem>('PATCH', `/profiles/${pid}/scans/${id}`, patch); }
   deleteScan(pid: string, id: string) { return this.request<void>('DELETE', `/profiles/${pid}/scans/${id}`); }
+
+  publicConfig() { return this.request<PublicConfig>('GET', '/config'); }
+  nearbyFacilities(q: FacilityQuery) {
+    const params = new URLSearchParams({ lat: q.lat.toFixed(5), lon: q.lon.toFixed(5), radius: String(q.radiusKm) });
+    if (q.kinds?.length) params.set('kinds', q.kinds.join(','));
+    if (q.country) params.set('country', q.country);
+    return this.request<FacilitySearchResult>('GET', `/facilities?${params}`);
+  }
+  searchPlaces(q: string) { return this.request<GeoCandidate[]>('GET', `/geo/search?${new URLSearchParams({ q })}`); }
+  reversePlace(lat: number, lon: number) {
+    return this.request<GeoReverse>('GET', `/geo/reverse?${new URLSearchParams({ lat: roundCoord(lat).toFixed(2), lon: roundCoord(lon).toFixed(2) })}`);
+  }
 }
