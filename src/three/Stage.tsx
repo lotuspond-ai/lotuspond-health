@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useMemo, useRef } from 'react';
+import { Suspense, useEffect, useMemo, useRef, type RefObject } from 'react';
 import * as THREE from 'three';
 import { Canvas, useThree } from '@react-three/fiber';
 import { Bvh, CameraControls, Html, MeshReflectorMaterial } from '@react-three/drei';
@@ -81,7 +81,12 @@ function CameraRig() {
 
 const STATUS_COLOR = { none: '#7f9b98', ok: '#5fbf95', out: '#e9b949', focus: '#e2869e' };
 
-function Pins() {
+/** Container for the HTML labels. drei's <Html> otherwise attaches labels to R3F's event element, which changes while
+ *  the canvas unmounts (for example on sign-out); each label then mounts a second React root on the same node and
+ *  the final teardown throws "removeChild … not a child of this node". A stable container avoids that. */
+type Portal = RefObject<HTMLElement>;
+
+function Pins({ portal }: { portal: Portal }) {
   const { layers, hovered, setHovered } = useUI();
   const measurements = useHealth(s => s.measurements);
   const selected = useHealth(s => s.selectedOrgan);
@@ -95,7 +100,7 @@ function Pins() {
         const state = !s || s.total === 0 ? 'none' : s.out > 0 ? 'out' : 'ok';
         const showLabel = hovered === o.id || state === 'out';
         return (
-          <Html key={o.id} position={o.pin} center zIndexRange={[20, 0]} style={{ display: hidden ? 'none' : undefined }}>
+          <Html key={o.id} portal={portal} position={o.pin} center zIndexRange={[20, 0]} style={{ display: hidden ? 'none' : undefined }}>
             <button className={`pin pin--${state}${hovered === o.id ? ' is-hot' : ''}`} style={{ ['--pin' as string]: STATUS_COLOR[state] }}
               onClick={() => selectOrgan(o.id)} onPointerEnter={() => setHovered(o.id)} onPointerLeave={() => setHovered(null)}
               aria-label={`${o.name}${s?.total ? `, ${s.total} results, ${s.out} outside range` : ''}`}>
@@ -109,13 +114,13 @@ function Pins() {
   );
 }
 
-function Landmarks() {
+function Landmarks({ portal }: { portal: Portal }) {
   const selected = useHealth(s => s.selectedOrgan);
   const layers = useUI(s => s.layers);
   return (
     <>
       {ORGANS.flatMap(o => o.landmarks.map(l => ({ o, l }))).map(({ o, l }) => (
-        <Html key={o.id + l.name} position={l.at} zIndexRange={[20, 0]} className="lm-wrap" style={{ display: selected === o.id && layers.labels ? undefined : 'none' }}>
+        <Html key={o.id + l.name} portal={portal} position={l.at} zIndexRange={[20, 0]} className="lm-wrap" style={{ display: selected === o.id && layers.labels ? undefined : 'none' }}>
           <div className="landmark" tabIndex={0}>
             <span className="landmark__dot" />
             <span className="landmark__name">{l.name}</span>
@@ -127,8 +132,8 @@ function Landmarks() {
   );
 }
 
-function Loader() {
-  return <Html center><div className="stage-loading">Loading the 3D model…</div></Html>;
+function Loader({ portal }: { portal: Portal }) {
+  return <Html portal={portal} center><div className="stage-loading">Loading the 3D model…</div></Html>;
 }
 
 function ToneFix({ quality }: { quality: 'high' | 'fast' }) {
@@ -140,19 +145,22 @@ function ToneFix({ quality }: { quality: 'high' | 'fast' }) {
 export default function Stage() {
   const quality = useUI(s => s.quality);
   const selectOrgan = useHealth(s => s.selectOrgan);
+  const labelLayer = useRef<HTMLDivElement>(null);
+  const labels = labelLayer as Portal;
   return (
+    <>
     <Canvas className="stage-canvas" frameloop="demand" dpr={[1, 2]} camera={{ fov: 30, near: 0.02, far: 40, position: HOME.pos.toArray() }}
       gl={{ antialias: quality === 'fast', powerPreference: 'high-performance' }} onPointerMissed={(e) => { if (e.type === 'dblclick') selectOrgan(null); }}>
       <color attach="background" args={[POND]} />
       <fog attach="fog" args={[POND, 3.2, 7.5]} />
       <ToneFix quality={quality} />
       <StudioLight />
-      <Suspense fallback={<Loader />}>
+      <Suspense fallback={<Loader portal={labels} />}>
         <Bvh firstHitOnly={false}>
           <Anatomy />
         </Bvh>
-        <Pins />
-        <Landmarks />
+        <Pins portal={labels} />
+        <Landmarks portal={labels} />
       </Suspense>
       <Pond quality={quality} />
       <CameraRig />
@@ -166,5 +174,7 @@ export default function Stage() {
         </EffectComposer>
       )}
     </Canvas>
+    <div ref={labelLayer} className="stage-labels" />
+    </>
   );
 }

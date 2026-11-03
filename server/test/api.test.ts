@@ -18,8 +18,11 @@ let database: Database;
 let app: Hono<AppEnv>;
 let filesDir: string;
 
+// TEST_DATABASE_URL runs the suite against a real PostgreSQL server; otherwise an in-memory PGlite database is used.
+const run = Date.now().toString(36);
+
 before(async () => {
-  database = await openDatabase({});
+  database = await openDatabase({ url: process.env.TEST_DATABASE_URL });
   await database.migrate(migrations);
   filesDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lotuspond-files-'));
   const config = loadConfig({ NODE_ENV: 'test', TRUST_PROXY: 'true' });
@@ -69,7 +72,7 @@ const measurement = (over: Partial<Measurement> = {}): Omit<Measurement, 'id'> =
 
 let counter = 0;
 async function signUp(c = client()) {
-  const email = `person${++counter}@example.com`;
+  const email = `person${++counter}.${run}@example.com`;
   const info = await c.json<SessionInfo>('POST', '/api/auth/register', { email, password: 'correct horse battery', displayName: 'Asha' }, 201);
   return { c, email, info, self: info.profiles[0] };
 }
@@ -87,7 +90,7 @@ describe('accounts', () => {
   });
 
   it('sets an HttpOnly, SameSite cookie', async () => {
-    const res = await client().call('POST', '/api/auth/register', { email: 'cookie@example.com', password: 'long enough password', displayName: 'C' });
+    const res = await client().call('POST', '/api/auth/register', { email: `cookie.${run}@example.com`, password: 'long enough password', displayName: 'C' });
     const set = res.headers.get('set-cookie') ?? '';
     assert.match(set, /HttpOnly/i);
     assert.match(set, /SameSite=Lax/i);
@@ -115,11 +118,14 @@ describe('accounts', () => {
     await c.json('POST', '/api/auth/login', { email: email.toUpperCase(), password: 'correct horse battery' });
     await c.json('GET', '/api/auth/me');
     await c.json('POST', '/api/auth/logout', undefined, 204);
-    assert.equal((await c.call('GET', '/api/auth/me')).status, 401);
+    assert.equal(await c.json('GET', '/api/auth/me'), null, 'signed out: no session');
   });
 
   it('requires a session for profile data', async () => {
     assert.equal((await client().call('GET', '/api/profiles')).status, 401);
+    assert.equal(await client().json('GET', '/api/auth/me'), null);
+    const forged = await app.request('/api/auth/me', { headers: { cookie: 'lp_session=not-a-real-token-but-long-enough' } });
+    assert.equal(await forged.json(), null);
   });
 
   it('changing the password signs out other sessions', async () => {
@@ -129,7 +135,8 @@ describe('accounts', () => {
     const wrong = await c.call('POST', '/api/auth/password', { currentPassword: 'nope nope nope', newPassword: 'a brand new password' });
     assert.equal(wrong.status, 400);
     await c.json('POST', '/api/auth/password', { currentPassword: 'correct horse battery', newPassword: 'a brand new password' }, 204);
-    assert.equal((await other.call('GET', '/api/auth/me')).status, 401, 'other session revoked');
+    assert.equal(await other.json('GET', '/api/auth/me'), null, 'other session revoked');
+    assert.equal((await other.call('GET', '/api/profiles')).status, 401, 'revoked session cannot read data');
     await c.json('GET', '/api/auth/me');
     await client().json('POST', '/api/auth/login', { email, password: 'a brand new password' });
   });

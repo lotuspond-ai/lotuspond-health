@@ -1,0 +1,36 @@
+# Production-style stack: PostgreSQL plus the LotusPond app on http://localhost:8787.
+#   POSTGRES_PASSWORD=choose-one docker compose up --build
+# Put it behind HTTPS (a reverse proxy) for real use and set COOKIE_SECURE=true and TRUST_PROXY=true.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: lotuspond
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      POSTGRES_DB: lotuspond
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lotuspond -d lotuspond"]
+      interval: 5s
+      retries: 10
+    restart: unless-stopped
+
+  app:
+    build: .
+    environment:
+      DATABASE_URL: postgres://lotuspond:${POSTGRES_PASSWORD}@db:5432/lotuspond
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      TRUST_PROXY: ${TRUST_PROXY:-false}
+    ports:
+      - "8787:8787"
+    volumes:
+      - files:/data
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  files:

@@ -229,9 +229,9 @@ check('organSummary heart has LDL high', sum.heart.high >= 1 && sum.heart.total 
 const liverRows = store.measurementsForOrgan({ measurements: sm }, 'liver');
 check('measurementsForOrgan liver history', liverRows.find(s => s.key === 'alt')?.history.length === 3);
 const s = store.useHealth.getState();
-s.loadSample();
+await s.loadSample();
 check('store loadSample', store.useHealth.getState().measurements.length === sm.length);
-store.useHealth.getState().loadSample();
+await store.useHealth.getState().loadSample();
 check('store dedupes on re-add', store.useHealth.getState().measurements.length === sm.length);
 const tshRow = store.useHealth.getState().measurements.find(m => m.markerId === 'tsh' && m.date === '2026-10-20');
 store.useHealth.getState().updateMeasurement(tshRow.id, { value: 6.1, valueText: '6.1' });
@@ -245,10 +245,13 @@ store.useHealth.getState().removeMeasurement(tshRow.id);
 check('removeMeasurement', store.useHealth.getState().measurements.length === sm.length - 1);
 store.useHealth.getState().selectOrgan('liver');
 check('selectOrgan', store.useHealth.getState().selectedOrgan === 'liver');
-await store.hydrate();
-check('hydrate without IndexedDB keeps data', store.useHealth.getState().hydrated && store.useHealth.getState().measurements.length === sm.length - 1);
-store.useHealth.getState().clearAll();
-check('clearAll', store.useHealth.getState().measurements.length === 0);
+store.useHealth.getState().removeDocument('missing-doc');
+check('removeDocument of unknown id keeps results', store.useHealth.getState().measurements.length === sm.length - 1);
+await store.useHealth.getState().clearAll();
+check('clearAll', store.useHealth.getState().measurements.length === 0 && store.useHealth.getState().selectedOrgan === null);
+await store.useHealth.getState().loadSample();
+await store.useHealth.getState().openProfile(null);
+check('openProfile(null) clears records', store.useHealth.getState().measurements.length === 0 && store.useHealth.getState().profileId === null);
 check('refreshMeasurement export', typeof refreshMeasurement === 'function');
 
 /* ---------------- PDF ---------------- */

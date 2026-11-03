@@ -12,6 +12,8 @@ import { createApp } from './app.ts';
 // This file runs from server/src (tsx) or server/dist (bundle); both are one level below server/.
 const serverRoot = fileURLToPath(new URL('..', import.meta.url));
 
+// Optional server/.env (see .env.example); variables already set in the environment win.
+try { process.loadEnvFile('.env'); } catch { /* no .env file */ }
 const config = loadConfig();
 const dataDir = path.resolve(config.dataDir);
 if (!config.staticDir && config.env === 'production') {

@@ -10,5 +10,7 @@ await build({
   target: 'node22',
   packages: 'external',
   sourcemap: true,
+  // The bundle is the production server: default NODE_ENV accordingly (secure cookies, serve ../dist).
+  banner: { js: "process.env.NODE_ENV ??= 'production';" },
   logLevel: 'info',
 });

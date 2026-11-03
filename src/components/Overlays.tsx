@@ -8,6 +8,9 @@ import { buildSeries, formatDate, STATUS_WORD } from '../lib/derive';
 import { useUI } from '../state/ui';
 import { Icon, RangeBar, TrendChart } from './ui';
 import { OrganSelect } from '../pages/Scans';
+import { errorMessage, isPreview } from '../api';
+import { firstName, useActiveProfile } from '../state/session';
+import { toast } from '../state/toast';
 import type { Measurement, ParseResult } from '../types';
 
 function useEscape(close: () => void) {
@@ -54,17 +57,39 @@ export function MarkerDrawer() {
 export function UploadDialog() {
   const open = useUI(s => s.uploadOpen), setOpen = useUI(s => s.setUploadOpen);
   const addResult = useHealth(s => s.addResult);
+  const profile = useActiveProfile();
   const [over, setOver] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [draft, setDraft] = useState<ParseResult | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
-  const close = () => { setOpen(false); setDraft(null); setBusy(null); };
+  const close = () => { if (saving) return; setOpen(false); setDraft(null); setBusy(null); setFiles([]); setSaveError(null); };
   useEscape(close);
   if (!open) return null;
+  const who = profile?.relationship === 'self' ? 'your' : `${firstName(profile)}’s`;
 
-  async function handle(files: FileList | File[]) {
+  async function save(d: ParseResult) {
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const done = await addResult(d, files);
+      setSaving(false);
+      close();
+      const parts = [done.measurements && `${done.measurements} result${done.measurements > 1 ? 's' : ''}`, done.scans && `${done.scans} scan${done.scans > 1 ? 's' : ''}`].filter(Boolean);
+      toast.info(parts.length ? `Added ${parts.join(' and ')} to ${who} records.` : 'Everything in these files was already in the records.');
+    } catch (e) {
+      setSaving(false);
+      setSaveError(`Nothing was added. ${errorMessage(e)}`);
+    }
+  }
+
+  async function handle(list: FileList | File[]) {
     const merged: ParseResult = { measurements: [], scans: [], blobs: {}, warnings: [], detectedDate: null };
-    for (const f of Array.from(files)) {
+    const chosen = Array.from(list);
+    setFiles(chosen);
+    for (const f of chosen) {
       setBusy(`Reading ${f.name}…`);
       try {
         const r = await parseFile(f);
@@ -81,7 +106,9 @@ export function UploadDialog() {
     <div className="scrim" onClick={close}>
       <div className="dialog" role="dialog" aria-modal="true" aria-labelledby="up-title" onClick={e => e.stopPropagation()}>
         <div className="dialog__head"><div><h2 id="up-title">{draft ? 'Check what was read' : 'Add results and scans'}</h2>
-          <p className="muted">{draft ? 'Edit anything that looks wrong, then add it to your body map.' : 'Files are read on this device. Nothing is uploaded to a server.'}</p></div>
+          <p className="muted">{draft
+            ? `Edit anything that looks wrong, then add it to ${who} records.`
+            : isPreview ? `Files are read on this device and saved to ${who} records in this browser.` : `Files are read on this device, then saved with the originals to ${who} records.`}</p></div>
           <button className="btn btn--quiet x" onClick={close} aria-label="Close">{Icon.close}</button></div>
         {!draft ? (
           <div className={`drop${over ? ' is-over' : ''}`} onDragOver={e => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)}
@@ -125,10 +152,11 @@ export function UploadDialog() {
               </div>
             )}
             {draft.measurements.length === 0 && draft.scans.length === 0 && <p className="lede" style={{ marginTop: 12 }}>Nothing could be read from these files. Try a text-based PDF, a CSV export, or image files.</p>}
+            {saveError && <p className="form-error" role="alert" style={{ marginTop: 14 }}>{saveError}</p>}
             <div className="tools" style={{ marginTop: 20, justifyContent: 'flex-end' }}>
-              <button className="btn" onClick={() => setDraft(null)}>Choose other files</button>
-              <button className="btn btn--primary" disabled={!draft.measurements.length && !draft.scans.length}
-                onClick={() => { addResult(draft); close(); }}>Add {draft.measurements.length ? `${draft.measurements.length} results` : ''}{draft.measurements.length && draft.scans.length ? ' and ' : ''}{draft.scans.length ? `${draft.scans.length} scans` : ''}</button>
+              <button className="btn" disabled={saving} onClick={() => { setDraft(null); setFiles([]); setSaveError(null); }}>Choose other files</button>
+              <button className="btn btn--primary" disabled={saving || (!draft.measurements.length && !draft.scans.length)}
+                onClick={() => void save(draft)}>{saving ? 'Saving…' : <>Add {draft.measurements.length ? `${draft.measurements.length} results` : ''}{draft.measurements.length && draft.scans.length ? ' and ' : ''}{draft.scans.length ? `${draft.scans.length} scans` : ''}</>}</button>
             </div>
           </>
         )}

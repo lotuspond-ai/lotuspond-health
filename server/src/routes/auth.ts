@@ -6,7 +6,7 @@ import { profiles, users, type UserRow } from '../db/schema.ts';
 import type { Db } from '../db/client.ts';
 import { hashPassword, verifyAgainstDummy, verifyPassword } from '../auth/password.ts';
 import {
-  clearSessionCookie, createSession, deleteSessionByToken, deleteUserSessions, readSessionCookie, writeSessionCookie,
+  clearSessionCookie, createSession, deleteSessionByToken, deleteUserSessions, findSession, readSessionCookie, writeSessionCookie,
 } from '../auth/sessions.ts';
 import { conflict, HttpError, tooMany } from '../lib/errors.ts';
 import { RateLimiter } from '../lib/rate-limit.ts';
@@ -27,7 +27,8 @@ export function authRoutes(deps: Deps) {
   const app = new Hono<AppEnv>();
   const loginByIp = new RateLimiter(20, 15 * MINUTE);
   const loginByEmail = new RateLimiter(8, 15 * MINUTE);
-  const registerByIp = new RateLimiter(10, 60 * MINUTE);
+  // Sign-ups per network per hour. Relaxed outside production so local testing does not lock itself out.
+  const registerByIp = new RateLimiter(config.env === 'production' ? 10 : 500, 60 * MINUTE);
   const auth = requireAuth(deps);
 
   async function startSession(c: Ctx, user: UserRow) {
@@ -78,7 +79,16 @@ export function authRoutes(deps: Deps) {
     return c.body(null, 204);
   });
 
-  app.get('/me', auth, async c => c.json(await sessionInfo(db, c.var.user)));
+  /** The current session, or null when signed out (a normal state for the app's first request, so not a 401). */
+  app.get('/me', async c => {
+    const token = readSessionCookie(c);
+    const session = token ? await findSession(db, token, config.sessionTtlMs) : null;
+    if (!session) {
+      if (token) clearSessionCookie(c, config.cookieSecure);
+      return c.json(null);
+    }
+    return c.json(await sessionInfo(db, session.user));
+  });
 
   app.post('/password', auth, async c => {
     const body = await readJson(c, ChangePasswordBody);

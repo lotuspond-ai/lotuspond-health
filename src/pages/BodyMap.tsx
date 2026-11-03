@@ -1,4 +1,4 @@
-import { lazy, Suspense, useMemo } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { useHealth } from '../lib/store';
 import { SYSTEM_LABELS } from '../lib/catalog';
 import { useUI, type SectionAxis } from '../state/ui';
@@ -6,6 +6,10 @@ import { ORGANS, ORGAN_BY_ID } from '../anatomy/organs';
 import { buildSeries, formatDate, seriesForOrgan, systemCounts, STATUS_WORD, type Series } from '../lib/derive';
 import { Icon, RangeBar, Sparkline } from '../components/ui';
 import type { OrganId, SystemId } from '../types';
+import { errorMessage, isPreview } from '../api';
+import { firstName, possessive, useActiveProfile } from '../state/session';
+import { toast } from '../state/toast';
+import { findLegacyData, legacyAsResult, markLegacyHandled } from '../lib/legacy';
 
 const Stage = lazy(() => import('../three/Stage'));
 
@@ -60,10 +64,11 @@ function StageOverlay() {
   const selected = useHealth(s => s.selectedOrgan), selectOrgan = useHealth(s => s.selectOrgan);
   const { layers, toggleLayer, quality, setQuality } = useUI();
   const organ = selected ? ORGAN_BY_ID[selected] : null;
+  const profile = useActiveProfile();
   return (
     <>
       <div className="stage__title">
-        <h2>{organ ? organ.name : 'Your body, mapped'}</h2>
+        <h2>{organ ? organ.name : `${possessive(profile)} body, mapped`}</h2>
         <p>{organ ? 'Drag to turn, scroll to move closer, and hover a point to read about it.' : 'Click an organ to open it. Dots show where your results relate.'}</p>
       </div>
       <div className="stage__tools" role="group" aria-label="Model layers">
@@ -99,13 +104,48 @@ function MarkerRow({ s }: { s: Series }) {
   );
 }
 
+type Legacy = Awaited<ReturnType<typeof findLegacyData>>;
+
+/** Offer to bring in results saved by the earlier, browser-only version. */
+function LegacyImport() {
+  const addResult = useHealth(s => s.addResult);
+  const profile = useActiveProfile();
+  const [legacy, setLegacy] = useState<Legacy>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { let alive = true; void findLegacyData().then(d => { if (alive) setLegacy(d); }); return () => { alive = false; }; }, []);
+  if (!legacy) return null;
+  const n = legacy.measurements.length, k = legacy.scans.length;
+  return (
+    <div className="callout legacy">
+      <p><b>Results from the earlier version of LotusPond</b></p>
+      <p className="note">This browser holds {n} result{n === 1 ? '' : 's'}{k ? ` and ${k} scan${k === 1 ? '' : 's'}` : ''} saved before accounts existed. Import them into {profile?.relationship === 'self' ? 'your' : `${firstName(profile)}’s`} records?</p>
+      <div className="tools">
+        <button className="btn btn--primary" disabled={busy} onClick={async () => {
+          setBusy(true);
+          try {
+            const done = await addResult(await legacyAsResult(legacy), []);
+            await markLegacyHandled();
+            setLegacy(null);
+            toast.info(`Imported ${done.measurements} results${done.scans ? ` and ${done.scans} scans` : ''}.`);
+          } catch (e) { toast.error(errorMessage(e)); setBusy(false); }
+        }}>{busy ? 'Importing…' : 'Import'}</button>
+        <button className="btn btn--quiet" disabled={busy} onClick={() => { void markLegacyHandled(); setLegacy(null); }}>Not now</button>
+      </div>
+    </div>
+  );
+}
+
 function Welcome() {
   const loadSample = useHealth(s => s.loadSample);
   const setUploadOpen = useUI(s => s.setUploadOpen);
+  const profile = useActiveProfile();
+  const [busy, setBusy] = useState(false);
+  const self = profile?.relationship !== 'self' ? `${firstName(profile)}’s` : 'your';
   return (
     <div className="welcome">
-      <h2>See your results where they happen</h2>
-      <p className="lede">Add a lab report or a scan and LotusPond places each result on the organ it relates to, so you can explore your body one system at a time.</p>
+      <LegacyImport />
+      <h2>{profile?.relationship === 'self' ? 'See your results where they happen' : `Start ${self} record`}</h2>
+      <p className="lede">Add a lab report or a scan and LotusPond places each result on the organ it relates to, so you can explore {profile?.relationship === 'self' ? 'your body' : `${self} health`} one system at a time.</p>
       <ol>
         <li>Upload PDF or CSV lab reports, or photos and DICOM files of scans.</li>
         <li>Check what was read from each file and fix anything that looks wrong.</li>
@@ -113,9 +153,16 @@ function Welcome() {
       </ol>
       <div className="actions">
         <button className="btn btn--primary" onClick={() => setUploadOpen(true)}>{Icon.upload} Upload results</button>
-        <button className="btn" onClick={loadSample}>Explore with sample data</button>
+        <button className="btn" disabled={busy} onClick={async () => {
+          setBusy(true);
+          try { await loadSample(); toast.info('Sample results added. Delete them any time from the profile page.'); }
+          catch (e) { toast.error(errorMessage(e)); }
+          finally { setBusy(false); }
+        }}>{busy ? 'Adding sample…' : 'Explore with sample data'}</button>
       </div>
-      <p className="note" style={{ marginTop: 18 }}>Files are read on this device and stay in this browser. LotusPond explains results; it does not diagnose.</p>
+      <p className="note" style={{ marginTop: 18 }}>{isPreview
+        ? 'Files are read on this device and saved in this browser only. LotusPond explains results; it does not diagnose.'
+        : 'Files are read on this device and saved to your account with their originals. LotusPond explains results; it does not diagnose.'}</p>
     </div>
   );
 }
@@ -203,6 +250,7 @@ function OrganPanel({ organ, series }: { organ: OrganId; series: Series[] }) {
 export default function BodyMap({ hidden }: { hidden?: boolean }) {
   const series = useSeries();
   const selected = useHealth(s => s.selectedOrgan);
+  const loading = useHealth(s => s.loading);
   return (
     <main className="bodymap" hidden={hidden}>
       <IndexPanel series={series} />
@@ -211,7 +259,8 @@ export default function BodyMap({ hidden }: { hidden?: boolean }) {
         <StageOverlay />
       </section>
       <aside className="context" aria-live="polite">
-        {selected ? <OrganPanel organ={selected} series={series} /> : series.length ? <Overview series={series} /> : <Welcome />}
+        {loading ? <p className="note loading-note" role="status">Loading records…</p>
+          : selected ? <OrganPanel organ={selected} series={series} /> : series.length ? <Overview series={series} /> : <Welcome />}
       </aside>
     </main>
   );
