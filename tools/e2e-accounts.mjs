@@ -1,13 +1,17 @@
-// End-to-end check of accounts, profiles, uploads and files in a real browser.
-// Run against the dev stack (npm run dev) or a production build (npm start):
+// End-to-end check of the public website, accounts, profiles, uploads and files in a real browser.
+// Run against the dev stack (npm run dev), a production build (npm start) or the server-less preview
+// (npm run build:artifact, then npx vite preview --outDir dist-artifact):
 //   node tools/e2e-accounts.mjs [url] [screenshot-dir]
+// With a server, it checks the landing, legal and 404 pages at desktop and phone widths, then signs up from the
+// landing page's "Create free account". The preview has no website, so it starts at #signup instead.
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const { chromium } = createRequire(import.meta.url)('playwright');
-const url = process.argv[2] ?? 'http://localhost:5173/';
+const url = new URL(process.argv[2] ?? 'http://localhost:5173/');
+const at = p => new URL(p, url).href;
 const out = process.argv[3] ?? 'shots';
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures');
 fs.mkdirSync(out, { recursive: true });
@@ -15,27 +19,101 @@ fs.mkdirSync(out, { recursive: true });
 const browser = await chromium.launch({ args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
 const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
 const page = await context.newPage();
+page.setDefaultTimeout(90000); // software WebGL on a busy machine can be slow to produce a frame
 const problems = [];
 let expectRejectedSignIn = false; // the wrong-password step makes the browser log a 401 on purpose
+let expectNotFound = false; // so does the 404 page check, with a 404
 page.on('console', m => {
   if (m.type() !== 'error') return;
   if (expectRejectedSignIn && m.text().includes('status of 401')) return;
-  problems.push(`console: ${m.text().slice(0, 300)}`);
+  if (expectNotFound && m.text().includes('status of 404')) return;
+  problems.push(`console (${page.url()}): ${m.text().slice(0, 300)}`);
 });
-page.on('pageerror', e => problems.push(`page error: ${e.message}`));
+page.on('pageerror', e => problems.push(`page error (${page.url()}): ${e.message}`));
 
 let step = 0;
 async function shot(name, full = false) { await page.screenshot({ path: `${out}/${String(++step).padStart(2, '0')}-${name}.png`, fullPage: full }); }
 function expect(ok, what) { if (!ok) problems.push(`FAILED: ${what}`); console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); }
 const text = sel => page.locator(sel).first().innerText();
+const sideScroll = () => page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1);
+const pathOf = () => new URL(page.url()).pathname;
 
 const email = `asha.${Date.now()}@example.com`;
 const password = 'lotus pond lily pad';
 
 try {
+// 0. Public website (servers only; the preview build is the app alone)
+await page.goto(at('./'), { waitUntil: 'networkidle' });
+const hasSite = await page.getByRole('link', { name: 'Create free account' }).first().isVisible().catch(() => false);
+console.log(hasSite ? 'Public website found; checking it first.' : 'No public website (preview build); starting at #signup.');
+
+if (hasSite) {
+  const dev = await page.locator('script[src*="@vite/client"]').count() > 0;
+  expect(await page.getByRole('heading', { level: 1 }).innerText() === 'Your health records, mapped to your body.', 'landing page has its headline');
+  expect(await page.locator('link[rel=canonical]').getAttribute('href') === 'https://health.lotuspond.ai/' || !!process.env.SITE_URL, 'landing page has a canonical URL');
+  expect((await page.locator('meta[property="og:image"]').getAttribute('content'))?.endsWith('/site/og.png'), 'landing page has a social preview image');
+  const ld = await page.locator('script[type="application/ld+json"]').textContent();
+  let graph = [];
+  try { graph = JSON.parse(ld)['@graph']; } catch { /* reported below */ }
+  expect(graph.some(n => n['@type'] === 'WebApplication') && graph.some(n => n.parentOrganization), 'landing page has JSON-LD for the app and its parent organisation');
+  if (!dev) expect(await page.locator('script:not([type="application/ld+json"])').count() === 0, 'landing page runs no JavaScript');
+  const og = await page.request.get(at('/site/og.png'));
+  expect(og.ok() && og.headers()['content-type'] === 'image/png', 'social preview image is served');
+  const robots = await (await page.request.get(at('/robots.txt'))).text();
+  expect(/Sitemap: https?:\/\/\S+\/sitemap\.xml/.test(robots), 'robots.txt names the sitemap');
+  const sitemap = await (await page.request.get(at('/sitemap.xml'))).text();
+  expect(['/', '/privacy/', '/terms/', '/trust/'].every(p => sitemap.includes(`${p}</loc>`)), 'sitemap.xml lists the public pages');
+
+  // Keyboard: the first Tab reaches the skip link, which shows with a focus outline.
+  await page.keyboard.press('Tab');
+  const focus = await page.evaluate(() => { const a = document.activeElement; const s = getComputedStyle(a); return { text: a.textContent, outline: s.outlineStyle, top: a.getBoundingClientRect().top }; });
+  expect(focus.text === 'Skip to content' && focus.outline !== 'none' && focus.top >= 0, 'skip link is reachable and visibly focused');
+
+  const pages = [
+    { path: '/', name: 'landing', h1: /mapped to your body/ },
+    { path: '/privacy/', name: 'privacy', h1: /Privacy Policy/ },
+    { path: '/terms/', name: 'terms', h1: /Terms of Use/ },
+    { path: '/trust/', name: 'trust', h1: /look after your records/ },
+    { path: '/no-such-page', name: '404', h1: /drifted off/, status: 404 },
+  ];
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: width > 500 ? 900 : 844 });
+    for (const p of pages) {
+      expectNotFound = p.status === 404;
+      const res = await page.goto(at(p.path), { waitUntil: 'networkidle' });
+      expectNotFound = false;
+      const ok = res.status() === (p.status ?? 200) && p.h1.test(await page.getByRole('heading', { level: 1 }).innerText());
+      expect(ok, `${p.name} page loads at ${width}px (${res.status()})`);
+      if (width === 390) expect(!(await sideScroll()), `${p.name} page has no sideways scroll at 390px`);
+      await shot(`site-${p.name}-${width}`, true);
+    }
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(at('/privacy'), { waitUntil: 'networkidle' });
+  expect(pathOf() === '/privacy/', '/privacy redirects to /privacy/');
+  expect(await page.locator('#consumer-health-data').count() === 1, 'privacy page has the Consumer Health Data Privacy Policy section');
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  expect(await page.evaluate(() => getComputedStyle(document.documentElement).scrollBehavior) === 'auto', 'reduced motion turns off smooth scrolling');
+  await page.emulateMedia({ reducedMotion: null });
+
+  // From the landing page to sign-up.
+  await page.goto(at('/'), { waitUntil: 'networkidle' });
+  await page.locator('.hero').getByRole('link', { name: 'Create free account' }).click();
+  await page.getByRole('heading', { name: 'Start your record' }).waitFor();
+  expect(pathOf() === '/signup', '"Create free account" opens /signup in sign-up mode');
+  expect(await page.getByRole('link', { name: 'LotusPond Health home' }).getAttribute('href') === '/', 'auth screen links to the LotusPond Health home page');
+  await page.getByRole('tab', { name: 'Sign in' }).click();
+  expect(pathOf() === '/login' && (await page.title()).startsWith('Sign in'), 'switching to sign-in changes the address to /login');
+  await page.getByRole('tab', { name: 'Create account' }).click();
+  expect(pathOf() === '/signup', 'and back to /signup');
+} else {
+  await page.goto(at('./#signup'), { waitUntil: 'networkidle' });
+  await page.getByRole('heading', { name: 'Start your record' }).waitFor();
+  expect(true, '#signup opens the auth screen in sign-up mode');
+  expect((await page.getByRole('link', { name: 'LotusPond Health home' }).getAttribute('href'))?.startsWith('http'), 'auth screen links to the live website');
+}
+
 // 1. Sign-up
-await page.goto(url, { waitUntil: 'networkidle' });
-await page.getByRole('tab', { name: 'Create account' }).click();
 await shot('create-account');
 await page.getByLabel('Your name').fill('Asha Rao');
 await page.getByLabel('Email').fill(email);
@@ -47,6 +125,7 @@ await page.getByRole('button', { name: 'Create account', exact: true }).click();
 
 // 2. Onboarding
 await page.getByRole('heading', { name: /Welcome, Asha/ }).waitFor();
+if (hasSite) expect(pathOf() === '/app', 'after sign-up the address is /app');
 await page.getByLabel('Date of birth').fill('1990-04-12');
 await page.getByRole('radio', { name: 'Female' }).click();
 await page.getByLabel('Height').fill('164');
@@ -112,6 +191,11 @@ await shot('family-body');
 await page.reload({ waitUntil: 'networkidle' });
 await page.getByRole('heading', { name: 'Start Mira’s record' }).waitFor();
 expect(true, 'reload keeps the session and the open profile');
+if (hasSite) {
+  await page.goto(at('/login'), { waitUntil: 'networkidle' });
+  await page.getByRole('heading', { name: 'Start Mira’s record' }).waitFor();
+  expect(pathOf() === '/app', 'a signed-in visit to /login goes to /app');
+}
 
 // 9. Switch back; records are separate
 await page.locator('.pmenu__trigger').click();
@@ -131,6 +215,7 @@ await shot('account', true);
 await page.locator('.pmenu__trigger').click();
 await page.getByRole('menuitem', { name: 'Sign out' }).click();
 await page.getByRole('heading', { name: 'Welcome back' }).waitFor();
+if (hasSite) expect(pathOf() === '/login', 'signing out goes to /login');
 await page.getByLabel('Email').fill(email);
 await page.getByLabel('Password', { exact: true }).fill(password);
 expectRejectedSignIn = true;
@@ -141,18 +226,19 @@ await page.getByLabel('Password', { exact: true }).fill('a brand new lily pad');
 await page.getByRole('button', { name: 'Sign in', exact: true }).click();
 await page.getByRole('heading', { name: 'Overview' }).waitFor();
 expect(true, 'signs in with the new password');
+if (hasSite) expect(pathOf() === '/app', 'after sign-in the address is /app');
 
 // 11. Phone width
 await page.setViewportSize({ width: 390, height: 844 });
 await page.locator('.pmenu__trigger').click();
 await page.getByRole('menuitem', { name: 'Profile details' }).click();
 await page.waitForTimeout(400);
-const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1);
-expect(!overflow, 'profile page has no sideways scroll at phone width');
+expect(!(await sideScroll()), 'profile page has no sideways scroll at phone width');
 await shot('profile-phone', true);
 await page.locator('.pmenu__trigger').click();
 await page.getByRole('menuitem', { name: 'Sign out' }).click();
 await page.getByRole('heading', { name: 'Welcome back' }).waitFor();
+expect(!(await sideScroll()), 'sign-in screen has no sideways scroll at phone width');
 await shot('signin-phone', true);
 
 } catch (e) {
