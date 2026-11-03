@@ -126,8 +126,6 @@ body { -webkit-tap-highlight-color: transparent; -webkit-text-size-adjust: 100%;
   .page__head .spacer { display: none; }
   .search { min-width: 0; flex: 1 1 100%; }
   .tally b { font-size: 28px; }
-  /* Result filters scroll sideways; each chip keeps its full width (labs.css also styles a .fchip, with min-width 0). */
-  .fchips > .fchip { flex: none; max-width: none; }
 
   /* tables become cards */
   .table, .table tbody { display: block; }

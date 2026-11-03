@@ -152,7 +152,7 @@ Turned on from **Account → App lock**, in the apps only. Turning it on or off 
   - the share sheet for reports and exports
   - the location prompt
   - Face ID, Touch ID and Android fingerprint prompts, the passcode fallback and the app switcher cover
-- **Self-hosted map tiles.** With the default OpenStreetMap tiles the map works as on the web. With `MAP_PMTILES_URL` the apps fetch the `.pmtiles` file from the API host in byte ranges, across origins. The server's CORS answer for the apps doesn't list `Range` yet, so check the map on devices before turning that on.
+- **Self-hosted map tiles.** With `MAP_PMTILES_URL` the apps fetch the `.pmtiles` file from the API host in byte ranges, across origins. The server's CORS answer allows `Range` and exposes `Content-Range` and `ETag` for this, but it hasn't been tried in the iOS and Android web views yet.
 - **Later features:**
   - "Open in LotusPond" from Files, Mail and other apps (document types and intent filters)
   - 3D performance tuning on older phones
