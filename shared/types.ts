@@ -139,6 +139,78 @@ export interface SessionInfo {
   profiles: Profile[];
 }
 
+/* ---------------- consent, activity and sign-up ---------------- */
+
+/** What a person agreed to. `cross_border` applies where records are stored outside their country. */
+export type ConsentKind = 'terms' | 'privacy' | 'health_data' | 'cross_border' | 'marketing';
+
+/** One consent decision. Decisions are never edited; a change adds a new record. */
+export interface ConsentRecord {
+  kind: ConsentKind;
+  /** Version of the consent texts (CONSENT_VERSION in shared/regions.ts). */
+  version: string;
+  granted: boolean;
+  createdAt: string;
+  /** Country of residence at the time. */
+  country: string | null;
+}
+
+/** Account events kept in the audit log and shown as "Recent activity". */
+export type AuditKind =
+  | 'account_created' | 'sign_in' | 'sign_in_failed' | 'sign_out' | 'password_changed' | 'sessions_revoked'
+  | 'export' | 'profile_deleted' | 'records_deleted' | 'account_deleted' | 'consent_changed' | 'preferences_changed';
+
+/** The only details an audit event may carry. Deliberately narrow: never names, values, file names or other health data. */
+export interface AuditDetail {
+  consent?: ConsentKind;
+  granted?: boolean;
+  unitSystem?: 'conventional' | 'si';
+  /** Opaque id of the profile acted on. */
+  profileId?: string;
+}
+
+export interface ActivityEvent {
+  id: string;
+  kind: AuditKind;
+  createdAt: string;
+  /** Short device description, e.g. "Firefox on Windows". */
+  device: string | null;
+  detail: AuditDetail | null;
+}
+
+/** Everything sign-up sends. The server checks each rule again. */
+export interface RegisterInput {
+  email: string;
+  password: string;
+  displayName: string;
+  /** ISO 3166-1 alpha-2 country of residence. */
+  country: string;
+  /** The person confirmed they are at least the country's minimum age. */
+  ageConfirmed: boolean;
+  consents: {
+    /** Terms and Privacy Policy (recorded as two consents). */
+    termsAndPrivacy: boolean;
+    healthData: boolean;
+    /** Required when the country's records are stored abroad. */
+    crossBorder: boolean;
+    /** Optional product emails. */
+    marketing: boolean;
+  };
+}
+
+/** Public facts about this server, for sign-up and the Account page. */
+export interface ServiceInfo {
+  /** Data regions this server holds records for. Sign-up for other regions is refused. */
+  servedRegions: ('in' | 'eu' | 'us' | 'global')[];
+  consentVersion: string;
+  contacts: {
+    /** Grievance officer (India, DPDP Act). */
+    grievance: string | null;
+    /** Data protection officer. */
+    dpo: string | null;
+  };
+}
+
 /** Measurement as sent to the API; the server assigns the id. */
 export type MeasurementInput = Omit<Measurement, 'id'>;
 

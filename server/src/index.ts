@@ -1,38 +1,82 @@
-// Entry point: open the database, apply migrations, start the HTTP server.
+// Entry point: resolve secrets, open the default database and every cell (applying migrations to each), start the
+// HTTP server. `node dist/index.js files:rekey` instead re-encrypts stored files with the current key and exits.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { serve } from '@hono/node-server';
+import { REGIONS } from '../../shared/regions.ts';
 import { loadConfig } from './config.ts';
-import { openDatabase } from './db/client.ts';
-import { DiskFileStore } from './lib/files.ts';
+import { openCells, type Cell } from './cells.ts';
+import { resolveSecrets } from './compliance/secrets.ts';
+import { purgeOldEvents } from './compliance/audit.ts';
+import { EncryptedFileStore } from './lib/files-encrypted.ts';
 import { purgeExpiredSessions } from './auth/sessions.ts';
 import { createApp } from './app.ts';
 
 // This file runs from server/src (tsx) or server/dist (bundle); both are one level below server/.
 const serverRoot = fileURLToPath(new URL('..', import.meta.url));
+const command = process.argv[2];
 
 // Optional server/.env (see .env.example); variables already set in the environment win.
 try { process.loadEnvFile('.env'); } catch { /* no .env file */ }
-const config = loadConfig();
-const dataDir = path.resolve(config.dataDir);
+
+function fail(e: unknown): never {
+  console.error(`[api] ${e instanceof Error ? e.message : String(e)}`);
+  process.exit(1);
+}
+
+const config = (() => { try { return loadConfig(); } catch (e) { return fail(e); } })();
 if (!config.staticDir && config.env === 'production') {
   const built = path.resolve(serverRoot, '..', 'dist');
   if (fs.existsSync(built)) config.staticDir = built;
 }
 
-const database = await openDatabase({ url: config.databaseUrl, pgliteDir: path.join(dataDir, 'pglite') });
-await database.migrate(path.join(serverRoot, 'drizzle'));
-await purgeExpiredSessions(database.db);
+const secrets = (() => { try { return resolveSecrets(config); } catch (e) { return fail(e); } })();
+const opened = await openCells(config, secrets, path.join(serverRoot, 'drizzle')).catch(fail);
+const { registry } = opened;
+/** The default cell and every cell with storage of its own. */
+const allCells: Cell[] = [...new Set([registry.defaultCell, ...registry.cells])];
 
-const app = createApp({ db: database.db, files: new DiskFileStore(path.join(dataDir, 'files')), config });
+if (command === 'files:rekey') {
+  if (!config.fileEncryption) fail('FILE_ENCRYPTION=off: there is nothing to re-encrypt.');
+  let failed = 0;
+  for (const cell of allCells) {
+    if (!(cell.files instanceof EncryptedFileStore)) continue;
+    const r = await cell.files.rekey();
+    failed += r.failed.length;
+    console.log(`[files] ${cell.id} cell: ${r.checked} files checked, ${r.encrypted} encrypted for the first time, ${r.rekeyed} moved to the current key${r.failed.length ? `, ${r.failed.length} could not be read: ${r.failed.join(', ')}` : ''}.`);
+  }
+  await opened.close();
+  process.exit(failed ? 1 : 0);
+}
+if (command) fail(`Unknown command "${command}". The only command is files:rekey.`);
+
+async function sweep() {
+  for (const cell of allCells) {
+    await purgeExpiredSessions(cell.db);
+    await purgeOldEvents(cell.db, config.auditRetentionMs);
+  }
+}
+await sweep();
+
+if (config.env === 'production' && registry.serves('in') && !config.grievanceContact) {
+  console.warn('[api] GRIEVANCE_CONTACT is not set. India\'s DPDP Act requires a published grievance contact for accounts in India.');
+}
+
+const app = createApp({ db: opened.defaultDatabase.db, files: registry.defaultCell.files, config, cells: registry, secrets });
 const server = serve({ fetch: app.fetch, port: config.port, hostname: config.host }, info => {
-  console.log(`[api] LotusPond Health API on http://localhost:${info.port} (${database.kind}${database.kind === 'pglite' ? ` in ${path.join(dataDir, 'pglite')}` : ''})`);
+  const where = (d: (typeof opened.databases)[number]) => (d.database.kind === 'pglite' ? `PGlite in ${path.dirname(d.filesRoot)}` : 'PostgreSQL');
+  console.log(`[api] LotusPond Health API on http://localhost:${info.port} (${where(opened.databases[0])})`);
+  for (const cell of allCells) {
+    const regions = registry.regionsOf(cell).map(r => REGIONS[r].name);
+    const db = opened.databases.find(d => d.id === cell.id)!;
+    console.log(`[api]   ${cell.id} cell: ${regions.length ? regions.join(', ') : 'no regions (directory and shared data)'}; ${where(db)}; files in ${db.filesRoot}${config.fileEncryption ? ', encrypted' : ', NOT encrypted'}`);
+  }
   if (config.staticDir) console.log(`[api] serving the app from ${config.staticDir}`);
 });
 
-const sweep = setInterval(() => void purgeExpiredSessions(database.db).catch(() => {}), 6 * 60 * 60 * 1000);
-sweep.unref();
+const timer = setInterval(() => void sweep().catch(() => {}), 6 * 60 * 60 * 1000);
+timer.unref();
 
 let stopping = false;
 async function stop(signal: string) {
@@ -40,7 +84,7 @@ async function stop(signal: string) {
   stopping = true;
   console.log(`[api] ${signal}: shutting down`);
   server.close();
-  await database.close().catch(() => {});
+  await opened.close();
   process.exit(0);
 }
 process.on('SIGINT', () => void stop('SIGINT'));

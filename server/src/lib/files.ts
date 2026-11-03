@@ -1,4 +1,5 @@
-// Storage for uploaded originals. Files are kept on disk under DATA_DIR/files/<profileId>/<documentId>.
+// Storage for uploaded originals. Files are kept on disk under <cell data dir>/files/<profileId>/<documentId>,
+// encrypted by EncryptedFileStore (files-encrypted.ts) unless FILE_ENCRYPTION=off.
 // Swap in an object-store implementation (S3, GCS) of the same interface for multi-instance deployments.
 import fs from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
@@ -14,10 +15,16 @@ export interface FileStore {
   deletePrefix(prefix: string): Promise<void>;
 }
 
+/** A store that can also hand back whole files and list its keys (what encryption and re-keying need). */
+export interface ByteStore extends FileStore {
+  read(key: string): Promise<Uint8Array | null>;
+  keys(): AsyncIterable<string>;
+}
+
 const SAFE_KEY = /^[0-9a-f-]{36}(?:\/[0-9a-f-]{36})?$/;
 
-export class DiskFileStore implements FileStore {
-  private readonly root: string;
+export class DiskFileStore implements ByteStore {
+  readonly root: string;
   constructor(root: string) {
     this.root = path.resolve(root);
   }
@@ -43,6 +50,36 @@ export class DiskFileStore implements FileStore {
       return null;
     }
     return Readable.toWeb(createReadStream(file)) as ReadableStream<Uint8Array>;
+  }
+
+  async read(key: string): Promise<Uint8Array | null> {
+    try {
+      return new Uint8Array(await fs.readFile(this.resolve(key)));
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw e;
+    }
+  }
+
+  async *keys(): AsyncIterable<string> {
+    let dirs: string[];
+    try {
+      dirs = await fs.readdir(this.root);
+    } catch {
+      return;
+    }
+    for (const dir of dirs) {
+      let names: string[];
+      try {
+        names = await fs.readdir(path.join(this.root, dir));
+      } catch {
+        continue;
+      }
+      for (const name of names) {
+        const key = `${dir}/${name}`;
+        if (SAFE_KEY.test(key)) yield key;
+      }
+    }
   }
 
   async delete(key: string): Promise<void> {

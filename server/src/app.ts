@@ -6,7 +6,8 @@ import { bodyLimit } from 'hono/body-limit';
 import { secureHeaders } from 'hono/secure-headers';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { forbidden, HttpError } from './lib/errors.ts';
-import type { AppEnv, Deps } from './http.ts';
+import type { AppEnv } from './http.ts';
+import { completeDeps, type DepsInput } from './cells.ts';
 import { authRoutes } from './routes/auth.ts';
 import { profileRoutes } from './routes/profiles.ts';
 
@@ -27,7 +28,8 @@ const PAGE_CSP = [
   "frame-ancestors 'none'",
 ].join('; ');
 
-export function createApp(deps: Deps): Hono<AppEnv> {
+export function createApp(input: DepsInput): Hono<AppEnv> {
+  const deps = completeDeps(input); // one default cell unless index.ts opened several
   const { config } = deps;
   const app = new Hono<AppEnv>();
 

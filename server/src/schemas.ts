@@ -17,10 +17,26 @@ export const NewPassword = z.string()
   .min(LIMITS.passwordMin, `Use at least ${LIMITS.passwordMin} characters.`)
   .max(LIMITS.passwordMax, `Use at most ${LIMITS.passwordMax} characters.`);
 
+/** Sign-up. Country, age and consent rules are checked by signUpProblem() in shared/regions.ts. */
 export const RegisterBody = z.object({
   email: Email,
   password: NewPassword,
   displayName: z.string().trim().min(1, 'Enter your name.').max(80),
+  country: z.string({ error: 'Choose the country you live in.' }).trim().toUpperCase().max(2, 'Choose the country you live in.'),
+  ageConfirmed: z.boolean({ error: 'Confirm your age.' }),
+  consents: z.object({
+    termsAndPrivacy: z.boolean().default(false),
+    healthData: z.boolean().default(false),
+    crossBorder: z.boolean().default(false),
+    marketing: z.boolean().default(false),
+  }, { error: 'Answer the consent questions.' }),
+});
+
+export const PreferencesBody = z.object({ unitSystem: z.enum(['conventional', 'si'], { error: 'Choose conventional or SI units.' }) });
+
+export const ConsentPatchBody = z.object({
+  kind: z.enum(['terms', 'privacy', 'health_data', 'cross_border', 'marketing'], { error: 'Unknown consent.' }),
+  granted: z.boolean(),
 });
 
 export const LoginBody = z.object({

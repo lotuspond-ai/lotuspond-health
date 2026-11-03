@@ -8,17 +8,26 @@ import type { ProfileRow, UserRow } from './db/schema.ts';
 import type { FileStore } from './lib/files.ts';
 import { badRequest, unauthorized } from './lib/errors.ts';
 import { findSession, readSessionCookie } from './auth/sessions.ts';
+import type { Cell, CellRegistry } from './cells.ts';
+import type { Secrets } from './compliance/secrets.ts';
 
 export interface Deps {
+  /** The default database: non-personal data (directory, partner labs, facility cache). Personal data is in `cells`. */
   db: Db;
+  /** The default cell's file store. Routes use the request's cell (`c.var.cell.files`). */
   files: FileStore;
   config: Config;
+  /** Where each region's accounts and records are kept. */
+  cells: CellRegistry;
+  secrets: Secrets;
 }
 
 export interface AppEnv {
   Variables: {
     user: UserRow;
     sessionId: string;
+    /** The signed-in account's cell. Every query for personal data uses `c.var.cell.db` and `c.var.cell.files`. */
+    cell: Cell;
     profile: ProfileRow;
   };
 }
@@ -55,14 +64,15 @@ export function clientIp(c: Ctx, trustProxy: boolean): string {
   }
 }
 
-/** Require a signed-in user; sets `user` and `sessionId`. */
+/** Require a signed-in user; sets `user`, `sessionId` and the account's `cell`. */
 export function requireAuth(deps: Deps): MiddlewareHandler<AppEnv> {
   return async (c, next) => {
     const token = readSessionCookie(c);
-    const session = token ? await findSession(deps.db, token, deps.config.sessionTtlMs) : null;
+    const session = token ? await findSession(deps.cells, token, deps.config.sessionTtlMs) : null;
     if (!session) throw unauthorized();
     c.set('user', session.user);
     c.set('sessionId', session.id);
+    c.set('cell', session.cell);
     await next();
   };
 }
