@@ -28,6 +28,8 @@
 	<true/>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Find labs and clinics near you. Your location is rounded to about 1 km before it is used.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Connect to a LotusPond test server on your network, when you choose one in a test build.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<!-- Plain http to local network addresses only, for testing against a server on your computer. -->
