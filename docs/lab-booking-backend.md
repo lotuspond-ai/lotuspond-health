@@ -1,6 +1,6 @@
 # Lab booking and results: backend design
 
-Status: November 2026. Booking and results into the profile are built on the API server (`server/src/lab/`), against a simulated lab; the app's screens for them are next. No lab partner has signed yet, so everything partner-specific (endpoints, status names, webhook format) is a placeholder until we have their API docs.
+Status: November 2026. Booking, results into the profile and the app's screens for them are built (`server/src/lab/`, `src/components/labs/`), against a simulated lab. No lab partner has signed yet, so everything partner-specific (endpoints, status names, webhook format) is a placeholder until we have their API docs.
 
 ## 1. Context
 
@@ -148,6 +148,16 @@ Built in `server/src/lab/results/service.ts`.
 
 Replacing earlier deliveries matters because the app's merge only drops repeats with the same marker, date and value. A corrected value in an amended report would otherwise sit next to the old one. The server matches the earlier delivery by its document and by the order's label, so the replacement doesn't depend on what the app sends.
 
+### 5.4 In the app
+
+Find a lab gets a second half, **Home collection**, for accounts held in a region with a partner (`LAB_BOOKING_REGIONS`); elsewhere, and in the server-less preview, the page is unchanged.
+
+- **Booking** is a four-step dialog. *Tests*: the pincode (filled from the profile's home area when it has one) and the packages offered there, cheapest first, with price, list price, fasting and report time. *Visit*: seven days and the free one-hour slots, in India time, starting from the first day with a free slot. *Details*: name, age and sex for the lab (filled from the profile), the mobile number the collector calls, and the address. *Confirm*: a summary and the booking notice (§5.1, step 3), which must be ticked.
+- **Idempotency.** The key is made when the details are first sent and kept while they stay the same, so pressing Book again after a dropped connection is the same booking; changing anything makes a new key. A slot taken meanwhile (`409 slot_unavailable`) goes back to the visit step with fresh slots; `202 placing` closes the dialog and the order shows "Confirming with the lab".
+- **Orders** are listed with results to check first, then those in progress, then the rest. Each shows the visit, the price, a five-step tracker (booked, collector, sample collected, at the lab, results) and a line about what happens next. While the lab allows it, the visit can be moved (`GET …/:oid/slots`, which uses the address the server holds, so the app never needs it back) or the booking cancelled.
+- **Following.** The app checks orders and results every 5 seconds while one is moving and Find a lab is open, every minute otherwise, and when it returns to the foreground. New results raise a notice, and the number waiting shows on Find a lab in the menu and the phone tab bar.
+- **Review** opens the result in the upload review table (§5.3, step 4): values can be corrected, re-matched or removed, and the report PDF opened. Adding saves them and reloads the profile's records; *Don't add* dismisses the result.
+
 ## 6. Order states
 
 ```
@@ -183,7 +193,7 @@ All under `/api`, signed in with main's session (cookie in the browser, bearer t
 | `GET /api/lab/slots?partner=&pincode=&date=&items=` | Available slots |
 | `POST /api/profiles/:pid/lab-orders` | Book for that profile (example below); needs an `Idempotency-Key` header |
 | `GET /api/profiles/:pid/lab-orders`, `GET …/:oid` | The profile's orders, or one order with its status timeline |
-| `POST …/:oid/cancel` `{reason?}`, `POST …/:oid/reschedule` `{slot}` | Change an order |
+| `POST …/:oid/cancel` `{reason?}`, `GET …/:oid/slots?date=`, `POST …/:oid/reschedule` `{slot}` | Cancel an order; free slots for moving its visit (same lab, address and tests); move it |
 | `GET /api/profiles/:pid/lab-results` (`?status=all` for every delivery) | Results waiting for review, with their bundle (`LabResultView`) |
 | `GET …/lab-results/:rid/report` | The report PDF |
 | `POST …/lab-results/:rid/save` `{measurements}`, `POST …/:rid/dismiss` | Save the reviewed values (and the PDF) as the profile's records, or drop the result |
@@ -362,13 +372,17 @@ server/src/lab/
   sealer.ts, log.ts, time.ts
 server/src/db/schema.ts       lab_* tables (migrations 0003_lab_orders.sql, 0004_lab_results.sql)
 server/test/                  fake-lab, state, webhooks, lab-store, lab-booking and lab-results tests
+src/state/lab.ts              the open profile's orders and results, dialogs, Find a lab's tab
+src/components/labs/          HomeTests (orders), BookingDialog, SlotPicker, ResultReview, labFormat, useLabFollow
+src/api/                      lab methods on the Backend interface (http.ts; browser.ts refuses them)
+tools/test-app-client.ts      the app's client booking cross-site, as the mobile apps do
 ```
 
 ## 15. Build order
 
 1. **Done: simulated lab, end to end.** The partner interface and simulated lab, the state machine, the webhook receiver, processor and poller, and the booking API, on the API server's accounts, profiles, cells and audit log.
 2. **Done: results into the profile (§5.3).**
-3. **Next: the app's booking and review screens.**
+3. **Done: the app's booking and review screens (§5.4).**
 4. **First real partner, PDF results.** Whichever partner signs first. Adapter, webhook verification, and a pilot in one city.
 5. **Then:** purging contact details after an order closes, cancelling open orders before a profile is deleted, notifications, payments (if we collect), a second partner, and a small internal view of stuck orders.
 
@@ -398,7 +412,7 @@ server/test/                  fake-lab, state, webhooks, lab-store, lab-booking 
 **For us:**
 
 - Children: profiles can be children, but bookings are adults-only for now. Is the account holder's consent enough as a parent's, or does DPDP need more?
-- Should the app ask for the mobile number once and keep it on the profile, or each time?
+- Should the app ask for the mobile number and address once and keep them on the profile? For now it asks at each booking and keeps nothing on the device.
 - Which pilot city?
 
 ## 18. Revisit as it grows

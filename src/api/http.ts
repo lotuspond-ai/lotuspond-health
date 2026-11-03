@@ -203,10 +203,14 @@ export class HttpBackend implements Backend {
   async cancelLabOrder(pid: string, id: string, reason?: string) {
     return (await this.request<{ order: LabOrderView }>('POST', `/profiles/${pid}/lab-orders/${id}/cancel`, reason ? { reason } : {})).order;
   }
+  async labOrderSlots(pid: string, id: string, date: string) {
+    return (await this.request<{ slots: LabSlot[] }>('GET', `/profiles/${pid}/lab-orders/${id}/slots?${new URLSearchParams({ date })}`)).slots;
+  }
   async rescheduleLabOrder(pid: string, id: string, slot: LabSlot) {
     return (await this.request<{ order: LabOrderView }>('POST', `/profiles/${pid}/lab-orders/${id}/reschedule`, { slot })).order;
   }
   async labResults(pid: string) { return (await this.request<{ results: LabResultView[] }>('GET', `/profiles/${pid}/lab-results`)).results; }
+  labReportUrl(pid: string, rid: string) { return this.app ? null : `${BASE}/profiles/${pid}/lab-results/${rid}/report`; }
   async labReport(pid: string, rid: string) {
     const res = await this.fetchFile(`/profiles/${pid}/lab-results/${rid}/report`);
     if (!res.ok) throw new ApiError(res.status, 'file', res.status === 404 ? 'The lab report was not found.' : 'The lab report could not be loaded.');

@@ -252,6 +252,14 @@ export class BookingService {
     return this.localMove(o.id, 'cancelled', 'user', 'cancelled by the user');
   }
 
+  /** Slots for moving an order's visit: same lab, address and tests, without the app needing the address. */
+  async slotsForOrder(owner: Owner, orderId: string, date: string): Promise<Slot[]> {
+    const o = await this.owned(owner, orderId);
+    if (!canReschedule(o.status) || !o.contactCt) throw new BookingError('not_reschedulable', `This visit can no longer be moved (${o.status})`);
+    const { address } = this.partnerInput(o);
+    return this.slots(owner.region, o.partner, address.pincode, date, o.items.map(i => i.code));
+  }
+
   async reschedule(owner: Owner, orderId: string, slot: Slot): Promise<OrderRecord> {
     const o = await this.owned(owner, orderId);
     if (!canReschedule(o.status) || !o.partnerRef) throw new BookingError('not_reschedulable', `This visit can no longer be moved (${o.status})`);

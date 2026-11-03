@@ -18,6 +18,7 @@ A personal health record. Create an account, keep a profile for yourself and eac
 - **Biomarkers**: latest value of each marker grouped by body system, with its position in the reference range and its trend over time.
 - **Scans**: assign scans to body areas; view with zoom, and brightness/contrast for DICOM.
 - **Files**: every original report and scan, with links to open, download or delete it.
+- **Find a lab**: labs, imaging centres and hospitals near you on a map. For accounts held in India, **Home collection** books a lab visit at home for any profile: pick a package for your pincode and a time, follow the order from booking to report, move or cancel the visit, then check the results on the same review screen as an upload before they are added. Only the simulated lab is connected so far (see [Lab booking](#lab-booking-in-progress)).
 - **Account**: where your records are stored, the consents you gave (with date and version), recent sign-ins and changes, units for lab values (conventional or SI), contacts for data questions; change password, sign out other devices, export a profile as JSON, delete a profile or the whole account.
 
 Reference ranges come from your report when it prints one; otherwise a typical adult range is used and labelled. LotusPond explains results; it does not diagnose.
@@ -182,7 +183,7 @@ All routes are under `/api` and use JSON unless noted.
 | `POST /profiles/:id/scans`, `PATCH`/`DELETE …/scans/:sid` | Save, edit or delete scans |
 | `GET /lab/catalog?pincode=`, `GET /lab/slots?partner=&pincode=&date=&items=` | Lab booking: packages and home-collection slots from the partners serving the account's region |
 | `GET`, `POST /profiles/:id/lab-orders` | A profile's lab bookings, or book one (needs an `Idempotency-Key` header) |
-| `GET /profiles/:id/lab-orders/:oid`, `POST …/:oid/cancel`, `POST …/:oid/reschedule` | One booking with its status timeline; cancel or move the visit |
+| `GET /profiles/:id/lab-orders/:oid`, `POST …/:oid/cancel`, `GET …/:oid/slots?date=`, `POST …/:oid/reschedule` | One booking with its status timeline; cancel it, or find a new time (same lab, address and tests) and move the visit |
 | `GET /profiles/:id/lab-results`, `GET …/lab-results/:rid/report` | Lab results waiting for review (`?status=all` for every delivery), and the report PDF |
 | `POST …/lab-results/:rid/save` `{ measurements }`, `POST …/:rid/dismiss` | Save the reviewed values and the PDF as the profile's records (replacing an earlier delivery of the same order), or drop the result |
 
@@ -195,9 +196,10 @@ Book a home sample collection with a lab partner for any profile, and follow it 
 - **Partners.** No real lab is connected yet. `LAB_PARTNERS=fake` runs a simulated lab inside the server: it has packages, slots and an order timeline, sends signed webhooks, and writes reports as structured results plus a PDF. It is on by default in development and refused in production. Each partner serves one data region (the simulated lab: India), and only accounts held there can book with it.
 - **Orders.** Orders are kept in the account's cell with the profile they are for, and carry the booking consent (notice version and time). The patient's contact details are encrypted with the cell's file key. Partner webhooks are only hints: the server asks the partner for the current status, and a poller catches missed webhooks.
 - **Results.** When the lab's report is ready, the server fetches it and keeps it, with the PDF, waiting for review. The app reads it like an upload; saving makes the values measurements and the PDF a document in the profile, replacing whatever an earlier delivery of the same order saved (a partial report, or one later amended).
-- **Not built yet.** The app's booking and review screens, payments (orders are pay-at-collection), and notifications.
+- **In the app.** Find a lab → Home collection (shown only for accounts in a region with a partner, and not in the server-less preview). Booking takes four steps: tests for a pincode, a visit time (India time), who is tested and where the collector comes, then a notice naming the lab and what it receives, which must be accepted. The booking is sent with an idempotency key tied to exactly those details, so retrying after a dropped connection never books twice. Orders show a progress tracker and can be moved or cancelled while the lab allows it. The screen checks the lab every few seconds while an order is moving, and every minute elsewhere in the app; results waiting to be checked show as a count on Find a lab. Code: `src/components/labs/` (`HomeTests`, `BookingDialog`, `SlotPicker`, `ResultReview`) and `src/state/lab.ts`.
+- **Not built yet.** Payments (orders are pay-at-collection), notifications, and keeping the mobile number and address for the next booking.
 
-To try it, run `npm run dev`, sign up with India as the country, and book through the API (the order moves a step every 10 seconds; set `LAB_FAKE_STEP_MS` to change that).
+To try it, run `npm run dev`, sign up with India as the country, open Find a lab and book with a Bengaluru, Mumbai or Delhi pincode (e.g. 560034). The order moves a step every 10 seconds (set `LAB_FAKE_STEP_MS` to change that). Add `#partial`, `#recollect`, `#slot-full` and the like to the patient's name to play other scenarios ([list](server/src/lab/README.md#the-simulated-lab)).
 
 ## Mobile apps (iOS and Android)
 
@@ -250,7 +252,7 @@ The product's own site, **https://health.lotuspond.ai**, is built by the same Vi
 | `src/lib/` | Biomarker catalog, file parsers, the records store |
 | `src/api/` | Data access: `http.ts` talks to the API, `browser.ts` keeps everything in IndexedDB for server-less previews |
 | `src/state/` | Session (account, profiles, open profile), interface state, toasts |
-| `src/pages/`, `src/components/` | Interface |
+| `src/pages/`, `src/components/` | Interface (`src/components/labs/`: Find a lab, home collection booking and lab results review) |
 | `index.html`, `privacy/`, `terms/`, `trust/`, `404.html`, `src/site/` | Public website (see above); `app.html` is the app shell |
 | `tools/site/` | Build plugin for the website, region tables, screenshot and social-image tool |
 | `server/src/` | API: routes, auth, database schema, file storage, cells (`cells.ts`) and compliance records (`compliance/`: directory, consents, audit log, secrets) |

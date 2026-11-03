@@ -217,7 +217,9 @@ describe('managing orders', () => {
     const o = (await env.book(c, profileId)).body.order!;
     await env.advance(1000);
     assert.equal((await env.getOrder(c, profileId, o.id)).status, 'collector_assigned');
+    const forOrder = await c.json<{ slots: { start: string; end: string }[] }>('GET', `/api/profiles/${profileId}/lab-orders/${o.id}/slots?date=${istDate(env.now() + 3 * 86_400_000)}`);
     const newSlot = await env.slot(c, istDate(env.now() + 3 * 86_400_000));
+    assert.deepEqual(forOrder.slots, (await c.json<{ slots: unknown[] }>('GET', `/api/lab/slots?partner=fake&pincode=560034&date=${istDate(env.now() + 3 * 86_400_000)}&items=FL_ESSENTIAL`)).slots, 'same slots, without the app sending the address');
     const r = await c.json<{ order: LabOrderView }>('POST', `/api/profiles/${profileId}/lab-orders/${o.id}/reschedule`, { slot: newSlot });
     assert.equal(r.order.status, 'booked');
     assert.equal(r.order.slot?.start, newSlot.start);
@@ -225,6 +227,7 @@ describe('managing orders', () => {
     await env.advance(1000);
     await env.advance(1000);
     assert.equal((await c.error('POST', `/api/profiles/${profileId}/lab-orders/${o.id}/reschedule`, { slot: newSlot })).code, 'not_reschedulable');
+    assert.equal((await c.error('GET', `/api/profiles/${profileId}/lab-orders/${o.id}/slots?date=${istDate(env.now() + 3 * 86_400_000)}`)).code, 'not_reschedulable');
   });
 
   test('from booking to report, driven by the lab\'s webhooks', async () => {

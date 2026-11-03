@@ -6,9 +6,10 @@ Home sample collection with lab partners, as designed in [docs/lab-booking-backe
 - the order state machine, sync with partners, and the poller;
 - the webhook receiver and inbox processor;
 - the booking API: catalogue, slots, and booking, listing, cancelling and rescheduling a profile's orders;
-- results into the profile: reports fetched into pending results, reviewed in the app, saved as the profile's records.
+- results into the profile: reports fetched into pending results, reviewed in the app, saved as the profile's records;
+- the app's screens (Find a lab → Home collection, in `src/components/labs/`).
 
-Not built yet: the app's booking and review screens, payments (orders are pay-at-collection), and notifications.
+Not built yet: payments (orders are pay-at-collection) and notifications.
 
 ## How it fits the server
 

@@ -5,6 +5,7 @@
 //   GET  /api/profiles/:pid/lab-orders                the profile's orders, newest first
 //   GET  /api/profiles/:pid/lab-orders/:oid           one order with its timeline
 //   POST /api/profiles/:pid/lab-orders/:oid/cancel    { reason? }
+//   GET  /api/profiles/:pid/lab-orders/:oid/slots?date= slots for moving the visit (same lab, address, tests)
 //   POST /api/profiles/:pid/lab-orders/:oid/reschedule { slot }
 //   GET  /api/profiles/:pid/lab-results               pending results (?status=all for every delivery)
 //   GET  /api/profiles/:pid/lab-results/:rid/report   the report PDF
@@ -101,6 +102,11 @@ export function labOrderRoutes(deps: Deps, labs: Labs) {
       await recordEvent(c.var.cell.db, eventContext(c, deps), c.var.user.id, 'lab_order_cancelled', { profileId: order.profileId });
     }
     return c.json({ order: orderView(order) });
+  });
+
+  app.get('/:oid/slots', async c => {
+    const slots = await runtime(labs, c).booking.slotsForOrder(owner(c), c.req.param('oid'), c.req.query('date') ?? '');
+    return c.json({ slots });
   });
 
   app.post('/:oid/reschedule', async c => {

@@ -24,6 +24,7 @@ import { memoryLogger } from '../server/src/lab/log.ts';
 import { createLabs, fakePartner } from '../server/src/lab/runtime.ts';
 import { istDate } from '../server/src/lab/time.ts';
 import { LAB_BOOKING_NOTICE_VERSION } from '../shared/lab-bundle.ts';
+import { nextDays, rupees, slotLabel, stepOf, timeRange } from '../src/components/labs/labFormat.ts';
 import { parseJsonText } from '../src/lib/parse/json.ts';
 
 const ORIGIN = 'capacitor://localhost';
@@ -284,5 +285,32 @@ describe('app client: lab booking', () => {
     assert.equal((await backend.records(pid)).measurements.length, reviewed.length);
     assert.equal((await backend.labOrder(pid, order.id)).status, 'delivered');
     assert.deepEqual(await backend.labResults(pid), []);
+  });
+});
+
+describe('app: lab booking display', () => {
+  const slot = (a: string, b: string) => ({ start: `2026-11-08T${a}:00+05:30`, end: `2026-11-08T${b}:00+05:30` });
+
+  it('shows prices in rupees with Indian grouping', () => {
+    assert.equal(rupees(99900), '₹999');
+    assert.equal(rupees(18990000), '₹1,89,900');
+    assert.equal(rupees(34950), '₹349.50');
+  });
+
+  it('shows visits in India time, whatever the device clock says', () => {
+    assert.equal(timeRange(slot('07:00', '08:00')), '7:00 – 8:00 am');
+    assert.equal(timeRange(slot('11:00', '12:00')), '11:00 am – 12:00 pm');
+    assert.equal(slotLabel(slot('16:00', '17:00')), 'Sun, 8 Nov, 4:00 – 5:00 pm');
+    // 01:30 on 4 November in India is still 3 November in UTC: the days start from India's today.
+    assert.deepEqual(nextDays(3, Date.parse('2026-11-03T20:00:00Z')), [
+      { date: '2026-11-04', label: 'Today' }, { date: '2026-11-05', label: 'Tomorrow' }, { date: '2026-11-06', label: 'Fri, 6 Nov' },
+    ]);
+  });
+
+  it('places each order status on the tracker', () => {
+    const at = (status: string) => stepOf({ status } as Parameters<typeof stepOf>[0]);
+    assert.deepEqual(['booked', 'collector_assigned', 'sample_collected', 'processing', 'report_ready', 'delivered'].map(at), [0, 1, 2, 3, 4, 4]);
+    assert.equal(at('recollection_needed'), 0, 'a new sample starts the visit again');
+    assert.deepEqual(['placing', 'failed', 'cancelled', 'expired'].map(at), [-1, -1, -1, -1]);
   });
 });

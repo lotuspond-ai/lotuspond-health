@@ -93,11 +93,15 @@ export interface Backend {
    */
   bookLab(profileId: string, input: LabBookingInput, idempotencyKey: string): Promise<LabOrderView>;
   cancelLabOrder(profileId: string, id: string, reason?: string): Promise<LabOrderView>;
+  /** Slots for moving a booking's visit (the server knows its address). */
+  labOrderSlots(profileId: string, id: string, date: string): Promise<LabSlot[]>;
   rescheduleLabOrder(profileId: string, id: string, slot: LabSlot): Promise<LabOrderView>;
   /** Results waiting for review. */
   labResults(profileId: string): Promise<LabResultView[]>;
   /** The report PDF of a result. */
   labReport(profileId: string, resultId: string): Promise<Blob>;
+  /** A link that opens the report PDF in the browser, or null in the apps (which fetch it with labReport). */
+  labReportUrl(profileId: string, resultId: string): string | null;
   /** Save reviewed values (and the report PDF) as the profile's records. */
   saveLabResult(profileId: string, resultId: string, measurements: MeasurementInput[]): Promise<LabResultSaved>;
   /** Drop a result without saving anything. */

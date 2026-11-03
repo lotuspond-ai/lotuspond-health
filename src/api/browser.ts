@@ -494,9 +494,11 @@ export class BrowserBackend implements Backend {
   async labOrder(): Promise<LabOrderView> { throw noLabs(); }
   async bookLab(): Promise<LabOrderView> { throw noLabs(); }
   async cancelLabOrder(): Promise<LabOrderView> { throw noLabs(); }
+  async labOrderSlots(): Promise<LabSlot[]> { throw noLabs(); }
   async rescheduleLabOrder(): Promise<LabOrderView> { throw noLabs(); }
   async labResults(): Promise<LabResultView[]> { return []; }
   async labReport(): Promise<Blob> { throw noLabs(); }
+  labReportUrl(): string | null { return null; }
   async saveLabResult(): Promise<LabResultSaved> { throw noLabs(); }
   async dismissLabResult(): Promise<LabResultView> { throw noLabs(); }
 

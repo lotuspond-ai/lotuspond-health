@@ -162,3 +162,14 @@ export interface LabResultSaved {
   /** Measurements from an earlier delivery of the same order that this one replaced. */
   replaced: number;
 }
+
+/** How each partner is named in the app. */
+export const PARTNER_LABELS: Record<PartnerId, string> = {
+  fake: 'LotusPond Test Lab (simulated)',
+  tata1mg: 'Tata 1mg Labs',
+  thyrocare: 'Thyrocare',
+  labsadvisor: 'LabsAdvisor',
+};
+
+/** Data regions with at least one lab partner. Only accounts held there can book. */
+export const LAB_BOOKING_REGIONS: readonly string[] = ['in'];
