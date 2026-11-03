@@ -1,0 +1,65 @@
+# LotusPond Health in production at https://health.lotuspond.ai, on one server: PostgreSQL, the app, and Caddy for
+# HTTPS (certificates from Let's Encrypt, renewed automatically). See deploy/README.md.
+#   cd deploy && ./make-secrets.sh && $EDITOR .env && docker compose up -d --build
+name: lotuspond-health
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: lotuspond
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in deploy/.env (make-secrets.sh does)}
+      POSTGRES_DB: lotuspond
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lotuspond -d lotuspond"]
+      interval: 5s
+      retries: 20
+    restart: unless-stopped
+
+  app:
+    build:
+      context: ..
+      args:
+        SITE_URL: https://${DOMAIN:-health.lotuspond.ai}
+    # Optional settings (contacts, geocoder contact, extra cells…) come from deploy/.env; see .env.example.
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://lotuspond:${POSTGRES_PASSWORD}@db:5432/lotuspond
+      COOKIE_SECURE: "true"
+      TRUST_PROXY: "true"
+      SERVED_REGIONS: ${SERVED_REGIONS:?Set SERVED_REGIONS in deploy/.env to the regions this server's location may hold}
+      DIRECTORY_SECRET: ${DIRECTORY_SECRET:?Set DIRECTORY_SECRET in deploy/.env (make-secrets.sh does)}
+      FILE_ENCRYPTION_KEY: ${FILE_ENCRYPTION_KEY:?Set FILE_ENCRYPTION_KEY in deploy/.env (make-secrets.sh does)}
+    volumes:
+      - files:/data
+    expose:
+      - "8787"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN:-health.lotuspond.ai}
+      ACME_EMAIL: ${ACME_EMAIL:?Set ACME_EMAIL in deploy/.env (Let's Encrypt sends certificate notices there)}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  files:
+  caddy_data:
+  caddy_config:

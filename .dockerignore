@@ -9,3 +9,7 @@ tools/anatomy/parts
 tools/anatomy/dec
 .git
 .env
+server/.data-*
+.claude
+deploy/.env
+deploy/backups

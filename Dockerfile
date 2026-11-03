@@ -5,6 +5,9 @@ COPY package.json package-lock.json ./
 COPY server/package.json server/
 RUN npm ci
 COPY . .
+# Canonical address for links, sitemap and social previews.
+ARG SITE_URL=https://health.lotuspond.ai
+ENV SITE_URL=$SITE_URL
 RUN npm run build
 
 FROM node:22-bookworm-slim
@@ -20,5 +23,6 @@ RUN mkdir -p /data && chown node:node /data
 USER node
 VOLUME /data
 EXPOSE 8787
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||8787)+'/api/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"
 WORKDIR /app/server
 CMD ["node", "dist/index.js"]

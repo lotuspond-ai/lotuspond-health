@@ -1,9 +1,11 @@
-// Bundle the API into dist/index.js. Dependencies stay external and load from node_modules.
+// Bundle the API into dist/index.js, and the partner-lab import command into dist/facilities/import-cli.js (same
+// depth as in src/, since both find the server folder relative to themselves). Dependencies stay external.
 import { build } from 'esbuild';
 
 await build({
-  entryPoints: ['src/index.ts'],
-  outfile: 'dist/index.js',
+  entryPoints: ['src/index.ts', 'src/facilities/import-cli.ts'],
+  outdir: 'dist',
+  outbase: 'src',
   bundle: true,
   platform: 'node',
   format: 'esm',

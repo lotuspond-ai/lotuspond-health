@@ -1,0 +1,12 @@
+# HTTPS for LotusPond Health. Caddy gets and renews the certificate for the domain by itself.
+{
+	email {$ACME_EMAIL}
+}
+
+{$DOMAIN} {
+	# The app sends its own security headers (CSP, HSTS, nosniff) and serves precompressed files;
+	# Caddy compresses the rest (API responses) and leaves already-compressed responses alone.
+	encode zstd gzip
+	reverse_proxy app:8787
+	header -Server
+}

@@ -12,6 +12,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate-cli.ts",
     "partners:import": "tsx src/facilities/import-cli.ts",
+    "partners:import:prod": "node dist/facilities/import-cli.js",
     "files:rekey": "tsx src/index.ts files:rekey"
   },
   "devDependencies": {

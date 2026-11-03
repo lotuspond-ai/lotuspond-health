@@ -88,6 +88,9 @@ The cell tests (`server/test/compliance.test.ts`) run three cells at once: the d
 
 ## Production
 
+**To deploy on your own server at https://health.lotuspond.ai, follow [`deploy/README.md`](deploy/README.md):** PostgreSQL, the app and automatic HTTPS (Caddy) with one command, plus secrets, backups and partner-lab import. The notes below explain the pieces.
+
+
 ```bash
 npm run build      # frontend to dist/, server bundle to server/dist/
 npm start          # serves the API and the app on :8787

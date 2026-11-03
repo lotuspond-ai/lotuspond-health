@@ -43,3 +43,7 @@ server/dist/
 # temporary worktrees used by parallel coding agents
 .claude/worktrees/
 dist-mobile
+
+# production deployment secrets and backups
+deploy/.env
+deploy/backups/
