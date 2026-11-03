@@ -295,8 +295,8 @@ def load_za(sex):
 
 # ------------------------------------------------------------------------------------------------ refinement
 REF = dict(gap_brain=0.0016, soft_min=0.0034, soft_max_vault=0.0095, eye_clear=0.0010, condyle_gap=0.0015, ball=0.005,
-           sigma=0.012, sigma_fine=0.006, ridge=1e-3, iters=4, iters_fine=3, w_brain=3.0, w_brain_out=5.0, w_skin_out=6.0, w_skin=2.0, w_skin_far=1.0,
-           w_eye=3.0, w_condyle=3.0, w_keep=0.6, max_step=0.0015, skin_hard=0.0008, orbit_clear=0.0003)
+           sigma=0.012, sigma_fine=0.006, ridge=1e-3, iters=4, iters_fine=4, w_brain=3.0, w_brain_out=5.0, w_skin_out=8.0, w_skin=2.0, w_skin_far=2.0,
+           w_eye=3.0, w_condyle=3.0, w_keep=0.6, max_step=0.0015, skin_hard=0.0012, orbit_clear=0.0003, soft_min_nasal=0.0020)
 
 
 def voxel_subsample(p, h):
@@ -335,6 +335,8 @@ def refine(sex, Wz, Z, T, L, M, zsk, cfg=REF, log=log):
     cond0 = np.concatenate([V0['occipital_bone'][L[f'occ_condyle_{S}']] for S in 'LR'])
     S0 = np.concatenate([S0, cond0]); is_cond = np.r_[np.zeros(len(own), bool), np.ones(len(cond0), bool)]
     is_cran = np.r_[is_cran, np.ones(len(cond0), bool)]
+    # the nasal dorsum has only 2-3 mm of soft tissue over the nasal bones (rhinion): a lower minimum there
+    is_nasal = np.r_[np.isin(own, ['nasal_bone_l', 'nasal_bone_r']), np.zeros(len(cond0), bool)]
     D = MultiField()
     plug0 = Wz(L['fm_plug'][0]); rim0 = Wz(L['fm_rim'])
     bp, bn = T.brain_p, T.brain_n
@@ -381,7 +383,7 @@ def refine(sex, Wz, Z, T, L, M, zsk, cfg=REF, log=log):
             # where the brain needs the bone to move out (the Allen brain lies within a few mm of the skin) the brain
             # wins over the soft-tissue minimum; only bone closer than `skin_hard` to the skin is pulled back in
             relaxed |= best > 0
-            smin = np.where(relaxed, cfg['skin_hard'], cfg['soft_min'])
+            smin = np.where(relaxed, cfg['skin_hard'], np.where(is_nasal, cfg['soft_min_nasal'], cfg['soft_min']))
             vs = ss > -smin
             tgt[vs] = fdisp[vs] - np.minimum(ss[vs] + smin[vs], cfg['max_step'])[:, None] * nsk[vs]
             wts[vs] = np.where(ss[vs] > -cfg['skin_hard'], cfg['w_skin_out'], cfg['w_skin'])
@@ -447,8 +449,10 @@ def render_qa(sex, P, T, outdir, prefix='qa', extra=()):
     hs = T.head_skin
     c = brain[0].mean(0)
     items_skin = [dict(mesh=hs, color=COLORS['skin'], opacity=0.22)]
+    # the brain is drawn inside the opaque skull: any place where it shows through the bone is a containment failure
     core = [dict(mesh=bones, color=COLORS['bone']), dict(mesh=mand, color=COLORS['mandible']), dict(mesh=teeth, color=COLORS['teeth']),
-            dict(mesh=eyes, color=COLORS['eyes']), dict(mesh=c12, color=COLORS['c1']), dict(mesh=cord, color=COLORS['cord'])] + list(extra)
+            dict(mesh=brain, color=COLORS['brain']), dict(mesh=eyes, color=COLORS['eyes']), dict(mesh=c12, color=COLORS['c1']),
+            dict(mesh=cord, color=COLORS['cord'])] + list(extra)
     if 'hyoid_bone' in P: core.append(dict(mesh=P['hyoid_bone'][:2], color=COLORS['hyoid']))
     elif T.hyoid is not None: core.append(dict(mesh=T.hyoid, color=COLORS['hyoid']))
     R = 0.17
@@ -679,10 +683,27 @@ def run(sex, argv, L, zsk):
     return report
 
 
+def render_only(sex):
+    """Re-render the QA views from the cached placement (work/placed.npz) without refitting."""
+    from fit import skull_measure as M
+    Z = load_za(sex)
+    d = np.load(os.path.join(work_dir(sex), 'placed.npz'))
+    P = {n: (d[n + '__v'].astype(float), d[n + '__f'].astype(np.int64), Z[n][2]) for n in Z}
+    zp, zl, hp, hl, hn = brain_hulls(sex)
+    T = M.Targets(sex, hp, hl, hn)
+    out = os.path.join(FIT, sex, GROUP)
+    for fn in os.listdir(out):
+        if fn.startswith('qa-') and fn.endswith('.png'): os.remove(os.path.join(out, fn))
+    return render_qa(sex, P, T, out)
+
+
 def main(argv):
     from fit import skull_measure as M
     which = argv[1] if len(argv) > 1 and not argv[1].startswith('--') else 'all'
     sexes = ('male', 'female') if which == 'all' else (which,)
+    if '--render-only' in argv:
+        for sex in sexes: print(render_only(sex))
+        return
     L = M.za_landmarks()
     zsk = M.skin_regions_za()
     for sex in sexes:

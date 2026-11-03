@@ -75,7 +75,8 @@ class Seat:
                 nw = W[b].vec(n); nw /= np.linalg.norm(nw, axis=1, keepdims=True)
                 target = s * np.maximum(sd0, 0.0002)
                 delta = (target - sd)[:, None] * nw * 0.5
-                moves[a].append((X, delta, np.where(sd0 < 0.0002, 3.0, 1.0)))
+                # joint spaces outweigh skin pressure (weight 1 per point) so small joints are not squeezed
+                moves[a].append((X, delta, np.where(sd0 < 0.0002, 10.0, 5.0)))
             # one-sided contacts between bones that do not articulate (e.g. neighbouring toes): keep `gap` apart
             Xs = {b: W[b](self.pts[b]) for b in self.names}
             lo = {b: Xs[b].min(0) for b in self.names}; hi = {b: Xs[b].max(0) for b in self.names}

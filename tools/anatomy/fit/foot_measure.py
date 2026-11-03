@@ -87,8 +87,8 @@ def measure(meshes, maps, F, tg, facets, skin_toes=None, n_inside=4000):
     pen_t = max(float(-min(tg.tib_tm.signed(tp).min(), 0)), float(-min(tg.fib_tm.signed(tp).min(), 0)))
     pen_f = max(float(-min(tal.signed(P).min(), 0)) for P in facets.values())
     med_ok = all(1.0 <= gaps[k]['median'] <= 4.0 for k in gaps)
-    spread_ok = all(gaps[k]['p10'] >= 0.5 and gaps[k]['p90'] <= 5.0 for k in gaps)
-    out['mortise_gap_mm'] = dict(value=gaps, threshold='median 1..4 mm per facet (p10 >= 0.5, p90 <= 5)', ok=bool(med_ok and spread_ok))
+    low_ok = all(gaps[k]['p10'] >= 1.0 for k in gaps)
+    out['mortise_gap_mm'] = dict(value=gaps, threshold='joint space 1..4 mm: median of each facet (plafond, medial, lateral) in 1..4 mm and its 10th percentile >= 1 mm; p90 reported (facet rims, where the surfaces part)', ok=bool(med_ok and low_ok))
     out['mortise_penetration_mm'] = item(max(pen_t, pen_f) * 1000, hi=1.0)
     # also: other foot bones vs the HRA tibia / fibula
     worst = 0.0
@@ -145,53 +145,54 @@ def measure(meshes, maps, F, tg, facets, skin_toes=None, n_inside=4000):
     return out, fr
 
 
-def skin_toes(tg, meshes, maps, F, fr, step=0.003, prom=0.0004):
-    """Inter-toe clefts on the HRA skin of the forefoot. In the foot frame (u along the foot, w lateral, n dorsal), slices
-    across the toes are scanned for dorsal grooves (local minima of the dorsal height) and plantar sulci (local maxima of
-    the plantar height) deeper than `prom`; a groove belongs to the cleft between toes k and k+1 when it lies within
-    5 mm of the midpoint between their proximal phalanges. Clefts seen in fewer than two slices count as absent (the
-    skin toes are fused there). Returns {(k, k+1): dict(found, w (m), u0 (m), slices)} and the frame used."""
+def skin_toes(tg, meshes, maps, F, fr, step=0.003, dw=0.0005, prom=0.0003):
+    """Inter-toe clefts on the HRA skin of the forefoot. In the foot frame (u along the foot, w lateral, n dorsal) the
+    dorsal and plantar skin heights are found by exact ray casts on a (u, w) grid over the toes. A cleft between toes k
+    and k+1 is a dorsal groove (local minimum of the dorsal height) or a plantar sulcus (local maximum of the plantar
+    height) deeper than `prom` on both sides within 6 mm, lying in the gap between the two toes' phalanges (+-3 mm);
+    clefts seen in fewer than two slices count as absent (the skin toes are fused there).
+    Returns ({(k, k+1): dict(found, w, u0, slices, depth_mm)}, info)."""
     ax, up, lat = fr['axis'], fr['up'], fr['lat']
-    sv, sf = tg.skin
-    P = dense(tg.skin, spacing=0.0008, seed=9)
-    u, w, n = P @ ax, P @ lat, P @ up
+    S = tg.skin_tm
+    sv = tg.skin[0]
     mtp = {k: maps[METATARSALS[k - 1]](F.toes[k]['joints'][0].c[None])[0] for k in range(1, 6)}
-    pp = {k: dense(meshes[toe_bones(k)[0]], n=600, seed=1) for k in range(1, 6)}
-    wc = {k: float(np.median(pp[k] @ lat)) for k in range(1, 6)}
+    ph = {k: np.concatenate([dense(meshes[b], n=800, seed=1) for b in toe_bones(k)]) for k in range(1, 6)}
     u_start = max(float(mtp[k] @ ax) for k in range(1, 6)) + 0.008
-    u_tip = float(u.max())
-    toe_zone = (u > u_start - 0.01)
+    u_tip = float((sv @ ax).max())
+    top, bot = float((sv @ up).max()) + 0.02, float((sv @ up).min()) - 0.02
     clefts = {}
     for k in range(1, 5):
-        clefts[(k, k + 1)] = dict(found=False, w=0.5 * (wc[k] + wc[k + 1]), expected_w=0.5 * (wc[k] + wc[k + 1]), slices=0, grooves=[])
-    for u0 in np.arange(u_start, u_tip - 0.004, step):
-        sl = toe_zone & (np.abs(u - u0) < 0.0012)
-        if sl.sum() < 50: continue
-        ws, ns = w[sl], n[sl]
-        bins = np.arange(ws.min(), ws.max() + 0.001, 0.001)
-        top = np.full(len(bins), np.nan); bot = np.full(len(bins), np.nan)
-        ib = np.clip(np.round((ws - bins[0]) / 0.001).astype(int), 0, len(bins) - 1)
-        for i in range(len(bins)):
-            m = ib == i
-            if m.any(): top[i] = ns[m].max(); bot[i] = ns[m].min()
-        for prof, sign in ((top, 1), (bot, -1)):
-            for i in range(3, len(bins) - 3):
-                if not np.isfinite(prof[i]): continue
-                lo_, hi_ = max(0, i - 8), min(len(bins), i + 9)
-                left, right = prof[lo_:i], prof[i + 1:hi_]
-                if not (np.isfinite(left).any() and np.isfinite(right).any()): continue
-                v = sign * prof[i]
-                if v <= np.nanmin(sign * prof[max(0, i - 2):i + 3]) and \
-                        np.nanmax(sign * left) - v > prom and np.nanmax(sign * right) - v > prom:
-                    for key, c in clefts.items():
-                        if abs(bins[i] - c['expected_w']) < 0.005: c['grooves'].append((float(u0), float(bins[i])))
+        clefts[(k, k + 1)] = dict(found=False, slices=0, grooves=[])
+    for u0 in np.arange(u_start, u_tip - 0.003, step):
+        band = {k: p[np.abs(p @ ax - u0) < 0.002] for k, p in ph.items()}
+        have = [k for k in range(1, 6) if len(band[k])]
+        if len(have) < 2: continue
+        wl = min(float((band[k] @ lat).min()) for k in have) - 0.004; wr = max(float((band[k] @ lat).max()) for k in have) + 0.004
+        ws = np.arange(wl, wr, dw)
+        O = ax[None] * u0 + lat[None] * ws[:, None]
+        hd = top - S.ray(O + up * top, np.repeat(-up[None], len(ws), 0), tmax=top - bot)
+        hp = bot + S.ray(O + up * bot, np.repeat(up[None], len(ws), 0), tmax=top - bot)
+        win = int(round(0.006 / dw))
+        for k in range(1, 5):
+            if not (len(band[k]) and len(band[k + 1])): continue
+            g0 = float((band[k] @ lat).max()) - 0.003; g1 = float((band[k + 1] @ lat).min()) + 0.003
+            for prof, sign in ((hd, 1.0), (hp, -1.0)):
+                v = sign * prof
+                for i in np.flatnonzero((ws >= min(g0, g1)) & (ws <= max(g0, g1))):
+                    if not np.isfinite(v[i]) or i < 2 or i > len(ws) - 3: continue
+                    if v[i] > np.nanmin(v[i - 2:i + 3]): continue
+                    left, right = v[max(0, i - win):i], v[i + 1:i + 1 + win]
+                    if not (np.isfinite(left).any() and np.isfinite(right).any()): continue
+                    depth = min(np.nanmax(left) - v[i], np.nanmax(right) - v[i])
+                    if depth > prom: clefts[(k, k + 1)]['grooves'].append((float(u0), float(ws[i]), float(depth)))
     for key, c in clefts.items():
         us = sorted({g[0] for g in c['grooves']})
         c['slices'] = len(us)
         if len(us) >= 2:
             c['found'] = True; c['w'] = float(np.median([g[1] for g in c['grooves']])); c['u0'] = float(min(us))
+            c['depth_mm'] = round(float(np.median([g[2] for g in c['grooves']]) * 1000), 2)
         del c['grooves']
-    return clefts, dict(u_start=u_start, wc=wc)
+    return clefts, dict(u_start=u_start)
 
 
 def toes_in_skin(tg, meshes, clefts, info, fr):

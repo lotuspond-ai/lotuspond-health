@@ -156,39 +156,55 @@ def fit_piece(v, T, obstacles, skin_clear, joint=None, centre=None, reg=(3.0, 0.
 
 
 def fit_sternum(sex, W, T, ST):
-    from fit.ribcage_data import Part
-    pieces = {k: W[k][0] for k in ('manubrium', 'sternum_body', 'xiphoid')}
-    obst = lambda extra=(): [(T['heart'], STERNUM_CLEAR['heart'], 1.0), (T['lungs'], STERNUM_CLEAR['lungs'], 1.0), (T['liver'], STERNUM_CLEAR['liver'], 1.0)] + list(extra)
-    vessels = [(T['great_veins'], 0.001, 0.3), (T['aorta'], 0.001, 0.3)]
-    info, out = {}, {}
-    # manubrium: only a criterion (heart / lung / liver contact, heart < 3 mm, skin < 3 mm) may move it
-    Mv = pieces['manubrium']
-    P = Mv[::2]
-    viol = {'heart': float(M.signed(T['heart'], P).min()), 'lungs': float(M.signed(T['lungs'], P).min()),
-            'liver': float(M.signed(T['liver'], P).min()), 'skin': float(-M.signed(T['skin'], P).max())}
-    forced = viol['heart'] < 0.003 or viol['lungs'] < 0 or viol['liver'] < 0 or viol['skin'] < 0.003
-    if forced:
-        tf, x = fit_piece(Mv, T, obst(), STERNUM_CLEAR['skin'], reg=(1.0, 0.002))
-        out['manubrium'] = tf(Mv)
-    else:
-        out['manubrium'] = Mv.copy(); x = np.zeros(6)
+    """The sternum as an articulated chain: manubrium, body (hinged at the manubriosternal joint) and xiphoid
+    (hinged at the xiphisternal joint), each a rigid piece, fitted together so that all three clear the heart by 3.5 mm
+    and the lungs and liver by STERNUM_CLEAR, stay 4 mm inside the skin, and keep their joints closed. The manubrium is
+    anchored where the trunk warp puts it (the clavicles are seated there) and moves only as far as a clearance forces
+    it; the clavicular notches' displacement is reported."""
+    keys = ('manubrium', 'sternum_body', 'xiphoid')
+    V = {k: W[k][0] for k in keys}
+    cen = {k: V[k].mean(0) for k in keys}
+    sub = {k: np.arange(len(V[k]))[::2] for k in keys}
+    obst = [(T['heart'], STERNUM_CLEAR['heart']), (T['lungs'], STERNUM_CLEAR['lungs']), (T['liver'], STERNUM_CLEAR['liver'])]
+    soft = [(T['great_veins'], 0.001), (T['aorta'], 0.001)]          # not acceptance criteria: body and xiphoid only
+    # joint pairs from Z-Anatomy contacts, matched in the warped configuration
+    pairs = {}
+    for a, b, jk in (('sternum_body', 'manubrium', 'body_to_manubrium'), ('xiphoid', 'sternum_body', 'xiphoid_to_body')):
+        idx = ST[jk][0]
+        nn = cKDTree(V[b]).query(V[a][idx])[1]
+        pairs[a] = (b, idx, nn)
+    reg = dict(manubrium=(0.5, 0.0003), sternum_body=(3.0, 0.003), xiphoid=(3.0, 0.003))
+
+    def tfs(x):
+        return {k: rigid(x[6 * i:6 * i + 6], cen[k]) for i, k in enumerate(keys)}
+
+    def resid(x):
+        tf = tfs(x); r = []
+        for i, k in enumerate(keys):
+            P = tf[k](V[k][sub[k]])
+            for tgt, clear in obst + (soft if k != 'manubrium' else []):
+                w = 1.0 if (tgt, clear) in obst else 0.3
+                r.append(w * np.maximum(clear - tgt.sdf(P), 0) / 0.0001)
+            r.append(np.maximum(T['skin'].sdf(P) + STERNUM_CLEAR['skin'], 0) / 0.0001)
+            r.append(x[6 * i:6 * i + 3] / np.radians(reg[k][0])); r.append(x[6 * i + 3:6 * i + 6] / reg[k][1])
+        for a, (b, idx, nn) in pairs.items():
+            pa, pb = V[a][idx], V[b][nn]
+            r.append(((tf[a](pa) - tf[b](pb)) - (pa - pb)).ravel() / 0.0003 / np.sqrt(len(idx)) * 3)
+        return np.concatenate(r)
+
+    sol = optimize.least_squares(resid, np.zeros(18), x_scale=np.array(([0.02] * 3 + [0.002] * 3) * 3), max_nfev=600)
+    tf = tfs(sol.x)
+    out = {k: tf[k](V[k]) for k in keys}
     nl, nr = ST['notch_l'], ST['notch_r']
-    info['manubrium'] = dict(forced=bool(forced), warp_clearances_mm={k: mm1(v) for k, v in viol.items()},
-                             notch_moved_mm=dict(left=mm1(np.linalg.norm(out['manubrium'][nl] - Mv[nl], axis=1).max()),
-                                                 right=mm1(np.linalg.norm(out['manubrium'][nr] - Mv[nr], axis=1).max())))
-    # body about the manubriosternal joint, xiphoid about the xiphisternal joint
-    for key, partner, jk in (('sternum_body', 'manubrium', 'body_to_manubrium'), ('xiphoid', 'sternum_body', 'xiphoid_to_body')):
-        v = pieces[key]
-        idx, gap = ST[jk]
-        part = Part(out[partner], W[partner][1])
-        # the partner's own motion carried over first (rigidly, so the joint stays closed), then the piece's own fit
-        d0 = out[partner][::7] - pieces[partner][::7]
-        from lib.register import umeyama
-        Tp = umeyama(pieces[partner], out[partner], scale=False)
-        v0 = Tp(v)
-        tf, x = fit_piece(v0, T, obst(vessels), STERNUM_CLEAR['skin'], joint=(idx, part, gap), centre=v0[idx].mean(0))
-        out[key] = tf(v0)
-        info[key] = dict(rot_deg=round(float(np.degrees(np.linalg.norm(x[:3]))), 2), shift_mm=mm1(np.linalg.norm(x[3:])))
+    P = V['manubrium'][::2]
+    warp_clear = {'heart': float(M.signed(T['heart'], P).min()), 'lungs': float(M.signed(T['lungs'], P).min()),
+                  'liver': float(M.signed(T['liver'], P).min()), 'skin': float(-M.signed(T['skin'], P).max())}
+    info = dict(manubrium=dict(warp_clearances_mm={k: mm1(v) for k, v in warp_clear.items()},
+                               notch_moved_mm=dict(left=mm1(np.linalg.norm(out['manubrium'][nl] - V['manubrium'][nl], axis=1).max()),
+                                                   right=mm1(np.linalg.norm(out['manubrium'][nr] - V['manubrium'][nr], axis=1).max())),
+                               rot_deg=round(float(np.degrees(np.linalg.norm(sol.x[:3]))), 2), shift_mm=mm1(np.linalg.norm(sol.x[3:6]))))
+    for i, k in enumerate(keys[1:], start=1):
+        info[k] = dict(rot_deg=round(float(np.degrees(np.linalg.norm(sol.x[6 * i:6 * i + 3]))), 2), shift_mm=mm1(np.linalg.norm(sol.x[6 * i + 3:6 * i + 6])))
     return out, info
 
 

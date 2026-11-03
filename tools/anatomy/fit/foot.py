@@ -50,6 +50,7 @@ GROUP = 'foot'
 DEG = np.pi / 180
 GAP0 = 0.0025          # target joint space talus <-> HRA plafond / malleoli (m)
 CLEAR = 0.0025         # minimum soft tissue over bone kept by the fit (m)
+SEAT_CLEAR = 0.0024    # ... and by the seating step (criterion: dorsal clearance >= 2 mm)
 
 
 def phuber(r, d):
@@ -309,9 +310,9 @@ class FootFit:
         def constraints(b, X, W):
             src, dsp, wts = [], [], []
             # inside the skin with clearance
-            sd = tg.skin_sd(X); m = sd > -CLEAR
+            sd = tg.skin_sd(X); m = sd > -SEAT_CLEAR
             if m.any():
-                src.append(X[m]); dsp.append(-(sd[m] + CLEAR)[:, None] * skin_n(X[m])); wts.append(np.full(m.sum(), 2.0))
+                src.append(X[m]); dsp.append(-(sd[m] + SEAT_CLEAR)[:, None] * skin_n(X[m])); wts.append(np.full(m.sum(), 1.0))
             # clear of the HRA tibia / fibula by 1 mm
             sl = tg.leg_field(X); m = sl < 0.001
             if m.any():
@@ -334,8 +335,8 @@ class FootFit:
         # remaining overlaps (Z-Anatomy's own) and small residual contacts: local push-out
         def extra(b, V):
             e = np.zeros_like(V)
-            sd = tg.skin_sd(V); m = sd > -CLEAR * 0.8
-            if m.any(): e[m] += -(sd[m] + CLEAR * 0.8)[:, None] * skin_n(V[m])
+            sd = tg.skin_sd(V); m = sd > -SEAT_CLEAR * 0.85
+            if m.any(): e[m] += -(sd[m] + SEAT_CLEAR * 0.85)[:, None] * skin_n(V[m])
             sl = tg.leg_field(V); m = sl < 0.0008
             if m.any(): e[m] += (0.0008 - sl[m])[:, None] * tib_n(V[m])
             return e if e.any() else None
@@ -369,13 +370,13 @@ def _prox(m, h):
     return crop_box(m, np.array([-9, y1 - h, -9.]), np.array([9, 9, 9.]))
 
 
-def _local_sim(Z, H, init=None, n=6000, seed=0):
+def _local_sim(Z, H, init=None, n=4000, seed=0):
     from lib.register import icp
-    Hd = dense_points(*H, 0.001); Zp = sample_surface(*Z, n, seed=seed)
+    Hd = dense_points(*H, 0.0014); Zp = sample_surface(*Z, n, seed=seed)
     best = None
-    inits = [init] if init is not None else [Sim(s0, np.eye(3), Hd.mean(0) - s0 * Zp.mean(0)) for s0 in (0.95, 1.05, 1.15, 1.25)]
+    inits = [init] if init is not None else [Sim(s0, np.eye(3), Hd.mean(0) - s0 * Zp.mean(0)) for s0 in (1.0, 1.1, 1.2)]
     for Ti in inits:
-        T, err = icp(Zp, Hd, init=Ti, iters=100, scale=True, trim=0.92, scale_range=(0.8, 1.35))
+        T, err = icp(Zp, Hd, init=Ti, iters=70, scale=True, trim=0.92, scale_range=(0.8, 1.35))
         if best is None or err < best[1]: best = (T, err)
     return best
 

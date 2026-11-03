@@ -53,6 +53,14 @@ for (const body of BODIES) {
       assert.match(asset.copyright ?? '', /CC BY-SA 4\.0/);
       assert.match(asset.copyright ?? '', /HuBMAP/);
       assert.match(asset.copyright ?? '', /Z-Anatomy/);
+      assert.match(asset.copyright ?? '', /\/credits\//, 'the file points to the full credits');
+      const extras = asset.extras as { changes?: string; credits?: string[] } | undefined;
+      assert.ok(extras?.changes, 'the file carries the change notice');
+      assert.ok((extras?.credits ?? []).some(c => /Brain/.test(c)) && (extras?.credits ?? []).some(c => /Allen/.test(c)), 'the file credits the brain atlases');
+    });
+
+    it('opens the pelvis in cross-section, so the red marrow shows', () => {
+      assert.ok(meshSpecs(body).get('skel_pelvis')?.hollow, 'skel_pelvis is not flagged hollow');
     });
 
     it('maps every part to a known organ and tissue', () => {
