@@ -35,6 +35,8 @@ before(async () => {
   write('assets/app-Ab12Cd34.js.br', zlib.brotliCompressSync(script));
   write('assets/app-Ab12Cd34.js.gz', zlib.gzipSync(script));
   write('robots.txt', 'User-agent: *\nAllow: /\n');
+  write('bodymap/angle-00-600.0123456789.webp', 'RIFF-webp');
+  write('bodymap/manifest.json', '{}');
   database = await openDatabase({});
   config = loadConfig({ NODE_ENV: 'test', STATIC_DIR: site });
   app = createApp({ db: database.db, files: new DiskFileStore(filesDir), config });
@@ -115,6 +117,13 @@ describe('public site and app shell', () => {
     assert.equal(plain.headers.get('content-encoding'), null);
     assert.match(plain.headers.get('vary') ?? '', /Accept-Encoding/);
     assert.equal(await plain.text(), script);
+  });
+
+  it('caches hash-named body-map images for a year', async () => {
+    const res = await get('/bodymap/angle-00-600.0123456789.webp');
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('cache-control'), 'public, max-age=31536000, immutable');
+    assert.equal((await get('/bodymap/manifest.json')).headers.get('cache-control'), 'public, max-age=3600', 'unhashed files stay short-lived');
   });
 
   it('caches other public files for an hour', async () => {

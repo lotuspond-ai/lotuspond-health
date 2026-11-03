@@ -49,6 +49,8 @@ const SITE_CSP = [
 ].join('; ');
 
 const IMMUTABLE = 'public, max-age=31536000, immutable';
+/** Files whose names change with their content: built assets, and the pre-rendered body-map images (name.<hash>.webp/png). */
+const HASHED = /[\\/]assets[\\/]|[\\/]bodymap[\\/][^\\/]+\.[0-9a-f]{10}\.(webp|png)$/;
 
 export function createApp(input: DepsInput): Hono<AppEnv> {
   const deps = completeDeps(input); // one default cell unless index.ts opened several
@@ -153,7 +155,7 @@ function serveSite(app: Hono<AppEnv>, dir: string, appCsp: string): void {
     const file = abs(served.replace(/\.(br|gz|zst)$/, ''));
     const h: Record<string, string> = file.endsWith('.html')
       ? { 'Content-Security-Policy': file === appPath ? appCsp : SITE_CSP, 'Cache-Control': 'no-cache' }
-      : { 'Cache-Control': /[\\/]assets[\\/]/.test(file) ? IMMUTABLE : /[\\/]sw\.js$/.test(file) ? 'no-cache' : 'public, max-age=3600' };
+      : { 'Cache-Control': HASHED.test(file) ? IMMUTABLE : /[\\/]sw\.js$/.test(file) ? 'no-cache' : 'public, max-age=3600' };
     if (compressed.has(file)) h.Vary = 'Accept-Encoding';
     return h;
   };

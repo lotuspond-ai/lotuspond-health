@@ -214,7 +214,8 @@ The product's own site, **https://health.lotuspond.ai**, is built by the same Vi
 
 | Path | What it holds |
 | --- | --- |
-| `src/three/` | React Three Fiber stage: tissue materials, pond floor, camera, x-ray and cross-sections |
+| `src/three/` | React Three Fiber stage: tissue materials, pond floor, camera, x-ray and cross-sections, adaptive quality |
+| `src/components/bodymap2d/`, `public/bodymap/` | Pre-rendered body map (default view) and its images |
 | `src/anatomy/organs.ts` | Organ metadata: meshes, tissues, landmarks, linked body systems |
 | `src/lib/` | Biomarker catalog, file parsers, the records store |
 | `src/api/` | Data access: `http.ts` talks to the API, `browser.ts` keeps everything in IndexedDB for server-less previews |
@@ -241,6 +242,15 @@ cd ../.. && npx gltf-transform meshopt tools/anatomy/anatomy_raw.glb public/mode
 ```
 
 Model coordinates are metres with `+x` toward the person's left, `+y` up and `+z` toward the front.
+
+### Pre-rendered body map
+
+The body map opens as images rendered ahead of time, so it needs no WebGL; "Explore in 3D" loads the interactive model on request. After changing the model or the look of the stage, render the images again (headless Chromium, a few minutes) and commit `public/bodymap/` and `src/components/bodymap2d/manifest.json`:
+
+```bash
+node tools/render-bodymap.mjs              # 16 angles + a close-up per organ, two sizes, ID maps, manifest
+node tools/measure-bodymap.mjs http://localhost:8787/ --3d   # first-view downloads and 3D frame cost
+```
 
 ## Server-less preview
 
