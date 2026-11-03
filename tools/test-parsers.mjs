@@ -449,6 +449,121 @@ for (const [f, want] of ORGAN_HINTS) check(`guessOrgan(${f})`, guessOrgan(f) ===
 const MOD_HINTS = [['chest_xray.jpg', 'XR'], ['x-ray knee.png', 'XR'], ['CT abdomen.png', 'CT'], ['mri_brain.jpg', 'MR'], ['usg.jpg', 'US'], ['echo.png', 'Echo'], ['ecg.png', 'ECG'], ['photo.jpg', null]];
 for (const [f, want] of MOD_HINTS) check(`guessModality(${f})`, guessModality(f) === want, String(guessModality(f)));
 
+/* ---------------- app lock (Face ID / fingerprint) ---------------- */
+section('app lock');
+const { createAppLock } = await import(lib('applock.ts'));
+
+/** Fake platform: `results` queues what each prompt does ('ok', an error code, or a pending promise). */
+function lockDeps(settings = null) {
+  const d = {
+    t: 0, settings, saved: [], privacy: [], prompts: 0, results: [],
+    bio: { available: true, deviceSecure: true, method: 'Face ID' },
+    async loadSettings() { return d.settings; },
+    async saveSettings(s) { d.saved.push(s); d.settings = s; },
+    async checkBiometry() { return d.bio; },
+    authenticate() {
+      d.prompts++;
+      const r = d.results.length ? d.results.shift() : 'ok';
+      if (r instanceof Promise) return r;
+      return r === 'ok' ? Promise.resolve() : Promise.reject(Object.assign(new Error(r), { code: r }));
+    },
+    async setPrivacyScreen(on) { d.privacy.push(on); },
+    now: () => d.t,
+  };
+  return d;
+}
+const tick = () => new Promise(r => setTimeout(r, 0));
+const ON = { enabled: true, delayMs: 60_000 };
+{
+  const d = lockDeps();
+  const lock = createAppLock(d);
+  check('lock: no settings → starts open', (await lock.start()) === 'open' && lock.store.getState().status === 'open');
+  check('lock: open → data may load', await Promise.race([lock.ready.then(() => true), tick().then(() => false)]));
+  check('lock: off → no prompt, no privacy screen', d.prompts === 0 && d.privacy.length === 0);
+}
+{
+  const d = lockDeps(ON);
+  const lock = createAppLock(d);
+  check('lock: on → starts locked', (await lock.start()) === 'locked');
+  check('lock: on → app switcher privacy screen', eq(d.privacy, [true]));
+  check('lock: locked → data stays unloaded', !(await Promise.race([lock.ready.then(() => true), tick().then(() => false)])));
+  d.results.push('userCancel');
+  check('lock: cancelled prompt stays locked', (await lock.unlock()) === false && lock.store.getState().status === 'locked' && lock.store.getState().message === null);
+  d.results.push('authenticationFailed');
+  await lock.unlock();
+  check('lock: failed face/finger says so', lock.store.getState().status === 'locked' && /Not recognised/.test(lock.store.getState().message));
+  check('lock: unlock opens', (await lock.unlock()) === true && lock.store.getState().status === 'open' && lock.store.getState().message === null);
+  check('lock: unlocked → data may load', await Promise.race([lock.ready.then(() => true), tick().then(() => false)]));
+
+  // Leaving briefly does not lock; leaving longer than the delay does.
+  d.t = 1_000; lock.onPause(); d.t = 31_000; lock.onResume(); await tick();
+  check('lock: back within the delay stays open', lock.store.getState().status === 'open');
+  const before = d.prompts;
+  d.t = 100_000; lock.onPause(); d.t = 200_000; lock.onResume(); await tick();
+  check('lock: back after the delay asks again', d.prompts === before + 1 && lock.store.getState().status === 'open');
+
+  // Android shows the prompt in its own activity, which pauses and resumes the app: that must not re-lock.
+  let finish;
+  d.t = 300_000; lock.onPause(); d.t = 400_000;
+  d.results.push(new Promise(r => { finish = r; }));
+  lock.onResume(); await tick();
+  check('lock: prompt in progress', lock.store.getState().status === 'authenticating');
+  const prompts = d.prompts;
+  lock.onPause(); d.t = 500_000; lock.onResume(); await tick();
+  check('lock: pause/resume around the prompt is ignored', d.prompts === prompts && lock.store.getState().status === 'authenticating');
+  finish(); await tick();
+  lock.onResume(); await tick();
+  check('lock: no re-lock right after unlocking', lock.store.getState().status === 'open' && d.prompts === prompts);
+}
+{
+  const d = lockDeps({ enabled: true, delayMs: 0 });
+  const lock = createAppLock(d);
+  await lock.start(); await lock.unlock();
+  lock.onPause();
+  check('lock: "as soon as you leave" locks on leaving', lock.store.getState().status === 'locked');
+  lock.onResume(); await tick();
+  check('lock: and asks on return', lock.store.getState().status === 'open' && d.prompts === 2);
+}
+{
+  const d = lockDeps('unreadable');
+  check('lock: unreadable settings keep the lock on', (await createAppLock(d).start()) === 'locked');
+}
+{
+  // Passcode removed from the phone: the lock cannot work, so it switches itself off instead of locking out.
+  const d = lockDeps(ON);
+  d.bio = { available: false, deviceSecure: false, method: 'passcode' };
+  const lock = createAppLock(d);
+  check('lock: no passcode any more → opens', (await lock.start()) === 'open');
+  check('lock: … and turns itself off', d.settings.enabled === false && d.privacy.at(-1) === false && /turned off/.test(lock.store.getState().message));
+  const d2 = lockDeps(ON);
+  const lock2 = createAppLock(d2);
+  await lock2.start();
+  d2.bio = { available: false, deviceSecure: false, method: 'passcode' };
+  d2.results.push('passcodeNotSet');
+  check('lock: passcode removed while locked → opens', (await lock2.unlock()) === true && lock2.store.getState().status === 'open' && d2.settings.enabled === false);
+}
+{
+  const d = lockDeps();
+  const lock = createAppLock(d);
+  await lock.start();
+  d.results.push('userCancel');
+  check('lock: turning on needs a confirmed prompt', (await lock.setEnabled(true)) === false && d.saved.length === 0);
+  check('lock: turning on', (await lock.setEnabled(true)) === true && d.settings.enabled === true && d.privacy.at(-1) === true);
+  check('lock: turning on keeps the app open', lock.store.getState().status === 'open');
+  await lock.setDelay(300_000);
+  check('lock: delay saved', d.settings.delayMs === 300_000 && lock.store.getState().settings.delayMs === 300_000);
+  d.results.push('authenticationFailed');
+  check('lock: turning off needs a confirmed prompt', (await lock.setEnabled(false)) === false && d.settings.enabled === true);
+  check('lock: turning off', (await lock.setEnabled(false)) === true && d.settings.enabled === false && d.privacy.at(-1) === false);
+  lock.onPause(); d.t = 10_000_000; lock.onResume(); await tick();
+  check('lock: off → leaving and coming back stays open', lock.store.getState().status === 'open');
+  const d2 = lockDeps();
+  d2.bio = { available: false, deviceSecure: false, method: 'passcode' };
+  const lock2 = createAppLock(d2);
+  await lock2.start();
+  check('lock: cannot turn on without Face ID or a passcode', (await lock2.setEnabled(true)) === false && d2.prompts === 0 && !!lock2.store.getState().message);
+}
+
 /* ---------------- summary ---------------- */
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) { console.log('\nFailures:\n  ' + failures.join('\n  ')); process.exitCode = 1; }

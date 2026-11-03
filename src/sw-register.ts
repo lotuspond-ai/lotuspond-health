@@ -1,7 +1,8 @@
 // Registers the service worker (public/sw.js), which keeps the app shell, the pre-rendered body map and the 3D model
 // on the device. Production builds served by our server only: not in development, and not in the server-less preview
 // build (VITE_BACKEND=browser), whose hosts cannot run service workers.
-const enabled = import.meta.env.PROD && import.meta.env.VITE_BACKEND !== 'browser'
+// Not in the iOS / Android apps either: they ship every file inside the app already.
+const enabled = import.meta.env.PROD && import.meta.env.VITE_BACKEND !== 'browser' && import.meta.env.MODE !== 'mobile'
   && typeof window !== 'undefined' && window.isSecureContext && 'serviceWorker' in navigator;
 
 function register() {

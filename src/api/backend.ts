@@ -9,10 +9,13 @@ import type {
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
-  constructor(status: number, code: string, message: string) {
+  /** Extra fields of the server's error, for example `region` and `apiOrigin` on `wrong_region`. */
+  readonly detail: Record<string, unknown>;
+  constructor(status: number, code: string, message: string, detail: Record<string, unknown> = {}) {
     super(message);
     this.status = status;
     this.code = code;
+    this.detail = detail;
   }
 }
 
@@ -58,6 +61,8 @@ export interface Backend {
   documentUrl(profileId: string, id: string, download?: boolean): string | null;
   /** Link that downloads a JSON export of the profile, or null where downloads are not possible. */
   exportUrl(profileId: string): string | null;
+  /** The JSON export as a file, where there is no link to offer (the iOS and Android apps share it instead). */
+  exportFile?(profileId: string): Promise<Blob>;
 
   addScans(profileId: string, scans: ScanInput[]): Promise<ScanItem[]>;
   updateScan(profileId: string, id: string, patch: ScanPatch): Promise<ScanItem>;

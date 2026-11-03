@@ -183,6 +183,15 @@ All routes are under `/api` and use JSON unless noted.
 
 ## Mobile apps (iOS and Android)
 
+The iOS and Android apps (`android/`, `ios/`) are the app shell built with [Capacitor](https://capacitorjs.com), signed in to the same server. On phones they add bottom tabs, a draggable results sheet over the body map, camera capture, an optional Face ID / fingerprint lock and the system share sheet. [docs/mobile.md](docs/mobile.md) covers setup, testing against your computer's server, and releasing.
+
+```bash
+npm run android    # build the app shell, sync it into the projects, open Android Studio (needs JDK 21)
+npm run ios        # same, then open Xcode (needs macOS with Xcode 26+)
+```
+
+How the apps sign in and which server they call:
+
 The apps load the same build in a native shell, from `capacitor://localhost` (iOS) and `https://localhost` (Android). Every API call is therefore cross-site, and cookies are not sent, so the apps use **token sessions**:
 
 1. **Sign in or sign up** with the header `X-LotusPond-Client: app` on `POST /api/auth/login` or `/api/auth/register`. The response is the usual session (account and profiles) plus `token` and `expiresAt`, and no cookie is set. The token is stored and expires like a browser session; the database holds only its SHA-256. Keep it in the platform's secure storage (Keychain or Keystore).
