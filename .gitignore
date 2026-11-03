@@ -38,3 +38,6 @@ server/.data/
 server/.data-local/
 server/dist/
 .env
+
+# temporary worktrees used by parallel coding agents
+.claude/worktrees/
