@@ -3,8 +3,8 @@
 // Two kinds of moves:
 // - partner: what the lab reports (via a webhook hint or a poll). The lab is the source of truth for the
 //   visit and the report, so these moves are judged on whether they make sense, not on who asked.
-// - local: what we do ourselves: payment, placing the order, a user's cancel or reschedule, the device
-//   confirming pickup, the mailbox expiring.
+// - local: what we do ourselves: payment, placing the order, a user's cancel or reschedule, saving the final
+//   results to the profile (delivered), or giving up on unreviewed results (expired).
 //
 // Out-of-date reads (an older status fetched late) are caught by comparing the partner's status time
 // before this is called (orders/sync.ts); this module only judges whether a move is allowed.

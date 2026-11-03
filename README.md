@@ -180,6 +180,21 @@ All routes are under `/api` and use JSON unless noted.
 | `POST /profiles/:id/measurements`, `PATCH`/`DELETE …/measurements/:mid` | Save, edit or delete results |
 | `POST /profiles/:id/documents` (multipart), `GET …/documents/:did/file`, `DELETE …/documents/:did` | Store, fetch or delete original files |
 | `POST /profiles/:id/scans`, `PATCH`/`DELETE …/scans/:sid` | Save, edit or delete scans |
+| `GET /lab/catalog?pincode=`, `GET /lab/slots?partner=&pincode=&date=&items=` | Lab booking: packages and home-collection slots from the partners serving the account's region |
+| `GET`, `POST /profiles/:id/lab-orders` | A profile's lab bookings, or book one (needs an `Idempotency-Key` header) |
+| `GET /profiles/:id/lab-orders/:oid`, `POST …/:oid/cancel`, `POST …/:oid/reschedule` | One booking with its status timeline; cancel or move the visit |
+
+Lab partners call `POST /hooks/:partner/:secret` (outside `/api`; see [Lab booking](#lab-booking-in-progress)).
+
+## Lab booking (in progress)
+
+Book a home sample collection with a lab partner for any profile, and follow it from booking to report. The design is in [docs/lab-booking-backend.md](docs/lab-booking-backend.md); the code is in `server/src/lab/` ([its README](server/src/lab/README.md)).
+
+- **Partners.** No real lab is connected yet. `LAB_PARTNERS=fake` runs a simulated lab inside the server: it has packages, slots and an order timeline, sends signed webhooks, and writes reports as structured results plus a PDF. It is on by default in development and refused in production. Each partner serves one data region (the simulated lab: India), and only accounts held there can book with it.
+- **Orders.** Orders are kept in the account's cell with the profile they are for, and carry the booking consent (notice version and time). The patient's contact details are encrypted with the cell's file key. Partner webhooks are only hints: the server asks the partner for the current status, and a poller catches missed webhooks.
+- **Not built yet.** Fetching reports into the profile's records, payments (orders are pay-at-collection), and the booking screens in the app.
+
+To try it, run `npm run dev`, sign up with India as the country, and book through the API (the order moves a step every 10 seconds; set `LAB_FAKE_STEP_MS` to change that).
 
 ## Mobile apps (iOS and Android)
 
@@ -236,10 +251,10 @@ The product's own site, **https://health.lotuspond.ai**, is built by the same Vi
 | `index.html`, `privacy/`, `terms/`, `trust/`, `404.html`, `src/site/` | Public website (see above); `app.html` is the app shell |
 | `tools/site/` | Build plugin for the website, region tables, screenshot and social-image tool |
 | `server/src/` | API: routes, auth, database schema, file storage, cells (`cells.ts`) and compliance records (`compliance/`: directory, consents, audit log, secrets) |
+| `server/src/lab/` | Lab booking: partner interface and simulated lab, order state machine, webhooks, booking service and routes ([README](server/src/lab/README.md)) |
 | `server/drizzle/` | SQL migrations (generate with `npm run db:generate` after changing `server/src/db/schema.ts`) |
 | `shared/` | Types and limits used by both sides |
 | `tools/anatomy/` | Python generator for `public/models/anatomy.glb` (signed-distance modelling, surface nets, quadric decimation) |
-| `server/`, `shared/` | Lab booking backend, in progress: booking API, webhooks and a simulated lab (see `server/README.md`) |
 
 ## Rebuilding the anatomy model
 
