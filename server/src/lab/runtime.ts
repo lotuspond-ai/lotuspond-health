@@ -10,6 +10,7 @@ import { BookingService, type BookingOptions } from './booking/service.ts';
 import { consoleLogger, type Logger } from './log.ts';
 import { reconcile } from './orders/reconcile.ts';
 import type { OrderHooks, SyncDeps } from './orders/sync.ts';
+import { ResultsService } from './results/service.ts';
 import { FakeLab, type FakeWebhookRequest } from './partners/fake-lab.ts';
 import { FakeLabAdapter } from './partners/fake.ts';
 import type { PartnerConfig, PartnerRegistry } from './partners/types.ts';
@@ -29,6 +30,8 @@ export interface LabRuntime {
   sealer: Sealer;
   booking: BookingService;
   processor: WebhookProcessor;
+  /** Fetches reports into pending results, and saves reviewed ones into the profile. */
+  results: ResultsService;
   sync: SyncDeps;
 }
 
@@ -39,7 +42,7 @@ export interface Labs {
   forCell(cell: Cell): LabRuntime | null;
   /** Where a partner's webhooks are stored (lab/webhooks/receiver.ts). */
   target(partner: PartnerId): WebhookTarget | null;
-  /** Run every background job once: process webhooks, retry placements, poll, purge old webhook bodies. */
+  /** Run every background job once: process webhooks, retry placements, poll, fetch reports, purge old webhook bodies. */
   tick(): Promise<void>;
   /** Run the background jobs on timers; returns a function that stops them. */
   start(): () => void;
@@ -63,6 +66,15 @@ export function createLabs(opts: LabsOptions): Labs {
   const log = opts.log ?? consoleLogger;
   const partners: Map<PartnerId, PartnerConfig> = new Map(opts.partners.map(p => [p.adapter.id, p]));
   const byCell = new Map<Cell, LabRuntime>();
+  // A report may have changed (sync saw partial_report, report_ready or an amendment): fetch it soon.
+  let wakeResults = () => {};
+  const hooks: OrderHooks = {
+    onTransition: (o, from) => opts.hooks?.onTransition?.(o, from),
+    onReportUpdate: async o => {
+      await opts.hooks?.onReportUpdate?.(o);
+      wakeResults();
+    },
+  };
 
   for (const p of opts.partners) {
     const cell = opts.cells.forRegion(p.region);
@@ -73,11 +85,12 @@ export function createLabs(opts: LabsOptions): Labs {
       const inbox = new DrizzleWebhookInbox(cell.db);
       const sealer = keyringSealer(opts.secrets.fileKeys?.[cell.id] ?? opts.secrets.fileKeys?.default ?? null);
       const cellPartners = new Map<PartnerId, PartnerConfig>();
-      const sync: SyncDeps = { orders, partners: cellPartners, now, log, hooks: opts.hooks };
+      const sync: SyncDeps = { orders, partners: cellPartners, now, log, hooks };
       rt = {
         cell, partners: cellPartners, orders, inbox, sealer, sync,
         booking: new BookingService({ ...sync, sealer }, { noticeVersion: LAB_BOOKING_NOTICE_VERSION, ...opts.booking }),
         processor: new WebhookProcessor({ ...sync, inbox, sealer }, opts.processor),
+        results: new ResultsService({ db: cell.db, files: cell.files, orders, partners: cellPartners, now, log }),
       };
       byCell.set(cell, rt);
     }
@@ -99,8 +112,11 @@ export function createLabs(opts: LabsOptions): Labs {
     webhooks: () => each('webhooks', rt => rt.processor.runOnce()),
     placements: () => each('placements', rt => rt.booking.retryPlacements()),
     poll: () => each('poll', rt => reconcile(rt.sync, opts.poll ? { every: opts.poll } : {})),
+    results: () => each('results', rt => rt.results.fetchDue()),
     purge: () => each('purge', rt => rt.inbox.purge(now() - 7 * DAY)),
   };
+
+  wakeResults = () => { void jobs.results(); };
 
   return {
     partners,
@@ -114,6 +130,7 @@ export function createLabs(opts: LabsOptions): Labs {
       await jobs.webhooks();
       await jobs.placements();
       await jobs.poll();
+      await jobs.results();
       await jobs.purge();
     },
     start() {
@@ -121,6 +138,7 @@ export function createLabs(opts: LabsOptions): Labs {
         setInterval(() => void jobs.webhooks(), 5000),
         setInterval(() => void jobs.placements(), 15_000),
         setInterval(() => void jobs.poll(), 5 * MIN),
+        setInterval(() => void jobs.results(), 10_000),
         setInterval(() => void jobs.purge(), 6 * 60 * MIN),
       ];
       for (const t of timers) t.unref();

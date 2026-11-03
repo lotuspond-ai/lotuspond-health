@@ -16,7 +16,7 @@ import { facilityRoutes } from './routes/facilities.ts';
 import { geoRoutes } from './routes/geo.ts';
 import { configRoutes, mapFileRoutes } from './routes/config.ts';
 import { addCspSources, mapCspSources } from './facilities/index.ts';
-import { hookRoutes, labOrderRoutes, labRoutes } from './lab/routes.ts';
+import { hookRoutes, labOrderRoutes, labResultRoutes, labRoutes } from './lab/routes.ts';
 
 const UNSAFE = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
@@ -120,6 +120,7 @@ export function createApp(input: DepsInput): Hono<AppEnv> {
     // Before /api/profiles, so lab-order requests are answered here (with the same session and profile checks).
     app.route('/api/lab', labRoutes(deps, deps.labs));
     app.route('/api/profiles/:pid/lab-orders', labOrderRoutes(deps, deps.labs));
+    app.route('/api/profiles/:pid/lab-results', labResultRoutes(deps, deps.labs));
   }
   app.route('/api/profiles', profileRoutes(deps));
   app.route('/api/facilities', facilityRoutes(deps));

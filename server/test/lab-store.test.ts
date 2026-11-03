@@ -43,7 +43,8 @@ for (const [name, make] of impls) {
         partnerRef: `FL-${randomUUID()}`, partnerStatus: 'ORDER_PLACED', partnerStatusAt: T0 + 1, lastSyncedAt: T0 + 2,
         items: [{ code: 'FL_ESSENTIAL', name: 'Essential health check', pricePaise: 99_900 }], slotStart: T0 + 86_400_000, slotEnd: T0 + 90_000_000,
         pricePaise: 99_900, contactCt: new Uint8Array([1, 2, 3, 250]), consentVersion: '2026-11-03', consentedAt: T0,
-        idempotencyKey: `k-${randomUUID()}`, requestHash: 'abc', placementAttempts: 2, nextPlacementAt: T0 + 30_000, failureReason: null, updatedAt: T0 + 5,
+        idempotencyKey: `k-${randomUUID()}`, requestHash: 'abc', placementAttempts: 2, nextPlacementAt: T0 + 30_000, failureReason: null,
+        reportVersion: '3', reportCheckedStatusAt: T0 + 1, reportAttempts: 1, nextReportAt: T0 + 60_000, updatedAt: T0 + 5,
       });
       await orders.insert(o);
       assert.deepEqual(await orders.get(o.id), o);
@@ -115,6 +116,17 @@ for (const [name, make] of impls) {
       for (const o of [due1, due2, notYet, other, unplaced, done]) await orders.insert(o);
       const got = (await orders.dueForPoll({ booked: T0 + 5000, cancelled: T0 + 5000 }, 100)).filter(o => o.partnerRef?.includes(tag));
       assert.deepEqual(got.map(o => o.id), [due1.id, due2.id], 'never-synced first');
+    });
+
+    test('due for report: a partner status newer than the last check, not waiting for a retry', async () => {
+      const { orders } = make();
+      const tag = randomUUID();
+      const mk = (over: Partial<OrderRecord>) => order({ status: 'report_ready', partnerRef: `FL-${tag}-${randomUUID()}`, partnerStatusAt: T0 + 100, ...over });
+      const never = mk({}), older = mk({ reportCheckedStatusAt: T0 + 50 }), covered = mk({ reportCheckedStatusAt: T0 + 100 });
+      const waiting = mk({ nextReportAt: T0 + 60_000 }), retryDue = mk({ nextReportAt: T0 - 1 }), notReport = mk({ status: 'processing' });
+      for (const o of [never, older, covered, waiting, retryDue, notReport]) await orders.insert(o);
+      const got = (await orders.dueForReport(['partial_report', 'report_ready', 'delivered'], T0, 100)).filter(o => o.partnerRef?.includes(tag)).map(o => o.id);
+      assert.deepEqual(new Set(got), new Set([never.id, older.id, retryDue.id]));
     });
 
     test('due for placement: placing orders whose retry time has come', async () => {

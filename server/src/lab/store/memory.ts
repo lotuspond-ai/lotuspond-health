@@ -74,6 +74,16 @@ export class MemoryOrderStore implements OrderStore {
     return out.sort((a, b) => (a.lastSyncedAt ?? 0) - (b.lastSyncedAt ?? 0)).slice(0, limit);
   }
 
+  async dueForReport(statuses: readonly OrderStatus[], now: number, limit: number): Promise<OrderRecord[]> {
+    return [...this.orders.values()]
+      .filter(o => statuses.includes(o.status) && o.partnerRef && o.partnerStatusAt != null
+        && (o.reportCheckedStatusAt == null || o.reportCheckedStatusAt < o.partnerStatusAt)
+        && (o.nextReportAt == null || o.nextReportAt <= now))
+      .sort((a, b) => (a.partnerStatusAt ?? 0) - (b.partnerStatusAt ?? 0))
+      .slice(0, limit)
+      .map(x => copy(x));
+  }
+
   async dueForPlacement(now: number, limit: number): Promise<OrderRecord[]> {
     return [...this.orders.values()]
       .filter(o => o.status === 'placing' && o.nextPlacementAt != null && o.nextPlacementAt <= now)

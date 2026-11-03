@@ -2,7 +2,7 @@
 import { boolean, date, doublePrecision, index, integer, jsonb, pgTable, real, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import type { AuditDetail, AuditKind, ConsentKind, RefRange } from '../../../shared/types.ts';
 import type { DataRegion, UnitSystem } from '../../../shared/regions.ts';
-import type { OrderStatus } from '../../../shared/lab-bundle.ts';
+import type { LabResultBundle, OrderStatus } from '../../../shared/lab-bundle.ts';
 
 const createdAt = () => timestamp('created_at', { withTimezone: true }).notNull().defaultNow();
 const updatedAt = () => timestamp('updated_at', { withTimezone: true }).notNull().defaultNow();
@@ -215,6 +215,12 @@ export const labOrders = pgTable('lab_orders', {
   placementAttempts: integer('placement_attempts').notNull().default(0),
   nextPlacementAt: timestamp('next_placement_at', { withTimezone: true }),
   failureReason: text('failure_reason'),
+  /** The partner's identifier for the last report stored (lab_results), to tell a new or amended report from a repeat. */
+  reportVersion: text('report_version'),
+  /** The partner status time the last report check covered; a later partner status means check again. */
+  reportCheckedStatusAt: timestamp('report_checked_status_at', { withTimezone: true }),
+  reportAttempts: integer('report_attempts').notNull().default(0),
+  nextReportAt: timestamp('next_report_at', { withTimezone: true }),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 }, t => [
@@ -236,6 +242,35 @@ export const labOrderEvents = pgTable('lab_order_events', {
   receivedAt: timestamp('received_at', { withTimezone: true }).notNull(),
   note: text('note'),
 }, t => [index('lab_order_events_order_idx').on(t.orderId, t.id)]);
+
+/**
+ * Reports fetched from the partner, waiting for the person to review them (docs/lab-booking-backend.md §5.3).
+ * Saving one turns it into ordinary records: a document (the PDF) and measurements. Each delivery for an order has
+ * the next sequence number; a newer one replaces what an earlier one saved.
+ */
+export const labResults = pgTable('lab_results', {
+  id: uuid('id').primaryKey(),
+  orderId: uuid('order_id').notNull().references(() => labOrders.id, { onDelete: 'cascade' }),
+  profileId: uuid('profile_id').notNull().references(() => profiles.id, { onDelete: 'cascade' }),
+  sequence: integer('sequence').notNull(),
+  partial: boolean('partial').notNull(),
+  /** The partner's report version, or a hash of the report when it gives none. */
+  partnerVersion: text('partner_version').notNull(),
+  /** The rows as the lab printed them, for the app to match to the catalogue (shared/lab-bundle.ts). */
+  bundle: jsonb('bundle').$type<LabResultBundle>().notNull(),
+  /** The report PDF in the cell's file store, keyed <profile>/<result id> like documents (deleted with the profile). */
+  pdfKey: text('pdf_key'),
+  pdfBytes: integer('pdf_bytes'),
+  pdfSha256: text('pdf_sha256'),
+  status: text('status').$type<'pending' | 'saved' | 'dismissed' | 'superseded'>().notNull().default('pending'),
+  /** The document the PDF became when saved. */
+  documentId: uuid('document_id').references(() => documents.id, { onDelete: 'set null' }),
+  createdAt: createdAt(),
+  decidedAt: timestamp('decided_at', { withTimezone: true }),
+}, t => [
+  uniqueIndex('lab_results_order_sequence_key').on(t.orderId, t.sequence),
+  index('lab_results_profile_idx').on(t.profileId, t.status),
+]);
 
 /**
  * Partner webhooks as received, before processing (lab/webhooks/). Kept in the partner's region cell, sealed,
@@ -271,3 +306,4 @@ export type PartnerLabRow = typeof partnerLabs.$inferSelect;
 export type LabOrderRow = typeof labOrders.$inferSelect;
 export type LabOrderEventRow = typeof labOrderEvents.$inferSelect;
 export type LabWebhookInboxRow = typeof labWebhookInbox.$inferSelect;
+export type LabResultRow = typeof labResults.$inferSelect;

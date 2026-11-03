@@ -46,6 +46,13 @@ export interface OrderRecord {
   nextPlacementAt: number | null;
   /** Why the order failed, in our error vocabulary (e.g. slot_unavailable). */
   failureReason: string | null;
+  /** The partner's identifier for the last report stored, to tell a new or amended report from a repeat. */
+  reportVersion: string | null;
+  /** The partner status time the last report check covered; a later partner status means check again. */
+  reportCheckedStatusAt: number | null;
+  /** Failed report fetches in a row, and when to try again. */
+  reportAttempts: number;
+  nextReportAt: number | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -56,7 +63,8 @@ export function newOrderRecord(fields: Pick<OrderRecord, 'id' | 'userId' | 'prof
     partnerRef: null, partnerStatus: null, partnerStatusAt: null, lastSyncedAt: null,
     items: [], slotStart: null, slotEnd: null, pricePaise: 0, payer: 'partner',
     contactCt: null, piiPurgedAt: null, consentVersion: null, consentedAt: null, idempotencyKey: null, requestHash: null,
-    placementAttempts: 0, nextPlacementAt: null, failureReason: null, updatedAt: fields.createdAt,
+    placementAttempts: 0, nextPlacementAt: null, failureReason: null,
+    reportVersion: null, reportCheckedStatusAt: null, reportAttempts: 0, nextReportAt: null, updatedAt: fields.createdAt,
     ...fields,
   };
 }
@@ -110,6 +118,11 @@ export interface OrderStore {
   dueForPoll(syncedBefore: Partial<Record<OrderStatus, number>>, limit: number): Promise<OrderRecord[]>;
   /** Orders still placing whose next placement retry is due. */
   dueForPlacement(now: number, limit: number): Promise<OrderRecord[]>;
+  /**
+   * Orders whose report may be new: in `statuses`, with a partner status newer than the last report check covered,
+   * and no retry wait pending (nextReportAt in the past or unset).
+   */
+  dueForReport(statuses: readonly OrderStatus[], now: number, limit: number): Promise<OrderRecord[]>;
 }
 
 /* ---------------- webhook inbox ---------------- */

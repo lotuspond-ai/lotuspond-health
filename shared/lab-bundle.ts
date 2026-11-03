@@ -69,3 +69,29 @@ export interface LabOrderView {
   /** Status changes, oldest first; only when reading one order. */
   timeline?: { status: OrderStatus; at: string }[];
 }
+
+export type LabResultStatus = 'pending' | 'saved' | 'dismissed' | 'superseded';
+
+/** A delivery of an order's results (GET /api/profiles/:pid/lab-results). */
+export interface LabResultView {
+  id: string;
+  orderId: string;
+  profileId: string;
+  /** 1 for the first delivery of an order; a later one replaces what an earlier one saved. */
+  sequence: number;
+  partial: boolean;
+  /**
+   * pending: waiting for review. saved: now records in the profile (documentId is the PDF). dismissed: not wanted.
+   * superseded: replaced by a later delivery for the same order.
+   */
+  status: LabResultStatus;
+  /** How the saved records are labelled (their sourceFile), e.g. "LotusPond Test Lab (simulated) order FL…". */
+  source: string;
+  createdAt: string;
+  decidedAt: string | null;
+  documentId: string | null;
+  /** Whether GET …/:rid/report serves the PDF. */
+  hasPdf: boolean;
+  /** The rows as printed, for the app's review screen; only while pending. */
+  bundle?: LabResultBundle;
+}

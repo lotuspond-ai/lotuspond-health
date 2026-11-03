@@ -1,6 +1,6 @@
 // Lab order and webhook inbox storage on a cell database (db/schema.ts lab_* tables). Same contracts as the
 // in-memory stores (store/types.ts); test/lab-store.test.ts runs both against the same expectations.
-import { and, asc, desc, eq, isNotNull, isNull, lt, lte, notInArray, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, lte, notInArray, or, sql } from 'drizzle-orm';
 import type { OrderStatus, PartnerId } from '../../../../shared/lab-bundle.ts';
 import type { Db } from '../../db/client.ts';
 import { labOrderEvents, labOrders, labWebhookInbox, type LabOrderEventRow, type LabOrderRow, type LabWebhookInboxRow } from '../../db/schema.ts';
@@ -23,7 +23,9 @@ function toRecord(r: LabOrderRow): OrderRecord {
     items: r.items, slotStart: ms(r.slotStart), slotEnd: ms(r.slotEnd), pricePaise: r.pricePaise, payer: r.payer,
     contactCt: toBytes(r.contactCt), piiPurgedAt: ms(r.piiPurgedAt), consentVersion: r.consentVersion, consentedAt: ms(r.consentedAt),
     idempotencyKey: r.idempotencyKey, requestHash: r.requestHash, placementAttempts: r.placementAttempts,
-    nextPlacementAt: ms(r.nextPlacementAt), failureReason: r.failureReason, createdAt: r.createdAt.getTime(), updatedAt: r.updatedAt.getTime(),
+    nextPlacementAt: ms(r.nextPlacementAt), failureReason: r.failureReason,
+    reportVersion: r.reportVersion, reportCheckedStatusAt: ms(r.reportCheckedStatusAt), reportAttempts: r.reportAttempts, nextReportAt: ms(r.nextReportAt),
+    createdAt: r.createdAt.getTime(), updatedAt: r.updatedAt.getTime(),
   };
 }
 
@@ -34,7 +36,9 @@ function toRow(o: OrderRecord): typeof labOrders.$inferInsert {
     items: o.items, slotStart: date(o.slotStart), slotEnd: date(o.slotEnd), pricePaise: o.pricePaise, payer: o.payer,
     contactCt: toB64(o.contactCt), piiPurgedAt: date(o.piiPurgedAt), consentVersion: o.consentVersion, consentedAt: date(o.consentedAt),
     idempotencyKey: o.idempotencyKey, requestHash: o.requestHash, placementAttempts: o.placementAttempts,
-    nextPlacementAt: date(o.nextPlacementAt), failureReason: o.failureReason, createdAt: new Date(o.createdAt), updatedAt: new Date(o.updatedAt),
+    nextPlacementAt: date(o.nextPlacementAt), failureReason: o.failureReason,
+    reportVersion: o.reportVersion, reportCheckedStatusAt: date(o.reportCheckedStatusAt), reportAttempts: o.reportAttempts, nextReportAt: date(o.nextReportAt),
+    createdAt: new Date(o.createdAt), updatedAt: new Date(o.updatedAt),
   };
 }
 
@@ -119,6 +123,18 @@ export class DrizzleOrderStore implements OrderStore {
         or(isNull(labOrders.lastSyncedAt), lte(labOrders.lastSyncedAt, new Date(cutoff))),
       ))),
     )).orderBy(sql`${labOrders.lastSyncedAt} asc nulls first`).limit(limit);
+    return rows.map(toRecord);
+  }
+
+  async dueForReport(statuses: readonly OrderStatus[], now: number, limit: number): Promise<OrderRecord[]> {
+    if (!statuses.length) return [];
+    const rows = await this.db.select().from(labOrders).where(and(
+      inArray(labOrders.status, [...statuses]),
+      isNotNull(labOrders.partnerRef),
+      isNotNull(labOrders.partnerStatusAt),
+      or(isNull(labOrders.reportCheckedStatusAt), lt(labOrders.reportCheckedStatusAt, labOrders.partnerStatusAt)),
+      or(isNull(labOrders.nextReportAt), lte(labOrders.nextReportAt, new Date(now))),
+    )).orderBy(asc(labOrders.partnerStatusAt)).limit(limit);
     return rows.map(toRecord);
   }
 

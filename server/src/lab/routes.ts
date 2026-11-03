@@ -6,12 +6,19 @@
 //   GET  /api/profiles/:pid/lab-orders/:oid           one order with its timeline
 //   POST /api/profiles/:pid/lab-orders/:oid/cancel    { reason? }
 //   POST /api/profiles/:pid/lab-orders/:oid/reschedule { slot }
+//   GET  /api/profiles/:pid/lab-results               pending results (?status=all for every delivery)
+//   GET  /api/profiles/:pid/lab-results/:rid/report   the report PDF
+//   POST /api/profiles/:pid/lab-results/:rid/save     { measurements } as reviewed in the app: saved as records
+//   POST /api/profiles/:pid/lab-results/:rid/dismiss  drop it without saving
 // Partner webhooks are served at /hooks/:partner/:hookSecret (hookRoutes), outside /api and its browser checks.
 import { Hono } from 'hono';
+import { z } from 'zod';
+import { LIMITS } from '../../../shared/constants.ts';
 import { eventContext, recordEvent } from '../compliance/audit.ts';
-import { badRequest, HttpError } from '../lib/errors.ts';
+import { badRequest, HttpError, notFound } from '../lib/errors.ts';
 import { clientIp, readJson, requireAuth, type AppEnv, type Ctx, type Deps } from '../http.ts';
-import { requireProfile } from '../routes/profiles.ts';
+import { contentDisposition, requireProfile } from '../routes/profiles.ts';
+import { MeasurementInput } from '../schemas.ts';
 import { BookingError, type Owner } from './booking/service.ts';
 import { LabCancelBody, LabOrderCreateBody, LabRescheduleBody, type BookingInput } from './booking/validate.ts';
 import { orderView } from './booking/view.ts';
@@ -100,6 +107,50 @@ export function labOrderRoutes(deps: Deps, labs: Labs) {
     const { slot } = await readJson(c, LabRescheduleBody);
     const order = await runtime(labs, c).booking.reschedule(owner(c), c.req.param('oid'), slot);
     return c.json({ order: orderView(order) });
+  });
+
+  return app;
+}
+
+/** The reviewed values to save; sourceFile and documentId are set by the server. */
+const LabResultSaveBody = z.object({
+  measurements: z.array(MeasurementInput).max(LIMITS.measurementsPerRequest),
+});
+
+export function labResultRoutes(deps: Deps, labs: Labs) {
+  const app = new Hono<AppEnv>();
+  app.use('*', requireAuth(deps));
+  app.use('*', requireProfile());
+
+  app.get('/', async c => {
+    const rt = labs.forCell(c.var.cell);
+    return c.json({ results: rt ? await rt.results.list(c.var.profile.id, c.req.query('status') === 'all') : [] });
+  });
+
+  app.get('/:rid/report', async c => {
+    const file = await runtime(labs, c).results.pdf(c.var.profile.id, c.req.param('rid'));
+    if (!file) throw notFound('That report');
+    return new Response(file.stream, {
+      headers: {
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': contentDisposition('inline', file.fileName),
+        'Cache-Control': 'private, no-store',
+        'X-Content-Type-Options': 'nosniff',
+        'Content-Security-Policy': "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; sandbox",
+      },
+    });
+  });
+
+  app.post('/:rid/save', async c => {
+    const { measurements } = await readJson(c, LabResultSaveBody);
+    const r = await runtime(labs, c).results.save(c.var.profile.id, c.req.param('rid'), measurements);
+    await recordEvent(c.var.cell.db, eventContext(c, deps), c.var.user.id, 'lab_results_saved', { profileId: c.var.profile.id });
+    return c.json(r);
+  });
+
+  app.post('/:rid/dismiss', async c => {
+    const result = await runtime(labs, c).results.dismiss(c.var.profile.id, c.req.param('rid'));
+    return c.json({ result });
   });
 
   return app;

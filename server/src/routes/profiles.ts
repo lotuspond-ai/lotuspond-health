@@ -7,7 +7,7 @@ import { bodyLimit } from 'hono/body-limit';
 import { and, asc, count, desc, eq, inArray } from 'drizzle-orm';
 import { LIMITS } from '../../../shared/constants.ts';
 import type { Db } from '../db/client.ts';
-import { documents, measurements, profiles, scans, type ProfileRow } from '../db/schema.ts';
+import { documents, labResults, measurements, profiles, scans, type ProfileRow } from '../db/schema.ts';
 import { eventContext, recentActivity, recordEvent } from '../compliance/audit.ts';
 import { listConsents } from '../compliance/consents.ts';
 import { badRequest, conflict, HttpError, notFound } from '../lib/errors.ts';
@@ -35,7 +35,7 @@ function cleanFileName(name: string): string {
   return cleaned || 'file';
 }
 
-function contentDisposition(kind: 'inline' | 'attachment', fileName: string): string {
+export function contentDisposition(kind: 'inline' | 'attachment', fileName: string): string {
   const ascii = fileName.replace(/[^\x20-\x7e]/g, '_').replace(/[\\"]/g, '_');
   return `${kind}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(fileName)}`;
 }
@@ -121,6 +121,7 @@ export function profileRoutes(deps: Deps) {
     const pid = c.var.profile.id;
     await db.transaction(async tx => {
       await tx.delete(measurements).where(eq(measurements.profileId, pid));
+      await tx.delete(labResults).where(eq(labResults.profileId, pid)); // their PDFs are under the profile's files, deleted below
       await tx.delete(documents).where(eq(documents.profileId, pid)); // cascades to scans
     });
     await files.deletePrefix(pid);

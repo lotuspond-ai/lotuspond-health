@@ -257,6 +257,7 @@ const ACTIVITY_LABEL: Record<AuditKind, string> = {
   preferences_changed: 'Units changed',
   lab_order_created: 'Lab test booked',
   lab_order_cancelled: 'Lab test booking cancelled',
+  lab_results_saved: 'Lab results added',
 };
 
 function describe(e: ActivityEvent, profiles: Profile[]): string | null {

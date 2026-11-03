@@ -8,25 +8,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { eq } from 'drizzle-orm';
-import type { Hono } from 'hono';
 import type { LabOrderView } from '../../shared/lab-bundle.ts';
-import type { SessionInfo } from '../../shared/types.ts';
-import { createApp } from '../src/app.ts';
-import { singleCell } from '../src/cells.ts';
-import { ephemeralSecrets } from '../src/compliance/secrets.ts';
-import { loadConfig } from '../src/config.ts';
 import { openDatabase, type Database } from '../src/db/client.ts';
 import { auditEvents, labOrders } from '../src/db/schema.ts';
-import type { AppEnv } from '../src/http.ts';
-import { DiskFileStore } from '../src/lib/files.ts';
-import type { BookingOptions } from '../src/lab/booking/service.ts';
-import { memoryLogger } from '../src/lab/log.ts';
-import type { FakeTag } from '../src/lab/partners/fake-lab.ts';
 import { PartnerError, type LabPartner } from '../src/lab/partners/types.ts';
-import { createLabs, fakePartner } from '../src/lab/runtime.ts';
 import { istDate } from '../src/lab/time.ts';
-import { makeClient, registration, type TestClient } from './helpers.ts';
-import { bookingBody, NOTICE_VERSION } from './lab-helpers.ts';
+import { makeClient } from './helpers.ts';
+import { bookingBody, labEnv, NOTICE_VERSION, withOverrides } from './lab-helpers.ts';
 
 const migrations = fileURLToPath(new URL('../drizzle', import.meta.url));
 let database: Database;
@@ -42,73 +30,11 @@ after(async () => {
   fs.rmSync(filesDir, { recursive: true, force: true });
 });
 
-/** The real adapter with some methods replaced. */
-function withOverrides(real: LabPartner, overrides: Partial<Record<keyof LabPartner, unknown>>): LabPartner {
-  return Object.create(real, Object.fromEntries(Object.entries(overrides).map(([k, v]) => [k, { value: v }])));
-}
-
-let users = 0;
-
-/** A fresh app over the shared database, with the simulated lab as the partner and a clock the test moves. */
-function labEnv(opts: { tags?: FakeTag[]; wrap?: (real: LabPartner) => LabPartner; booking?: Partial<BookingOptions> } = {}) {
-  let t = Date.now();
-  const now = () => t;
-  const log = memoryLogger();
-  const config = loadConfig({ NODE_ENV: 'test', TRUST_PROXY: 'true' });
-  const files = new DiskFileStore(filesDir);
-  const cells = singleCell(database.db, files, config.servedRegions);
-  const secrets = ephemeralSecrets();
-  let app!: Hono<AppEnv>;
-  const fake = fakePartner({
-    now, stepMs: 1000,
-    deliver: async (hookPath, req) => {
-      const res = await app.request(hookPath, { method: 'POST', headers: req.headers, body: req.rawBody });
-      if (!res.ok) throw new Error(`receiver replied ${res.status}`);
-    },
-  });
-  const partner = opts.wrap ? { ...fake.config, adapter: opts.wrap(fake.adapter) } : fake.config;
-  const labs = createLabs({
-    cells, secrets, partners: [partner], now, log,
-    booking: { placeTimeoutMs: 2000, placementRetryDelaysMs: [1000, 2000, 4000], ...opts.booking },
-    processor: { baseDelayMs: 1000 },
-  });
-  app = createApp({ db: database.db, files, config, cells, secrets, labs });
-  const tagSuffix = opts.tags?.length ? ` ${opts.tags.map(x => `#${x}`).join(' ')}` : '';
-
-  /** Sign up a new account (India unless given) and return its client and self profile id. */
-  async function signUp(country = 'IN'): Promise<{ c: TestClient; profileId: string }> {
-    const c = makeClient(app);
-    const info = await c.json<SessionInfo>('POST', '/api/auth/register', registration(`lab-${Date.now()}-${++users}@example.com`, country), 201);
-    return { c, profileId: info.profiles[0].id };
-  }
-  const tomorrow = () => istDate(t + 86_400_000);
-  async function slot(c: TestClient, date = tomorrow()) {
-    const r = await c.json<{ slots: { start: string; end: string }[] }>('GET', `/api/lab/slots?partner=fake&pincode=560034&date=${date}&items=FL_ESSENTIAL`);
-    return r.slots[0];
-  }
-  let keys = 0;
-  async function book(c: TestClient, profileId: string, body?: Record<string, unknown>, key = `key-${Date.now()}-${++keys}`) {
-    const b = body ?? bookingBody(await slot(c), { patient: { name: `Asha Rao${tagSuffix}`, age: 34, sex: 'female' } });
-    const res = await c.call('POST', `/api/profiles/${profileId}/lab-orders`, b, { 'idempotency-key': key });
-    const text = await res.text();
-    return { status: res.status, headers: res.headers, body: (text ? JSON.parse(text) : {}) as { order?: LabOrderView; error?: { code: string; message: string; order?: LabOrderView } } };
-  }
-  async function getOrder(c: TestClient, profileId: string, id: string) {
-    return (await c.json<{ order: LabOrderView }>('GET', `/api/profiles/${profileId}/lab-orders/${id}`)).order;
-  }
-  /** Move the clock, let the lab act and deliver its webhooks, then run the background jobs once. */
-  async function advance(ms: number) {
-    t += ms;
-    await fake.lab.tick();
-    await labs.tick();
-  }
-  return { app, labs, fake, log, now, signUp, slot, book, getOrder, advance, tomorrow };
-}
 
 describe('catalogue and slots', () => {
   test('signed-in accounts in India see the catalogue in paise, cached a day; other regions see none', async () => {
     let calls = 0;
-    const env = labEnv({ wrap: real => withOverrides(real, { catalog: async (pin: string) => { calls++; return real.catalog(pin); } }) });
+    const env = labEnv(database, filesDir, { wrap: real => withOverrides(real, { catalog: async (pin: string) => { calls++; return real.catalog(pin); } }) });
     const { c } = await env.signUp();
     const r = await c.json<{ items: { code: string; pricePaise: number; partner: string }[]; unavailable: string[] }>('GET', '/api/lab/catalog?pincode=560034');
     const essential = r.items.find(i => i.code === 'FL_ESSENTIAL');
@@ -125,7 +51,7 @@ describe('catalogue and slots', () => {
   });
 
   test('slots for a partner and date', async () => {
-    const env = labEnv();
+    const env = labEnv(database, filesDir, );
     const { c } = await env.signUp();
     const s = await env.slot(c);
     assert.match(s.start, /T\d{2}:00:00\+05:30$/);
@@ -136,7 +62,7 @@ describe('catalogue and slots', () => {
 
 describe('booking', () => {
   test('a confirmed booking: 201, stored in the cell with consent, details sealed, recorded in activity', async () => {
-    const env = labEnv();
+    const env = labEnv(database, filesDir, );
     const { c, profileId } = await env.signUp();
     const r = await env.book(c, profileId);
     assert.equal(r.status, 201, JSON.stringify(r.body));
@@ -158,7 +84,7 @@ describe('booking', () => {
   });
 
   test('the same Idempotency-Key and request returns the same order; a different request is refused', async () => {
-    const env = labEnv();
+    const env = labEnv(database, filesDir, );
     const { c, profileId } = await env.signUp();
     const body = bookingBody(await env.slot(c));
     const first = await env.book(c, profileId, body, 'same-key-123');
@@ -174,7 +100,7 @@ describe('booking', () => {
   });
 
   test('checks: shape, adults only, current notice, offered items, served pincode, future slot, mobile number', async () => {
-    const env = labEnv();
+    const env = labEnv(database, filesDir, );
     const { c, profileId } = await env.signUp();
     const s = await env.slot(c);
     const code = async (over: Record<string, unknown>) => (await env.book(c, profileId, bookingBody(s, over))).body.error?.code;
@@ -192,7 +118,7 @@ describe('booking', () => {
   });
 
   test('a slot taken at the lab: 409, with the order recorded as failed', async () => {
-    const env = labEnv({ tags: ['slot-full'] });
+    const env = labEnv(database, filesDir, { tags: ['slot-full'] });
     const { c, profileId } = await env.signUp();
     const r = await env.book(c, profileId);
     assert.equal(r.status, 409);
@@ -201,7 +127,7 @@ describe('booking', () => {
   });
 
   test('accounts outside the lab\'s region, other people\'s profiles and cross-site requests are refused', async () => {
-    const env = labEnv();
+    const env = labEnv(database, filesDir, );
     const { c, profileId } = await env.signUp();
     const { c: other, profileId: otherProfile } = await env.signUp();
     const o = (await env.book(c, profileId)).body.order!;
@@ -215,7 +141,7 @@ describe('booking', () => {
   });
 
   test('a family member\'s booking is kept under their profile', async () => {
-    const env = labEnv();
+    const env = labEnv(database, filesDir, );
     const { c, profileId } = await env.signUp();
     const partner = await c.json<{ id: string }>('POST', '/api/profiles', { displayName: 'Ravi', relationship: 'partner' }, 201);
     const o = (await env.book(c, partner.id, bookingBody(await env.slot(c), { patient: { name: 'Ravi Rao', age: 38, sex: 'male' } }))).body.order!;
@@ -227,7 +153,7 @@ describe('booking', () => {
 
 describe('when the lab does not answer', () => {
   test('a lost reply: 202 placing, then the retry finds the booking at the lab', async () => {
-    const env = labEnv({ tags: ['lost-response', 'no-webhooks'] });
+    const env = labEnv(database, filesDir, { tags: ['lost-response', 'no-webhooks'] });
     const { c, profileId } = await env.signUp();
     const r = await env.book(c, profileId);
     assert.equal(r.status, 202);
@@ -239,7 +165,7 @@ describe('when the lab does not answer', () => {
   });
 
   test('a slow reply after the timeout is still applied', async () => {
-    const env = labEnv({
+    const env = labEnv(database, filesDir, {
       booking: { placeTimeoutMs: 20 },
       wrap: real => withOverrides(real, { createOrder: async (input: Parameters<LabPartner['createOrder']>[0]) => { await sleep(80); return real.createOrder(input); } }),
     });
@@ -251,7 +177,7 @@ describe('when the lab does not answer', () => {
   });
 
   test('if the lab never confirms, the order fails after the last retry, with an alert', async () => {
-    const env = labEnv({
+    const env = labEnv(database, filesDir, {
       booking: { placementRetryDelaysMs: [1000, 1000] },
       wrap: real => withOverrides(real, { createOrder: async () => { throw new PartnerError('timeout', 'no reply'); }, findOrderByClientRef: async () => null }),
     });
@@ -267,7 +193,7 @@ describe('when the lab does not answer', () => {
 
 describe('managing orders', () => {
   test('cancel before collection (at the lab too, and in activity); not after', async () => {
-    const env = labEnv();
+    const env = labEnv(database, filesDir, );
     const { c, profileId } = await env.signUp();
     const o = (await env.book(c, profileId)).body.order!;
     const r = await c.json<{ order: LabOrderView }>('POST', `/api/profiles/${profileId}/lab-orders/${o.id}/cancel`, { reason: 'Travelling' });
@@ -286,7 +212,7 @@ describe('managing orders', () => {
   });
 
   test('reschedule a visit; not after collection', async () => {
-    const env = labEnv();
+    const env = labEnv(database, filesDir, );
     const { c, profileId } = await env.signUp();
     const o = (await env.book(c, profileId)).body.order!;
     await env.advance(1000);
@@ -302,7 +228,7 @@ describe('managing orders', () => {
   });
 
   test('from booking to report, driven by the lab\'s webhooks', async () => {
-    const env = labEnv();
+    const env = labEnv(database, filesDir, );
     const { c, profileId } = await env.signUp();
     const o = (await env.book(c, profileId)).body.order!;
     for (let i = 0; i < 5; i++) await env.advance(1000);
@@ -313,14 +239,14 @@ describe('managing orders', () => {
   });
 
   test('webhooks are served outside /api, and a wrong secret looks like nothing is there', async () => {
-    const env = labEnv();
+    const env = labEnv(database, filesDir, );
     const res = await env.app.request('/hooks/fake/not-the-secret', { method: 'POST', body: '{}', headers: { 'content-type': 'application/json' } });
     assert.equal(res.status, 404);
     assert.deepEqual(await res.json(), { error: 'not_found' });
   });
 
   test('deleting a profile deletes its lab orders', async () => {
-    const env = labEnv();
+    const env = labEnv(database, filesDir, );
     const { c } = await env.signUp();
     const member = await c.json<{ id: string }>('POST', '/api/profiles', { displayName: 'Mum', relationship: 'parent' }, 201);
     const o = (await env.book(c, member.id, bookingBody(await env.slot(c), { patient: { name: 'Lata Rao', age: 61, sex: 'female' } }))).body.order!;
