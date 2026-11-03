@@ -2,55 +2,42 @@ import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { useFrame, useThree, type ThreeEvent } from '@react-three/fiber';
 import { useAnatomyModel, preloadAnatomyModel } from './model';
-import { ORGANS, TISSUE, MESH_TO_ORGAN, ORGAN_BY_ID, type MeshSpec, type Tissue } from '../anatomy/organs';
-import type { OrganId, SystemId } from '../types';
+import { TISSUE, MESH_TO_ORGAN, ORGAN_BY_ID, type MeshSpec } from '../anatomy/organs';
+import { GHOSTS, tissueMaterial, type MaterialTier, type TissueMaterial } from './materials';
+import type { OrganId } from '../types';
 import { useUI } from '../state/ui';
 import { useHealth } from '../lib/store';
-import { BIOMARKERS } from '../lib/catalog';
+import { ORGAN_SYSTEMS } from '../components/stage/status';
 
 /** Shared lookup so the camera rig can frame meshes by name. */
 export const meshRegistry = new Map<string, THREE.Mesh>();
 
-const ghostVS = /* glsl */ `
-  varying vec3 vN; varying vec3 vV;
-  void main(){ vec4 mv = modelViewMatrix * vec4(position,1.0); vN = normalize(normalMatrix * normal); vV = -mv.xyz; gl_Position = projectionMatrix * mv; }`;
-const ghostFS = /* glsl */ `
-  uniform vec3 uColor; uniform float uStrength; uniform float uBase;
-  varying vec3 vN; varying vec3 vV;
-  void main(){ float f = pow(1.0 - abs(dot(normalize(vN), normalize(vV))), 2.4); float a = (uBase + f) * uStrength; gl_FragColor = vec4(uColor * a, a); }`;
-
-function ghost(color: string, strength: number, base = 0.03) {
-  return new THREE.ShaderMaterial({
-    vertexShader: ghostVS, fragmentShader: ghostFS, transparent: true, depthWrite: false, side: THREE.DoubleSide,
-    blending: THREE.AdditiveBlending, uniforms: { uColor: { value: new THREE.Color(color) }, uStrength: { value: strength }, uBase: { value: base } },
-  });
-}
-
-function physical(t: Tissue, inner = false) {
-  const d = TISSUE[t];
-  const m = new THREE.MeshPhysicalMaterial({
-    color: inner ? d.inner ?? d.color : d.color, roughness: inner ? 0.8 : d.rough, clearcoat: inner ? 0.1 : d.clear, clearcoatRoughness: 0.32,
-    sheen: d.sheen && !inner ? 0.55 : 0, sheenColor: new THREE.Color(d.sheen ?? '#ffffff'), sheenRoughness: 0.55,
-    side: inner ? THREE.BackSide : THREE.FrontSide, envMapIntensity: 0.9,
-  });
-  if (d.opacity) { m.transparent = true; m.opacity = inner ? d.opacity * 0.55 : d.opacity; m.depthWrite = false; }
-  return m;
-}
+interface MaterialSet { solid: TissueMaterial; glass: TissueMaterial; inner?: TissueMaterial }
 
 interface Part {
   mesh: THREE.Mesh; organ: OrganId; spec: MeshSpec;
-  solid: THREE.MeshPhysicalMaterial; inner?: THREE.Mesh; glass: THREE.MeshPhysicalMaterial;
+  sets: Record<MaterialTier, MaterialSet>;
+  /** Materials of the current tier. */
+  solid: TissueMaterial; glass: TissueMaterial;
+  /** Back faces drawn as cut tissue. Only shown when they can be seen: in a cross-section, or through see-through tissue. */
+  inner?: THREE.Mesh; seeThrough: boolean;
   base: THREE.Color; dimmed: THREE.Color; dim: number; dimT: number; baseOpacity: number;
 }
 
-const organSystems = (() => {
-  const map: Record<string, Set<SystemId>> = {};
-  for (const o of ORGANS) map[o.id] = new Set(o.systems);
-  for (const b of BIOMARKERS) for (const o of b.organs) (map[o] ??= new Set()).add(b.system);
-  return map as Record<OrganId, Set<SystemId>>;
-})();
+function materialSet(spec: MeshSpec, tier: MaterialTier, inner: boolean): MaterialSet {
+  const solid = tissueMaterial(spec.tissue, tier);
+  const glass = tissueMaterial(spec.tissue, tier); glass.transparent = true; glass.opacity = 0.2; glass.depthWrite = false;
+  return { solid, glass, inner: inner ? tissueMaterial(spec.tissue, tier, true) : undefined };
+}
 
-export function Anatomy() {
+export interface AnatomyProps {
+  /** Physical (clearcoat, sheen) or standard materials. */
+  tier?: MaterialTier;
+  /** Draw the inside of see-through tissue (lungs) as a second layer. Off on the cheapest tiers. */
+  depth?: boolean;
+}
+
+export function Anatomy({ tier = 'physical', depth = true }: AnatomyProps) {
   const { scene } = useAnatomyModel();
   const { gl, invalidate } = useThree();
   const selected = useHealth(s => s.selectedOrgan);
@@ -59,9 +46,9 @@ export function Anatomy() {
   const { hovered, setHovered, layers, xray, section } = useUI();
   const animating = useRef(true);
 
-  const skinGhost = useMemo(() => ghost('#8fd3dc', 0.42, 0.03), []);
-  const boneGhost = useMemo(() => ghost('#efe6d2', 0.30, 0.05), []);
-  const contextGhost = useMemo(() => ghost('#9fd6dd', 0.13, 0.01), []);
+  const skinGhost = useMemo(() => GHOSTS.skin(), []);
+  const boneGhost = useMemo(() => GHOSTS.bone(), []);
+  const contextGhost = useMemo(() => GHOSTS.context(), []);
   const clipPlane = useMemo(() => new THREE.Plane(new THREE.Vector3(0, 0, -1), 0), []);
 
   const parts = useMemo(() => {
@@ -75,28 +62,40 @@ export function Anatomy() {
       meshRegistry.set(mesh.name, mesh);
       mesh.geometry.computeBoundingSphere(); mesh.geometry.computeBoundingBox();
       if (organ === 'skin') { mesh.material = skinGhost; mesh.raycast = () => {}; mesh.renderOrder = 10; return; }
-      const solid = physical(spec.tissue);
-      const glass = physical(spec.tissue); glass.transparent = true; glass.opacity = 0.2; glass.depthWrite = false;
+      const seeThrough = !!TISSUE[spec.tissue].opacity;
+      const hasInner = !!spec.hollow || (seeThrough && spec.tissue !== 'diaphragm');
+      const sets = { physical: materialSet(spec, 'physical', hasInner), standard: materialSet(spec, 'standard', hasInner) };
+      const { solid, glass } = sets.physical;
       mesh.material = solid;
       let inner: THREE.Mesh | undefined;
-      if (spec.hollow || (TISSUE[spec.tissue].opacity && spec.tissue !== 'diaphragm')) {
-        inner = new THREE.Mesh(mesh.geometry, physical(spec.tissue, true));
-        inner.raycast = () => {}; inner.renderOrder = TISSUE[spec.tissue].opacity ? 1 : 0;
+      if (hasInner) {
+        inner = new THREE.Mesh(mesh.geometry, sets.physical.inner);
+        inner.raycast = () => {}; inner.renderOrder = seeThrough ? 1 : 0; inner.visible = false;
         mesh.add(inner);
       }
-      if (TISSUE[spec.tissue].opacity) mesh.renderOrder = 2;
+      if (seeThrough) mesh.renderOrder = 2;
       const base = solid.color.clone();
       const hsl = { h: 0, s: 0, l: 0 }; base.getHSL(hsl);
       const dimmed = new THREE.Color().setHSL(hsl.h, hsl.s * 0.18, Math.min(hsl.l, 0.5) * 0.42);
-      list.push({ mesh, organ, spec, solid, inner, glass, base, dimmed, dim: 0, dimT: 0, baseOpacity: solid.opacity });
+      list.push({ mesh, organ, spec, sets, solid, glass, inner, seeThrough, base, dimmed, dim: 0, dimT: 0, baseOpacity: solid.opacity });
     });
     return list;
   }, [scene, skinGhost]);
 
   useEffect(() => { gl.localClippingEnabled = true; }, [gl]);
 
-  // Apply state: focus, system highlight, x-ray, layers, cross-section.
+  // Release GPU programs and materials if the stage is ever torn down.
+  useEffect(() => () => {
+    for (const p of parts) for (const set of Object.values(p.sets)) { set.solid.dispose(); set.glass.dispose(); set.inner?.dispose(); }
+  }, [parts]);
+
+  // Apply state: material tier (the adaptive quality monitor may change it), focus, system highlight, x-ray, layers, cross-section.
   useEffect(() => {
+    for (const p of parts) {
+      const set = p.sets[tier];
+      p.solid = set.solid; p.glass = set.glass;
+      if (p.inner && set.inner) p.inner.material = set.inner;
+    }
     const focus = selected && selected !== 'skin' ? selected : null;
     const bonesSolid = focus === 'marrow' || (!focus && activeSystem === 'blood');
     let box: THREE.Box3 | null = null;
@@ -113,12 +112,12 @@ export function Anatomy() {
       else if (isBone && !bonesSolid) mat = boneGhost;
       else if (isFocus && xray && p.spec.shell) mat = p.glass;
       p.mesh.material = mat;
-      if (p.inner) p.inner.visible = mat === p.solid;
-      p.mesh.castShadow = false;
       const clip = isFocus && section.on && box && (p.spec.hollow || p.spec.shell) ? [clipPlane] : [];
+      // Closed organs never show their back faces unless the cutting plane opens them.
+      if (p.inner) p.inner.visible = mat === p.solid && (p.seeThrough ? depth || clip.length > 0 : clip.length > 0);
       p.solid.clippingPlanes = clip; p.glass.clippingPlanes = clip;
       if (p.inner) (p.inner.material as THREE.Material).clippingPlanes = clip;
-      p.dimT = !focus && activeSystem && !organSystems[p.organ]?.has(activeSystem) ? 1 : 0;
+      p.dimT = !focus && activeSystem && !ORGAN_SYSTEMS[p.organ]?.has(activeSystem) ? 1 : 0;
     }
     const skin = meshRegistry.get('skin'); if (skin) skin.visible = layers.skin && !focus;
     if (box && section.on) {
@@ -128,7 +127,7 @@ export function Anatomy() {
       else { clipPlane.normal.set(0, -1, 0); clipPlane.constant = THREE.MathUtils.lerp(box.max.y, box.min.y, t); }
     }
     animating.current = true; invalidate();
-  }, [parts, selected, activeSystem, xray, layers, section, boneGhost, contextGhost, clipPlane, invalidate]);
+  }, [parts, tier, depth, selected, activeSystem, xray, layers, section, boneGhost, contextGhost, clipPlane, invalidate]);
 
   useEffect(() => { animating.current = true; invalidate(); }, [hovered, invalidate]);
 

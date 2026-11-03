@@ -18,7 +18,7 @@ import { PartnerError, type LabPartner, type PartnerConfig, type PartnerRegistry
 import { MemoryAccountStore, MemoryOrderStore, MemoryWebhookInbox } from '../src/store/memory.ts';
 import { newOrderRecord } from '../src/store/types.ts';
 import { WebhookProcessor } from '../src/webhooks/processor.ts';
-import { bookingBody, NOTICE_VERSION } from './helpers.ts';
+import { bookingBody, NOTICE_VERSION } from './lab-helpers.ts';
 
 const T0 = Date.parse('2026-11-03T07:30:00+05:30');
 const HOOK = 'hook-path-secret-1';

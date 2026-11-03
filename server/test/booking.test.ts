@@ -4,7 +4,7 @@ import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { PartnerError, type LabPartner } from '../src/partners/types.ts';
-import { apiEnv, bookingBody, deviceKey, NOTICE_VERSION, ORIGIN, type ApiEnv } from './helpers.ts';
+import { apiEnv, bookingBody, deviceKey, NOTICE_VERSION, ORIGIN, type ApiEnv } from './lab-helpers.ts';
 
 /** The real adapter with some methods replaced. */
 function withOverrides(real: LabPartner, overrides: Partial<Record<keyof LabPartner, unknown>>): LabPartner {

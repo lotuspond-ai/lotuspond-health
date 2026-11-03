@@ -1,7 +1,7 @@
 // Phone OTP sign-in and sessions, through the HTTP API. Run: npm run test:server
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { apiEnv, HOUR } from './helpers.ts';
+import { apiEnv, HOUR } from './lab-helpers.ts';
 
 const PHONE = '+919812345678';
 

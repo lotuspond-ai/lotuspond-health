@@ -23,6 +23,8 @@ const { parseValue } = await import(lib('parse/rows.ts'));
 const { SAMPLE } = await import(lib('sample.ts'));
 const store = await import(lib('store.ts'));
 const { buildExport } = await import(lib('export.ts'));
+const units = await import(lib('units.ts'));
+const regions = await import(new URL('../shared/regions.ts', import.meta.url).href);
 
 let pass = 0, fail = 0;
 const failures = [];
@@ -229,9 +231,9 @@ check('organSummary heart has LDL high', sum.heart.high >= 1 && sum.heart.total 
 const liverRows = store.measurementsForOrgan({ measurements: sm }, 'liver');
 check('measurementsForOrgan liver history', liverRows.find(s => s.key === 'alt')?.history.length === 3);
 const s = store.useHealth.getState();
-s.loadSample();
+await s.loadSample();
 check('store loadSample', store.useHealth.getState().measurements.length === sm.length);
-store.useHealth.getState().loadSample();
+await store.useHealth.getState().loadSample();
 check('store dedupes on re-add', store.useHealth.getState().measurements.length === sm.length);
 const tshRow = store.useHealth.getState().measurements.find(m => m.markerId === 'tsh' && m.date === '2026-10-20');
 store.useHealth.getState().updateMeasurement(tshRow.id, { value: 6.1, valueText: '6.1' });
@@ -245,11 +247,47 @@ store.useHealth.getState().removeMeasurement(tshRow.id);
 check('removeMeasurement', store.useHealth.getState().measurements.length === sm.length - 1);
 store.useHealth.getState().selectOrgan('liver');
 check('selectOrgan', store.useHealth.getState().selectedOrgan === 'liver');
-await store.hydrate();
-check('hydrate without IndexedDB keeps data', store.useHealth.getState().hydrated && store.useHealth.getState().measurements.length === sm.length - 1);
-store.useHealth.getState().clearAll();
-check('clearAll', store.useHealth.getState().measurements.length === 0);
+store.useHealth.getState().removeDocument('missing-doc');
+check('removeDocument of unknown id keeps results', store.useHealth.getState().measurements.length === sm.length - 1);
+await store.useHealth.getState().clearAll();
+check('clearAll', store.useHealth.getState().measurements.length === 0 && store.useHealth.getState().selectedOrgan === null);
+await store.useHealth.getState().loadSample();
+await store.useHealth.getState().openProfile(null);
+check('openProfile(null) clears records', store.useHealth.getState().measurements.length === 0 && store.useHealth.getState().profileId === null);
 check('refreshMeasurement export', typeof refreshMeasurement === 'function');
+
+/* ---------------- display units and country policy ---------------- */
+section('display units');
+{
+  const glu = { markerId: 'glucose_fasting', rawName: 'Glucose', value: 99, valueText: '99', unit: 'mg/dL', range: { low: 70, high: 100, text: '70 - 100', source: 'report' }, status: 'normal', date: null, sourceFile: 'x', confidence: 'high' };
+  const si = units.displayMeasurement(glu, 'si');
+  check('glucose 99 mg/dL → 5.5 mmol/L', si.unit === 'mmol/L' && si.value === 5.5 && si.converted, JSON.stringify(si));
+  check('glucose range converted', si.range.low === 3.89 && si.range.high === 5.55 && si.range.text === '3.89 – 5.55', JSON.stringify(si.range));
+  check('conventional leaves values alone', units.displayMeasurement(glu, 'conventional').text === '99');
+  const crea = units.displayMeasurement({ ...glu, markerId: 'creatinine', value: 0.82, valueText: '0.82', range: { low: 0.6, high: 1.1, source: 'report' } }, 'si');
+  check('creatinine 0.82 mg/dL → 72.5 µmol/L', crea.unit === 'µmol/L' && Math.abs(crea.value - 72.5) < 0.6, JSON.stringify(crea));
+  const hb = units.displayMeasurement({ ...glu, markerId: 'hemoglobin', value: 12.9, valueText: '12.9', unit: 'g/dL', range: null }, 'si');
+  check('hemoglobin 12.9 g/dL → 129 g/L', hb.unit === 'g/L' && hb.value === 129, JSON.stringify(hb));
+  const lt = units.displayMeasurement({ ...glu, markerId: 'ldl', value: 100, valueText: '<100', unit: 'mg/dL' }, 'si');
+  check('keeps < prefix', lt.text === '<2.59', lt.text);
+  check('tsh has no SI conversion', units.siConversion('tsh') === null);
+  check('qualitative untouched', units.displayMeasurement({ ...glu, markerId: 'urine_protein', value: null, valueText: 'Negative', unit: '' }, 'si').text === 'Negative');
+  check('every SI unit exists in the catalog', Object.keys(units).length > 0 && ['total_cholesterol','triglycerides','creatinine','vitamin_d','ft4','cortisol','hematocrit'].every(id => units.siConversion(id)));
+  check('round 3 s.f.', units.roundForDisplay(4.891) === 4.89 && units.roundForDisplay(0.0566) === 0.06 && units.roundForDisplay(129.4) === 129 && units.roundForDisplay(72.46) === 72.5);
+}
+section('country policy');
+{
+  check('249 ISO codes, no duplicates', regions.COUNTRY_CODES.length === 249 && new Set(regions.COUNTRY_CODES).size === 249);
+  const inp = regions.countryPolicy('in');
+  check('India: own cell, partners, grievance officer, adults only', inp.region === 'in' && inp.partnerLabs && inp.grievanceOfficer && inp.minAge === 18 && !inp.crossBorder);
+  check('Germany: EU cell, GDPR', regions.countryPolicy('DE').region === 'eu' && regions.countryPolicy('DE').laws[0].includes('GDPR'));
+  check('UK: stored in EU, cross-border, SI units', regions.countryPolicy('GB').region === 'eu' && regions.countryPolicy('GB').crossBorder && regions.countryPolicy('GB').units === 'si');
+  check('US: US cell, imperial', regions.countryPolicy('US').region === 'us' && regions.countryPolicy('US').measurement === 'us');
+  check('UAE not available (in-country health data)', !regions.countryPolicy('AE').available && /UAE/.test(regions.countryPolicy('AE').unavailableReason));
+  check('Australia: international cell, own law', regions.countryPolicy('AU').region === 'global' && regions.countryPolicy('AU').laws[0].includes('Privacy Act 1988'));
+  check('every country has a region and a law', regions.COUNTRY_CODES.every(c => { const p = regions.countryPolicy(c); return p.region && p.laws.length > 0; }));
+  check('isCountryCode', regions.isCountryCode('in') && !regions.isCountryCode('ZZ'));
+}
 
 /* ---------------- PDF ---------------- */
 section('PDF');
@@ -410,6 +448,121 @@ const ORGAN_HINTS = [['chest_xray_2026.jpg', 'lungs'], ['CXR-PA.png', 'lungs'], 
 for (const [f, want] of ORGAN_HINTS) check(`guessOrgan(${f})`, guessOrgan(f) === want, String(guessOrgan(f)));
 const MOD_HINTS = [['chest_xray.jpg', 'XR'], ['x-ray knee.png', 'XR'], ['CT abdomen.png', 'CT'], ['mri_brain.jpg', 'MR'], ['usg.jpg', 'US'], ['echo.png', 'Echo'], ['ecg.png', 'ECG'], ['photo.jpg', null]];
 for (const [f, want] of MOD_HINTS) check(`guessModality(${f})`, guessModality(f) === want, String(guessModality(f)));
+
+/* ---------------- app lock (Face ID / fingerprint) ---------------- */
+section('app lock');
+const { createAppLock } = await import(lib('applock.ts'));
+
+/** Fake platform: `results` queues what each prompt does ('ok', an error code, or a pending promise). */
+function lockDeps(settings = null) {
+  const d = {
+    t: 0, settings, saved: [], privacy: [], prompts: 0, results: [],
+    bio: { available: true, deviceSecure: true, method: 'Face ID' },
+    async loadSettings() { return d.settings; },
+    async saveSettings(s) { d.saved.push(s); d.settings = s; },
+    async checkBiometry() { return d.bio; },
+    authenticate() {
+      d.prompts++;
+      const r = d.results.length ? d.results.shift() : 'ok';
+      if (r instanceof Promise) return r;
+      return r === 'ok' ? Promise.resolve() : Promise.reject(Object.assign(new Error(r), { code: r }));
+    },
+    async setPrivacyScreen(on) { d.privacy.push(on); },
+    now: () => d.t,
+  };
+  return d;
+}
+const tick = () => new Promise(r => setTimeout(r, 0));
+const ON = { enabled: true, delayMs: 60_000 };
+{
+  const d = lockDeps();
+  const lock = createAppLock(d);
+  check('lock: no settings → starts open', (await lock.start()) === 'open' && lock.store.getState().status === 'open');
+  check('lock: open → data may load', await Promise.race([lock.ready.then(() => true), tick().then(() => false)]));
+  check('lock: off → no prompt, no privacy screen', d.prompts === 0 && d.privacy.length === 0);
+}
+{
+  const d = lockDeps(ON);
+  const lock = createAppLock(d);
+  check('lock: on → starts locked', (await lock.start()) === 'locked');
+  check('lock: on → app switcher privacy screen', eq(d.privacy, [true]));
+  check('lock: locked → data stays unloaded', !(await Promise.race([lock.ready.then(() => true), tick().then(() => false)])));
+  d.results.push('userCancel');
+  check('lock: cancelled prompt stays locked', (await lock.unlock()) === false && lock.store.getState().status === 'locked' && lock.store.getState().message === null);
+  d.results.push('authenticationFailed');
+  await lock.unlock();
+  check('lock: failed face/finger says so', lock.store.getState().status === 'locked' && /Not recognised/.test(lock.store.getState().message));
+  check('lock: unlock opens', (await lock.unlock()) === true && lock.store.getState().status === 'open' && lock.store.getState().message === null);
+  check('lock: unlocked → data may load', await Promise.race([lock.ready.then(() => true), tick().then(() => false)]));
+
+  // Leaving briefly does not lock; leaving longer than the delay does.
+  d.t = 1_000; lock.onPause(); d.t = 31_000; lock.onResume(); await tick();
+  check('lock: back within the delay stays open', lock.store.getState().status === 'open');
+  const before = d.prompts;
+  d.t = 100_000; lock.onPause(); d.t = 200_000; lock.onResume(); await tick();
+  check('lock: back after the delay asks again', d.prompts === before + 1 && lock.store.getState().status === 'open');
+
+  // Android shows the prompt in its own activity, which pauses and resumes the app: that must not re-lock.
+  let finish;
+  d.t = 300_000; lock.onPause(); d.t = 400_000;
+  d.results.push(new Promise(r => { finish = r; }));
+  lock.onResume(); await tick();
+  check('lock: prompt in progress', lock.store.getState().status === 'authenticating');
+  const prompts = d.prompts;
+  lock.onPause(); d.t = 500_000; lock.onResume(); await tick();
+  check('lock: pause/resume around the prompt is ignored', d.prompts === prompts && lock.store.getState().status === 'authenticating');
+  finish(); await tick();
+  lock.onResume(); await tick();
+  check('lock: no re-lock right after unlocking', lock.store.getState().status === 'open' && d.prompts === prompts);
+}
+{
+  const d = lockDeps({ enabled: true, delayMs: 0 });
+  const lock = createAppLock(d);
+  await lock.start(); await lock.unlock();
+  lock.onPause();
+  check('lock: "as soon as you leave" locks on leaving', lock.store.getState().status === 'locked');
+  lock.onResume(); await tick();
+  check('lock: and asks on return', lock.store.getState().status === 'open' && d.prompts === 2);
+}
+{
+  const d = lockDeps('unreadable');
+  check('lock: unreadable settings keep the lock on', (await createAppLock(d).start()) === 'locked');
+}
+{
+  // Passcode removed from the phone: the lock cannot work, so it switches itself off instead of locking out.
+  const d = lockDeps(ON);
+  d.bio = { available: false, deviceSecure: false, method: 'passcode' };
+  const lock = createAppLock(d);
+  check('lock: no passcode any more → opens', (await lock.start()) === 'open');
+  check('lock: … and turns itself off', d.settings.enabled === false && d.privacy.at(-1) === false && /turned off/.test(lock.store.getState().message));
+  const d2 = lockDeps(ON);
+  const lock2 = createAppLock(d2);
+  await lock2.start();
+  d2.bio = { available: false, deviceSecure: false, method: 'passcode' };
+  d2.results.push('passcodeNotSet');
+  check('lock: passcode removed while locked → opens', (await lock2.unlock()) === true && lock2.store.getState().status === 'open' && d2.settings.enabled === false);
+}
+{
+  const d = lockDeps();
+  const lock = createAppLock(d);
+  await lock.start();
+  d.results.push('userCancel');
+  check('lock: turning on needs a confirmed prompt', (await lock.setEnabled(true)) === false && d.saved.length === 0);
+  check('lock: turning on', (await lock.setEnabled(true)) === true && d.settings.enabled === true && d.privacy.at(-1) === true);
+  check('lock: turning on keeps the app open', lock.store.getState().status === 'open');
+  await lock.setDelay(300_000);
+  check('lock: delay saved', d.settings.delayMs === 300_000 && lock.store.getState().settings.delayMs === 300_000);
+  d.results.push('authenticationFailed');
+  check('lock: turning off needs a confirmed prompt', (await lock.setEnabled(false)) === false && d.settings.enabled === true);
+  check('lock: turning off', (await lock.setEnabled(false)) === true && d.settings.enabled === false && d.privacy.at(-1) === false);
+  lock.onPause(); d.t = 10_000_000; lock.onResume(); await tick();
+  check('lock: off → leaving and coming back stays open', lock.store.getState().status === 'open');
+  const d2 = lockDeps();
+  d2.bio = { available: false, deviceSecure: false, method: 'passcode' };
+  const lock2 = createAppLock(d2);
+  await lock2.start();
+  check('lock: cannot turn on without Face ID or a passcode', (await lock2.setEnabled(true)) === false && d2.prompts === 0 && !!lock2.store.getState().message);
+}
 
 /* ---------------- summary ---------------- */
 console.log(`\n${pass} passed, ${fail} failed`);
