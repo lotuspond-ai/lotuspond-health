@@ -1,0 +1,88 @@
+# Builds the iOS and Android apps (unsigned, debug) to catch native breakage.
+# Runs when the native projects, Capacitor config or dependencies change, and on demand.
+name: Mobile apps
+
+on:
+  pull_request:
+    paths:
+      - android/**
+      - ios/**
+      - capacitor.config.ts
+      - package.json
+      - package-lock.json
+      - .github/workflows/mobile.yml
+  push:
+    branches: [main]
+    paths:
+      - android/**
+      - ios/**
+      - capacitor.config.ts
+      - package.json
+      - package-lock.json
+      - .github/workflows/mobile.yml
+  workflow_dispatch:
+
+concurrency:
+  group: mobile-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    name: Android (debug APK)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: gradle
+      - run: npm ci
+      - run: npm run build:mobile
+      - name: Assemble debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lotuspond-health-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 7
+
+  ios:
+    name: iOS (simulator build)
+    runs-on: macos-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      - run: npm ci
+      - run: npm run build:mobile
+      - name: Build for the iOS Simulator (unsigned)
+        working-directory: ios/App
+        run: |
+          xcodebuild -project App.xcodeproj -scheme App -configuration Debug \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
+      - name: Check the privacy manifest is in the app
+        run: plutil -lint ios/App/build/Build/Products/Debug-iphonesimulator/App.app/PrivacyInfo.xcprivacy
+      - name: Zip the simulator app
+        run: cd ios/App/build/Build/Products/Debug-iphonesimulator && zip -qry "$GITHUB_WORKSPACE/LotusPondHealth-simulator.zip" App.app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lotuspond-health-ios-simulator
+          path: LotusPondHealth-simulator.zip
+          retention-days: 7

@@ -1,6 +1,8 @@
 // PDF lab reports via pdfjs-dist (text layer only; no OCR).
-import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist';
-import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+// Legacy build: the modern one calls Map.getOrInsertComputed, Math.sumPrecise and Promise.try, which iOS
+// WebViews before iOS 26 (and older Safari / Android WebView versions) lack.
+import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist/legacy/build/pdf.mjs';
+import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
 import type { ParseResult } from '../../types';
 import { parseReportPages, type PdfPageText, type PdfTextItem } from './pdf-text.ts';
 

@@ -10,8 +10,9 @@ const api = { '/api': { target: `http://localhost:${process.env.API_PORT ?? 8787
 // - default: the public site (/, /privacy/, /terms/, /trust/, 404) plus the app shell (app.html, served at /app,
 //   /login and /signup), for the Node server. Absolute paths, so the 404 page works at any depth.
 // - `--mode artifact` (tools/build-artifact.mjs): only the app, with relative paths, for server-less hosts.
+// - `--mode mobile` (tools/build-mobile.mjs): only the app, with relative paths, for the iOS and Android projects.
 export default defineConfig(({ mode }) => {
-  const artifact = mode === 'artifact'
+  const artifact = mode === 'artifact' || mode === 'mobile'
   const siteUrl = normalizeSiteUrl(process.env.SITE_URL || DEFAULT_SITE_URL)
   return {
     base: artifact ? './' : '/',

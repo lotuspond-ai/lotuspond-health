@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Debug builds only: allow plain http so the app can talk to `npm run local` on your computer
+     (VITE_API_ORIGIN=http://<computer's LAN IP>:8787). Release builds use https only. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application android:usesCleartextTraffic="true" />
+</manifest>

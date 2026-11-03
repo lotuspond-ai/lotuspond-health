@@ -1,6 +1,6 @@
-import { Suspense, useEffect, useMemo, useRef, type RefObject } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import * as THREE from 'three';
-import { Canvas, useThree } from '@react-three/fiber';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { Bvh, CameraControls, Html, MeshReflectorMaterial } from '@react-three/drei';
 import { EffectComposer, Bloom, ToneMapping, SMAA } from '@react-three/postprocessing';
 import { ToneMappingMode } from 'postprocessing';
@@ -140,13 +140,17 @@ function Pins({ portal }: { portal: Portal }) {
 function Landmarks({ portal }: { portal: Portal }) {
   const selected = useHealth(s => s.selectedOrgan);
   const labels = useUI(s => s.layers.labels);
+  // Notes open on hover / keyboard focus, and on tap for touch screens (no hover there).
+  const [open, setOpen] = useState<string | null>(null);
   if (!selected || !labels) return null;
   const o = ORGAN_BY_ID[selected];
+  const toggle = (key: string) => setOpen(v => (v === key ? null : key));
   return (
     <>
       {o.landmarks.map(l => (
         <Html key={o.id + l.name} portal={portal} position={l.at} zIndexRange={[20, 0]} className="lm-wrap">
-          <div className="landmark" tabIndex={0}>
+          <div className={`landmark${open === o.id + l.name ? ' is-open' : ''}`} tabIndex={0} role="button" aria-expanded={open === o.id + l.name}
+            onClick={() => toggle(o.id + l.name)} onKeyDown={e => e.key === 'Enter' && toggle(o.id + l.name)}>
             <span className="landmark__dot" />
             <span className="landmark__name">{l.name}</span>
             <span className="landmark__note">{l.note}</span>
@@ -155,6 +159,43 @@ function Landmarks({ portal }: { portal: Portal }) {
       ))}
     </>
   );
+}
+
+/**
+ * Fit the scene into the part of the canvas the phone bottom sheet leaves visible. The camera's field of view
+ * is mapped onto that visible strip (camera.setViewOffset with a frame shorter than the canvas), so framing
+ * and centring work as if the canvas ended at the sheet. The camera is managed here (aspect included).
+ */
+function ViewInset() {
+  const inset = useUI(s => s.stageInset);
+  const size = useThree(s => s.size);
+  const invalidate = useThree(s => s.invalidate);
+  const get = useThree(s => s.get);
+  const current = useRef(0);
+  const apply = useCallback((px: number) => {
+    const { camera, size: { width: w, height: h } } = get();
+    if (!w || !h || !(camera instanceof THREE.PerspectiveCamera)) return;
+    const visible = h - px;
+    camera.aspect = w / visible;
+    if (px > 0.5) camera.setViewOffset(w, visible, 0, 0, w, h); else camera.clearViewOffset();
+    camera.updateProjectionMatrix();
+  }, [get]);
+  useEffect(() => {
+    const camera = get().camera as THREE.Camera & { manual?: boolean };
+    camera.manual = true;
+    return () => { camera.manual = false; apply(0); };
+  }, [get, apply]);
+  useEffect(() => { apply(current.current); invalidate(); }, [size, apply, invalidate]);
+  useEffect(() => invalidate(), [inset, invalidate]);
+  useFrame((_, dt) => {
+    const target = Math.min(inset, size.height * 0.6);
+    if (Math.abs(target - current.current) < 0.5) return;
+    current.current += (target - current.current) * (1 - Math.pow(0.0005, Math.min(dt, 0.05)));
+    if (Math.abs(target - current.current) < 0.5) current.current = target;
+    apply(current.current);
+    invalidate();
+  });
+  return null;
 }
 
 function Loader({ portal }: { portal: Portal }) {
@@ -217,6 +258,7 @@ export default function Stage({ active = true }: { active?: boolean }) {
         <AdaptiveQuality active={active} />
       </Suspense>
       <Pond reflective={studio} />
+      <ViewInset />
       <CameraRig />
       <Resume active={active} />
       {studio && <StudioEffects />}

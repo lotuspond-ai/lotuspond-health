@@ -42,3 +42,4 @@ server/dist/
 
 # temporary worktrees used by parallel coding agents
 .claude/worktrees/
+dist-mobile

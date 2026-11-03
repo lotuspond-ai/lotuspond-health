@@ -16,6 +16,8 @@ interface UIState {
   uploadOpen: boolean;
   addProfileOpen: boolean;
   scanOpen: string | null;
+  /** Pixels of the 3D stage covered by the phone bottom sheet; the camera re-centres on the visible part. */
+  stageInset: number;
   setView: (v: View) => void;
   setHovered: (o: OrganId | null) => void;
   toggleLayer: (k: keyof UIState['layers']) => void;
@@ -25,6 +27,7 @@ interface UIState {
   setUploadOpen: (v: boolean) => void;
   setAddProfileOpen: (v: boolean) => void;
   setScanOpen: (id: string | null) => void;
+  setStageInset: (px: number) => void;
 }
 
 const lowPower = typeof navigator !== 'undefined' && ((navigator.hardwareConcurrency ?? 8) <= 4 || /Mobi|Android/i.test(navigator.userAgent));
@@ -39,6 +42,7 @@ export const useUI = create<UIState>(set => ({
   uploadOpen: false,
   addProfileOpen: false,
   scanOpen: null,
+  stageInset: 0,
   setView: view => {
     set({ view });
     if (typeof history !== 'undefined' && location.hash.slice(1) !== view) history.replaceState(null, '', `#${view}`);
@@ -51,4 +55,5 @@ export const useUI = create<UIState>(set => ({
   setUploadOpen: uploadOpen => set({ uploadOpen }),
   setAddProfileOpen: addProfileOpen => set({ addProfileOpen }),
   setScanOpen: scanOpen => set({ scanOpen }),
+  setStageInset: stageInset => set({ stageInset }),
 }));

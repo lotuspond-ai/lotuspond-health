@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react';
 import type { ScanItem, StoredDocument } from '../types';
-import { backend, isPreview } from '../api';
+import { backend, errorMessage, inApp, isPreview } from '../api';
+import { shareBlob } from '../native/share';
+import { toast } from '../state/toast';
 import { useHealth } from '../lib/store';
 import { possessive, useActiveProfile } from '../state/session';
 import { useUI } from '../state/ui';
@@ -30,6 +32,20 @@ function linkedText(f: FileInfo): string {
   return f.results ? `${f.results} result${f.results > 1 ? 's' : ''}` : 'Not linked';
 }
 
+/** In the apps files cannot be linked to (requests need the sign-in token): fetch the original and share it. */
+function ShareFile({ d }: { d: StoredDocument }) {
+  const profileId = useHealth(s => s.profileId);
+  const [busy, setBusy] = useState(false);
+  if (!inApp || !profileId) return null;
+  const share = async () => {
+    setBusy(true);
+    try { await shareBlob(await backend.documentFile(profileId, d.id), d.fileName, d.fileName); }
+    catch (e) { toast.error(errorMessage(e)); }
+    finally { setBusy(false); }
+  };
+  return <button className="btn btn--quiet" disabled={busy} onClick={() => void share()} aria-label={`Open or save ${d.fileName}`}>{Icon.share} {busy ? 'Opening…' : 'Open or save'}</button>;
+}
+
 function Actions({ f, compact }: { f: FileInfo; compact?: boolean }) {
   const setScanOpen = useUI(s => s.setScanOpen);
   const removeDocument = useHealth(s => s.removeDocument);
@@ -39,6 +55,7 @@ function Actions({ f, compact }: { f: FileInfo; compact?: boolean }) {
       {scan && <button className="btn btn--quiet" onClick={() => setScanOpen(scan.id)} aria-label={`View ${d.fileName}`}>{Icon.eye} View</button>}
       {!scan && open && INLINE.test(d.contentType) && <a className="btn btn--quiet" href={open} target="_blank" rel="noopener" aria-label={`Open ${d.fileName}`}>{Icon.eye} Open</a>}
       {download && <a className="btn btn--quiet" href={download} download={d.fileName} aria-label={`Download ${d.fileName}`}>{Icon.download} Download</a>}
+      {!download && <ShareFile d={d} />}
       <ConfirmButton className="btn btn--quiet btn--danger-text" confirmText={scan ? 'Delete the file and its scan?' : 'Delete this file?'}
         onConfirm={() => removeDocument(d.id)}>Delete</ConfirmButton>
     </div>

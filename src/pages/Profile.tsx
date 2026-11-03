@@ -12,6 +12,7 @@ import {
 import { bmiOf, checkDraft, fromDraft, toDraft, type ProfileDraft, todayIso } from '../lib/profile';
 import { Icon } from '../components/ui';
 import { HomeAreaPanel } from '../components/labs/HomeAreaPanel';
+import { shareBlob } from '../native/share';
 import { HeightInput, WeightInput } from '../components/MeasureInputs';
 import { IMPERIAL_ERRORS } from '../lib/measures';
 
@@ -138,6 +139,19 @@ function BodyMeasurements({ draft, errors, patch, bmi }: {
   );
 }
 
+/** The apps cannot link to the export (it needs the sign-in token): fetch it and hand it to the share sheet. */
+function ShareExport({ profile }: { profile: Profile }) {
+  const [busy, setBusy] = useState(false);
+  const share = async () => {
+    setBusy(true);
+    try {
+      const name = `lotuspond-health-${profile.displayName.replace(/\s+/g, '-').toLowerCase()}-${todayIso()}.json`;
+      await shareBlob(await backend.exportFile!(profile.id), name, `${profile.displayName}'s LotusPond Health export`);
+    } catch (e) { toast.error(errorMessage(e)); } finally { setBusy(false); }
+  };
+  return <button className="btn" disabled={busy} onClick={() => void share()}>{Icon.share} {busy ? 'Preparing…' : 'Export'}</button>;
+}
+
 function RecordsPanel({ profile }: { profile: Profile }) {
   const { measurements, scans, documents, clearAll } = useHealth();
   const { setUploadOpen, setView } = useUI();
@@ -155,7 +169,7 @@ function RecordsPanel({ profile }: { profile: Profile }) {
       <div className="tools">
         <button className="btn btn--primary" onClick={() => setUploadOpen(true)}>{Icon.upload} Upload</button>
         <button className="btn" onClick={() => setView('files')}>{Icon.file} Files</button>
-        {exportUrl && <a className="btn" href={exportUrl} download>{Icon.download} Export</a>}
+        {exportUrl ? <a className="btn" href={exportUrl} download>{Icon.download} Export</a> : backend.exportFile && <ShareExport profile={profile} />}
       </div>
       {(measurements.length > 0 || documents.length > 0) && (
         <div className="panel__danger">

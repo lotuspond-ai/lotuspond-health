@@ -9,14 +9,9 @@ import { LabIcon } from './LabIcon';
 import { sameArea, saveArea } from './area';
 import { savedArea } from './meta';
 import type { SearchPoint } from './store';
+import { currentPosition, LocationError } from '../../native/location';
 import '../../styles/labs.css';
 
-function geoErrorMessage(err: GeolocationPositionError | null): string {
-  if (!err) return 'This browser cannot share its location here. Search for your area instead.';
-  if (err.code === err.PERMISSION_DENIED) return 'Location is blocked for this site. Allow it in your browser settings, or search for your area.';
-  if (err.code === err.TIMEOUT) return 'Finding your location took too long. Try again, or search for your area.';
-  return 'Your device could not find its location. Search for your area instead.';
-}
 
 export function LocationPicker({ onPick, variant = 'inline', autoFocus = false, label = 'Area or postcode' }: {
   onPick: (p: SearchPoint) => void;
@@ -62,25 +57,24 @@ export function LocationPicker({ onPick, variant = 'inline', autoFocus = false, 
     setProblem(null);
   }
 
-  function locate() {
+  async function locate() {
     setProblem(null);
-    if (!('geolocation' in navigator) || !window.isSecureContext) { setProblem(geoErrorMessage(null)); return; }
     setLocating(true);
-    navigator.geolocation.getCurrentPosition(
-      async pos => {
-        const { latitude: lat, longitude: lon } = pos.coords;
-        let label = 'Near you', country: string | null = null, postalCode: string | null = null;
-        try {
-          const r = await backend.reversePlace(lat, lon);
-          ({ label, country, postalCode } = r);
-        } catch { /* keep the generic label; the search still works */ }
-        if (!mounted.current) return;
-        setLocating(false);
-        onPick({ lat, lon, label, country, postalCode, source: 'device' });
-      },
-      err => { if (mounted.current) { setLocating(false); setProblem(geoErrorMessage(err)); } },
-      { enableHighAccuracy: false, timeout: 15_000, maximumAge: 10 * 60_000 },
-    );
+    let lat: number, lon: number;
+    try {
+      ({ lat, lon } = await currentPosition());
+    } catch (e) {
+      if (mounted.current) { setLocating(false); setProblem(e instanceof LocationError ? e.message : 'Your device could not find its location. Search for your area instead.'); }
+      return;
+    }
+    let label = 'Near you', country: string | null = null, postalCode: string | null = null;
+    try {
+      const r = await backend.reversePlace(lat, lon);
+      ({ label, country, postalCode } = r);
+    } catch { /* keep the generic label; the search still works */ }
+    if (!mounted.current) return;
+    setLocating(false);
+    onPick({ lat, lon, label, country, postalCode, source: 'device' });
   }
 
   function onKey(e: KeyboardEvent<HTMLInputElement>) {
@@ -92,7 +86,7 @@ export function LocationPicker({ onPick, variant = 'inline', autoFocus = false, 
 
   return (
     <div className={`lpick lpick--${variant}`}>
-      <button type="button" className={`lpick__locate${variant === 'hero' ? ' btn btn--primary' : ' btn'}`} onClick={locate} disabled={locating}>
+      <button type="button" className={`lpick__locate${variant === 'hero' ? ' btn btn--primary' : ' btn'}`} onClick={() => void locate()} disabled={locating}>
         <LabIcon name={locating ? 'spinner' : 'locate'} className={locating ? 'spin' : undefined} />
         {locating ? 'Finding you…' : 'Use my location'}
       </button>

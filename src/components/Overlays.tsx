@@ -14,7 +14,32 @@ import { OrganSelect } from '../pages/Scans';
 import { errorMessage, isPreview } from '../api';
 import { firstName, useActiveProfile, useUnitSystem } from '../state/session';
 import { toast } from '../state/toast';
+import { isNative } from '../native/platform';
 import type { Measurement, ParseResult } from '../types';
+
+/** File picker filter on the web. The apps accept any file: phone pickers grey out types they cannot map
+ *  (DICOM is usually application/octet-stream there), and every file is checked by content anyway. */
+const ACCEPT = isNative ? undefined : '.pdf,.csv,.tsv,.txt,.json,.dcm,image/*,application/dicom';
+
+/**
+ * iOS names every camera shot (and photos picked from the library) "image.jpg". Give those distinct names,
+ * otherwise a second photo of the same size looks like a duplicate of the first and is skipped.
+ */
+function distinctPhotoNames(files: File[]): File[] {
+  const now = new Date();
+  // "09h05m01s": dotted times such as 09.05.01 would be read back as a date by the scan date parser.
+  const time = [now.getHours(), now.getMinutes(), now.getSeconds()].map((n, i) => String(n).padStart(2, '0') + 'hms'[i]).join('');
+  return files.map((f, i) => {
+    const m = /^image\.(jpe?g|png|heic|heif|webp)$/i.exec(f.name);
+    return m ? new File([f], `Photo ${time}${files.length > 1 ? ` (${i + 1})` : ''}.${m[1].toLowerCase()}`, { type: f.type, lastModified: f.lastModified }) : f;
+  });
+}
+
+const takeFiles = (input: HTMLInputElement): File[] => {
+  const files = distinctPhotoNames(Array.from(input.files ?? []));
+  input.value = ''; // so choosing the same file again still fires a change
+  return files;
+};
 
 /** Close on Escape. Subscribes once and always calls the latest `close`, so there is no gap while effects re-run. */
 function useEscape(close: () => void) {
@@ -117,7 +142,13 @@ export function MarkerDrawer() {
 
 /* ---------- upload + review ---------- */
 export function UploadDialog() {
-  const open = useUI(s => s.uploadOpen), setOpen = useUI(s => s.setUploadOpen);
+  const open = useUI(s => s.uploadOpen);
+  // Mounted only while open, so closing from anywhere (Escape, Android back) starts the next upload fresh.
+  return open ? <UploadPanel /> : null;
+}
+
+function UploadPanel() {
+  const setOpen = useUI(s => s.setUploadOpen);
   const addResult = useHealth(s => s.addResult);
   const profile = useActiveProfile();
   const unitSystem = useUnitSystem();
@@ -128,9 +159,9 @@ export function UploadDialog() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
+  const camera = useRef<HTMLInputElement>(null);
   const close = () => { if (saving) return; setOpen(false); setDraft(null); setBusy(null); setFiles([]); setSaveError(null); };
   useEscape(close);
-  if (!open) return null;
   const who = profile?.relationship === 'self' ? 'your' : `${firstName(profile)}’s`;
 
   async function save(d: ParseResult) {
@@ -167,7 +198,7 @@ export function UploadDialog() {
 
   return (
     <div className="scrim" onClick={close}>
-      <div className="dialog" role="dialog" aria-modal="true" aria-labelledby="up-title" onClick={e => e.stopPropagation()}>
+      <div className="dialog dialog--upload" role="dialog" aria-modal="true" aria-labelledby="up-title" onClick={e => e.stopPropagation()}>
         <div className="dialog__head"><div><h2 id="up-title">{draft ? 'Check what was read' : 'Add results and scans'}</h2>
           <p className="muted">{draft
             ? `Edit anything that looks wrong, then add it to ${who} records.`
@@ -176,10 +207,14 @@ export function UploadDialog() {
         {!draft ? (
           <div className={`drop${over ? ' is-over' : ''}`} onDragOver={e => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)}
             onDrop={e => { e.preventDefault(); setOver(false); void handle(e.dataTransfer.files); }}>
-            <h3>{busy ?? 'Drop files here'}</h3>
-            <p className="muted">or</p>
-            <button className="btn btn--primary" style={{ marginTop: 10 }} onClick={() => input.current?.click()} disabled={!!busy}>{Icon.upload} Choose files</button>
-            <input ref={input} type="file" multiple hidden accept=".pdf,.csv,.tsv,.txt,.json,.dcm,image/*,application/dicom" onChange={e => e.target.files && void handle(e.target.files)} />
+            <h3>{busy ?? <><span className="only-fine">Drop files here</span><span className="only-touch">Add a report or scan</span></>}</h3>
+            <p className="muted only-fine">or</p>
+            <div className="drop__actions">
+              <button className="btn btn--primary" onClick={() => input.current?.click()} disabled={!!busy}>{Icon.upload} Choose files</button>
+              <button className="btn only-touch" onClick={() => camera.current?.click()} disabled={!!busy}>{Icon.camera} Take a photo</button>
+            </div>
+            <input ref={input} type="file" multiple hidden accept={ACCEPT} onChange={e => { const f = takeFiles(e.target); if (f.length) void handle(f); }} />
+            <input ref={camera} type="file" hidden accept="image/*" capture="environment" onChange={e => { const f = takeFiles(e.target); if (f.length) void handle(f); }} />
             <div className="formats"><span>Lab report PDF</span><span>CSV or JSON export</span><span>DICOM (.dcm)</span><span>X-ray or scan photos</span></div>
           </div>
         ) : (
@@ -219,7 +254,7 @@ export function UploadDialog() {
             )}
             {draft.measurements.length === 0 && draft.scans.length === 0 && <p className="lede" style={{ marginTop: 12 }}>Nothing could be read from these files. Try a text-based PDF, a CSV export, or image files.</p>}
             {saveError && <p className="form-error" role="alert" style={{ marginTop: 14 }}>{saveError}</p>}
-            <div className="tools" style={{ marginTop: 20, justifyContent: 'flex-end' }}>
+            <div className="tools dialog__actions">
               <button className="btn" disabled={saving} onClick={() => { setDraft(null); setFiles([]); setSaveError(null); }}>Choose other files</button>
               <button className="btn btn--primary" disabled={saving || (!draft.measurements.length && !draft.scans.length)}
                 onClick={() => void save(draft)}>{saving ? 'Saving…' : <>Add {[draft.measurements.length && `${draft.measurements.length} result${draft.measurements.length === 1 ? '' : 's'}`, draft.scans.length && `${draft.scans.length} scan${draft.scans.length === 1 ? '' : 's'}`].filter(Boolean).join(' and ')}</>}</button>
@@ -241,7 +276,11 @@ export function ScanViewer() {
   const [wl, setWl] = useState<{ center: number; width: number } | null>(null);
   const [zoom, setZoom] = useState(1); const [pan, setPan] = useState({ x: 0, y: 0 });
   const canvas = useRef<HTMLCanvasElement>(null);
-  const drag = useRef<{ x: number; y: number } | null>(null);
+  // Active pointers and the gesture they started: one finger / mouse pans, two fingers pinch-zoom.
+  const pointers = useRef(new Map<number, { x: number; y: number }>());
+  const gesture = useRef<{ pan: { x: number; y: number }; zoom: number; mid: { x: number; y: number }; dist: number; moved: boolean } | null>(null);
+  const lastTap = useRef(0);
+  const lastPointer = useRef('mouse');
   const close = () => setScanOpen(null);
   useEscape(close);
   useEffect(() => {
@@ -261,6 +300,42 @@ export function ScanViewer() {
     if (!wl) setWl({ center: r.center, width: r.width_ });
   }, [dicom, wl]);
   if (!scan) return null;
+  const startGesture = () => {
+    const pts = [...pointers.current.values()];
+    const mid = pts.length > 1 ? { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 } : pts[0];
+    const dist = pts.length > 1 ? Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) : 0;
+    gesture.current = pts.length ? { pan, zoom, mid, dist, moved: gesture.current?.moved ?? false } : null;
+  };
+  const onPointerDown = (e: React.PointerEvent) => {
+    lastPointer.current = e.pointerType;
+    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+    pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.current.size === 1) gesture.current = null;
+    startGesture();
+  };
+  const onPointerMove = (e: React.PointerEvent) => {
+    if (!pointers.current.has(e.pointerId) || !gesture.current) return;
+    pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const g = gesture.current, pts = [...pointers.current.values()];
+    const mid = pts.length > 1 ? { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 } : pts[0];
+    if (Math.hypot(mid.x - g.mid.x, mid.y - g.mid.y) > 4) g.moved = true;
+    if (pts.length > 1 && g.dist > 0) {
+      g.moved = true;
+      setZoom(Math.min(8, Math.max(1, g.zoom * Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) / g.dist)));
+    }
+    setPan({ x: g.pan.x + mid.x - g.mid.x, y: g.pan.y + mid.y - g.mid.y });
+  };
+  const onPointerUp = (e: React.PointerEvent) => {
+    if (!pointers.current.delete(e.pointerId)) return;
+    const tapped = gesture.current && !gesture.current.moved && pointers.current.size === 0;
+    if (pointers.current.size) startGesture(); else gesture.current = null;
+    if (zoom <= 1.02 && pointers.current.size === 0) setPan({ x: 0, y: 0 });
+    if (tapped && e.pointerType !== 'mouse') {
+      // Double tap: zoom in to 2.5x, or back out to fit.
+      if (e.timeStamp - lastTap.current < 320) { setZoom(zoom > 1.05 ? 1 : 2.5); if (zoom > 1.05) setPan({ x: 0, y: 0 }); lastTap.current = 0; }
+      else lastTap.current = e.timeStamp;
+    }
+  };
   const style: React.CSSProperties = { width: '100%', height: '100%', objectFit: 'contain', transform: `translate(calc(-50% + ${pan.x}px), calc(-50% + ${pan.y}px)) scale(${zoom})` };
   return (
     <div className="scrim" onClick={close}>
@@ -268,8 +343,8 @@ export function ScanViewer() {
         <header><h2 id="sv-title">{scan.fileName}</h2><span className="muted">{[scan.modality, scan.bodyPart, formatDate(scan.date)].filter(Boolean).join(', ')}</span>
           <button className="btn btn--quiet x" style={{ color: '#dcefec' }} onClick={close} aria-label="Close">{Icon.close}</button></header>
         <div className="viewer__img" onWheel={e => setZoom(z => Math.min(8, Math.max(1, z * Math.exp(-e.deltaY * 0.0015))))}
-          onPointerDown={e => { drag.current = { x: e.clientX - pan.x, y: e.clientY - pan.y }; (e.target as HTMLElement).setPointerCapture?.(e.pointerId); }}
-          onPointerMove={e => drag.current && setPan({ x: e.clientX - drag.current.x, y: e.clientY - drag.current.y })} onPointerUp={() => { drag.current = null; }}>
+          onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}
+          onDoubleClick={() => { if (lastPointer.current !== 'mouse') return; setZoom(zoom > 1.05 ? 1 : 2.5); if (zoom > 1.05) setPan({ x: 0, y: 0 }); }}>
           {scan.kind === 'dicom' ? <canvas ref={canvas} style={style} /> : url ? <img src={url} alt={scan.fileName} style={style} draggable={false} /> : null}
         </div>
         <footer>
