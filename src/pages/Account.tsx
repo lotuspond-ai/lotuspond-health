@@ -142,7 +142,7 @@ function UnitsPanel({ onChange }: { onChange: () => void }) {
 /* ---------------- consents ---------------- */
 
 const CONSENT_LABEL: Record<ConsentKind, string> = {
-  terms: 'Terms of Service',
+  terms: 'Terms of Use',
   privacy: 'Privacy Policy',
   health_data: 'Processing your health data',
   cross_border: 'Storing records outside your country',

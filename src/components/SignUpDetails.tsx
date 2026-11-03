@@ -5,6 +5,7 @@ import { countryInSentence, countryPolicy, REGIONS, type DataRegion, type SignUp
 import type { SignUpDraft } from '../lib/signup';
 import { CountrySelect } from './CountrySelect';
 import '../styles/compliance.css';
+import { siteHref } from '../site/links';
 
 function Check({ checked, onChange, children, detail, error, optional }: {
   checked: boolean; onChange: (v: boolean) => void; children: ReactNode; detail?: ReactNode; error?: string | null; optional?: boolean;
@@ -98,7 +99,7 @@ export function SignUpDetails({ value, onChange, servedRegions, problem }: {
             <fieldset className="consents">
               <legend>Your consent</legend>
               <Check checked={value.termsAndPrivacy} onChange={v => patch({ termsAndPrivacy: v })} error={errorFor('termsAndPrivacy')}>
-                I agree to the <a href="/terms" target="_blank" rel="noopener">Terms of Service</a> and the <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a>.
+                I agree to the <a href={siteHref('/terms/')} target="_blank" rel="noopener">Terms of Use</a> and the <a href={siteHref('/privacy/')} target="_blank" rel="noopener">Privacy Policy</a>.
               </Check>
               <Check checked={value.healthData} onChange={v => patch({ healthData: v })} error={errorFor('healthData')}
                 detail={<p>This covers the lab reports, scans and results you add, and the health details you enter for you and your family. LotusPond uses them only to keep your records and show them to you. We never sell them or share them.</p>}>

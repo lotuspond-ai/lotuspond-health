@@ -149,7 +149,7 @@ expect(await createButton.isDisabled(), 'sign-up is blocked under the minimum ag
 await page.getByRole('radio', { name: 'Yes' }).check();
 await createButton.click();
 expect((await text('.form-error')).includes('Terms'), 'Terms and Privacy must be agreed first');
-await page.getByLabel(/I agree to the Terms of Service/).check();
+await page.getByLabel(/I agree to the Terms of Use/).check();
 await page.getByLabel(/I consent to LotusPond processing my health data/).check();
 expect(!(await page.getByLabel(/Send me news about LotusPond/).isChecked()), 'product emails start unchecked');
 await shot('signup-india', true);
