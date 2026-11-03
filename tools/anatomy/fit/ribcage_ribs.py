@@ -29,6 +29,7 @@ LUNG_CLEAR = 0.0012      # ribs keep this far outside the lung surface (parietal
 ORGAN_CLEAR = 0.0015     # ...and this far from heart, liver, spleen and kidneys
 SKIN_CLEAR = 0.004       # ...and this far inside the skin (the acceptance limit is 3 mm)
 FADE = 0.08              # length (m) over which the joint seating fades out along the rib
+JOINT_GAP = 0.001        # bone-to-bone gap aimed for at the costovertebral and costotransverse joints (m)
 
 
 def edges(f):
@@ -118,7 +119,7 @@ def smoothstep(x):
     x = np.clip(x, 0, 1); return x * x * (3 - 2 * x)
 
 
-def seat(rg, v, verts, lung):
+def seat(rg, v, verts, lung, skip=None):
     """Seat the rib's articular facets on the HRA vertebrae. v: the warped rib (HRA space); verts: {'T5': Target}.
     Ribs 2-9: the head's two facets on T(n-1) and T(n); ribs 1, 10, 11, 12: the head on T(n) alone, its centre
     nearer T(n) than the vertebra above; ribs 1-10: the tubercle on the transverse process of T(n).
@@ -142,12 +143,17 @@ def seat(rg, v, verts, lung):
     else:
         na = v[(rg.s > rg.s_head + 0.015) & (rg.s < rg.s_head + 0.03)].mean(0) - c
     na /= np.linalg.norm(na)
+    # the warp places the facets along the vertebra to ~1 mm; the seating mainly closes the gap, along the
+    # vertebra's surface normal at the head, and may slide the head only a little across it
+    nv = own.field.grad(c[None])[0]
     w_fade = 1 - smoothstep((rg.s - rg.s_rigid) / FADE)
     w_roll = 1 - smoothstep((rg.s - (rg.s_head + 0.006)) / max(s_end - rg.s_head - 0.006, 0.004))
     post = np.flatnonzero(rg.s <= rg.s_rigid + 0.01)
     post_s = post[::3]
     s_free = (rg.s_tub + 0.004) if rg.s_tub is not None else rg.s_head + 0.025
-    neck = np.flatnonzero((rg.s >= s_free) & (rg.s <= rg.s_rigid + 0.03))[::3]
+    neck_m = (rg.s >= s_free) & (rg.s <= rg.s_rigid + 0.03)
+    if skip is not None: neck_m &= ~skip                # the lung/spine conflict zone is not chased
+    neck = np.flatnonzero(neck_m)[::3]
     near = [verts[k] for k in (f'T{n - 1}', f'T{n}', f'T{n + 1}', 'C7' if n == 1 else 'L1' if n == 12 else None) if k in verts]
 
     def apply(x, idx):
@@ -168,9 +174,9 @@ def seat(rg, v, verts, lung):
     def resid(x):
         r = []
         for idx, tgt, gap, w in terms:
+            # every facet point to the joint gap JOINT_GAP: the head sits in the socket of its demifacets
             d = tgt.sdf(apply(x, idx))
-            ww = w / (1 + gap / 0.0015)
-            r.append(ww * (d - np.clip(gap, 0.0005, 0.002)) / 0.0005 / np.sqrt(len(idx)) * 4)
+            r.append(w * (d - JOINT_GAP) / 0.0005 / np.sqrt(len(idx)) * 4)
         if not two and up is not None:
             # level: the head centre sits on its own vertebra, at least 1.5 mm nearer it than the one above
             hc = apply(x, head_idx).mean(0)[None]
@@ -178,12 +184,15 @@ def seat(rg, v, verts, lung):
         P = apply(x, post_s)
         for tgt in near:
             r.append(np.maximum(0.0003 - tgt.sdf(P), 0) / 0.0002 / np.sqrt(len(P)) * 6)
-        Pn = apply(x, neck)
-        r.append(np.maximum(LUNG_CLEAR - lung.sdf(Pn), 0) / 0.0005 / np.sqrt(len(Pn)) * 2)
+        if len(neck):
+            Pn = apply(x, neck)
+            r.append(np.maximum(LUNG_CLEAR - lung.sdf(Pn), 0) / 0.0005 / np.sqrt(len(Pn)) * 2)
         wn = x[:3] @ na
         r.append(np.array([wn / np.radians(12.0)]))              # neck torsion: a few degrees are anatomical
         r.append((x[:3] - wn * na) / np.radians(4.0))
-        r.append(x[3:] / 0.004)
+        tn = x[3:] @ nv
+        r.append(np.array([tn / 0.004]))
+        r.append((x[3:] - tn * nv) / 0.0015)
         return np.concatenate(r)
 
     sol = optimize.least_squares(resid, np.zeros(6), method='trf', x_scale=np.array([0.02] * 3 + [0.002] * 3), max_nfev=400)
@@ -237,10 +246,12 @@ def rib_basis(s, length, s_fix, spacing=0.02):
     return B
 
 
-def bar_basis(s, length, spacing=0.012, end=0.005):
-    """B-spline basis over arc length, windowed to vanish at both ends of the bar (its two joints)."""
+def bar_basis(s, length, spacing=0.012, end=0.005, s0=0.0, s1=None):
+    """B-spline basis over arc length, windowed to vanish over both joints of the bar: up to s0 (the end of the
+    first joint patch) and from s1 (the start of the second) on."""
+    s1 = length if s1 is None else s1
     knots = np.linspace(0, length, max(3, int(np.ceil(length / spacing)) + 1))
-    w = smoothstep(s / end) * smoothstep((length - s) / end)
+    w = smoothstep((s - s0) / end) * smoothstep((s1 - s) / end)
     return bspline_basis(s, knots) * w[:, None]
 
 
@@ -280,7 +291,7 @@ def exit_along(tgt, p, d, clear, tmax=0.03, step=0.0003):
 
 
 def bend(v, Bf, obstacles, skin=None, skin_clear=SKIN_CLEAR, iters=5, sub=2, w_smooth=20.0, band=0.003, radial=None,
-         mu=1000.0, min_capacity=0.25):
+         mu=1000.0, min_capacity=0.25, skip=None):
     """Smallest smooth displacement v + Bf @ C (one vector per arc length, so whole cross-sections move together)
     that clears `obstacles` [(Target, clearance)] and keeps `skin_clear` inside the skin.
     Minimises |C|^2 + w_smooth |D2 C|^2 + mu * sum(hinge^2) (mm): the clearances are soft, so conflicting ones
@@ -304,14 +315,25 @@ def bend(v, Bf, obstacles, skin=None, skin_clear=SKIN_CLEAR, iters=5, sub=2, w_s
         for k_, (tgt, clear) in enumerate(obstacles):
             d = tgt.sdf(P)
             m = d < clear + band
+            if skip is not None and tgt.name == 'lungs': m &= ~skip[idx_all]
             if not m.any(): continue
             g = tgt.field.grad(P[m]); need = clear - d[m]
             if radial is not None and tgt.name == 'lungs':
                 deep = d[m] < -0.002
                 if deep.any():
-                    r = radial(P[m][deep])
-                    g[deep] = r
-                    need[deep] = exit_along(tgt, P[m][deep], r, clear)
+                    # deep inside, the field gradient is unreliable: leave toward the nearest lung surface point,
+                    # unless that is through the lung's inner side, then straight out through the chest wall
+                    Pd = P[m][deep]
+                    best_d = np.full(len(Pd), np.inf); best_q = np.zeros_like(Pd)
+                    for part in tgt.parts:
+                        q, dd = part.closest(Pd)
+                        mm_ = dd < best_d; best_d[mm_] = dd[mm_]; best_q[mm_] = q[mm_]
+                    e = (best_q - Pd) / np.maximum(best_d[:, None], 1e-9)
+                    r = radial(Pd)
+                    inward = np.einsum('ij,ij->i', e, r) < -0.3
+                    gd = np.where(inward[:, None], r, e)
+                    nd = np.where(inward, exit_along(tgt, Pd, r, clear), best_d + clear)
+                    g[deep] = gd; need[deep] = nd
             Bi = Bf[idx_all[m]]
             A.append(np.hstack([Bi * g[:, k:k + 1] for k in range(3)])); b.append(need * 1000)
             worst = max(worst, float(need.max()))
@@ -337,3 +359,13 @@ def bend(v, Bf, obstacles, skin=None, skin_clear=SKIN_CLEAR, iters=5, sub=2, w_s
     disp = Bf @ (c.reshape(3, nf).T / 1000)
     info['max_mm'] = float(np.linalg.norm(disp, axis=1).max() * 1000)
     return v + disp, info
+
+
+def conflict_zone(v, side, n, overlap, verts, reach=0.015):
+    """Rib vertices within `reach` of a vertebra (T(n-1), T(n), T(n+1)) that the HRA lung itself overlaps on this
+    side: there the lung data contradicts the spine, and a rib seated on its joints cannot be outside the lung."""
+    z = np.zeros(len(v), bool)
+    for k in (f'T{n - 1}', f'T{n}', f'T{n + 1}'):
+        if (k, side) in overlap and k in verts:
+            z |= verts[k].sdf(v) < reach
+    return z

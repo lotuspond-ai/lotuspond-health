@@ -363,18 +363,82 @@ def _seg_seg(p1, q1, p2, q2):
 
 
 # ------------------------------------------------------------------------------------------------ leg warp
-def leg_warp(sex, side, out_dir=None, rebuild=False):
-    """Thin-plate-spline warp of the leg (femur, patella, tibia, fibula anchors of the catalog), cached as its control
-    points in .cache/fit/<sex>/foot/warp-leg_<side>.npz (same storage as fit.common.get_warp)."""
+def _prox(m, h):
+    v, f = m; y1 = v[:, 1].max()
+    from fit.foot_geom import crop_box
+    return crop_box(m, np.array([-9, y1 - h, -9.]), np.array([9, 9, 9.]))
+
+
+def _local_sim(Z, H, init=None, n=6000, seed=0):
+    from lib.register import icp
+    Hd = dense_points(*H, 0.001); Zp = sample_surface(*Z, n, seed=seed)
+    best = None
+    inits = [init] if init is not None else [Sim(s0, np.eye(3), Hd.mean(0) - s0 * Zp.mean(0)) for s0 in (0.95, 1.05, 1.15, 1.25)]
+    for Ti in inits:
+        T, err = icp(Zp, Hd, init=Ti, iters=100, scale=True, trim=0.92, scale_range=(0.8, 1.35))
+        if best is None or err < best[1]: best = (T, err)
+    return best
+
+
+def leg_warp(sex, side, out_dir=None, rebuild=False, log=print):
+    """Thin-plate-spline warp of one leg, cached as its control points in .cache/fit/<sex>/foot/warp-leg_<side>.npz
+    (same storage as fit.common.get_warp). The catalog's leg anchors (femur, patella, tibia, fibula) slide along the
+    bones by about a centimetre near the joints when each bone is aligned as a whole, so the control pairs here come from
+    joint-local alignments: the hip (proximal femur), the knee (distal femur, patella, proximal tibia and fibula) and the
+    ankle (the mortise similarity used for the foot) are each aligned by trimmed similarity ICP; shaft points are carried
+    by the similarity interpolated between their two joints. Every pair is then projected onto the HRA bone surface."""
     out_dir = out_dir or os.path.join(FIT, sex, GROUP)
     path = os.path.join(out_dir, f'warp-leg_{side}.npz')
     if os.path.exists(path) and not rebuild:
         d = np.load(path)
         return Warp(d['src'], d['dst'], pre=Sim(float(d['s']), d['R'], d['t']), smoothing=float(d['smoothing']), max_points=10 ** 9)
+    t0 = time.time()
+    zs = source('za-skeletal')
+    Z = {k: (lambda v, f: (v, orient_outward(v, f)))(*zs.get(k.capitalize() + side)) for k in ('femur', 'patella', 'tibia', 'fibula')}
+    H = {k: hra_bone(sex, k, side)[:2] for k in ('femur', 'patella', 'tibia', 'fibula')}
+    from fit.foot_target import distal, mortise_map
+    regions = {
+        'hip': ([_prox(Z['femur'], 0.12)], [_prox(H['femur'], 0.13)]),
+        'knee': ([distal(Z['femur'], 0.08), Z['patella'], _prox(Z['tibia'], 0.08), _prox(Z['fibula'], 0.06)],
+                 [distal(H['femur'], 0.085), H['patella'], _prox(H['tibia'], 0.085), _prox(H['fibula'], 0.065)]),
+    }
+    sims = {}
+    for r, (zl, hl) in regions.items():
+        sims[r], err = _local_sim(merge(zl), merge(hl), seed=3)
+        log(f'    leg warp {sex}/{side}: {r} {sims[r]} (ICP rms {err * 1000:.1f} mm)')
+    F_ = ZAFoot.__new__(ZAFoot); F_.tibia, F_.fibula = Z['tibia'], Z['fibula']
+    sims['ankle'], _ = mortise_map(F_, H['tibia'], H['fibula'], cache=os.path.join(out_dir, f'mortise-{side}.json'))
+    # joint levels along each bone (Z-Anatomy heights): hip -> knee on the femur, knee -> ankle on the tibia / fibula
+    yz = {k: (Z[k][0][:, 1].min(), Z[k][0][:, 1].max()) for k in Z}
+    spans = {'femur': ('hip', 'knee', yz['femur'][1] - 0.12, yz['femur'][0] + 0.08),
+             'tibia': ('knee', 'ankle', yz['tibia'][1] - 0.08, yz['tibia'][0] + 0.07),
+             'fibula': ('knee', 'ankle', yz['fibula'][1] - 0.06, yz['fibula'][0] + 0.08),
+             'patella': ('knee', 'knee', 9.0, -9.0)}
+    src, dst = [], []
+    for k, (a, b, ya, yb) in spans.items():
+        P = sample_surface(*Z[k], 700 if k != 'patella' else 150, seed=5)
+        y = P[:, 1]
+        t = np.clip((ya - y) / max(ya - yb, 1e-6), 0, 1)[:, None] if k != 'patella' else np.zeros((len(P), 1))
+        Ma, Mb = Sim4.from_sim(sims[a]), Sim4.from_sim(sims[b])
+        X = (1 - t) * Ma(P) + t * Mb(P)
+        q, d, _, _ = TriMesh(*H[k]).closest(X)
+        src.append(P); dst.append(q)
+    src, dst = np.concatenate(src), np.concatenate(dst)
+    from fit.common import anchor_meshes, global_similarity
+    T0 = global_similarity(anchor_meshes(sex, region=f'leg_{side}'))
     sm = 1e-4
-    warp, anchors, T0, res = build_warp(sex, f'leg_{side}', smoothing=sm, report_path=os.path.join(out_dir, f'warp-leg_{side}-report.json'))
+    warp = Warp(src, dst, pre=T0, smoothing=sm)
     os.makedirs(out_dir, exist_ok=True)
     np.savez(path, src=T0.inverse()(warp.centres), dst=warp.centres + warp.rbf(warp.centres), s=T0.s, R=T0.R, t=T0.t, smoothing=sm)
+    # residuals: warped Z-Anatomy bone surfaces to the HRA bones
+    rep = {}
+    for k in Z:
+        P = sample_surface(*Z[k], 2000, seed=7)
+        d = np.abs(TriMesh(*H[k]).signed(warp(P)))
+        rep[k] = dict(mean_mm=round(float(d.mean() * 1000), 2), p90_mm=round(float(np.quantile(d, 0.9) * 1000), 2))
+    json.dump(dict(sex=sex, side=side, joints={r: repr(S) for r, S in sims.items()}, residuals=rep, seconds=round(time.time() - t0, 1)),
+              open(os.path.join(out_dir, f'warp-leg_{side}-report.json'), 'w'), indent=1)
+    log(f'    leg warp {sex}/{side}: residuals ' + ', '.join(f'{k} {v["mean_mm"]}/{v["p90_mm"]} mm' for k, v in rep.items()) + f' ({time.time() - t0:.0f}s)')
     return leg_warp(sex, side, out_dir)
 
 

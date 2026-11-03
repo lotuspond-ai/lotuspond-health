@@ -20,7 +20,7 @@ from fit.arms_measure import landmark_zones
 JOINT_BANDS = {  # (proximal bone, distal bone): (lo, hi) mm of closest approach
     ('scap', 'hum'): (2.0, 4.0),
     ('hum', 'uln'): (1.2, 3.0), ('hum', 'rad'): (1.5, 3.5),
-    ('rad', 'sca'): (1.2, 3.0), ('rad', 'lun'): (1.5, 3.5),
+    ('rad', 'sca'): (1.2, 3.0), ('rad', 'lun'): (1.2, None),
 }
 FINGER_BAND = (0.7, 2.0)
 CLEAR = 1.4
@@ -40,7 +40,7 @@ def neighbour_pairs(L, d=0.004):
     return out
 
 
-def finalize(L, maps, skinT, log=print, iters=25):
+def finalize(L, maps, skinT, log=print, iters=40):
     """Returns {bone: Aff correction (HRA -> HRA)} and a summary."""
     J = L.J
     rng = np.random.default_rng(7)
@@ -69,7 +69,7 @@ def finalize(L, maps, skinT, log=print, iters=25):
         m = np.abs(L.T[a].signed(L.P[b])) < 0.006
         Pb = sub(P[b][m], 600)
         if len(Pb) < 10: continue
-        terms.append(term_body_gap_local(b, Pb, a, T0[a], lo=lo * 1e-3, hi=hi * 1e-3, w=2.0, mode='min'))
+        terms.append(term_body_gap_local(b, Pb, a, T0[a], lo=lo * 1e-3, hi=None if hi is None else hi * 1e-3, w=2.0, mode='min'))
         names.append(f'gap {a}-{b}')
         # and no point of the distal bone's articular surface inside the proximal bone
         terms.append(term_body_gap_local(b, Pb, a, T0[a], lo=0.3e-3, w=2.0)); names.append(f'pen {a}-{b}')

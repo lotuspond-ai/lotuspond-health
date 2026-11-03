@@ -36,18 +36,38 @@ def unsigned(target, p):
     return d
 
 
-def ribs_in_lungs(ribs, lungs):
-    """ribs: {(n, side): mesh}. Fraction of rib surface inside the lungs and the deepest point."""
-    per, allin, alld = {}, [], []
-    for key, m in ribs.items():
-        p = samples(m, seed=key[0])
+def ribs_in_lungs(ribs, lungs, zones=None, overlap=None):
+    """ribs: {(n, side): mesh}. Fraction of rib surface inside the lungs and the deepest point, over all rib surface
+    and outside the lung/spine conflict zone (zones: {(n, side): per-vertex mask}, see ribcage_ribs.conflict_zone)."""
+    from scipy.spatial import cKDTree
+    per, allin, alld, allz = {}, [], [], []
+    for key, (v, f) in ribs.items():
+        p = samples((v, f), seed=key[0])
         d = signed(lungs, p)
-        per[f'{key[0]}{key[1]}'] = dict(inside_pct=round(float((d < 0).mean() * 100), 3), deepest_mm=mm(max(0, -d.min())))
-        allin.append(d < 0); alld.append(d)
-    allin = np.concatenate(allin); alld = np.concatenate(alld)
+        z = zones[key][cKDTree(v).query(p)[1]] if zones is not None else np.zeros(len(p), bool)
+        e = dict(inside_pct=round(float((d < 0).mean() * 100), 3), deepest_mm=mm(max(0, -d.min())))
+        if z.any():
+            e.update(in_conflict_zone_pct=round(float(z.mean() * 100), 1),
+                     outside_zone_inside_pct=round(float((d[~z] < 0).mean() * 100), 3) if (~z).any() else 0.0,
+                     outside_zone_deepest_mm=mm(max(0, -d[~z].min())) if (~z).any() else 0.0)
+        per[f'{key[0]}{key[1]}'] = e
+        allin.append(d < 0); alld.append(d); allz.append(z)
+    allin = np.concatenate(allin); alld = np.concatenate(alld); allz = np.concatenate(allz)
     frac = float(allin.mean()); deep = max(0.0, float(-alld.min()))
-    return dict(inside_fraction=crit(round(frac * 100, 3), 0.5, frac < 0.005, unit='% of rib surface'),
-                deepest=crit(mm(deep), 1.0, deep <= 0.001), per_rib=per)
+    out = dict(inside_fraction=crit(round(frac * 100, 3), 0.5, frac < 0.005, unit='% of rib surface'),
+               deepest=crit(mm(deep), 1.0, deep <= 0.001))
+    if zones is not None:
+        o = ~allz
+        f2 = float(allin[o].mean()); d2 = max(0.0, float(-alld[o].min()))
+        out['outside_conflict_zone'] = dict(inside_fraction=crit(round(f2 * 100, 3), 0.5, f2 < 0.005, unit='% of rib surface outside the zone'),
+                                            deepest=crit(mm(d2), 1.0, d2 <= 0.001), zone_share_pct=round(float(allz.mean() * 100), 2))
+        if overlap:
+            out['conflict'] = dict(note='The HRA lung meshes overlap the HRA vertebrae themselves (no real lung can enter bone). A rib seated on '
+                                        'its costovertebral and costotransverse joints there cannot be outside the lung, so rib surface within '
+                                        '15 mm of an overlapped vertebra, on the overlapped side, is reported separately.',
+                                   lung_into_vertebra_mm={f'{k[0]}{"L" if k[1] == "l" else "R"}': mm(v, 1) for k, v in sorted(overlap.items())})
+    out['per_rib'] = per
+    return out
 
 
 def lateral_gap(ribs, lungs, side_sign):
@@ -80,12 +100,12 @@ def lateral_gap(ribs, lungs, side_sign):
 def facet_distance(points, target):
     """(median, p90, min) exact unsigned distance (m) and the deepest penetration (m) of facet points."""
     d = unsigned(target, points)
-    s = target.sdf(points)
+    s = signed(target, points)
     pen = max(0.0, float(-s.min()))
     return float(np.median(d)), float(np.quantile(d, 0.9)), float(d.min()), pen
 
 
-def joints(ribgeoms, ribs, verts):
+def joints(ribgeoms, ribs, verts, cord=None):
     """Rib head and tubercle seating. ribgeoms/ribs: {(n, side): RibGeom / mesh}; verts: {'T1': Target, ...}."""
     head, tub = {}, {}
     ok_h, ok_t, worst_h, worst_t = True, True, 0.0, 0.0
@@ -117,10 +137,17 @@ def joints(ribgeoms, ribs, verts):
             med, p90, mn, pen = facet_distance(v[it], verts[f'T{n}'])
             # the nearest vertebra surface must be the transverse process: well lateral of the vertebral body
             q, _ = closest_on_mesh(*verts[f'T{n}'].mesh, v[it], k=12)
-            vc = verts[f'T{n}'].mesh[0][:, 0].mean()
-            lat = float(np.median(np.abs(q[:, 0] - vc)))
+            # the contact must be on the transverse process: well away from the spinal canal (the cord), where the
+            # costal facets of the body lie ~15-20 mm from it and the tips of the transverse processes 25-35 mm
+            qc = q.mean(0)
+            if cord is not None and len(cord):
+                cc = cord[np.abs(cord[:, 1] - qc[1]) < 0.006]
+                ref = cc.mean(0) if len(cc) > 10 else verts[f'T{n}'].mesh[0].mean(0)
+            else:
+                ref = verts[f'T{n}'].mesh[0].mean(0)
+            lat = float(np.linalg.norm((qc - ref)[[0, 2]]))
             ok = med <= 0.003 and lat > 0.022
-            tub[name] = dict(value=mm(med), threshold=3.0, ok=bool(ok), p90_mm=mm(p90), penetration_mm=mm(pen), contact_lateral_mm=mm(lat, 1), vertebra=f'T{n}')
+            tub[name] = dict(value=mm(med), threshold=3.0, ok=bool(ok), p90_mm=mm(p90), penetration_mm=mm(pen), contact_from_canal_mm=mm(lat, 1), vertebra=f'T{n}')
             ok_t &= ok; worst_t = max(worst_t, med)
     return dict(head=dict(ok=bool(ok_h), worst_mm=mm(worst_h), threshold=3.0, per_rib=head),
                 tubercle=dict(ok=bool(ok_t), worst_mm=mm(worst_t), threshold=3.0, per_rib=tub))

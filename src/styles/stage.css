@@ -74,7 +74,6 @@
 
 @media (max-width: 860px) {
   .modes__long { display: none; }
-  .stage__credit { bottom: 14px; }
   .stage__credit-long { display: none; }
   .stage__credit-short { display: inline; }
 }

@@ -122,6 +122,10 @@ class Part:
     def unsigned(self, p, k=8):
         return closest_faces(self.v, self.f, p, k=k, tree=self.tree)[1]
 
+    def closest(self, p, k=8):
+        q, d, _ = closest_faces(self.v, self.f, p, k=k, tree=self.tree)
+        return q, d
+
     def signed(self, p, k=8):
         """Signed by the closest triangle's outward normal (closed, outward-wound meshes)."""
         q, d, t = closest_faces(self.v, self.f, p, k=k, tree=self.tree)
@@ -364,3 +368,30 @@ def targets(sex, which=None):
         out[name] = Target(name, [(p[0].astype(np.float32).astype(np.float64), p[1]) for p in parts], fld, 'normal' if name == 'skin' else mode)
         log(sex, f'target {name}: {sum(len(p[1]) for p in parts)} tris, grid {fld.sdf.shape} ({time.time() - t0:.0f} s)')
     return out
+
+
+def spine_lung_overlap(sex, T=None, threshold=0.0005):
+    """Where the HRA lungs overlap the HRA vertebrae themselves (impossible in a body: a segmentation conflict in the
+    reference data): {(vertebra key, side 'l'/'r'): depth in m} for overlaps deeper than threshold. Cached."""
+    path = os.path.join(cache_dir(sex), 'spine-lung-overlap.json')
+    if os.path.exists(path):
+        return {tuple(k.split('/')): v for k, v in json.load(open(path)).items()}
+    T = T or targets(sex)
+    L = T['lungs']; out = {}
+    for name, t in T.items():
+        if not name.startswith('V:'): continue
+        v = t.mesh[0]
+        d = L.sdf(v)
+        near = d < 0.002
+        if near.any(): d[near] = L.exact(v[near])
+        xc = v[:, 0].mean()
+        for side, m in (('l', v[:, 0] > xc), ('r', v[:, 0] <= xc)):
+            depth = float(max(0.0, -d[m].min()))
+            if depth > threshold: out[(name[2:], side)] = depth
+    json.dump({f'{k[0]}/{k[1]}': round(v, 5) for k, v in out.items()}, open(path, 'w'), indent=1)
+    return out
+
+
+def cord_points(sex):
+    """Vertices of the HRA spinal cord (locates the canal)."""
+    return merge(_load_entries(sex, _hra_entries(sex, r'spinal_cord')))[0]

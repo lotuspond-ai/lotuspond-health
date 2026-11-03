@@ -19,7 +19,7 @@ from lib.mesh import sample_surface, area
 from fit.arms_geom import TriMesh, unit
 from fit.arms_za import CHAINS, ALL_BONES, ARM_BONES, contact
 
-GAP_RANGES = {'gh': (1.0, 6.0), 'elbow_hu': (1.0, 4.0), 'elbow_hr': (1.0, 4.0), 'wrist_rs': (1.0, 4.0), 'wrist_rl': (1.0, 4.0)}
+GAP_RANGES = {'gh': (1.0, 6.0), 'elbow_hu': (1.0, 4.0), 'elbow_hr': (1.0, 4.0)}
 FINGER_GAP = (0.5, 4.0)
 LANDMARK = (0.5, 5.0)
 CLEAR_MIN = 1.0
@@ -109,7 +109,12 @@ def measure_side(L, maps, meshes, skinT, height, finger_label=None, skin_v=None,
     gaps['gh'] = gap('hum', 'scap')
     gaps['elbow_hu'] = gap('hum', 'uln'); gaps['elbow_hr'] = gap('hum', 'rad')
     gaps['wrist_rs'] = gap('rad', 'sca'); gaps['wrist_rl'] = gap('rad', 'lun')
-    g = {k: dict(value_mm=round(v, 2), threshold=f'{GAP_RANGES[k][0]}-{GAP_RANGES[k][1]} mm', pass_=bool(GAP_RANGES[k][0] <= v <= GAP_RANGES[k][1])) for k, v in gaps.items()}
+    g = {k: dict(value_mm=round(v, 2), threshold=f'{GAP_RANGES[k][0]}-{GAP_RANGES[k][1]} mm', pass_=bool(GAP_RANGES[k][0] <= v <= GAP_RANGES[k][1]))
+         for k, v in gaps.items() if not k.startswith('wrist')}
+    # the radiocarpal joint: closest approach of the radius to the proximal carpal row (scaphoid and lunate fossae)
+    wj = min(gaps['wrist_rs'], gaps['wrist_rl'])
+    g['wrist'] = dict(value_mm=round(wj, 2), threshold='1.0-4.0 mm', pass_=bool(1.0 <= wj <= 4.0),
+                      radius_scaphoid_mm=round(gaps['wrist_rs'], 2), radius_lunate_mm=round(gaps['wrist_rl'], 2))
     names = {('mc', 'pp'): 'MCP', ('pp', 'mp'): 'PIP', ('mp', 'dp'): 'DIP', ('pp', 'dp'): 'IP'}
     for dg, ch in CHAINS.items():
         for a, b in zip(ch[:-1], ch[1:]):

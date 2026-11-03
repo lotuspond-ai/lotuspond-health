@@ -63,15 +63,17 @@ def rib_geoms(sex, ZA):
     return out
 
 
-def fit_ribs(sex, W, RG, T, verts):
+def fit_ribs(sex, W, RG, T, verts, overlap):
     out, info = {}, {}
     obstacles = [(T[k], c) for k, c in RIB_OBSTACLES if k in T]
     radial = RB.Radial(T['lungs'])
     for key, rg in RG.items():
         n, s = key
         v = W[f'rib_{n}_{s}'][0]
-        v1, i1 = RB.seat(rg, v, verts, T['lungs'])
-        v2, i2 = RB.bend(v1, RB.rib_basis(rg.s, rg.length, rg.s_rigid + 0.004), obstacles, T['skin'], radial=radial)
+        zone = RB.conflict_zone(v, s, n, overlap, verts)
+        v1, i1 = RB.seat(rg, v, verts, T['lungs'], skip=zone)
+        zone = RB.conflict_zone(v1, s, n, overlap, verts)
+        v2, i2 = RB.bend(v1, RB.rib_basis(rg.s, rg.length, rg.s_rigid + 0.004), obstacles, T['skin'], radial=radial, skip=zone)
         out[key] = v2
         info[f'{n}{s}'] = dict(seat=i1, bend=i2)
         log(sex, f'rib {n}{s}: seat {i1["rot_deg"]:.1f} deg / {i1["shift_mm"]:.1f} mm, bend max {i2["max_mm"]:.1f} mm')
@@ -238,8 +240,9 @@ def fit_cartilages(sex, W, T, C, ribs_v, st_v):
             vh = v + u
             # bend between the two joints to clear lungs, heart and liver
             sarc, _, _ = RB.arc_length(vh, f, e['rib'])
-            Bf = RB.bar_basis(sarc, sarc.max(), spacing=0.012, end=0.006)
-            vb, ib = RB.bend(vh, Bf, obstacles, T['skin'], spacing=0.012, sub=1)
+            far = e['sternum'] if n <= 7 else e['above']
+            Bf = RB.bar_basis(sarc, sarc.max(), spacing=0.012, end=0.006, s0=float(sarc[e['rib']].max()), s1=float(sarc[far].min()))
+            vb, ib = RB.bend(vh, Bf, obstacles, T['skin'], sub=1)
             out[key] = vb
             info[f'{n}{s}'] = dict(joint_motion_max_mm=mm1(np.linalg.norm(val, axis=1).max()), bend_max_mm=round(ib['max_mm'], 2))
     return out, info
@@ -295,12 +298,15 @@ def fit(sex, rebuild=False, render=True):
     RG = rib_geoms(sex, ZA)
     C, ST = za_contacts(ZA)
     cd = cache_dir(sex)
+    from fit.ribcage_data import spine_lung_overlap, cord_points
+    overlap = spine_lung_overlap(sex, T)
+    log(sex, 'HRA lung overlaps HRA vertebrae:', {f'{k[0]}{k[1]}': round(v * 1000, 1) for k, v in sorted(overlap.items())})
     # 1. ribs
     cp = os.path.join(cd, 'ribs-fit.npz')
     if os.path.exists(cp) and not rebuild:
         d = np.load(cp); ribs_v = {k: d[f'{k[0]}{k[1]}'] for k in RG}; rib_info = json.loads(str(d['info']))
     else:
-        ribs_v, rib_info = fit_ribs(sex, W, RG, T, verts)
+        ribs_v, rib_info = fit_ribs(sex, W, RG, T, verts, overlap)
         np.savez(cp, info=json.dumps(rib_info), **{f'{k[0]}{k[1]}': v for k, v in ribs_v.items()})
     # 2. sternum
     st_v, st_info = fit_sternum(sex, W, T, ST)
@@ -325,9 +331,10 @@ def fit(sex, rebuild=False, render=True):
     carts = {k: (cart_v[k], W[f'cart_{k[0]}_{k[1]}'][1]) for k in cart_v}
     sternum = merge([(st_v[k], W[k][1]) for k in ('manubrium', 'sternum_body', 'xiphoid')])
     rep = dict(sex=sex, group=GROUP)
-    rep['ribs_in_lungs'] = M.ribs_in_lungs(ribs, T['lungs'])
+    zones = {k: RB.conflict_zone(ribs_v[k], k[1], k[0], overlap, verts) for k in RG}
+    rep['ribs_in_lungs'] = M.ribs_in_lungs(ribs, T['lungs'], zones=zones, overlap=overlap)
     rep['lung_rib_gap_lateral'] = M.lateral_gap(ribs, T['lungs'], SIDE_SIGN)
-    rep['rib_joints'] = M.joints(RG, ribs, verts)
+    rep['rib_joints'] = M.joints(RG, ribs, verts, cord=cord_points(sex))
     rep['costal_cartilage_joints'] = M.cartilage_joints(C, carts, ribs, sternum)
     sh = M.clearance([sternum], T['heart'], inside=False)
     rep['sternum'] = dict(heart_gap=M.crit(M.mm(sh[0]), 3.0, sh[0] >= 0.003), pieces=st_info)
