@@ -2,6 +2,7 @@
 import { boolean, date, doublePrecision, index, integer, jsonb, pgTable, real, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import type { AuditDetail, AuditKind, ConsentKind, RefRange } from '../../../shared/types.ts';
 import type { DataRegion, UnitSystem } from '../../../shared/regions.ts';
+import type { OrderStatus } from '../../../shared/lab-bundle.ts';
 
 const createdAt = () => timestamp('created_at', { withTimezone: true }).notNull().defaultNow();
 const updatedAt = () => timestamp('updated_at', { withTimezone: true }).notNull().defaultNow();
@@ -180,6 +181,85 @@ export const directory = pgTable('directory', {
   createdAt: createdAt(),
 }, t => [index('directory_user_idx').on(t.userId)]);
 
+/* ---------- lab bookings (personal data: kept in the account's cell) ---------- */
+
+/**
+ * Home sample collections booked with a lab partner (docs/lab-booking-backend.md). The lab code reads and writes
+ * these through lab/store/drizzle.ts, which maps them to the booking service's records.
+ */
+export const labOrders = pgTable('lab_orders', {
+  id: uuid('id').primaryKey(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  profileId: uuid('profile_id').notNull().references(() => profiles.id, { onDelete: 'cascade' }),
+  partner: text('partner').notNull(),
+  /** The partner's order number, once it has accepted the booking. */
+  partnerRef: text('partner_ref'),
+  status: text('status').$type<OrderStatus>().notNull(),
+  /** The partner's own last status and when it says it began: guards against out-of-date reads. */
+  partnerStatus: text('partner_status'),
+  partnerStatusAt: timestamp('partner_status_at', { withTimezone: true }),
+  lastSyncedAt: timestamp('last_synced_at', { withTimezone: true }),
+  items: jsonb('items').$type<{ code: string; name: string; pricePaise: number }[]>().notNull().default([]),
+  slotStart: timestamp('slot_start', { withTimezone: true }),
+  slotEnd: timestamp('slot_end', { withTimezone: true }),
+  pricePaise: integer('price_paise').notNull().default(0),
+  payer: text('payer').$type<'partner' | 'lotuspond'>().notNull().default('partner'),
+  /** Patient name, age, sex, mobile number and address, sealed with the cell's file key (lab/sealer.ts), base64. */
+  contactCt: text('contact_ct'),
+  piiPurgedAt: timestamp('pii_purged_at', { withTimezone: true }),
+  /** The booking notice version accepted, and when. */
+  consentVersion: text('consent_version'),
+  consentedAt: timestamp('consented_at', { withTimezone: true }),
+  idempotencyKey: text('idempotency_key'),
+  requestHash: text('request_hash'),
+  placementAttempts: integer('placement_attempts').notNull().default(0),
+  nextPlacementAt: timestamp('next_placement_at', { withTimezone: true }),
+  failureReason: text('failure_reason'),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, t => [
+  uniqueIndex('lab_orders_partner_ref_key').on(t.partner, t.partnerRef),
+  uniqueIndex('lab_orders_idempotency_key').on(t.userId, t.idempotencyKey),
+  index('lab_orders_profile_idx').on(t.profileId, t.createdAt),
+  index('lab_orders_status_idx').on(t.status, t.lastSyncedAt),
+  index('lab_orders_placement_idx').on(t.nextPlacementAt),
+]);
+
+/** Every status change and partner update on an order: its timeline, and the audit trail for support. */
+export const labOrderEvents = pgTable('lab_order_events', {
+  id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
+  orderId: uuid('order_id').notNull().references(() => labOrders.id, { onDelete: 'cascade' }),
+  status: text('status').$type<OrderStatus>().notNull(),
+  partnerStatus: text('partner_status'),
+  source: text('source').$type<'webhook' | 'poll' | 'api' | 'user' | 'system'>().notNull(),
+  occurredAt: timestamp('occurred_at', { withTimezone: true }),
+  receivedAt: timestamp('received_at', { withTimezone: true }).notNull(),
+  note: text('note'),
+}, t => [index('lab_order_events_order_idx').on(t.orderId, t.id)]);
+
+/**
+ * Partner webhooks as received, before processing (lab/webhooks/). Kept in the partner's region cell, sealed,
+ * because a body may carry results. Purged 7 days after processing.
+ */
+export const labWebhookInbox = pgTable('lab_webhook_inbox', {
+  id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
+  partner: text('partner').notNull(),
+  /** The partner's event id, or a hash of the body. */
+  dedupeKey: text('dedupe_key').notNull(),
+  headers: jsonb('headers').$type<Record<string, string>>().notNull(),
+  /** Sealed raw body, base64. */
+  body: text('body').notNull(),
+  receivedAt: timestamp('received_at', { withTimezone: true }).notNull(),
+  attempts: integer('attempts').notNull().default(0),
+  nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }).notNull(),
+  processedAt: timestamp('processed_at', { withTimezone: true }),
+  error: text('error'),
+  deadAt: timestamp('dead_at', { withTimezone: true }),
+}, t => [
+  uniqueIndex('lab_webhook_inbox_dedupe_key').on(t.partner, t.dedupeKey),
+  index('lab_webhook_inbox_due_idx').on(t.processedAt, t.nextAttemptAt),
+]);
+
 export type UserRow = typeof users.$inferSelect;
 export type ConsentRow = typeof consents.$inferSelect;
 export type AuditEventRow = typeof auditEvents.$inferSelect;
@@ -188,3 +268,6 @@ export type DocumentRow = typeof documents.$inferSelect;
 export type MeasurementRow = typeof measurements.$inferSelect;
 export type ScanRow = typeof scans.$inferSelect;
 export type PartnerLabRow = typeof partnerLabs.$inferSelect;
+export type LabOrderRow = typeof labOrders.$inferSelect;
+export type LabOrderEventRow = typeof labOrderEvents.$inferSelect;
+export type LabWebhookInboxRow = typeof labWebhookInbox.$inferSelect;
