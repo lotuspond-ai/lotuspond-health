@@ -32,3 +32,8 @@ tools/anatomy/job*
 tools/anatomy/__pycache__/
 shots/
 dist-artifact
+
+# API server
+server/.data/
+server/dist/
+.env
