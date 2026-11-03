@@ -11,6 +11,7 @@ import {
 } from '../components/forms';
 import { bmiOf, checkDraft, fromDraft, toDraft, type ProfileDraft, todayIso } from '../lib/profile';
 import { Icon } from '../components/ui';
+import { HomeAreaPanel } from '../components/labs/HomeAreaPanel';
 
 const FAMILY: Relationship[] = ['partner', 'child', 'parent', 'sibling', 'other'];
 
@@ -111,6 +112,7 @@ function ProfileEditor({ profile }: { profile: Profile }) {
 
         <aside className="stack">
           <RecordsPanel profile={profile} />
+          <HomeAreaPanel profile={profile} locked={dirty} />
           <FamilyPanel />
           {!isSelf && <RemovePanel profile={profile} />}
         </aside>

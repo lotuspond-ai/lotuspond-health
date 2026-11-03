@@ -5,6 +5,7 @@ import { useSession, useActiveProfile, firstName } from '../state/session';
 import { BloodTypeSelect, Field, SexChoice } from './forms';
 import { checkDraft, fromDraft, toDraft, type ProfileDraft, todayIso } from '../lib/profile';
 import { Logo } from './ui';
+import { OnboardingArea } from './labs/OnboardingArea';
 
 /** One screen after sign-up with the details that make ranges and summaries fit the person. */
 export function Onboarding() {
@@ -13,7 +14,9 @@ export function Onboarding() {
   const [draft, setDraft] = useState<ProfileDraft | null>(() => (profile ? toDraft(profile) : null));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [stage, setStage] = useState<'about' | 'area'>('about');
   if (!profile || !draft) return null;
+  if (stage === 'area') return <OnboardingArea profile={profile} step="Step 3 of 3 · Your area" onDone={finishOnboarding} />;
   const errors = checkDraft(draft);
   const patch = (p: Partial<ProfileDraft>) => setDraft({ ...draft, ...p });
 
@@ -24,7 +27,8 @@ export function Onboarding() {
     try {
       const d = fromDraft(draft);
       await saveProfile(profile.id, { dateOfBirth: d.dateOfBirth, sex: d.sex, heightCm: d.heightCm, weightKg: d.weightKg, bloodType: d.bloodType });
-      finishOnboarding();
+      setBusy(false);
+      setStage('area');
     } catch (err) {
       setError(errorMessage(err));
       setBusy(false);
@@ -35,7 +39,7 @@ export function Onboarding() {
     <div className="onboard">
       <form className="onboard__card" onSubmit={submit} noValidate>
         <div className="auth__brand auth__brand--ink"><Logo /><b>LotusPond <span>Health</span></b></div>
-        <p className="eyebrow">Step 2 of 2 · About you</p>
+        <p className="eyebrow">Step 2 of 3 · About you</p>
         <h1>Welcome, {firstName(profile)}.</h1>
         <p className="lede">These details help LotusPond describe your results. All of them are optional, and you can change them later in your profile.</p>
         <div className="form-grid">
@@ -47,8 +51,8 @@ export function Onboarding() {
         </div>
         {error && <p className="form-error" role="alert">{error}</p>}
         <div className="onboard__actions">
-          <button type="button" className="btn btn--quiet" onClick={finishOnboarding}>Skip for now</button>
-          <button className="btn btn--primary" disabled={busy || Object.keys(errors).length > 0}>{busy ? 'Saving…' : 'Continue to your body map'}</button>
+          <button type="button" className="btn btn--quiet" onClick={() => setStage('area')}>Skip for now</button>
+          <button className="btn btn--primary" disabled={busy || Object.keys(errors).length > 0}>{busy ? 'Saving…' : 'Continue'}</button>
         </div>
       </form>
     </div>

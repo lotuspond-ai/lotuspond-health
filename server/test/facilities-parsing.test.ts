@@ -151,7 +151,8 @@ describe('outside services', () => {
     assert.equal(first.pathname, '/search');
     assert.equal(first.searchParams.get('format'), 'jsonv2');
     assert.equal(first.searchParams.get('email'), 'ops@example.com');
-    assert.equal((f.calls[0].init?.headers as Record<string, string>)['User-Agent'], 'LotusPondHealth/test (contact ops@example.com)');
+    const headers = f.calls[0].init?.headers as Record<string, string> | undefined;
+    assert.equal(headers?.['User-Agent'], 'LotusPondHealth/test (contact ops@example.com)');
     assert.equal(new URL(f.calls[2].url).searchParams.get('accept-language'), 'en-IN');
   });
 

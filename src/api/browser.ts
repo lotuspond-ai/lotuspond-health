@@ -4,8 +4,12 @@
 import { createStore, del, delMany, get, keys, set, type UseStore } from 'idb-keyval';
 import type {
   Account, DocumentKind, Measurement, MeasurementInput, Profile, ProfileInput, ProfileRecords, ScanInput, ScanItem, SessionInfo, StoredDocument,
+  FacilitySearchResult, GeoCandidate, GeoReverse, PublicConfig,
 } from '../types';
 import { LIMITS } from '../../shared/constants';
+import { isLatitude, isLongitude, roundCoord } from '../../shared/facilities';
+import { isCountryCode } from '../../shared/regions';
+import { searchOffline } from './gazetteer';
 import { uid } from '../lib/id';
 import { ApiError, type Backend, type ScanPatch } from './backend';
 
@@ -69,6 +73,28 @@ function checkProfile(patch: Partial<ProfileInput>): Partial<ProfileInput> {
     if (v) out[k] = v;
   }
   if (patch.notes !== undefined) out.notes = patch.notes.slice(0, LIMITS.notesLength);
+  return checkLocation(patch, out);
+}
+
+/** Home area, with the API's rules: coordinates rounded to about 1 km, set or cleared together. */
+function checkLocation(patch: Partial<ProfileInput>, out: Partial<ProfileInput>): Partial<ProfileInput> {
+  if (patch.latitude !== undefined || patch.longitude !== undefined) {
+    if (patch.latitude === undefined || patch.longitude === undefined || (patch.latitude === null) !== (patch.longitude === null)) {
+      throw bad('latitude: Send latitude and longitude together.');
+    }
+    if (patch.latitude !== null && patch.longitude !== null) {
+      if (!isLatitude(patch.latitude)) throw bad('latitude: Latitude must be between -90 and 90.');
+      if (!isLongitude(patch.longitude)) throw bad('longitude: Longitude must be between -180 and 180.');
+      out.latitude = roundCoord(patch.latitude);
+      out.longitude = roundCoord(patch.longitude);
+    }
+  }
+  if (patch.country) {
+    if (!isCountryCode(patch.country)) throw bad('country: Choose a country.');
+    out.country = patch.country.trim().toUpperCase();
+  }
+  if (patch.locality !== undefined) out.locality = patch.locality?.trim().slice(0, 120) || null;
+  if (patch.postalCode !== undefined) out.postalCode = patch.postalCode?.trim().slice(0, 20) || null;
   return out;
 }
 
@@ -365,6 +391,26 @@ export class BrowserBackend implements Backend {
       rec.documents = rec.documents.filter(d => d.id !== scan.blobKey);
       await del(fileKey(scan.blobKey), this.store);
     });
+  }
+
+  /* ---------------- nearby labs (needs the server) ---------------- */
+
+  async publicConfig(): Promise<PublicConfig> {
+    return { map: null, nearbySearch: false };
+  }
+
+  async nearbyFacilities(): Promise<FacilitySearchResult> {
+    throw new ApiError(503, 'preview', 'Finding labs needs the LotusPond server, and this preview runs without one.');
+  }
+
+  /** A short offline list of cities, so an area can still be chosen and saved. */
+  async searchPlaces(q: string): Promise<GeoCandidate[]> {
+    return searchOffline(q);
+  }
+
+  async reversePlace(lat: number, lon: number): Promise<GeoReverse> {
+    const la = roundCoord(lat), lo = roundCoord(lon);
+    return { label: `${Math.abs(la).toFixed(2)}° ${la >= 0 ? 'N' : 'S'}, ${Math.abs(lo).toFixed(2)}° ${lo >= 0 ? 'E' : 'W'}`, country: null, postalCode: null };
   }
 
   /** Every key this backend holds (used by tests and for diagnostics). */

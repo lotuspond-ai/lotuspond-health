@@ -2,6 +2,7 @@
 // HttpBackend talks to the LotusPond API; BrowserBackend keeps everything in this browser (preview builds).
 import type {
   DocumentKind, Measurement, MeasurementInput, Profile, ProfileInput, ProfileRecords, ScanInput, ScanItem, SessionInfo, StoredDocument,
+  FacilityQuery, FacilitySearchResult, GeoCandidate, GeoReverse, PublicConfig,
 } from '../types';
 
 export class ApiError extends Error {
@@ -51,6 +52,15 @@ export interface Backend {
   addScans(profileId: string, scans: ScanInput[]): Promise<ScanItem[]>;
   updateScan(profileId: string, id: string, patch: ScanPatch): Promise<ScanItem>;
   deleteScan(profileId: string, id: string): Promise<void>;
+
+  /* Nearby labs and facilities. Searches go through the LotusPond server; a preview has none. */
+  /** Public settings: map tiles, and whether nearby search is available. */
+  publicConfig(): Promise<PublicConfig>;
+  nearbyFacilities(query: FacilityQuery): Promise<FacilitySearchResult>;
+  /** Up to 5 places matching an area name or postcode. */
+  searchPlaces(q: string): Promise<GeoCandidate[]>;
+  /** The area around a point (sent rounded to about 1 km). */
+  reversePlace(lat: number, lon: number): Promise<GeoReverse>;
 }
 
 /** A message suitable for showing to the person. */

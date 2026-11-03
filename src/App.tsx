@@ -5,6 +5,7 @@ import Scans from './pages/Scans';
 import Files from './pages/Files';
 import ProfilePage from './pages/Profile';
 import AccountPage from './pages/Account';
+import Labs from './pages/Labs';
 import { MarkerDrawer, ScanViewer, UploadDialog } from './components/Overlays';
 import { AuthScreen, Offline, Splash } from './components/Auth';
 import { Onboarding } from './components/Onboarding';
@@ -16,6 +17,7 @@ import { useUI, VIEWS, type View } from './state/ui';
 
 const NAV: { id: View; label: string }[] = [
   { id: 'body', label: 'Body map' }, { id: 'markers', label: 'Biomarkers' }, { id: 'scans', label: 'Scans' }, { id: 'files', label: 'Files' },
+  { id: 'labs', label: 'Find a lab' },
 ];
 
 export default function App() {
@@ -64,6 +66,7 @@ function Shell({ hidden }: { hidden: boolean }) {
         {view === 'files' && <Files />}
         {view === 'profile' && <ProfilePage />}
         {view === 'account' && <AccountPage />}
+        {view === 'labs' && <Labs />}
         <MarkerDrawer />
         <UploadDialog />
         <ScanViewer />
