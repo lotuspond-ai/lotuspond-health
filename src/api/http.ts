@@ -1,5 +1,8 @@
 // Backend that talks to the LotusPond API on the same origin (/api).
-import type { DocumentKind, Measurement, MeasurementInput, Profile, ProfileInput, ProfileRecords, ScanInput, ScanItem, SessionInfo, StoredDocument } from '../types';
+import type {
+  Account, ActivityEvent, ConsentKind, ConsentRecord, DocumentKind, Measurement, MeasurementInput, Profile, ProfileInput, ProfileRecords,
+  RegisterInput, ScanInput, ScanItem, ServiceInfo, SessionInfo, StoredDocument,
+} from '../types';
 import { ApiError, type Backend, type ScanPatch } from './backend';
 
 const BASE = '/api';
@@ -42,12 +45,17 @@ export class HttpBackend implements Backend {
       throw e;
     }
   }
-  register(input: { email: string; password: string; displayName: string }) { return this.request<SessionInfo>('POST', '/auth/register', input); }
+  service() { return this.request<ServiceInfo>('GET', '/auth/config'); }
+  register(input: RegisterInput) { return this.request<SessionInfo>('POST', '/auth/register', input); }
   login(input: { email: string; password: string }) { return this.request<SessionInfo>('POST', '/auth/login', input); }
   logout() { return this.request<void>('POST', '/auth/logout'); }
   changePassword(currentPassword: string, newPassword: string) { return this.request<void>('POST', '/auth/password', { currentPassword, newPassword }); }
   signOutOtherSessions() { return this.request<void>('DELETE', '/auth/sessions'); }
   deleteAccount(password: string) { return this.request<void>('DELETE', '/auth/account', { password }); }
+  updatePreferences(patch: { unitSystem: 'conventional' | 'si' }) { return this.request<Account>('PATCH', '/auth/preferences', patch); }
+  consents() { return this.request<ConsentRecord[]>('GET', '/auth/consents'); }
+  setConsent(kind: ConsentKind, granted: boolean) { return this.request<ConsentRecord[]>('PATCH', '/auth/consents', { kind, granted }); }
+  activity() { return this.request<ActivityEvent[]>('GET', '/auth/activity'); }
 
   createProfile(input: ProfileInput) { return this.request<Profile>('POST', '/profiles', input); }
   updateProfile(id: string, patch: Partial<ProfileInput>) { return this.request<Profile>('PATCH', `/profiles/${id}`, patch); }

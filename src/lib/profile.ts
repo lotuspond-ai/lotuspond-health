@@ -32,7 +32,8 @@ export interface ProfileDraft {
   notes: string;
 }
 
-const num = (v: number | null) => (v == null ? '' : String(Math.round(v * 10) / 10));
+// Two decimals, so heights and weights entered in feet, inches or pounds survive the round trip through cm and kg.
+const num = (v: number | null) => (v == null ? '' : String(Math.round(v * 100) / 100));
 
 export function toDraft(p: Profile): ProfileDraft {
   return {

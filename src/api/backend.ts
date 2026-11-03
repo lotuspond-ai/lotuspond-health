@@ -1,7 +1,8 @@
 // The contract between the interface and wherever records are kept.
 // HttpBackend talks to the LotusPond API; BrowserBackend keeps everything in this browser (preview builds).
 import type {
-  DocumentKind, Measurement, MeasurementInput, Profile, ProfileInput, ProfileRecords, ScanInput, ScanItem, SessionInfo, StoredDocument,
+  Account, ActivityEvent, ConsentKind, ConsentRecord, DocumentKind, Measurement, MeasurementInput, Profile, ProfileInput, ProfileRecords,
+  RegisterInput, ScanInput, ScanItem, ServiceInfo, SessionInfo, StoredDocument,
 } from '../types';
 
 export class ApiError extends Error {
@@ -20,14 +21,23 @@ export interface Backend {
   /** 'server': records are kept by the LotusPond API. 'browser': records are kept in this browser only. */
   readonly kind: 'server' | 'browser';
 
+  /** Regions this backend holds records for, the consent version and published contacts. */
+  service(): Promise<ServiceInfo>;
   /** The signed-in session, or null when signed out. */
   me(): Promise<SessionInfo | null>;
-  register(input: { email: string; password: string; displayName: string }): Promise<SessionInfo>;
+  register(input: RegisterInput): Promise<SessionInfo>;
   login(input: { email: string; password: string }): Promise<SessionInfo>;
   logout(): Promise<void>;
   changePassword(currentPassword: string, newPassword: string): Promise<void>;
   signOutOtherSessions(): Promise<void>;
   deleteAccount(password: string): Promise<void>;
+  updatePreferences(patch: { unitSystem: 'conventional' | 'si' }): Promise<Account>;
+  /** Every consent decision, newest first. */
+  consents(): Promise<ConsentRecord[]>;
+  /** Grant or withdraw a consent; returns the updated list. Required consents cannot be withdrawn (delete the account instead). */
+  setConsent(kind: ConsentKind, granted: boolean): Promise<ConsentRecord[]>;
+  /** Recent account events, newest first. */
+  activity(): Promise<ActivityEvent[]>;
 
   createProfile(input: ProfileInput): Promise<Profile>;
   updateProfile(id: string, patch: Partial<ProfileInput>): Promise<Profile>;

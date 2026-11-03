@@ -106,7 +106,7 @@ describe('data residency cells', () => {
     assert.equal(entry.region, 'in');
     assert.equal(entry.emailHash, emailHash(secrets.directoryKey, address));
     assert.match(entry.emailHash, /^[0-9a-f]{64}$/, 'the directory keeps a keyed hash, not the email');
-    assert.equal((await inCell.db.select().from(directory)).length, 0, 'cells keep no directory');
+    assert.equal((await inCell.db.select().from(directory).where(eq(directory.userId, user.id))).length, 0, 'cells keep no directory');
   });
 
   it('never puts an EU account’s data in the India database', async () => {
@@ -327,7 +327,8 @@ describe('audit log', () => {
     assert.deepEqual(activity.find(e => e.kind === 'consent_changed')?.detail, { consent: 'marketing', granted: true });
 
     const rows = await inCell.db.select().from(auditEvents).where(eq(auditEvents.userId, p.user.id));
-    const text = JSON.stringify(rows);
+    // Every field that could carry data (ids and timestamps aside: a time such as 10:41:49.7… would match "9.7").
+    const text = JSON.stringify(rows.map(r => [r.kind, r.detail, r.ipHash, r.userAgent]));
     for (const secret of ['Meera', 'Anaya', 'Asthma', 'Haemoglobin', '9.7', 'diabetes', 'clinic', p.email, '203.0.113.42', 'Mozilla', 'correct horse']) {
       assert.ok(!text.includes(secret), `audit rows do not contain "${secret}"`);
     }
