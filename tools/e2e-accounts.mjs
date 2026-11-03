@@ -20,12 +20,15 @@ let expectRejectedSignIn = false; // the wrong-password step makes the browser l
 page.on('console', m => {
   if (m.type() !== 'error') return;
   if (expectRejectedSignIn && m.text().includes('status of 401')) return;
+  // Third-party map tiles (the development fallback) may be unreachable where this runs; the map copes.
+  if (/^https:\/\/tile\.openstreetmap\.org\//.test(m.location()?.url ?? '')) return;
   problems.push(`console: ${m.text().slice(0, 300)}`);
 });
 page.on('pageerror', e => problems.push(`page error: ${e.message}`));
 
 let step = 0;
-async function shot(name, full = false) { await page.screenshot({ path: `${out}/${String(++step).padStart(2, '0')}-${name}.png`, fullPage: full }); }
+// Full-page shots re-render the 3D stage; allow for a slow software renderer on a busy machine.
+async function shot(name, full = false) { await page.screenshot({ path: `${out}/${String(++step).padStart(2, '0')}-${name}.png`, fullPage: full, timeout: 120_000 }); }
 function expect(ok, what) { if (!ok) problems.push(`FAILED: ${what}`); console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); }
 const text = sel => page.locator(sel).first().innerText();
 
@@ -53,7 +56,21 @@ await page.getByLabel('Height').fill('164');
 await page.getByLabel('Weight').fill('61');
 await page.getByLabel('Blood type').selectOption('B+');
 await shot('onboarding');
-await page.getByRole('button', { name: 'Continue to your body map' }).click();
+await page.getByRole('button', { name: 'Continue', exact: true }).click();
+
+// 2b. Home area. Area search answers when the API runs with FACILITY_PROVIDER=fixture (or has internet access);
+// otherwise the step is skipped and the labs step below checks the "no location yet" state instead.
+await page.getByRole('heading', { name: 'Labs near you' }).waitFor();
+await page.getByRole('combobox', { name: 'Area or postcode' }).fill('Indiranagar');
+const areaFound = await page.getByRole('option', { name: /^Indiranagar, Bengaluru/ }).waitFor({ timeout: 6000 }).then(() => true, () => false);
+if (areaFound) {
+  await page.getByRole('option', { name: /^Indiranagar, Bengaluru/ }).click();
+  await shot('onboarding-area');
+  await page.getByRole('button', { name: 'Continue to your body map' }).click();
+} else {
+  console.log('note area search is not answering here (start the API with FACILITY_PROVIDER=fixture); skipping the area');
+  await page.getByRole('button', { name: 'Skip for now' }).click();
+}
 
 // 3. Body map, sample data
 await page.getByRole('heading', { name: 'See your results where they happen' }).waitFor();
@@ -78,6 +95,32 @@ await page.getByRole('heading', { name: 'Files', exact: true }).waitFor();
 const rows = await page.locator('table.files tbody tr').count();
 expect(rows === 2, `files page lists the report and the scan (${rows})`);
 await shot('files');
+
+// 5b. Find a lab: the saved home area is searched; cards come with directions; filters narrow the list.
+await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Find a lab' }).click();
+await page.getByRole('heading', { name: 'Find a lab', exact: true }).waitFor();
+if (areaFound) {
+  expect((await text('.lbar__place')).includes('Indiranagar, Bengaluru'), 'labs page searches the saved home area');
+  await page.locator('.fcard').first().waitFor({ timeout: 15000 });
+  const cards = await page.locator('.fcard').count();
+  expect(cards >= 5, `nearby facilities are listed (${cards})`);
+  const dir = await page.locator('.fcard').first().getByRole('link', { name: /^Directions to/ }).getAttribute('href');
+  expect(/^https:\/\/(www\.google\.com\/maps\/dir\/\?api=1&destination=|maps\.apple\.com\/\?daddr=)-?\d+\.\d+,-?\d+\.\d+$/.test(dir ?? ''), `directions open the maps app (${dir})`);
+  const partners = await page.locator('.fcard--partner').count();
+  console.log(`note ${partners} partner lab(s) shown (they appear only after partners:import)`);
+  await page.getByRole('group', { name: 'Show' }).getByRole('button', { name: /^Imaging/ }).click();
+  const kinds = await page.locator('.fcard .fchip--kind').allInnerTexts();
+  expect(kinds.length > 0 && kinds.every(k => k === 'Imaging'), `the Imaging filter shows imaging only (${kinds.join(', ')})`);
+  await page.getByRole('group', { name: 'Show' }).getByRole('button', { name: /^All/ }).click();
+  await page.locator('.fcard__main').first().click();
+  expect(await page.locator('.fcard.is-selected').count() === 1, 'selecting a card highlights it');
+  await page.waitForTimeout(1500);
+  await shot('labs');
+} else {
+  await page.getByRole('heading', { name: 'Where should we look?' }).waitFor();
+  expect(true, 'labs page asks for a location when none is saved');
+  await shot('labs-empty');
+}
 
 // 6. Profile details
 await page.locator('.pmenu__trigger').click();
@@ -150,6 +193,11 @@ await page.waitForTimeout(400);
 const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1);
 expect(!overflow, 'profile page has no sideways scroll at phone width');
 await shot('profile-phone', true);
+await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Find a lab' }).click();
+await page.getByRole('heading', { name: 'Find a lab', exact: true }).waitFor();
+await page.waitForTimeout(1200);
+expect(!(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1)), 'labs page has no sideways scroll at phone width');
+await shot('labs-phone');
 await page.locator('.pmenu__trigger').click();
 await page.getByRole('menuitem', { name: 'Sign out' }).click();
 await page.getByRole('heading', { name: 'Welcome back' }).waitFor();
