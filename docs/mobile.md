@@ -90,6 +90,7 @@ Debug builds can be inspected with Chrome (`chrome://inspect`) for Android, or S
    1. Set the team under *Signing & Capabilities*.
    2. Choose *Product → Archive* and upload from the Organizer.
    3. `ITSAppUsesNonExemptEncryption` is already `false` (the app only uses OS encryption).
+   4. The privacy manifest (`ios/App/App/PrivacyInfo.xcprivacy`) declares no tracking and no collected data. It lists one required-reason API: file timestamps, reason C617.1, because the Filesystem plugin reads file dates inside the app's container. Check it again when adding a plugin or native code; Xcode's *Generate Privacy Report* (on an archive) shows the combined report.
 4. **Store forms.** Neither app collects or shares data:
    - App Store *App Privacy*: "Data Not Collected".
    - Play *Data safety*: no data collected or shared.
@@ -115,7 +116,6 @@ Other safeguards:
 
 - **Device testing.** The apps were built and checked in CI and in a phone-sized browser; they have not been run on physical devices yet.
 - **Storage on devices.** The file storage above is covered by tests in Node against an in-memory file system. Migration from IndexedDB, large DICOM files and backgrounding still need checking on real iPhones and Android phones.
-- **iOS privacy manifest.** Add `PrivacyInfo.xcprivacy` for the app target before the first App Store submission.
 - **Later features:**
   - app lock with Face ID or fingerprint
   - "Open in LotusPond" from Files, Mail and other apps (document types and intent filters)

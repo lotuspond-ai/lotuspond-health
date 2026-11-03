@@ -77,6 +77,8 @@ jobs:
           xcodebuild -project App.xcodeproj -scheme App -configuration Debug \
             -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
             -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
+      - name: Check the privacy manifest is in the app
+        run: plutil -lint ios/App/build/Build/Products/Debug-iphonesimulator/App.app/PrivacyInfo.xcprivacy
       - name: Zip the simulator app
         run: cd ios/App/build/Build/Products/Debug-iphonesimulator && zip -qry "$GITHUB_WORKSPACE/LotusPondHealth-simulator.zip" App.app
       - uses: actions/upload-artifact@v4

@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Privacy manifest for the LotusPond Health app target.
+
+  Tracking and collection: none. Results and scans are read, stored and shown on the device only; nothing is
+  sent to the developer or any third party (exporting a backup is a user-chosen share, not collection).
+
+  Required-reason APIs used by code compiled into the app (Capacitor core ships its own manifest):
+  - File timestamps: @capacitor/filesystem (via IONFilesystemLib) reads creation / modification dates when it
+    lists a folder or stats a file. The app lists its own storage folder in Library/lotuspond on every launch
+    (src/native/storage.ts), so only files inside the app container: reason C617.1.
+  The other plugins (app, haptics, share, splash-screen) use none of the listed APIs.
+  Re-check this when adding a plugin or native code.
+-->
+<plist version="1.0">
+<dict>
+	<key>NSPrivacyTracking</key>
+	<false/>
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array/>
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array>
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>C617.1</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>
