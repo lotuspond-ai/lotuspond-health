@@ -8,6 +8,7 @@ import { guessCountry } from '../lib/country';
 import { Field } from './forms';
 import { checkSignUp, emptySignUp, signUpBlocked, toChoices, type SignUpDraft } from '../lib/signup';
 import { SignUpDetails } from './SignUpDetails';
+import { ServerPicker } from './ServerPicker';
 import { Icon, Logo } from './ui';
 import { onAuthHash, showAuthMode, siteHref, siteLinkProps, type AuthMode } from '../site/links';
 import '../styles/auth-site.css';
@@ -41,6 +42,7 @@ export function Offline() {
         </>
       )}
       <button className="btn btn--primary" onClick={() => void init()}>Try again</button>
+      <ServerPicker />
     </div>
   );
 }
@@ -161,6 +163,7 @@ export function AuthScreen({ initialMode = 'in' }: { initialMode?: AuthMode }) {
             <a href={siteHref('/trust/')} {...siteLinkProps}>Trust and compliance</a>
           </nav>
         </form>
+        <ServerPicker />
       </section>
     </div>
   );

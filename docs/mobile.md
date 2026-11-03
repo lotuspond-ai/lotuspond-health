@@ -75,11 +75,14 @@ Start the server so the phone can reach it:
 HOST=0.0.0.0 npm run local
 ```
 
-Then build the apps pointing at it, and run them:
+Then point the app at it. Either:
 
-```bash
-VITE_API_ORIGIN=http://192.168.1.20:8787 npm run build:mobile
-```
+- **Use a test build with the server picker.** The debug APK from CI (the `lotuspond-health-debug-apk` artifact of the *Mobile apps* workflow) and any build made with `VITE_SERVER_PICKER=1 npm run build:mobile` show *Test build · server … Change* under the sign-in form and on the "can't be reached" screen. Enter the server's address there, for example `192.168.1.20:8787`. The app checks that a LotusPond server answers, signs out of the old one and restarts. *Back to …* returns to the build's own server.
+- **Or build it in**, with no picker:
+
+  ```bash
+  VITE_API_ORIGIN=http://192.168.1.20:8787 npm run build:mobile
+  ```
 
 Use your computer's LAN address for a phone on the same Wi-Fi, `http://localhost:8787` for the iOS Simulator, or `http://10.0.2.2:8787` for the Android emulator. Plain http is allowed only for this: Android debug builds allow cleartext (`android/app/src/debug/AndroidManifest.xml`; release builds are https only), and iOS allows local network addresses (`NSAllowsLocalNetworking`).
 
@@ -98,24 +101,25 @@ Debug builds can be inspected with Chrome (`chrome://inspect`) for Android, or S
 | `src/lib/applock.ts`, `src/components/AppLock.tsx` | App lock: the state machine (tested in Node), the lock screen and the setting |
 | `src/lib/useMedia.ts` | `COMPACT`, the phone-layout breakpoint shared with `src/styles/mobile.css` |
 | `assets/`, `tools/mobile-assets.mjs` | Icon and launch screen sources. `npm run mobile:assets` regenerates every size (needs Playwright with Chromium). Android's adaptive icon is a vector in `res/drawable/ic_launcher_foreground.xml`. |
-| `.github/workflows/mobile.yml` | CI: unsigned Android debug APK and iOS simulator build when native files or dependencies change |
+| `.github/workflows/mobile.yml` | CI: unsigned Android debug APK (installable on a phone, with the server picker) and iOS simulator build. It runs when native files, the Capacitor config or dependencies change, and on demand (*Actions → Mobile apps → Run workflow*) for a fresh APK after app changes |
 
 Plugins: `@capacitor/app`, `filesystem`, `geolocation`, `haptics`, `privacy-screen`, `share`, `splash-screen`, plus `@aparajita/capacitor-biometric-auth` and `@aparajita/capacitor-secure-storage` (both MIT).
 
 ## Releasing
 
-1. **Version.**
+1. **Build the shell without the server picker.** Run `npm run build:mobile` with `VITE_SERVER_PICKER` unset. Only test builds have the picker, and CI's builds are test builds.
+2. **Version.**
    - Android: `versionCode` and `versionName` in `android/app/build.gradle`.
    - iOS: *Marketing Version* and *Current Project Version* in Xcode.
-2. **Android.**
+3. **Android.**
    1. Create an upload keystore. `*.jks`, `*.keystore` and `keystore.properties` are git-ignored; keep the key out of the repository.
    2. Add a release `signingConfig`.
    3. Run `cd android && ./gradlew bundleRelease` and upload the `.aab` to Play Console.
-3. **iOS.**
+4. **iOS.**
    1. Set the team under *Signing & Capabilities*.
    2. Choose *Product → Archive* and upload from the Organizer.
    3. `ITSAppUsesNonExemptEncryption` is already `false` (the app only uses HTTPS and OS encryption).
-4. **Privacy manifest** (`ios/App/App/PrivacyInfo.xcprivacy`). It declares no tracking. It lists the data the account stores, all linked to the person and used only for the app's functionality:
+5. **Privacy manifest** (`ios/App/App/PrivacyInfo.xcprivacy`). It declares no tracking. It lists the data the account stores, all linked to the person and used only for the app's functionality:
    - email address and name
    - user ID
    - health data: results, scans, conditions, medications, allergies, height and weight
@@ -126,7 +130,7 @@ Plugins: `@capacitor/app`, `filesystem`, `geolocation`, `haptics`, `privacy-scre
    - other diagnostic data (account security events: app version and a hashed IP address)
 
    It also lists one required-reason API: file timestamps, reason C617.1, because the Filesystem plugin reads file dates inside the app's container. Check it again when the server starts storing something new, or when adding a plugin or native code. Xcode's *Generate Privacy Report* (on an archive) shows the combined report.
-5. **Store forms.** Answer them from the same list:
+6. **Store forms.** Answer them from the same list:
    - App Store *App Privacy*: the data types above, linked to the user, not used for tracking, purpose App Functionality.
    - Play *Data safety*: the matching types (personal info, health and fitness, photos, files and docs, approximate location, app info and performance). Mark them collected, not shared, encrypted in transit, and deletable on request (Account → *Delete account*).
    - Both stores have health-app policies. Fill in Play's health apps declaration, and keep the "explains results, does not diagnose" wording in listings.
