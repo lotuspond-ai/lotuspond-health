@@ -5,16 +5,18 @@ Home sample collection with lab partners, as designed in [docs/lab-booking-backe
 - the partner interface and a simulated lab to build against;
 - the order state machine, sync with partners, and the poller;
 - the webhook receiver and inbox processor;
-- the booking API: catalogue, slots, and booking, listing, cancelling and rescheduling a profile's orders.
+- the booking API: catalogue, slots, and booking, listing, cancelling and rescheduling a profile's orders;
+- results into the profile: reports fetched into pending results, reviewed in the app, saved as the profile's records.
 
-Not built yet: fetching reports into the profile's records, payments (orders are pay-at-collection), and the app's booking screens.
+Not built yet: the app's booking and review screens, payments (orders are pay-at-collection), and notifications.
 
 ## How it fits the server
 
-- **Routes** (`routes.ts`): `/api/lab/catalog` and `/api/lab/slots`, and `/api/profiles/:pid/lab-orders`. They use main's `requireAuth`, `requireProfile`, `readJson` (Zod), `HttpError` and audit log, and are mounted by `app.ts` when `deps.labs` is set. Partner webhooks are served at `/hooks/:partner/:secret`, outside `/api`.
+- **Routes** (`routes.ts`): `/api/lab/catalog` and `/api/lab/slots`, `/api/profiles/:pid/lab-orders` and `/api/profiles/:pid/lab-results`. They use main's `requireAuth`, `requireProfile`, `readJson` (Zod), `HttpError` and audit log, and are mounted by `app.ts` when `deps.labs` is set. Partner webhooks are served at `/hooks/:partner/:secret`, outside `/api`.
 - **Regions and cells.** Each partner serves one data region (the simulated lab: `in`). Its orders and webhooks live in the cell that holds that region, and only accounts held there can book with it.
 - **Runtime** (`runtime.ts`). For each such cell it builds the stores on the cell's database, a sealer with the cell's file keys, the booking service, the webhook processor and the poller. `index.ts` starts them on timers when `LAB_PARTNERS` is set.
-- **Tables** (`db/schema.ts`): `lab_orders`, `lab_order_events` and `lab_webhook_inbox` (migration `0003_lab_orders.sql`). Orders are deleted with their profile or account.
+- **Tables** (`db/schema.ts`): `lab_orders`, `lab_order_events`, `lab_webhook_inbox` and `lab_results` (migrations `0003_lab_orders.sql`, `0004_lab_results.sql`). Orders and results are deleted with their profile or account; deleting a profile's records also clears its results.
+- **Results** (`results/service.ts`). The results job fetches a report when an order's partner status is newer than its last report check, and stores a new version as a pending result: the bundle, plus the PDF in the cell's file store at `<profile>/<result id>`. Saving a result, in one transaction, makes the PDF a document and the app-reviewed values measurements labelled with the order. It replaces what an earlier delivery of the order saved, and delivers the order when the result is final.
 
 | Path | What it holds |
 | --- | --- |
@@ -32,6 +34,7 @@ Not built yet: fetching reports into the profile's records, payments (orders are
 | `partners/fake-lab.ts`, `fake-lab-data.ts`, `fake-pdf.ts` | `FakeLab`: the simulated lab (catalogue, slots, order timeline, signed webhooks, reports and their PDF) |
 | `partners/fake.ts` | `FakeLabAdapter`: the adapter for the simulated lab |
 | `results/bundle.ts` | Turns a report into the bundle the app reads (`shared/lab-bundle.ts`) |
+| `results/service.ts` | The results job (fetch, store, supersede, retry), and listing, saving and dismissing results |
 | `log.ts`, `time.ts` | `[lab]` log lines (ids only, `alert: true` to page on); IST helpers |
 
 ## Tests
@@ -45,6 +48,7 @@ Not built yet: fetching reports into the profile's records, payments (orders are
 | `test/webhooks.test.ts` | Receiver, processor and poller against the simulated lab, with in-memory stores: every scenario tag, retries and dead letters, outages, polling without webhooks, the receiver's refusals, sealing |
 | `test/lab-store.test.ts` | The storage contracts, run against both the memory and the Drizzle stores |
 | `test/lab-booking.test.ts` | The booking API through the real app on PGlite: sign-up, regions, profiles, validation, idempotency, lost and slow replies, cancel, reschedule, webhooks through to the report |
+| `test/lab-results.test.ts` | Results into the profile through the real app, reviewed with the app's own parsers (bundle and PDF): final, partial then final, superseded, amended after delivery, PDF-only, dismiss, ownership, records deletion, retries and alert |
 
 ## The simulated lab
 

@@ -1,6 +1,6 @@
 # Lab booking and results: backend design
 
-Status: November 2026. The booking side is built on the API server (`server/src/lab/`), against a simulated lab; fetching results into the profile is next. No lab partner has signed yet, so everything partner-specific (endpoints, status names, webhook format) is a placeholder until we have their API docs.
+Status: November 2026. Booking and results into the profile are built on the API server (`server/src/lab/`), against a simulated lab; the app's screens for them are next. No lab partner has signed yet, so everything partner-specific (endpoints, status names, webhook format) is a placeholder until we have their API docs.
 
 ## 1. Context
 
@@ -124,14 +124,29 @@ A partner is configured with the data region it serves (Indian labs: `in`). Its 
    - An order it can't find is retried with backoff (from 1 minute up to 1 hour), then dead-lettered with an alert after 10 attempts. Partner timeouts and outages are retried the same way. An unreadable body goes straight to dead letter.
 4. Changes the user cares about (collector assigned, sample collected, report ready) will trigger a push notification (not built). The partner already texts the user about the collection visit, so we don't duplicate that.
 
-### 5.3 Results delivery (next to build)
+### 5.3 Results delivery
 
-1. On `report_ready` or `partial_report`, or when an amended report arrives, the worker calls `adapter.report()` to get the PDF and/or rows, builds a bundle with the next `sequence` number, and stores it with the PDF in the account's cell as a pending result for the profile.
-2. A notification says "Your LotusPond results are ready". It never names the lab, the test or any value.
-3. The app shows the pending result on the review screen, labelled with its source, e.g. "Thyrocare, order TC123".
-4. When the user confirms, the values and the PDF are saved to the profile like an upload, replacing any measurements from an earlier delivery for the same order.
+Built in `server/src/lab/results/service.ts`.
 
-Replacing earlier deliveries matters because the app's merge only drops repeats with the same marker, date and value. A corrected value in an amended report would otherwise sit next to the old one. Measurements carry a `sourceFile`, which the app shows ("from …"), so set it to something readable that is still unique per order, e.g. `Thyrocare order TC123`, and replace by it.
+1. **Fetch.** A results job looks for orders whose partner status changed since their last report check: an order reaching `partial_report` or `report_ready`, or an amended report while `report_ready` or `delivered`. "Changed" is judged by the partner's own status time, so clocks don't matter. The sync hook wakes the job as soon as such a status arrives, and it also runs every 10 seconds.
+2. **Store.** The job calls `adapter.report()`. If the report's version is new (the partner's version, or a hash of the report when it gives none), it stores a pending result in the account's cell with the next `sequence` number:
+   - the bundle (§9), in `lab_results`;
+   - the PDF, in the cell's encrypted file store at `<profile>/<result id>`, the same key shape as uploaded documents, so it is deleted with the profile.
+
+   An earlier delivery of the same order that was never reviewed is marked `superseded`, and its PDF deleted.
+3. **Notify** (not built). A notification will say "Your LotusPond results are ready". It never names the lab, the test or any value.
+4. **Review.** The app lists pending results (`GET /api/profiles/:pid/lab-results`), parses the bundle with its own parser (or the PDF, from `…/:rid/report`, when there are no rows) and shows the usual review screen, labelled with the source, e.g. "Thyrocare order TC123".
+5. **Save.** `POST …/:rid/save` with the reviewed values turns the result into ordinary records, in one transaction:
+   - the PDF becomes a document (kind `report`) pointing at the stored file, without a copy;
+   - the values become measurements linked to it, with `sourceFile` set by the server to the order's label;
+   - measurements and documents saved from an earlier delivery of the same order are deleted and replaced;
+   - a final (non-partial) result moves the order to `delivered`.
+
+   The save goes in the activity log.
+6. **Dismiss.** `POST …/:rid/dismiss` drops the result: its PDF is deleted and nothing is added.
+7. **Retries.** A failed fetch is retried with backoff (1 minute, doubling to 1 hour), with an alert after 8 failures in a row. Each report version is stored once, however often the order is checked.
+
+Replacing earlier deliveries matters because the app's merge only drops repeats with the same marker, date and value. A corrected value in an amended report would otherwise sit next to the old one. The server matches the earlier delivery by its document and by the order's label, so the replacement doesn't depend on what the app sends.
 
 ## 6. Order states
 
@@ -169,6 +184,9 @@ All under `/api`, signed in with main's session (cookie in the browser, bearer t
 | `POST /api/profiles/:pid/lab-orders` | Book for that profile (example below); needs an `Idempotency-Key` header |
 | `GET /api/profiles/:pid/lab-orders`, `GET …/:oid` | The profile's orders, or one order with its status timeline |
 | `POST …/:oid/cancel` `{reason?}`, `POST …/:oid/reschedule` `{slot}` | Change an order |
+| `GET /api/profiles/:pid/lab-results` (`?status=all` for every delivery) | Results waiting for review, with their bundle (`LabResultView`) |
+| `GET …/lab-results/:rid/report` | The report PDF |
+| `POST …/lab-results/:rid/save` `{measurements}`, `POST …/:rid/dismiss` | Save the reviewed values (and the PDF) as the profile's records, or drop the result |
 
 Inbound: `POST /hooks/:partner/:hookSecret` (partners), and later `POST /hooks/razorpay`.
 
@@ -263,12 +281,13 @@ export interface ResultRow {
 
 ## 10. Data model
 
-In `server/src/db/schema.ts`, in every cell's database (migration `0003_lab_orders.sql`):
+In `server/src/db/schema.ts`, in every cell's database (migrations `0003_lab_orders.sql` and `0004_lab_results.sql`):
 
 | Table | Holds |
 | --- | --- |
 | `lab_orders` | The order: account, profile, partner and its reference, our status and the partner's last status with its time, items, slot, price, payer, sealed contact details, consent version and time, idempotency key and request hash, placement retries, failure reason. Unique partner reference per partner; unique idempotency key per account. Deleted with the profile or account |
 | `lab_order_events` | Every status change and partner update: the timeline, and the audit trail for support |
+| `lab_results` | Each delivery of an order's results: sequence, partial or final, the partner's report version, the bundle, the PDF's file key and hash, and its state (pending, saved with its document, dismissed, superseded). The order also records the last report version stored and the partner status time its last check covered |
 | `lab_webhook_inbox` | Partner webhooks as received: sealed body, credential-free headers, attempts, next attempt, processed or dead-lettered. Unique per partner and event key |
 
 The lab code reads them through `server/src/lab/store/drizzle.ts`; `store/memory.ts` implements the same contracts for fast tests, and `server/test/lab-store.test.ts` runs both against the same expectations.
@@ -280,7 +299,7 @@ The lab code reads them through `server/src/lab/store/drizzle.ts`; `store/memory
 | Patient name, age, sex, mobile number, address (sealed) | The partner needs them to collect | Until the order reaches a final state, plus 30 days for disputes; then wiped (not built yet) |
 | Tests, price, payment reference | Invoices, refunds, tax | As long as tax law requires (GST records: about six years). Ask a lawyer whether test names can be reduced to a package code |
 | Order status history | Support, reconciliation | Same as the order |
-| Pending results (bundle and PDF) | Waiting for the user's review | Until saved or dismissed; then they are records like any upload |
+| Pending results (bundle and PDF, encrypted) | Waiting for the user's review | Until saved (then they are records like any upload) or dismissed (the PDF is deleted). Deleting the profile's records clears them |
 | Raw webhook bodies (sealed) | Debugging and replay | 7 days after processing |
 | Booking consent | Proof of consent | With the order; the activity log keeps the booking event as long as it keeps events |
 
@@ -296,7 +315,7 @@ Deleting a profile or the account deletes its orders with it. An order still ope
 | Partner down while the user is booking | That partner's packages are marked unavailable and the others are still shown; no order is created |
 | `createOrder` times out | Order moves to `placing`; the worker retries with a client-reference lookup first (§5.1) |
 | Payment taken but booking failed | Automatic refund job, plus an alert |
-| Report fetch fails | Retries with backoff from 1 minute to 1 hour for up to 24 hours, then an alert |
+| Report fetch fails | Retries with backoff (1 minute, doubling to 1 hour, then hourly); an alert after 8 failures in a row |
 | Scanned (image-only) PDF with no rows | The client shows the parser warning; we push the partner for structured results |
 | Password-protected PDF (some Indian labs lock emailed reports) | The client parser can't open these. Ask partners for unlocked copies through the API; if a partner only provides locked ones, the adapter unlocks the PDF server-side before storing it |
 | User never reviews the results | They wait in the account (§5.3); reminders on days 3 and 14. Nothing is lost by waiting |
@@ -339,18 +358,19 @@ server/src/lab/
   webhooks/                   receiver, processor
   partners/                   adapter interface, simulated lab and its adapter
   store/                      contracts, Drizzle and memory implementations
-  results/bundle.ts           report to bundle
+  results/                    report to bundle; results job, review, save into the profile
   sealer.ts, log.ts, time.ts
-server/src/db/schema.ts       lab_* tables (migration 0003_lab_orders.sql)
-server/test/                  fake-lab, state, webhooks, lab-store and lab-booking tests
+server/src/db/schema.ts       lab_* tables (migrations 0003_lab_orders.sql, 0004_lab_results.sql)
+server/test/                  fake-lab, state, webhooks, lab-store, lab-booking and lab-results tests
 ```
 
 ## 15. Build order
 
 1. **Done: simulated lab, end to end.** The partner interface and simulated lab, the state machine, the webhook receiver, processor and poller, and the booking API, on the API server's accounts, profiles, cells and audit log.
-2. **Next: results into the profile (§5.3),** and the app's booking and review screens.
-3. **First real partner, PDF results.** Whichever partner signs first. Adapter, webhook verification, and a pilot in one city.
-4. **Then:** purging contact details after an order closes, cancelling open orders before a profile is deleted, notifications, payments (if we collect), a second partner, and a small internal view of stuck orders.
+2. **Done: results into the profile (§5.3).**
+3. **Next: the app's booking and review screens.**
+4. **First real partner, PDF results.** Whichever partner signs first. Adapter, webhook verification, and a pilot in one city.
+5. **Then:** purging contact details after an order closes, cancelling open orders before a profile is deleted, notifications, payments (if we collect), a second partner, and a small internal view of stuck orders.
 
 ## 16. Trade-offs
 

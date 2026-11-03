@@ -183,6 +183,8 @@ All routes are under `/api` and use JSON unless noted.
 | `GET /lab/catalog?pincode=`, `GET /lab/slots?partner=&pincode=&date=&items=` | Lab booking: packages and home-collection slots from the partners serving the account's region |
 | `GET`, `POST /profiles/:id/lab-orders` | A profile's lab bookings, or book one (needs an `Idempotency-Key` header) |
 | `GET /profiles/:id/lab-orders/:oid`, `POST …/:oid/cancel`, `POST …/:oid/reschedule` | One booking with its status timeline; cancel or move the visit |
+| `GET /profiles/:id/lab-results`, `GET …/lab-results/:rid/report` | Lab results waiting for review (`?status=all` for every delivery), and the report PDF |
+| `POST …/lab-results/:rid/save` `{ measurements }`, `POST …/:rid/dismiss` | Save the reviewed values and the PDF as the profile's records (replacing an earlier delivery of the same order), or drop the result |
 
 Lab partners call `POST /hooks/:partner/:secret` (outside `/api`; see [Lab booking](#lab-booking-in-progress)).
 
@@ -192,7 +194,8 @@ Book a home sample collection with a lab partner for any profile, and follow it 
 
 - **Partners.** No real lab is connected yet. `LAB_PARTNERS=fake` runs a simulated lab inside the server: it has packages, slots and an order timeline, sends signed webhooks, and writes reports as structured results plus a PDF. It is on by default in development and refused in production. Each partner serves one data region (the simulated lab: India), and only accounts held there can book with it.
 - **Orders.** Orders are kept in the account's cell with the profile they are for, and carry the booking consent (notice version and time). The patient's contact details are encrypted with the cell's file key. Partner webhooks are only hints: the server asks the partner for the current status, and a poller catches missed webhooks.
-- **Not built yet.** Fetching reports into the profile's records, payments (orders are pay-at-collection), and the booking screens in the app.
+- **Results.** When the lab's report is ready, the server fetches it and keeps it, with the PDF, waiting for review. The app reads it like an upload; saving makes the values measurements and the PDF a document in the profile, replacing whatever an earlier delivery of the same order saved (a partial report, or one later amended).
+- **Not built yet.** The app's booking and review screens, payments (orders are pay-at-collection), and notifications.
 
 To try it, run `npm run dev`, sign up with India as the country, and book through the API (the order moves a step every 10 seconds; set `LAB_FAKE_STEP_MS` to change that).
 
