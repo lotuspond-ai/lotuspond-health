@@ -97,13 +97,15 @@ export function LocationPicker({ onPick, variant = 'inline', autoFocus = false, 
       {variant === 'hero' && <span className="lpick__or" aria-hidden>or</span>}
       <div className="lpick__search">
         <label htmlFor={inputId} className="sr-only">{label}</label>
-        <LabIcon name="search" className="lpick__glass" />
-        <input id={inputId} type="search" value={query} placeholder={variant === 'hero' ? 'Search an area or postcode' : 'Area or postcode'}
-          autoComplete="off" autoFocus={autoFocus} spellCheck={false} maxLength={120}
-          role="combobox" aria-expanded={showList} aria-controls={listId} aria-autocomplete="list"
-          aria-activedescendant={showList && items[active] ? `${listId}-${active}` : undefined}
-          onChange={e => { setQuery(e.target.value); setOpen(true); setActive(0); }}
-          onFocus={() => setOpen(true)} onBlur={() => setOpen(false)} onKeyDown={onKey} />
+        <div className="lpick__field">
+          <LabIcon name="search" className="lpick__glass" />
+          <input id={inputId} type="search" value={query} placeholder={variant === 'hero' ? 'Search an area or postcode' : 'Area or postcode'}
+            autoComplete="off" autoFocus={autoFocus} spellCheck={false} maxLength={120}
+            role="combobox" aria-expanded={showList} aria-controls={listId} aria-autocomplete="list"
+            aria-activedescendant={showList && items[active] ? `${listId}-${active}` : undefined}
+            onChange={e => { setQuery(e.target.value); setOpen(true); setActive(0); }}
+            onFocus={() => setOpen(true)} onBlur={() => setOpen(false)} onKeyDown={onKey} />
+        </div>
         {showList && (
           <ul className="lpick__list" id={listId} role="listbox" aria-label="Places">
             {searching && <li className="lpick__note" role="presentation"><LabIcon name="spinner" className="spin" /> Searching…</li>}

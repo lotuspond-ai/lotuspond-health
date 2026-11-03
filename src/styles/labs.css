@@ -26,6 +26,7 @@
 .lpick__locate { border-radius: 999px; white-space: nowrap; }
 .lpick__locate svg { width: 18px; height: 18px; }
 .lpick__search { position: relative; flex: 1 1 240px; min-width: 0; }
+.lpick__field { position: relative; }
 .lpick__search input { width: 100%; appearance: none; -webkit-appearance: none; border: 1px solid var(--line); background: var(--paper); border-radius: 999px; padding: 10px 16px 10px 40px; font-size: 15px; }
 .lpick__search input::-webkit-search-cancel-button { display: none; }
 .lpick__search input:focus { outline: none; border-color: var(--lily); box-shadow: 0 0 0 3px var(--lily-soft); }
@@ -47,6 +48,8 @@
 .lpick--hero .lpick__search { flex: none; width: 100%; }
 .lpick--hero .lpick__search input { padding: 13px 16px 13px 42px; }
 .lpick--hero .lpick__problem { flex-basis: auto; }
+/* In the large picker the suggestions push the content below down instead of covering its buttons. */
+.lpick--hero .lpick__list { position: static; margin-top: 8px; box-shadow: none; }
 .lpick__or { display: flex; align-items: center; gap: 12px; color: var(--reed); font-size: 13px; }
 .lpick__or::before, .lpick__or::after { content: ''; flex: 1; border-top: 1px solid var(--line); }
 .spin { animation: lspin 0.9s linear infinite; }

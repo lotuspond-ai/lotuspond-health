@@ -142,11 +142,12 @@ function fakeFetch(answer: (url: string, init?: RequestInit) => unknown | Promis
 describe('outside services', () => {
   it('identifies itself to Nominatim and spaces requests at least a second apart', async () => {
     const f = fakeFetch(() => fixture('nominatim-search.json'));
-    const g = new NominatimGeocoder({ baseUrl: 'https://geo.example', userAgent: 'LotusPondHealth/test (contact ops@example.com)', email: 'ops@example.com', timeoutMs: 2000, minIntervalMs: 200, fetch: f.fn });
+    const g = new NominatimGeocoder({ baseUrl: 'https://geo.example', userAgent: 'LotusPondHealth/test (contact ops@example.com)', email: 'ops@example.com', timeoutMs: 2000, minIntervalMs: 300, fetch: f.fn });
     await Promise.all([g.search('indiranagar', 'en'), g.search('koramangala', 'en'), g.reverse(12.97, 77.64, 'en-IN').catch(() => null)]);
     assert.equal(f.calls.length, 3);
     const gaps = f.calls.slice(1).map((c, i) => c.at - f.calls[i].at);
-    assert.ok(gaps.every(g => g >= 175), `requests were spaced out (${gaps.join(', ')} ms)`);
+    // Unthrottled, the gaps would be about 0 ms; the margin absorbs timer jitter on a busy machine.
+    assert.ok(gaps.every(g => g >= 220) && f.calls[2].at - f.calls[0].at >= 540, `requests were spaced out (${gaps.join(', ')} ms)`);
     const first = new URL(f.calls[0].url);
     assert.equal(first.pathname, '/search');
     assert.equal(first.searchParams.get('format'), 'jsonv2');

@@ -83,7 +83,7 @@ export default function Labs() {
 
       {point && isPreview && (
         <EmptyState variant="preview" title="Nearby search needs the server">
-          This preview runs without the LotusPond server, so it cannot look up labs. {profile && saved ? 'Your area is saved here.' : 'You can still set and save your area.'} The full app shows partner labs and public listings near it.
+          This preview has no server, so it cannot look up labs. {saved ? 'Your area is saved.' : 'You can still save your area.'} The full app shows labs near it.
         </EmptyState>
       )}
 
