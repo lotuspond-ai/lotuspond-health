@@ -9,6 +9,7 @@
     "dev:api": "npm run dev -w server",
     "build": "tsc -b && vite build && npm run build -w server",
     "start": "npm start -w server",
+    "local": "node tools/local.mjs",
     "lint": "oxlint",
     "typecheck": "tsc -b && npm run typecheck -w server",
     "test": "node tools/test-parsers.mjs && npm test -w server",
@@ -48,5 +49,8 @@
   },
   "workspaces": [
     "server"
-  ]
+  ],
+  "engines": {
+    "node": ">=22.12"
+  }
 }

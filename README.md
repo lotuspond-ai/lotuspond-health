@@ -34,18 +34,45 @@ Reference ranges come from your report when it prints one; otherwise a typical a
 
 Types shared by the browser and the server live in `shared/`.
 
-## Run it locally
+## Test it on your computer
 
-Requires Node.js 22.
+You need [Node.js](https://nodejs.org) 22.12 or newer (check with `node -v`) and git. Nothing else: the server uses an embedded PostgreSQL-compatible database (PGlite), so there is no database to install.
 
 ```bash
+git clone https://github.com/lotuspond-ai/lotuspond-health.git
+cd lotuspond-health
+git checkout claude/friendly-brahmagupta-vul203    # until the pull request is merged
 npm install
-npm run dev        # API on :8787 and the app on http://localhost:5173
+npm run local
 ```
 
-Open http://localhost:5173, create an account, and use **Explore with sample data** or upload one of the files in `tools/fixtures/`. Data is kept in `server/.data/` (delete that folder to start over).
+Then open **http://localhost:8787**. `npm run local` builds the app and runs the production server exactly as a deployment would, over plain http on your computer only. Stop it with Ctrl+C; run it again to pick up new changes.
 
-To use a PostgreSQL server instead of the embedded database, copy `server/.env.example` to `server/.env` and set `DATABASE_URL`. Migrations run automatically when the server starts.
+| Command | What runs | Data kept in |
+| --- | --- | --- |
+| `npm run local` | Production build on http://localhost:8787 | `server/.data-local/` |
+| `npm run dev` | Development with live reload: app on http://localhost:5173, API on :8787 | `server/.data/` |
+| `POSTGRES_PASSWORD=pick-one docker compose up --build` | Production image with a real PostgreSQL, on http://localhost:8787 | Docker volumes |
+
+Delete the data folder to start over with no accounts.
+
+**Things to try**
+
+1. Create an account, fill in the short setup step (or skip it).
+2. Choose **Explore with sample data**, or **Upload** files from `tools/fixtures/`: `sample-lab-report.pdf`, `results-export.csv`, `chest-xray-synthetic.dcm`, `ct-abdomen-synthetic.dcm`. Check the values, then add them.
+3. Open organs on the body map, then the **Biomarkers**, **Scans** and **Files** pages. Open and download an original from **Files**.
+4. From the menu at the top right, **Add a family member**, upload something for them, and switch back: each person's records are separate.
+5. **Profile details**: edit details, add allergies or medications, export the profile as JSON.
+6. **Account and sign-in**: change the password, sign out, sign back in. Open the app in a second browser to see "Sign out other devices" work.
+7. Reload the page at any point: you stay signed in on the same profile.
+
+**If something gets in the way**
+
+- *Port already in use*: `PORT=8788 npm run local` (Windows PowerShell: `$env:PORT=8788; npm run local`).
+- *Try it from a phone on the same Wi-Fi*: `HOST=0.0.0.0 npm run local`, then open `http://<your computer's IP>:8787` on the phone.
+- *`npm install` fails on an old Node*: install the current Node.js LTS and run it again.
+
+To use your own PostgreSQL server instead of the embedded database, copy `server/.env.example` to `server/.env` and set `DATABASE_URL`. Migrations run automatically when the server starts.
 
 ## Tests
 
