@@ -19,6 +19,11 @@ export const toProfile = (p: ProfileRow): Profile => ({
   notes: p.notes,
   createdAt: p.createdAt.toISOString(),
   updatedAt: p.updatedAt.toISOString(),
+  country: p.country,
+  locality: p.locality,
+  postalCode: p.postalCode,
+  latitude: p.latitude,
+  longitude: p.longitude,
 });
 
 export const toDocument = (d: DocumentRow): StoredDocument => ({

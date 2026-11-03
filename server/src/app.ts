@@ -9,6 +9,10 @@ import { forbidden, HttpError } from './lib/errors.ts';
 import type { AppEnv, Deps } from './http.ts';
 import { authRoutes } from './routes/auth.ts';
 import { profileRoutes } from './routes/profiles.ts';
+import { facilityRoutes } from './routes/facilities.ts';
+import { geoRoutes } from './routes/geo.ts';
+import { configRoutes, mapFileRoutes } from './routes/config.ts';
+import { addCspSources, mapCspSources } from './facilities/index.ts';
 
 const UNSAFE = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
@@ -30,6 +34,8 @@ const PAGE_CSP = [
 export function createApp(deps: Deps): Hono<AppEnv> {
   const { config } = deps;
   const app = new Hono<AppEnv>();
+  // Map tiles on the Labs page may come from another host (see facilities/map.ts).
+  const pageCsp = addCspSources(PAGE_CSP, mapCspSources(config));
 
   app.use('*', secureHeaders({
     contentSecurityPolicy: undefined,
@@ -66,6 +72,10 @@ export function createApp(deps: Deps): Hono<AppEnv> {
   app.get('/api/health', c => c.json({ ok: true }));
   app.route('/api/auth', authRoutes(deps));
   app.route('/api/profiles', profileRoutes(deps));
+  app.route('/api/facilities', facilityRoutes(deps));
+  app.route('/api/geo', geoRoutes(deps));
+  app.route('/api/config', configRoutes(deps));
+  app.route('/api/map', mapFileRoutes(deps));
   app.all('/api/*', c => c.json({ error: { code: 'not_found', message: 'No such API route.' } }, 404));
 
   app.onError((err, c) => {
@@ -81,7 +91,7 @@ export function createApp(deps: Deps): Hono<AppEnv> {
       root,
       onFound: (file, c) => {
         if (file.endsWith('.html')) {
-          c.header('Content-Security-Policy', PAGE_CSP);
+          c.header('Content-Security-Policy', pageCsp);
           c.header('Cache-Control', 'no-cache');
         } else {
           c.header('Cache-Control', /[\\/]assets[\\/]/.test(file) ? 'public, max-age=31536000, immutable' : 'public, max-age=3600');
@@ -90,7 +100,7 @@ export function createApp(deps: Deps): Hono<AppEnv> {
     }));
     // Single-page app: any other GET returns the shell.
     app.get('*', c => {
-      c.header('Content-Security-Policy', PAGE_CSP);
+      c.header('Content-Security-Policy', pageCsp);
       c.header('Cache-Control', 'no-cache');
       return c.html(indexHtml);
     });

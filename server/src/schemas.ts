@@ -1,6 +1,8 @@
 // Request validation. Shapes mirror the types in shared/types.ts.
 import { z } from 'zod';
 import { BLOOD_TYPES, DOCUMENT_KINDS, LIMITS, ORGAN_IDS, RELATIONSHIPS, SEXES } from '../../shared/constants.ts';
+import { roundCoord } from '../../shared/facilities.ts';
+import { isCountryCode } from '../../shared/regions.ts';
 
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use a date in the form yyyy-mm-dd.')
   .refine(s => !Number.isNaN(Date.parse(`${s}T00:00:00Z`)), 'That date does not exist.');
@@ -37,6 +39,28 @@ export const DeleteAccountBody = z.object({ password: z.string().max(LIMITS.pass
 
 /* ---------------- profiles ---------------- */
 
+/** Home area. Coordinates are rounded to about 1 km here, so a precise position can never be stored. */
+const coordinate = (min: number, max: number, what: string) =>
+  z.number().finite().min(min, `${what} must be between ${min} and ${max}.`).max(max, `${what} must be between ${min} and ${max}.`)
+    .transform(v => roundCoord(v)).nullable();
+const optionalText = (max: number) => z.string().trim().max(max).transform(s => s || null).nullable();
+
+export const profileLocationFields = {
+  country: z.string().trim().toUpperCase().refine(isCountryCode, 'Choose a country.').nullable(),
+  locality: optionalText(120),
+  postalCode: optionalText(20).refine(s => s == null || /^[\p{L}\p{N} -]+$/u.test(s), 'Use letters, digits, spaces or hyphens.'),
+  latitude: coordinate(-90, 90, 'Latitude'),
+  longitude: coordinate(-180, 180, 'Longitude'),
+};
+
+/** Latitude and longitude are set or cleared together. */
+function pairedCoordinates(b: { latitude?: number | null; longitude?: number | null }): boolean {
+  if (b.latitude === undefined && b.longitude === undefined) return true;
+  if (b.latitude === undefined || b.longitude === undefined) return false;
+  return (b.latitude === null) === (b.longitude === null);
+}
+const PAIRED = { message: 'Send latitude and longitude together.', path: ['latitude'] };
+
 const profileFields = {
   displayName: z.string().trim().min(1, 'Enter a name.').max(80),
   relationship: z.enum(RELATIONSHIPS as [string, ...string[]]),
@@ -49,10 +73,11 @@ const profileFields = {
   medications: listField,
   allergies: listField,
   notes: z.string().max(LIMITS.notesLength),
+  ...profileLocationFields,
 };
 
-export const ProfileCreateBody = z.object(profileFields).partial().required({ displayName: true });
-export const ProfilePatchBody = z.object(profileFields).partial();
+export const ProfileCreateBody = z.object(profileFields).partial().required({ displayName: true }).refine(pairedCoordinates, PAIRED);
+export const ProfilePatchBody = z.object(profileFields).partial().refine(pairedCoordinates, PAIRED);
 
 /* ---------------- records ---------------- */
 

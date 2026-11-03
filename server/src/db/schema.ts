@@ -1,5 +1,5 @@
 // Database schema (PostgreSQL). Generate migrations with `npm run db:generate -w server`.
-import { date, doublePrecision, index, integer, jsonb, pgTable, real, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import { boolean, date, doublePrecision, index, integer, jsonb, pgTable, real, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import type { RefRange } from '../../../shared/types.ts';
 
 const createdAt = () => timestamp('created_at', { withTimezone: true }).notNull().defaultNow();
@@ -38,6 +38,12 @@ export const profiles = pgTable('profiles', {
   medications: jsonb('medications').$type<string[]>().notNull().default([]),
   allergies: jsonb('allergies').$type<string[]>().notNull().default([]),
   notes: text('notes').notNull().default(''),
+  /* Home area. Coordinates are rounded to 2 decimals (about 1 km) before saving; precise positions are never stored. */
+  country: text('country'),
+  locality: text('locality'),
+  postalCode: text('postal_code'),
+  latitude: doublePrecision('latitude'),
+  longitude: doublePrecision('longitude'),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 }, t => [index('profiles_user_idx').on(t.userId)]);
@@ -92,8 +98,43 @@ export const scans = pgTable('scans', {
   updatedAt: updatedAt(),
 }, t => [index('scans_profile_idx').on(t.profileId)]);
 
+/* ---------- nearby labs and facilities (not personal data; kept in the default database) ---------- */
+
+/** Labs LotusPond partners with. Imported by an admin: `npm run partners:import -w server -- file.json`. */
+export const partnerLabs = pgTable('partner_labs', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  slug: text('slug').notNull(),
+  brand: text('brand').notNull(),
+  name: text('name').notNull(),
+  address: text('address').notNull(),
+  locality: text('locality'),
+  region: text('region'),
+  postalCode: text('postal_code'),
+  /** ISO 3166-1 alpha-2. */
+  country: text('country').notNull(),
+  latitude: doublePrecision('latitude').notNull(),
+  longitude: doublePrecision('longitude').notNull(),
+  phone: text('phone'),
+  website: text('website'),
+  bookingUrl: text('booking_url'),
+  services: jsonb('services').$type<string[]>().notNull().default([]),
+  openingHours: text('opening_hours'),
+  accreditation: text('accreditation'),
+  active: boolean('active').notNull().default(true),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, t => [uniqueIndex('partner_labs_slug_key').on(t.slug), index('partner_labs_country_idx').on(t.country)]);
+
+/** Responses from OpenStreetMap services, keyed by rounded query (places 7 days, geocoding 30 days). */
+export const facilityCache = pgTable('facility_cache', {
+  key: text('key').primaryKey(),
+  payload: jsonb('payload').notNull(),
+  fetchedAt: timestamp('fetched_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
 export type UserRow = typeof users.$inferSelect;
 export type ProfileRow = typeof profiles.$inferSelect;
 export type DocumentRow = typeof documents.$inferSelect;
 export type MeasurementRow = typeof measurements.$inferSelect;
 export type ScanRow = typeof scans.$inferSelect;
+export type PartnerLabRow = typeof partnerLabs.$inferSelect;

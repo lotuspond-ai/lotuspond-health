@@ -20,13 +20,16 @@
     "db:migrate": "npm run db:migrate -w server"
   },
   "dependencies": {
+    "@protomaps/basemaps": "^5.7.2",
     "@react-three/drei": "^10.7.9",
     "@react-three/fiber": "^9.8.2",
     "@react-three/postprocessing": "^3.2.2",
     "dicom-parser": "^1.8.21",
     "idb-keyval": "^6.3.0",
+    "maplibre-gl": "^6.15.0",
     "papaparse": "^5.7.0",
     "pdfjs-dist": "^6.5.438",
+    "pmtiles": "^4.5.0",
     "postprocessing": "^6.39.6",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",

@@ -110,6 +110,12 @@ export interface Profile {
   notes: string;
   createdAt: string;
   updatedAt: string;
+  /** Home area (see ProfileLocation). The API always sends these; older stored profiles may lack them. */
+  country?: string | null;
+  locality?: string | null;
+  postalCode?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
 }
 
 export type ProfileInput = Partial<Omit<Profile, 'id' | 'createdAt' | 'updatedAt'>> & { displayName: string };
@@ -144,3 +150,110 @@ export type MeasurementInput = Omit<Measurement, 'id'>;
 
 /** Scan as sent to the API: `blobKey` is the id of the stored document holding the original file. */
 export type ScanInput = Omit<ScanItem, 'id'>;
+
+/* ---------------- location, nearby labs and facilities ---------------- */
+
+/** A person's saved home area. Coordinates are rounded to 2 decimals (about 1 km) before they are stored. */
+export interface ProfileLocation {
+  /** ISO 3166-1 alpha-2. */
+  country: string | null;
+  /** Display label, e.g. "Indiranagar, Bengaluru". */
+  locality: string | null;
+  postalCode: string | null;
+  latitude: number | null;
+  longitude: number | null;
+}
+
+export type FacilityKind = 'lab' | 'imaging' | 'hospital' | 'clinic';
+
+/** Services a partner lab offers. */
+export type PartnerService = 'blood' | 'urine' | 'imaging' | 'home_collection' | 'ecg' | 'health_checkup';
+
+interface FacilityBase {
+  /** Stable id: `osm:node/123` or `partner:<slug>`. */
+  id: string;
+  kind: FacilityKind;
+  name: string;
+  lat: number;
+  lon: number;
+  /** From the searched point, in kilometres. */
+  distanceKm: number;
+  /** Short street address, when known. */
+  address: string | null;
+  phone: string | null;
+  website: string | null;
+  /** OpenStreetMap opening_hours syntax, e.g. "Mo-Sa 07:00-21:00". */
+  openingHours: string | null;
+}
+
+/** A public facility from OpenStreetMap. */
+export interface Place extends FacilityBase {
+  source: 'osm';
+  operator: string | null;
+  emergency: boolean;
+}
+
+/** A lab LotusPond partners with (offered where the country policy has partnerLabs). */
+export interface PartnerLab extends FacilityBase {
+  source: 'partner';
+  slug: string;
+  brand: string;
+  locality: string | null;
+  region: string | null;
+  postalCode: string | null;
+  country: string;
+  bookingUrl: string | null;
+  services: PartnerService[];
+  /** e.g. "NABL". */
+  accreditation: string | null;
+}
+
+export type Facility = Place | PartnerLab;
+
+export interface FacilitySearchResult {
+  partners: PartnerLab[];
+  places: Place[];
+  attribution: string;
+  center: { lat: number; lon: number };
+  radiusKm: number;
+  /** Set when public listings could not be loaded but partner labs could. */
+  notice?: { code: 'search_unavailable' | 'search_off'; message: string };
+}
+
+export interface FacilityQuery {
+  lat: number;
+  lon: number;
+  radiusKm: number;
+  kinds?: FacilityKind[];
+  /** The person's country (ISO-2); partner labs are only included where its policy offers them. */
+  country?: string | null;
+}
+
+/** A place found by area or postcode search. */
+export interface GeoCandidate {
+  label: string;
+  /** Longer description to tell similar names apart. */
+  detail: string | null;
+  lat: number;
+  lon: number;
+  country: string | null;
+  postalCode: string | null;
+}
+
+export interface GeoReverse {
+  label: string;
+  country: string | null;
+  postalCode: string | null;
+}
+
+/** How the map gets its background tiles (from GET /api/config). */
+export type MapSettings =
+  | { type: 'pmtiles'; url: string; assetsUrl: string; attribution: string }
+  | { type: 'style'; url: string }
+  | { type: 'raster'; tiles: string[]; attribution: string; maxZoom: number };
+
+export interface PublicConfig {
+  map: MapSettings | null;
+  /** Nearby search (OpenStreetMap places and area search) is available on this server. */
+  nearbySearch: boolean;
+}
