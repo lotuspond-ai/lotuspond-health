@@ -11,7 +11,8 @@
     "test": "node --import tsx --test --test-reporter=spec test/*.test.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate-cli.ts",
-    "partners:import": "tsx src/facilities/import-cli.ts"
+    "partners:import": "tsx src/facilities/import-cli.ts",
+    "files:rekey": "tsx src/index.ts files:rekey"
   },
   "devDependencies": {
     "@types/pg": "^8.23.1",

@@ -1,6 +1,7 @@
 // Database schema (PostgreSQL). Generate migrations with `npm run db:generate -w server`.
 import { boolean, date, doublePrecision, index, integer, jsonb, pgTable, real, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
-import type { RefRange } from '../../../shared/types.ts';
+import type { AuditDetail, AuditKind, ConsentKind, RefRange } from '../../../shared/types.ts';
+import type { DataRegion, UnitSystem } from '../../../shared/regions.ts';
 
 const createdAt = () => timestamp('created_at', { withTimezone: true }).notNull().defaultNow();
 const updatedAt = () => timestamp('updated_at', { withTimezone: true }).notNull().defaultNow();
@@ -10,6 +11,13 @@ export const users = pgTable('users', {
   /** Stored lower-cased and trimmed. */
   email: text('email').notNull(),
   passwordHash: text('password_hash').notNull(),
+  /** ISO 3166-1 alpha-2 country of residence from sign-up. Null for accounts created before it was asked. */
+  country: text('country'),
+  /** Data-residency cell that holds this account (shared/regions.ts). */
+  region: text('region').$type<DataRegion>().notNull().default('global'),
+  unitSystem: text('unit_system').$type<UnitSystem>().notNull().default('conventional'),
+  /** When the person confirmed they are old enough to hold an account. */
+  ageConfirmedAt: timestamp('age_confirmed_at', { withTimezone: true }),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 }, t => [uniqueIndex('users_email_key').on(t.email)]);
@@ -131,8 +139,50 @@ export const facilityCache = pgTable('facility_cache', {
   payload: jsonb('payload').notNull(),
   fetchedAt: timestamp('fetched_at', { withTimezone: true }).notNull().defaultNow(),
 });
+/**
+ * Consent decisions, append-only: each grant or withdrawal is a new row with the text version it refers to.
+ * The latest row per kind is the current state.
+ */
+export const consents = pgTable('consents', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  kind: text('kind').$type<ConsentKind>().notNull(),
+  version: text('version').notNull(),
+  granted: boolean('granted').notNull(),
+  /** Country of residence when the decision was made. */
+  country: text('country'),
+  createdAt: createdAt(),
+}, t => [index('consents_user_idx').on(t.userId, t.createdAt)]);
+
+/**
+ * Account events (sign-in, export, deletion…) for the person's own activity view and for scoping a breach.
+ * Holds no health data: only the kind, a small typed detail, a keyed hash of the client address and a short
+ * device description. No foreign key, so the `account_deleted` record outlives the account.
+ */
+export const auditEvents = pgTable('audit_events', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull(),
+  kind: text('kind').$type<AuditKind>().notNull(),
+  detail: jsonb('detail').$type<AuditDetail>(),
+  ipHash: text('ip_hash'),
+  userAgent: text('user_agent'),
+  createdAt: createdAt(),
+}, t => [index('audit_events_user_idx').on(t.userId, t.createdAt)]);
+
+/**
+ * Which cell holds each account, keyed by an HMAC of the email (DIRECTORY_SECRET) so no address is stored in plain
+ * text outside its cell. Lives in the default database only; cells leave theirs empty.
+ */
+export const directory = pgTable('directory', {
+  emailHash: text('email_hash').primaryKey(),
+  region: text('region').$type<DataRegion>().notNull(),
+  userId: uuid('user_id').notNull(),
+  createdAt: createdAt(),
+}, t => [index('directory_user_idx').on(t.userId)]);
 
 export type UserRow = typeof users.$inferSelect;
+export type ConsentRow = typeof consents.$inferSelect;
+export type AuditEventRow = typeof auditEvents.$inferSelect;
 export type ProfileRow = typeof profiles.$inferSelect;
 export type DocumentRow = typeof documents.$inferSelect;
 export type MeasurementRow = typeof measurements.$inferSelect;

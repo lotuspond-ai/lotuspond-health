@@ -1,11 +1,12 @@
 // Signed-in account, its profiles, and which profile is open.
 import { create } from 'zustand';
-import type { Account, Profile, ProfileInput, SessionInfo } from '../types';
+import type { Account, Profile, ProfileInput, RegisterInput, ServiceInfo, SessionInfo } from '../types';
 import { backend } from '../api';
 import { HttpBackend } from '../api/http';
 import { useHealth } from '../lib/store';
 import { enterApp, leaveApp } from '../site/links';
 import { useUI } from './ui';
+import { countryPolicy } from '../../shared/regions';
 
 type Status = 'loading' | 'signed-out' | 'signed-in' | 'offline';
 
@@ -18,10 +19,12 @@ interface SessionState {
   onboarding: boolean;
   /** Shown on the sign-in screen, e.g. after the session ended elsewhere. */
   notice: string | null;
+  /** Regions this server holds records for, and its published contacts. Loaded with the session. */
+  service: ServiceInfo | null;
 
   init: () => Promise<void>;
   signIn: (email: string, password: string) => Promise<void>;
-  signUp: (input: { displayName: string; email: string; password: string }) => Promise<void>;
+  signUp: (input: RegisterInput) => Promise<void>;
   signOut: () => Promise<void>;
   sessionEnded: () => void;
   switchProfile: (id: string) => void;
@@ -30,6 +33,7 @@ interface SessionState {
   deleteProfile: (id: string) => Promise<void>;
   finishOnboarding: () => void;
   deleteAccount: (password: string) => Promise<void>;
+  setUnitSystem: (unitSystem: 'conventional' | 'si') => Promise<void>;
 }
 
 const activeKey = (accountId: string) => `lotuspond:active-profile:${accountId}`;
@@ -71,8 +75,11 @@ export const useSession = create<SessionState>((set, get) => {
     activeId: null,
     onboarding: false,
     notice: null,
+    service: null,
 
     init: async () => {
+      // Service facts are optional: without them sign-up assumes every region is served and the server decides.
+      void backend.service().then(service => set({ service }), () => {});
       try {
         const info = await backend.me();
         if (info) start(info);
@@ -130,12 +137,22 @@ export const useSession = create<SessionState>((set, get) => {
       await backend.deleteAccount(password);
       reset('Your account and all of its records were deleted.');
     },
+
+    setUnitSystem: async unitSystem => {
+      const account = await backend.updatePreferences({ unitSystem });
+      set(s => ({ account: s.account ? { ...s.account, ...account } : account }));
+    },
   };
 });
 
 /** How lab values are shown for this account (conventional mg/dL until the account says otherwise). */
 export function useUnitSystem(): 'conventional' | 'si' {
   return useSession(s => s.account?.unitSystem ?? 'conventional');
+}
+
+/** Height and weight entry: feet, inches and pounds where the account's country uses them, otherwise cm and kg. */
+export function useMeasurementSystem(): 'metric' | 'us' {
+  return useSession(s => (s.account?.country ? countryPolicy(s.account.country).measurement : 'metric'));
 }
 
 /** The open profile. */

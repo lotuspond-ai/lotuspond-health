@@ -119,12 +119,41 @@ if (hasSite) {
 // 1. Sign-up
 await shot('create-account');
 await page.getByLabel('Your name').fill('Asha Rao');
-await page.getByLabel('Email').fill(email);
+await page.getByLabel('Email', { exact: true }).fill(email);
 await page.getByLabel('Password', { exact: true }).fill('short');
 await page.getByRole('button', { name: 'Create account', exact: true }).click();
 expect((await text('.form-error')).includes('at least 10'), 'short password is refused before sending');
 await page.getByLabel('Password', { exact: true }).fill(password);
-await page.getByRole('button', { name: 'Create account', exact: true }).click();
+
+const country = page.getByRole('combobox', { name: 'Country you live in' });
+async function chooseCountry(typed, name) {
+  await country.fill(typed);
+  await page.getByRole('option', { name: new RegExp(`^${name}`) }).click();
+}
+const createButton = page.getByRole('button', { name: 'Create account', exact: true });
+await chooseCountry('emirates', 'United Arab Emirates');
+expect((await text('.residency')).includes('stored inside the UAE'), 'an unavailable country explains why');
+expect(await createButton.isDisabled(), 'sign-up is blocked for an unavailable country');
+await shot('signup-unavailable', true);
+await chooseCountry('united k', 'United Kingdom');
+expect((await text('.residency')).includes('servers in the European Union'), 'a cross-border country says where records go');
+expect(await page.getByLabel(/my records being stored on servers in the European Union/).isVisible(), 'cross-border consent is asked');
+await page.getByRole('radio', { name: 'Yes' }).check();
+await shot('signup-cross-border', true);
+await chooseCountry('ind', 'India');
+expect((await text('.residency')).includes('Your records will be stored on servers in India'), 'India stores records in India');
+expect(await page.getByLabel(/my records being stored on/).count() === 0, 'no cross-border consent for India');
+await page.getByRole('radio', { name: 'No' }).check();
+expect((await text('.age .residency')).includes('parent or guardian'), 'under-age people are pointed to family profiles');
+expect(await createButton.isDisabled(), 'sign-up is blocked under the minimum age');
+await page.getByRole('radio', { name: 'Yes' }).check();
+await createButton.click();
+expect((await text('.form-error')).includes('Terms'), 'Terms and Privacy must be agreed first');
+await page.getByLabel(/I agree to the Terms of Service/).check();
+await page.getByLabel(/I consent to LotusPond processing my health data/).check();
+expect(!(await page.getByLabel(/Send me news about LotusPond/).isChecked()), 'product emails start unchecked');
+await shot('signup-india', true);
+await createButton.click();
 
 // 2. Onboarding
 await page.getByRole('heading', { name: /Welcome, Asha/ }).waitFor();
@@ -254,12 +283,24 @@ await page.getByLabel('New password', { exact: true }).fill('a brand new lily pa
 await page.getByLabel('Repeat new password').fill('a brand new lily pad');
 await page.getByRole('button', { name: 'Change password' }).click();
 await page.locator('.toast').filter({ hasText: 'Password changed' }).waitFor();
+expect((await text('.where__lead')) === 'Your records are stored on servers in India.', 'account page says where records are stored');
+const consentList = await text('.consent-list');
+expect(consentList.includes('Processing your health data') && consentList.includes('version'), `consents are listed with version (${consentList.slice(0, 80)})`);
+await page.getByRole('radio', { name: /International \(SI/ }).click();
+await page.locator('.toast').filter({ hasText: 'SI units' }).waitFor();
+await page.locator('.consent-list').getByRole('button', { name: 'Turn on' }).click();
+await page.locator('.toast').filter({ hasText: 'product emails' }).waitFor();
+await page.locator('.consent-list').getByRole('button', { name: 'Withdraw' }).first().click();
+expect((await text('.explain')).includes('means deleting your account'), 'withdrawing health-data consent explains deletion');
+await page.waitForTimeout(300);
+const activity = await text('.activity');
+expect(['Password changed', 'Units changed', 'Account created'].every(a => activity.includes(a)), 'recent activity lists account events');
 await shot('account', true);
 await page.locator('.pmenu__trigger').click();
 await page.getByRole('menuitem', { name: 'Sign out' }).click();
 await page.getByRole('heading', { name: 'Welcome back' }).waitFor();
 if (hasSite) expect(pathOf() === '/login', 'signing out goes to /login');
-await page.getByLabel('Email').fill(email);
+await page.getByLabel('Email', { exact: true }).fill(email);
 await page.getByLabel('Password', { exact: true }).fill(password);
 expectRejectedSignIn = true;
 await page.getByRole('button', { name: 'Sign in', exact: true }).click();
@@ -284,10 +325,21 @@ await page.waitForTimeout(1200);
 expect(!(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1)), 'labs page has no sideways scroll at phone width');
 await shot('labs-phone');
 await page.locator('.pmenu__trigger').click();
+await page.getByRole('menuitem', { name: 'Account and sign-in' }).click();
+await page.getByRole('heading', { name: 'Where your records are kept' }).waitFor();
+await page.waitForTimeout(300);
+expect(!(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1)), 'account page has no sideways scroll at phone width');
+await shot('account-phone', true);
+await page.locator('.pmenu__trigger').click();
 await page.getByRole('menuitem', { name: 'Sign out' }).click();
 await page.getByRole('heading', { name: 'Welcome back' }).waitFor();
 expect(!(await sideScroll()), 'sign-in screen has no sideways scroll at phone width');
 await shot('signin-phone', true);
+await page.getByRole('tab', { name: 'Create account' }).click();
+await chooseCountry('united k', 'United Kingdom');
+await page.getByRole('radio', { name: 'Yes' }).check();
+expect(!(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1)), 'sign-up has no sideways scroll at phone width');
+await shot('signup-phone', true);
 
 } catch (e) {
   problems.push(`STOPPED: ${e.message.split('\n')[0]}`);

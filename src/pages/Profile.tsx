@@ -3,7 +3,7 @@ import type { Profile, Relationship } from '../types';
 import { backend, errorMessage } from '../api';
 import { useHealth, dates } from '../lib/store';
 import { formatDate } from '../lib/derive';
-import { ageFrom, RELATIONSHIP_LABEL, useActiveProfile, useSession } from '../state/session';
+import { ageFrom, RELATIONSHIP_LABEL, useActiveProfile, useMeasurementSystem, useSession } from '../state/session';
 import { useUI } from '../state/ui';
 import { toast } from '../state/toast';
 import {
@@ -12,6 +12,8 @@ import {
 import { bmiOf, checkDraft, fromDraft, toDraft, type ProfileDraft, todayIso } from '../lib/profile';
 import { Icon } from '../components/ui';
 import { HomeAreaPanel } from '../components/labs/HomeAreaPanel';
+import { HeightInput, WeightInput } from '../components/MeasureInputs';
+import { IMPERIAL_ERRORS } from '../lib/measures';
 
 const FAMILY: Relationship[] = ['partner', 'child', 'parent', 'sibling', 'other'];
 
@@ -79,18 +81,7 @@ function ProfileEditor({ profile }: { profile: Profile }) {
             </div>
           </section>
 
-          <section className="panel">
-            <h2>Body measurements</h2>
-            <div className="form-grid form-grid--3">
-              <Field label="Height" error={errors.heightCm}>{id => <div className="unit"><input id={id} inputMode="decimal" value={draft.heightCm} onChange={e => patch({ heightCm: e.target.value })} /><span>cm</span></div>}</Field>
-              <Field label="Weight" error={errors.weightKg}>{id => <div className="unit"><input id={id} inputMode="decimal" value={draft.weightKg} onChange={e => patch({ weightKg: e.target.value })} /><span>kg</span></div>}</Field>
-              <div className="readout" aria-live="polite">
-                <span>Body mass index</span>
-                <b>{bmi ?? '—'}</b>
-                <small>{bmi ? 'kg/m², from height and weight' : 'Add height and weight'}</small>
-              </div>
-            </div>
-          </section>
+          <BodyMeasurements draft={draft} errors={errors} patch={patch} bmi={bmi} />
 
           <section className="panel">
             <h2>Health background</h2>
@@ -118,6 +109,32 @@ function ProfileEditor({ profile }: { profile: Profile }) {
         </aside>
       </div>
     </main>
+  );
+}
+
+/** Height and weight in the account's measurement system (stored in cm and kg either way). */
+function BodyMeasurements({ draft, errors, patch, bmi }: {
+  draft: ProfileDraft; errors: ReturnType<typeof checkDraft>; patch: (p: Partial<ProfileDraft>) => void; bmi: number | null;
+}) {
+  const system = useMeasurementSystem();
+  const us = system === 'us';
+  return (
+    <section className="panel">
+      <h2>Body measurements</h2>
+      <div className="form-grid form-grid--3">
+        <Field label="Height" error={errors.heightCm && (us ? IMPERIAL_ERRORS.height : errors.heightCm)}>
+          {id => <HeightInput id={id} system={system} cm={draft.heightCm} onChange={v => patch({ heightCm: v })} />}
+        </Field>
+        <Field label="Weight" error={errors.weightKg && (us ? IMPERIAL_ERRORS.weight : errors.weightKg)}>
+          {id => <WeightInput id={id} system={system} kg={draft.weightKg} onChange={v => patch({ weightKg: v })} />}
+        </Field>
+        <div className="readout" aria-live="polite">
+          <span>Body mass index</span>
+          <b>{bmi ?? '—'}</b>
+          <small>{bmi ? 'kg/m², from height and weight' : 'Add height and weight'}</small>
+        </div>
+      </div>
+    </section>
   );
 }
 

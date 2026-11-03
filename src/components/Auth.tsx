@@ -3,10 +3,16 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { errorMessage, isPreview } from '../api';
 import { useSession } from '../state/session';
 import { LIMITS } from '../../shared/constants';
+import type { SignUpProblem } from '../../shared/regions';
+import { guessCountry } from '../lib/country';
 import { Field } from './forms';
+import { checkSignUp, emptySignUp, signUpBlocked, toChoices, type SignUpDraft } from '../lib/signup';
+import { SignUpDetails } from './SignUpDetails';
 import { Icon, Logo } from './ui';
 import { onAuthHash, showAuthMode, siteHref, siteLinkProps, type AuthMode } from '../site/links';
 import '../styles/auth-site.css';
+
+const ALL_REGIONS = ['in', 'eu', 'us', 'global'] as const;
 
 export function Splash() {
   return (
@@ -64,7 +70,7 @@ function PondPanel() {
 }
 
 export function AuthScreen({ initialMode = 'in' }: { initialMode?: AuthMode }) {
-  const { signIn, signUp, notice } = useSession();
+  const { signIn, signUp, notice, service } = useSession();
   const [mode, setMode] = useState<AuthMode>(initialMode);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -72,24 +78,39 @@ export function AuthScreen({ initialMode = 'in' }: { initialMode?: AuthMode }) {
   const [show, setShow] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [details, setDetails] = useState<SignUpDraft>(() => emptySignUp(guessCountry()));
+  const [problem, setProblem] = useState<SignUpProblem | null>(null);
+  const served = service?.servedRegions ?? ALL_REGIONS;
+  const blocked = mode === 'up' && signUpBlocked(details, served);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
     setError(null);
-    if (mode === 'up' && password.length < LIMITS.passwordMin) { setError(`Use a password of at least ${LIMITS.passwordMin} characters.`); return; }
+    if (mode === 'up') {
+      if (password.length < LIMITS.passwordMin) { setError(`Use a password of at least ${LIMITS.passwordMin} characters.`); return; }
+      const p = checkSignUp(details, served);
+      setProblem(p);
+      if (p) { setError(p.message); return; }
+    }
     setBusy(true);
     try {
       if (mode === 'in') await signIn(email, password);
-      else await signUp({ displayName: name, email, password });
+      else await signUp({ displayName: name, email, password, ...toChoices(details) });
     } catch (err) {
       setError(errorMessage(err).replace(/^\w+: /, ''));
       setBusy(false);
     }
   }
 
-  const switchTo = (m: 'in' | 'up') => { setMode(m); setError(null); };
+  const switchTo = (m: 'in' | 'up') => { setMode(m); setError(null); setProblem(null); };
   useEffect(() => showAuthMode(mode), [mode]);
-  useEffect(() => onAuthHash(m => { setMode(m); setError(null); }), []);
+  useEffect(() => onAuthHash(m => { setMode(m); setError(null); setProblem(null); }), []);
+  const changeDetails = (d: SignUpDraft) => {
+    setDetails(d);
+    // A shown problem goes once the person has fixed it; other messages go as soon as they change something.
+    if (!problem) setError(null);
+    else if (checkSignUp(d, served)?.field !== problem.field) { setProblem(null); setError(null); }
+  };
 
   return (
     <div className="auth">
@@ -112,14 +133,15 @@ export function AuthScreen({ initialMode = 'in' }: { initialMode?: AuthMode }) {
             {id => (
               <div className="pw">
                 <input id={id} type={show ? 'text' : 'password'} autoComplete={mode === 'in' ? 'current-password' : 'new-password'}
-                  value={password} onChange={e => setPassword(e.target.value)} required minLength={mode === 'up' ? LIMITS.passwordMin : undefined} />
+                  value={password} onChange={e => { setPassword(e.target.value); if (error) setError(null); }} required minLength={mode === 'up' ? LIMITS.passwordMin : undefined} />
                 <button type="button" className="pw__toggle" onClick={() => setShow(!show)} aria-pressed={show}>{show ? 'Hide' : 'Show'}</button>
               </div>
             )}
           </Field>
+          {mode === 'up' && <SignUpDetails value={details} onChange={changeDetails} servedRegions={served} problem={problem} />}
 
           {error && <p className="form-error" role="alert">{error}</p>}
-          <button className="btn btn--primary btn--block" disabled={busy}>
+          <button className="btn btn--primary btn--block" disabled={busy || blocked}>
             {busy ? (mode === 'in' ? 'Signing in…' : 'Creating your account…') : mode === 'in' ? 'Sign in' : 'Create account'}
           </button>
           <p className="auth__switch">

@@ -2,7 +2,9 @@
 import type { Account, BloodType, Measurement, Profile, Relationship, ScanItem, Sex, StoredDocument } from '../../shared/types.ts';
 import type { DocumentRow, MeasurementRow, ProfileRow, ScanRow, UserRow } from './db/schema.ts';
 
-export const toAccount = (u: UserRow): Account => ({ id: u.id, email: u.email, createdAt: u.createdAt.toISOString() });
+export const toAccount = (u: UserRow): Account => ({
+  id: u.id, email: u.email, createdAt: u.createdAt.toISOString(), country: u.country, region: u.region, unitSystem: u.unitSystem,
+});
 
 export const toProfile = (p: ProfileRow): Profile => ({
   id: p.id,

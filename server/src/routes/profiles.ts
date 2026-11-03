@@ -1,17 +1,21 @@
 // Profiles and everything stored under them: measurements, scans and original documents.
 // Every route below /:pid first checks that the profile belongs to the signed-in account.
+// All of it is personal data, so every query goes to the account's cell (c.var.cell), never to deps.db.
 import { createHash } from 'node:crypto';
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { and, asc, count, desc, eq, inArray } from 'drizzle-orm';
 import { LIMITS } from '../../../shared/constants.ts';
+import type { Db } from '../db/client.ts';
 import { documents, measurements, profiles, scans, type ProfileRow } from '../db/schema.ts';
+import { eventContext, recentActivity, recordEvent } from '../compliance/audit.ts';
+import { listConsents } from '../compliance/consents.ts';
 import { badRequest, conflict, HttpError, notFound } from '../lib/errors.ts';
 import { readJson, requireAuth, UUID, type AppEnv, type Deps } from '../http.ts';
 import {
   DocumentKind, MeasurementPatchBody, MeasurementsCreateBody, ProfileCreateBody, ProfilePatchBody, ScanPatchBody, ScansCreateBody,
 } from '../schemas.ts';
-import { toDocument, toMeasurement, toProfile, toScan } from '../serialize.ts';
+import { toAccount, toDocument, toMeasurement, toProfile, toScan } from '../serialize.ts';
 
 const RELATIONSHIP_RANK: Record<string, number> = { self: 0, partner: 1, child: 2, parent: 3, sibling: 4, other: 5 };
 
@@ -37,18 +41,20 @@ function contentDisposition(kind: 'inline' | 'attachment', fileName: string): st
 }
 
 export function profileRoutes(deps: Deps) {
-  const { db, files, config } = deps;
+  const { config } = deps;
   const app = new Hono<AppEnv>();
   app.use('*', requireAuth(deps));
 
   /* ---------- profile list ---------- */
 
   app.get('/', async c => {
+    const { db } = c.var.cell;
     const rows = await db.select().from(profiles).where(eq(profiles.userId, c.var.user.id));
     return c.json(rows.sort(relationshipOrder).map(toProfile));
   });
 
   app.post('/', async c => {
+    const { db } = c.var.cell;
     const body = await readJson(c, ProfileCreateBody);
     const [{ n }] = await db.select({ n: count() }).from(profiles).where(eq(profiles.userId, c.var.user.id));
     if (n >= LIMITS.profilesPerAccount) throw conflict(`An account can hold up to ${LIMITS.profilesPerAccount} profiles.`);
@@ -63,6 +69,7 @@ export function profileRoutes(deps: Deps) {
   app.use('/:pid/*', async (c, next) => {
     const pid = c.req.param('pid');
     if (!pid || !UUID.test(pid)) throw notFound('That profile');
+    const { db } = c.var.cell;
     const [row] = await db.select().from(profiles).where(and(eq(profiles.id, pid), eq(profiles.userId, c.var.user.id))).limit(1);
     if (!row) throw notFound('That profile');
     c.set('profile', row);
@@ -71,6 +78,7 @@ export function profileRoutes(deps: Deps) {
   app.get('/:pid', c => c.json(toProfile(c.var.profile)));
 
   app.patch('/:pid', async c => {
+    const { db } = c.var.cell;
     const body = await readJson(c, ProfilePatchBody);
     const current = c.var.profile;
     if (body.relationship && (body.relationship === 'self') !== (current.relationship === 'self')) {
@@ -81,16 +89,18 @@ export function profileRoutes(deps: Deps) {
   });
 
   app.delete('/:pid', async c => {
+    const { db, files } = c.var.cell;
     const p = c.var.profile;
     if (p.relationship === 'self') throw conflict('Your own profile cannot be removed. To remove everything, delete your account.');
     await db.delete(profiles).where(eq(profiles.id, p.id));
     await files.deletePrefix(p.id);
+    await recordEvent(db, eventContext(c, deps), c.var.user.id, 'profile_deleted', { profileId: p.id });
     return c.body(null, 204);
   });
 
   /* ---------- all records ---------- */
 
-  async function loadRecords(profileId: string) {
+  async function loadRecords(db: Db, profileId: string) {
     const [ms, ss, ds] = await Promise.all([
       db.select().from(measurements).where(eq(measurements.profileId, profileId)).orderBy(asc(measurements.date), asc(measurements.createdAt)),
       db.select().from(scans).where(eq(scans.profileId, profileId)).orderBy(asc(scans.createdAt)),
@@ -99,23 +109,34 @@ export function profileRoutes(deps: Deps) {
     return { measurements: ms.map(toMeasurement), scans: ss.map(toScan), documents: ds.map(toDocument) };
   }
 
-  app.get('/:pid/records', async c => c.json(await loadRecords(c.var.profile.id)));
+  app.get('/:pid/records', async c => c.json(await loadRecords(c.var.cell.db, c.var.profile.id)));
 
   app.delete('/:pid/records', async c => {
+    const { db, files } = c.var.cell;
     const pid = c.var.profile.id;
     await db.transaction(async tx => {
       await tx.delete(measurements).where(eq(measurements.profileId, pid));
       await tx.delete(documents).where(eq(documents.profileId, pid)); // cascades to scans
     });
     await files.deletePrefix(pid);
+    await recordEvent(db, eventContext(c, deps), c.var.user.id, 'records_deleted', { profileId: pid });
     return c.body(null, 204);
   });
 
-  /** Everything for this profile as JSON. Re-importable through the upload dialog. */
+  /**
+   * Everything for this profile as JSON. Re-importable through the upload dialog. The account holder's own
+   * profile also carries the account: country, storage region, preferences, consents and recent activity.
+   * Family profiles leave that out, since they are often passed on to a doctor.
+   */
   app.get('/:pid/export', async c => {
+    const { db } = c.var.cell;
     const p = c.var.profile;
-    const records = await loadRecords(p.id);
-    const payload = { version: 1, app: 'LotusPond Health', exportedAt: new Date().toISOString(), profile: toProfile(p), ...records };
+    const records = await loadRecords(db, p.id);
+    await recordEvent(db, eventContext(c, deps), c.var.user.id, 'export', { profileId: p.id });
+    const account = p.relationship === 'self'
+      ? { ...toAccount(c.var.user), consents: await listConsents(db, c.var.user.id), activity: await recentActivity(db, c.var.user.id, 500) }
+      : undefined;
+    const payload = { version: 1, app: 'LotusPond Health', exportedAt: new Date().toISOString(), profile: toProfile(p), ...records, account };
     const name = `lotuspond-${p.displayName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'profile'}-${new Date().toISOString().slice(0, 10)}.json`;
     c.header('Content-Disposition', contentDisposition('attachment', name));
     c.header('Cache-Control', 'no-store');
@@ -124,7 +145,7 @@ export function profileRoutes(deps: Deps) {
 
   /* ---------- measurements ---------- */
 
-  async function assertDocuments(profileId: string, ids: (string | null | undefined)[]) {
+  async function assertDocuments(db: Db, profileId: string, ids: (string | null | undefined)[]) {
     const wanted = [...new Set(ids.filter((x): x is string => !!x))];
     if (!wanted.length) return;
     const found = await db.select({ id: documents.id }).from(documents).where(and(eq(documents.profileId, profileId), inArray(documents.id, wanted)));
@@ -132,9 +153,10 @@ export function profileRoutes(deps: Deps) {
   }
 
   app.post('/:pid/measurements', async c => {
+    const { db } = c.var.cell;
     const pid = c.var.profile.id;
     const body = await readJson(c, MeasurementsCreateBody);
-    await assertDocuments(pid, body.measurements.map(m => m.documentId));
+    await assertDocuments(db, pid, body.measurements.map(m => m.documentId));
     const rows = await db.insert(measurements).values(body.measurements.map(m => ({ ...m, documentId: m.documentId ?? null, profileId: pid }))).returning();
     return c.json(rows.map(toMeasurement), 201);
   });
@@ -143,7 +165,8 @@ export function profileRoutes(deps: Deps) {
     const pid = c.var.profile.id, id = c.req.param('id');
     if (!UUID.test(id)) throw notFound('That result');
     const body = await readJson(c, MeasurementPatchBody);
-    await assertDocuments(pid, [body.documentId]);
+    const { db } = c.var.cell;
+    await assertDocuments(db, pid, [body.documentId]);
     const [row] = await db.update(measurements).set({ ...body, updatedAt: new Date() })
       .where(and(eq(measurements.id, id), eq(measurements.profileId, pid))).returning();
     if (!row) throw notFound('That result');
@@ -153,6 +176,7 @@ export function profileRoutes(deps: Deps) {
   app.delete('/:pid/measurements/:id', async c => {
     const id = c.req.param('id');
     if (!UUID.test(id)) throw notFound('That result');
+    const { db } = c.var.cell;
     const gone = await db.delete(measurements).where(and(eq(measurements.id, id), eq(measurements.profileId, c.var.profile.id))).returning({ id: measurements.id });
     if (!gone.length) throw notFound('That result');
     return c.body(null, 204);
@@ -163,6 +187,7 @@ export function profileRoutes(deps: Deps) {
   app.post('/:pid/documents',
     bodyLimit({ maxSize: config.maxUploadBytes + 64 * 1024, onError: () => { throw new HttpError(413, 'too_large', `Files can be up to ${Math.round(config.maxUploadBytes / 1048576)} MB.`); } }),
     async c => {
+      const { db, files } = c.var.cell;
       const pid = c.var.profile.id;
       let form: Record<string, string | File | (string | File)[]>;
       try {
@@ -197,6 +222,7 @@ export function profileRoutes(deps: Deps) {
   app.get('/:pid/documents/:id/file', async c => {
     const id = c.req.param('id');
     if (!UUID.test(id)) throw notFound('That file');
+    const { db, files } = c.var.cell;
     const [doc] = await db.select().from(documents).where(and(eq(documents.id, id), eq(documents.profileId, c.var.profile.id))).limit(1);
     if (!doc) throw notFound('That file');
     const stream = await files.get(doc.storageKey);
@@ -217,6 +243,7 @@ export function profileRoutes(deps: Deps) {
   app.delete('/:pid/documents/:id', async c => {
     const id = c.req.param('id');
     if (!UUID.test(id)) throw notFound('That file');
+    const { db, files } = c.var.cell;
     const [doc] = await db.delete(documents).where(and(eq(documents.id, id), eq(documents.profileId, c.var.profile.id))).returning();
     if (!doc) throw notFound('That file');
     await files.delete(doc.storageKey);
@@ -226,9 +253,10 @@ export function profileRoutes(deps: Deps) {
   /* ---------- scans ---------- */
 
   app.post('/:pid/scans', async c => {
+    const { db } = c.var.cell;
     const pid = c.var.profile.id;
     const body = await readJson(c, ScansCreateBody);
-    await assertDocuments(pid, body.scans.map(s => s.blobKey));
+    await assertDocuments(db, pid, body.scans.map(s => s.blobKey));
     const rows = await db.insert(scans).values(body.scans.map(({ blobKey, ...s }) => ({ ...s, documentId: blobKey, profileId: pid }))).returning();
     return c.json(rows.map(toScan), 201);
   });
@@ -237,6 +265,7 @@ export function profileRoutes(deps: Deps) {
     const id = c.req.param('id');
     if (!UUID.test(id)) throw notFound('That scan');
     const body = await readJson(c, ScanPatchBody);
+    const { db } = c.var.cell;
     const [row] = await db.update(scans).set({ ...body, updatedAt: new Date() })
       .where(and(eq(scans.id, id), eq(scans.profileId, c.var.profile.id))).returning();
     if (!row) throw notFound('That scan');
@@ -247,6 +276,7 @@ export function profileRoutes(deps: Deps) {
   app.delete('/:pid/scans/:id', async c => {
     const id = c.req.param('id');
     if (!UUID.test(id)) throw notFound('That scan');
+    const { db, files } = c.var.cell;
     const [scan] = await db.select().from(scans).where(and(eq(scans.id, id), eq(scans.profileId, c.var.profile.id))).limit(1);
     if (!scan) throw notFound('That scan');
     const [doc] = await db.delete(documents).where(eq(documents.id, scan.documentId)).returning();

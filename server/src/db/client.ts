@@ -29,7 +29,17 @@ export async function openDatabase(opts: DatabaseOptions): Promise<Database> {
     return {
       db: db as unknown as Db,
       kind: 'postgres',
-      migrate: folder => migrate(db, { migrationsFolder: folder }),
+      // Several servers (or test processes) may start together: one applies migrations while the others wait.
+      migrate: async folder => {
+        const conn = await pool.connect();
+        try {
+          await conn.query('SELECT pg_advisory_lock(727631)');
+          await migrate(drizzle({ client: conn, schema }), { migrationsFolder: folder });
+        } finally {
+          await conn.query('SELECT pg_advisory_unlock(727631)').catch(() => {});
+          conn.release();
+        }
+      },
       close: () => pool.end(),
     };
   }

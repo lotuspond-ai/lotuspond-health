@@ -165,3 +165,66 @@ export function countryName(code: string, locale?: string): string {
 
 /** Version of the consent texts. Bump when Terms, Privacy or the health-data consent change materially. */
 export const CONSENT_VERSION = '2026-11-03';
+
+/** English names that take "the" inside a sentence ("records for people in the United Kingdom"). */
+const WITH_THE = new Set('AE AX BS CC CF CK DO FK FO GB GM GS HM IM IO KM KY MH MP MV NL PH PN SB SC TC TF UM US VG VI'.split(' '));
+
+/** The country's English name as it reads inside a sentence, with "the" where English uses it. */
+export function countryInSentence(code: string): string {
+  const name = countryName(code, 'en');
+  return WITH_THE.has(code.trim().toUpperCase()) ? `the ${name}` : name;
+}
+
+/** Where an account's records are kept, as a sentence. */
+export function storageSentence(region: DataRegion): string {
+  return `Your records are stored on ${REGIONS[region].storage}.`;
+}
+
+export interface SignUpChoices {
+  country: string;
+  ageConfirmed: boolean;
+  consents: { termsAndPrivacy: boolean; healthData: boolean; crossBorder: boolean; marketing: boolean };
+}
+
+export interface SignUpProblem {
+  code: 'country_required' | 'country_unavailable' | 'region_not_served' | 'under_age' | 'consent_required';
+  field: 'country' | 'age' | 'termsAndPrivacy' | 'healthData' | 'crossBorder';
+  message: string;
+}
+
+/**
+ * The first reason this person cannot sign up yet, or null. The sign-up form, the API server and the browser
+ * preview all apply these same rules, in this order.
+ */
+export function signUpProblem(input: SignUpChoices, servedRegions: readonly DataRegion[]): SignUpProblem | null {
+  if (!input.country || !isCountryCode(input.country)) {
+    return { code: 'country_required', field: 'country', message: 'Choose the country you live in.' };
+  }
+  const policy = countryPolicy(input.country);
+  const name = countryInSentence(policy.code);
+  if (!policy.available) {
+    return { code: 'country_unavailable', field: 'country', message: policy.unavailableReason ?? 'LotusPond Health is not available in this country yet.' };
+  }
+  if (!servedRegions.includes(policy.region)) {
+    return {
+      code: 'region_not_served', field: 'country',
+      message: `LotusPond Health keeps records for people in ${name} on ${REGIONS[policy.region].storage}. This server does not store records there, so it cannot create your account.`,
+    };
+  }
+  if (!input.ageConfirmed) {
+    return {
+      code: 'under_age', field: 'age',
+      message: `You need to be ${policy.minAge} or older to have your own account. A parent or guardian can add you as a family member on their account.`,
+    };
+  }
+  if (!input.consents.termsAndPrivacy) {
+    return { code: 'consent_required', field: 'termsAndPrivacy', message: 'Agree to the Terms and the Privacy Policy to create an account.' };
+  }
+  if (!input.consents.healthData) {
+    return { code: 'consent_required', field: 'healthData', message: 'LotusPond needs your consent to keep your health records. Without it, it cannot create your account.' };
+  }
+  if (policy.crossBorder && !input.consents.crossBorder) {
+    return { code: 'consent_required', field: 'crossBorder', message: `Agree to your records being stored on ${REGIONS[policy.region].storage} to create an account.` };
+  }
+  return null;
+}

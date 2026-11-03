@@ -1,14 +1,16 @@
 // Backend that keeps accounts, profiles, records and files in this browser's IndexedDB.
 // Used by preview builds that have no server (for example the hosted artifact). It follows the API's rules,
-// but nothing leaves the device and nothing is shared between browsers.
+// including sign-up's country, age and consent rules, but nothing leaves the device and nothing is shared between
+// browsers. Data-residency cells do not apply: everything stays in this browser.
 import { createStore, del, delMany, get, keys, set, type UseStore } from 'idb-keyval';
 import type {
-  Account, DocumentKind, Measurement, MeasurementInput, Profile, ProfileInput, ProfileRecords, ScanInput, ScanItem, SessionInfo, StoredDocument,
+  Account, ActivityEvent, AuditDetail, AuditKind, ConsentKind, ConsentRecord, DocumentKind, Measurement, MeasurementInput, Profile, ProfileInput,
+  ProfileRecords, RegisterInput, ScanInput, ScanItem, ServiceInfo, SessionInfo, StoredDocument,
   FacilitySearchResult, GeoCandidate, GeoReverse, PublicConfig,
 } from '../types';
 import { LIMITS } from '../../shared/constants';
 import { isLatitude, isLongitude, roundCoord } from '../../shared/facilities';
-import { isCountryCode } from '../../shared/regions';
+import { CONSENT_VERSION, countryPolicy, isCountryCode, signUpProblem, type DataRegion } from '../../shared/regions';
 import { searchOffline } from './gazetteer';
 import { uid } from '../lib/id';
 import { ApiError, type Backend, type ScanPatch } from './backend';
@@ -18,6 +20,10 @@ interface StoredAccount extends Account { salt: string; hash: string }
 const ACCOUNTS = 'accounts';
 const SESSION = 'session';
 const profilesKey = (accountId: string) => `profiles:${accountId}`;
+const consentsKey = (accountId: string) => `consents:${accountId}`;
+const activityKey = (accountId: string) => `activity:${accountId}`;
+const ALL_REGIONS: DataRegion[] = ['in', 'eu', 'us', 'global'];
+const REQUIRED_CONSENTS: ConsentKind[] = ['terms', 'privacy', 'health_data', 'cross_border'];
 const recordsKey = (profileId: string) => `records:${profileId}`;
 const fileKey = (docId: string) => `file:${docId}`;
 const RANK: Record<string, number> = { self: 0, partner: 1, child: 2, parent: 3, sibling: 4, other: 5 };
@@ -157,7 +163,22 @@ export class BrowserBackend implements Backend {
   }
 
   private async session(account: StoredAccount): Promise<SessionInfo> {
-    return { account: { id: account.id, email: account.email, createdAt: account.createdAt }, profiles: await this.profiles(account.id) };
+    return { account: this.publicAccount(account), profiles: await this.profiles(account.id) };
+  }
+
+  private publicAccount(a: StoredAccount): Account {
+    return { id: a.id, email: a.email, createdAt: a.createdAt, country: a.country ?? null, region: a.region ?? 'global', unitSystem: a.unitSystem ?? 'conventional' };
+  }
+
+  /** Account events, newest first, capped like the server's "Recent activity". */
+  private async log(accountId: string, kind: AuditKind, detail?: AuditDetail): Promise<void> {
+    const list = (await get<ActivityEvent[]>(activityKey(accountId), this.store)) ?? [];
+    list.unshift({ id: uid(), kind, createdAt: now(), device: 'This browser', detail: detail ?? null });
+    await set(activityKey(accountId), list.slice(0, 200), this.store);
+  }
+
+  private async readConsents(accountId: string): Promise<ConsentRecord[]> {
+    return (await get<ConsentRecord[]>(consentsKey(accountId), this.store)) ?? [];
   }
 
   private async removeProfileData(profileId: string): Promise<void> {
@@ -166,6 +187,10 @@ export class BrowserBackend implements Backend {
   }
 
   /* ---------------- accounts ---------------- */
+
+  async service(): Promise<ServiceInfo> {
+    return { servedRegions: ALL_REGIONS, consentVersion: CONSENT_VERSION, contacts: { grievance: null, dpo: null } };
+  }
 
   async me(): Promise<SessionInfo | null> {
     try {
@@ -176,7 +201,7 @@ export class BrowserBackend implements Backend {
     }
   }
 
-  register(input: { email: string; password: string; displayName: string }): Promise<SessionInfo> {
+  register(input: RegisterInput): Promise<SessionInfo> {
     return this.locked(async () => {
       const email = input.email.trim().toLowerCase();
       const displayName = input.displayName.trim();
@@ -184,16 +209,29 @@ export class BrowserBackend implements Backend {
       if (!EMAIL.test(email) || email.length > 254) throw bad('email: Enter a valid email address.');
       if (input.password.length < LIMITS.passwordMin) throw bad(`password: Use at least ${LIMITS.passwordMin} characters.`);
       if (input.password.length > LIMITS.passwordMax) throw bad(`password: Use at most ${LIMITS.passwordMax} characters.`);
+      const problem = signUpProblem(input, ALL_REGIONS);
+      if (problem) throw new ApiError(problem.code === 'country_unavailable' ? 403 : 400, problem.code, problem.message);
+      const policy = countryPolicy(input.country);
       const accounts = await this.accounts();
       if (accounts.some(a => a.email === email)) throw new ApiError(409, 'email_taken', 'An account with this email already exists. Sign in instead.');
       const salt = randomHex(16);
-      const account: StoredAccount = { id: uid(), email, createdAt: now(), salt, hash: await derive(input.password, salt) };
+      const account: StoredAccount = {
+        id: uid(), email, createdAt: now(), salt, hash: await derive(input.password, salt),
+        country: policy.code, region: policy.region, unitSystem: policy.units,
+      };
+      const decided = (kind: ConsentKind, granted: boolean): ConsentRecord => ({ kind, granted, version: CONSENT_VERSION, createdAt: now(), country: policy.code });
       const self: Profile = {
         id: uid(), relationship: 'self', displayName: displayName.slice(0, 80), dateOfBirth: null, sex: null, heightCm: null, weightKg: null,
         bloodType: null, conditions: [], medications: [], allergies: [], notes: '', createdAt: now(), updatedAt: now(),
       };
       await set(ACCOUNTS, [...accounts, account], this.store);
       await set(profilesKey(account.id), [self], this.store);
+      await set(consentsKey(account.id), [
+        decided('marketing', input.consents.marketing),
+        ...(policy.crossBorder ? [decided('cross_border', true)] : []),
+        decided('health_data', true), decided('privacy', true), decided('terms', true),
+      ], this.store);
+      await this.log(account.id, 'account_created');
       await set(SESSION, account.id, this.store);
       return this.session(account);
     });
@@ -203,12 +241,18 @@ export class BrowserBackend implements Backend {
     const email = input.email.trim().toLowerCase();
     const account = (await this.accounts()).find(a => a.email === email);
     const hash = await derive(input.password, account?.salt ?? '00'.repeat(16));
-    if (!account || hash !== account.hash) throw new ApiError(401, 'invalid_credentials', 'Email or password is incorrect.');
+    if (!account || hash !== account.hash) {
+      if (account) await this.locked(() => this.log(account.id, 'sign_in_failed'));
+      throw new ApiError(401, 'invalid_credentials', 'Email or password is incorrect.');
+    }
+    await this.locked(() => this.log(account.id, 'sign_in'));
     await set(SESSION, account.id, this.store);
     return this.session(account);
   }
 
   async logout(): Promise<void> {
+    const id = await get<string>(SESSION, this.store);
+    if (id) await this.locked(() => this.log(id, 'sign_out'));
     await del(SESSION, this.store);
   }
 
@@ -220,6 +264,7 @@ export class BrowserBackend implements Backend {
       const salt = randomHex(16);
       const updated = { ...account, salt, hash: await derive(newPassword, salt) };
       await set(ACCOUNTS, (await this.accounts()).map(a => (a.id === account.id ? updated : a)), this.store);
+      await this.log(account.id, 'password_changed');
     });
   }
 
@@ -232,10 +277,48 @@ export class BrowserBackend implements Backend {
       const account = await this.current();
       if ((await derive(password, account.salt)) !== account.hash) throw bad('Your password is incorrect.', 'wrong_password');
       for (const p of await this.profiles(account.id)) await this.removeProfileData(p.id);
-      await del(profilesKey(account.id), this.store);
+      await delMany([profilesKey(account.id), consentsKey(account.id), activityKey(account.id)], this.store);
       await set(ACCOUNTS, (await this.accounts()).filter(a => a.id !== account.id), this.store);
       await del(SESSION, this.store);
     });
+  }
+
+  updatePreferences(patch: { unitSystem: 'conventional' | 'si' }): Promise<Account> {
+    return this.locked(async () => {
+      if (patch.unitSystem !== 'conventional' && patch.unitSystem !== 'si') throw bad('unitSystem: Choose conventional or SI units.');
+      const account = await this.current();
+      const updated: StoredAccount = { ...account, unitSystem: patch.unitSystem };
+      await set(ACCOUNTS, (await this.accounts()).map(a => (a.id === account.id ? updated : a)), this.store);
+      if (account.unitSystem !== patch.unitSystem) await this.log(account.id, 'preferences_changed', { unitSystem: patch.unitSystem });
+      return this.publicAccount(updated);
+    });
+  }
+
+  async consents(): Promise<ConsentRecord[]> {
+    return this.readConsents((await this.current()).id);
+  }
+
+  setConsent(kind: ConsentKind, granted: boolean): Promise<ConsentRecord[]> {
+    return this.locked(async () => {
+      const account = await this.current();
+      if (kind === 'cross_border' && !(account.country && countryPolicy(account.country).crossBorder)) {
+        throw bad('Your records are stored in your own region, so this consent does not apply to your account.');
+      }
+      if (!granted && REQUIRED_CONSENTS.includes(kind)) {
+        throw new ApiError(409, 'withdraw_requires_deletion', 'LotusPond cannot keep your records without this consent. To withdraw it, delete your account. That removes every profile, result and file on it.');
+      }
+      const list = await this.readConsents(account.id);
+      const current = list.find(r => r.kind === kind);
+      if (current?.granted === granted && current.version === CONSENT_VERSION) return list;
+      const next = [{ kind, granted, version: CONSENT_VERSION, createdAt: now(), country: account.country ?? null }, ...list];
+      await set(consentsKey(account.id), next, this.store);
+      await this.log(account.id, 'consent_changed', { consent: kind, granted });
+      return next;
+    });
+  }
+
+  async activity(): Promise<ActivityEvent[]> {
+    return (await get<ActivityEvent[]>(activityKey((await this.current()).id), this.store)) ?? [];
   }
 
   /* ---------------- profiles ---------------- */
@@ -275,6 +358,7 @@ export class BrowserBackend implements Backend {
       if (profile.relationship === 'self') throw new ApiError(409, 'conflict', 'Your own profile cannot be removed. To remove everything, delete your account.');
       await this.removeProfileData(id);
       await set(profilesKey(account.id), profiles.filter(p => p.id !== id), this.store);
+      await this.log(account.id, 'profile_deleted', { profileId: id });
     });
   }
 
@@ -297,8 +381,9 @@ export class BrowserBackend implements Backend {
 
   clearRecords(profileId: string): Promise<void> {
     return this.locked(async () => {
-      await this.owned(profileId);
+      const { account } = await this.owned(profileId);
       await this.removeProfileData(profileId);
+      await this.log(account.id, 'records_deleted', { profileId });
     });
   }
 

@@ -42,6 +42,8 @@ const env = {
   // Plain http on localhost: the session cookie cannot require HTTPS here. Real deployments keep the default (true).
   COOKIE_SECURE: process.env.COOKIE_SECURE ?? 'false',
   DATA_DIR: process.env.DATA_DIR ?? '.data-local',
+  // On a laptop the server may generate its directory secret and file key in DATA_DIR. Servers set them instead.
+  LOCAL_SECRETS: process.env.LOCAL_SECRETS ?? 'true',
 };
 
 const server = spawn(process.execPath, ['dist/index.js'], { cwd: path.join(root, 'server'), env, stdio: ['inherit', 'pipe', 'inherit'] });

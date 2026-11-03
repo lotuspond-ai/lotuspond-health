@@ -10,6 +10,7 @@ import { createApp } from '../src/app.ts';
 import { loadConfig } from '../src/config.ts';
 import { openDatabase, type Database } from '../src/db/client.ts';
 import { DiskFileStore } from '../src/lib/files.ts';
+import { EncryptedFileStore } from '../src/lib/files-encrypted.ts';
 import type { AppEnv } from '../src/http.ts';
 import type { Measurement, ProfileRecords, ScanItem, SessionInfo, StoredDocument, Profile } from '../../shared/types.ts';
 
@@ -26,7 +27,9 @@ before(async () => {
   await database.migrate(migrations);
   filesDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lotuspond-files-'));
   const config = loadConfig({ NODE_ENV: 'test', TRUST_PROXY: 'true' });
-  app = createApp({ db: database.db, files: new DiskFileStore(filesDir), config });
+  // Files go through the same encryption layer as production; tests read them back through the API.
+  const files = new EncryptedFileStore(new DiskFileStore(filesDir), { current: crypto.getRandomValues(Buffer.alloc(32)), previous: [] });
+  app = createApp({ db: database.db, files, config });
 });
 
 after(async () => {
@@ -70,10 +73,16 @@ const measurement = (over: Partial<Measurement> = {}): Omit<Measurement, 'id'> =
   sourceFile: 'report.pdf', confidence: 'high', ...over,
 });
 
+/** A complete sign-up body: an adult in India who agreed to everything required. */
+const registration = (email: string, over: Record<string, unknown> = {}) => ({
+  email, password: 'correct horse battery', displayName: 'Asha', country: 'IN', ageConfirmed: true,
+  consents: { termsAndPrivacy: true, healthData: true, crossBorder: false, marketing: false }, ...over,
+});
+
 let counter = 0;
 async function signUp(c = client()) {
   const email = `person${++counter}.${run}@example.com`;
-  const info = await c.json<SessionInfo>('POST', '/api/auth/register', { email, password: 'correct horse battery', displayName: 'Asha' }, 201);
+  const info = await c.json<SessionInfo>('POST', '/api/auth/register', registration(email), 201);
   return { c, email, info, self: info.profiles[0] };
 }
 
@@ -90,7 +99,7 @@ describe('accounts', () => {
   });
 
   it('sets an HttpOnly, SameSite cookie', async () => {
-    const res = await client().call('POST', '/api/auth/register', { email: `cookie.${run}@example.com`, password: 'long enough password', displayName: 'C' });
+    const res = await client().call('POST', '/api/auth/register', registration(`cookie.${run}@example.com`, { password: 'long enough password', displayName: 'C' }));
     const set = res.headers.get('set-cookie') ?? '';
     assert.match(set, /HttpOnly/i);
     assert.match(set, /SameSite=Lax/i);
@@ -98,15 +107,15 @@ describe('accounts', () => {
 
   it('rejects a duplicate email, case-insensitively', async () => {
     const { email } = await signUp();
-    const res = await client().call('POST', '/api/auth/register', { email: email.toUpperCase(), password: 'another password', displayName: 'B' });
+    const res = await client().call('POST', '/api/auth/register', registration(email.toUpperCase(), { password: 'another password', displayName: 'B' }));
     assert.equal(res.status, 409);
   });
 
   it('validates sign-up input', async () => {
-    const short = await client().call('POST', '/api/auth/register', { email: 'x@example.com', password: 'short', displayName: 'X' });
+    const short = await client().call('POST', '/api/auth/register', registration('x@example.com', { password: 'short', displayName: 'X' }));
     assert.equal(short.status, 400);
     assert.match((await short.json() as { error: { message: string } }).error.message, /at least 10/);
-    const bad = await client().call('POST', '/api/auth/register', { email: 'not-an-email', password: 'long enough password', displayName: 'X' });
+    const bad = await client().call('POST', '/api/auth/register', registration('not-an-email', { password: 'long enough password', displayName: 'X' }));
     assert.equal(bad.status, 400);
   });
 
@@ -241,6 +250,9 @@ describe('records', () => {
     assert.equal(file.headers.get('content-type'), 'image/jpeg');
     assert.match(file.headers.get('content-security-policy') ?? '', /sandbox/);
     assert.deepEqual([...new Uint8Array(await file.arrayBuffer())], [0xff, 0xd8, 0xff, 1, 2, 3]);
+    const onDisk = fs.readFileSync(path.join(filesDir, self.id, doc.id));
+    assert.equal(onDisk.subarray(0, 4).toString('latin1'), 'LPEF', 'stored encrypted');
+    assert.equal(onDisk.includes(Buffer.from([0xff, 0xd8, 0xff, 1, 2, 3])), false, 'no plaintext on disk');
     const dl = await c.call('GET', `${base}/documents/${doc.id}/file?download=1`);
     assert.match(dl.headers.get('content-disposition') ?? '', /^attachment/);
     await dl.arrayBuffer();
@@ -286,9 +298,12 @@ describe('records', () => {
     assert.equal(after1.measurements[0].documentId, null, 'results stay when their report file is deleted');
     const exported = await c.call('GET', `${base}/export`);
     assert.match(exported.headers.get('content-disposition') ?? '', /attachment; filename="lotuspond-asha-/);
-    const body = await exported.json() as { version: number; measurements: unknown[]; profile: Profile };
+    const body = await exported.json() as { version: number; measurements: unknown[]; profile: Profile; account?: { country: string; consents: { kind: string }[]; activity: { kind: string }[] } };
     assert.equal(body.version, 1);
     assert.equal(body.measurements.length, 1);
+    assert.equal(body.account?.country, 'IN', 'own profile export carries the account');
+    assert.ok(body.account?.consents.some(x => x.kind === 'health_data'), 'export lists consents');
+    assert.ok(body.account?.activity.some(x => x.kind === 'account_created'), 'export lists activity');
     await c.json('DELETE', `${base}/records`, undefined, 204);
     const after2 = await c.json<ProfileRecords>('GET', `${base}/records`);
     assert.equal(after2.measurements.length + after2.scans.length + after2.documents.length, 0);

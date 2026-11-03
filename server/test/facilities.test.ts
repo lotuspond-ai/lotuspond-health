@@ -9,6 +9,8 @@ import { fileURLToPath } from 'node:url';
 import { eq } from 'drizzle-orm';
 import type { Hono } from 'hono';
 import { createApp } from '../src/app.ts';
+import { completeDeps } from '../src/cells.ts';
+import { registration } from './helpers.ts';
 import { loadConfig } from '../src/config.ts';
 import { openDatabase, type Database } from '../src/db/client.ts';
 import { facilityCache, profiles } from '../src/db/schema.ts';
@@ -65,7 +67,7 @@ let deps: FacilityDeps;
 
 function makeApp(env: Record<string, string> = {}, providers?: FacilityProviders) {
   const config = loadConfig({ NODE_ENV: 'test', TRUST_PROXY: 'true', ...env });
-  const d: FacilityDeps = { db: database.db, files: new DiskFileStore(filesDir), config, facilityProviders: providers ?? { places, geocoder } };
+  const d: FacilityDeps = { ...completeDeps({ db: database.db, files: new DiskFileStore(filesDir), config }), facilityProviders: providers ?? { places, geocoder } };
   return { app: createApp(d), deps: d };
 }
 
@@ -125,7 +127,7 @@ function client(target: () => Hono<AppEnv> = () => app) {
 let counter = 0;
 async function signedIn(target?: () => Hono<AppEnv>) {
   const c = client(target);
-  const info = await c.json<SessionInfo>('POST', '/api/auth/register', { email: `labs${++counter}.${run}@example.com`, password: 'lily pads everywhere', displayName: 'Asha' }, 201);
+  const info = await c.json<SessionInfo>('POST', '/api/auth/register', registration(`labs${++counter}.${run}@example.com`, 'IN', { password: 'lily pads everywhere', displayName: 'Asha' }), 201);
   return { c, self: info.profiles[0] };
 }
 

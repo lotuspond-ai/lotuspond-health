@@ -7,7 +7,8 @@ import { secureHeaders } from 'hono/secure-headers';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { APP_FILE, APP_PATHS, NOT_FOUND_FILE, SITE_PAGES } from '../../shared/site.ts';
 import { forbidden, HttpError } from './lib/errors.ts';
-import type { AppEnv, Deps } from './http.ts';
+import type { AppEnv } from './http.ts';
+import { completeDeps, type DepsInput } from './cells.ts';
 import { authRoutes } from './routes/auth.ts';
 import { profileRoutes } from './routes/profiles.ts';
 import { facilityRoutes } from './routes/facilities.ts';
@@ -48,7 +49,8 @@ const SITE_CSP = [
 
 const IMMUTABLE = 'public, max-age=31536000, immutable';
 
-export function createApp(deps: Deps): Hono<AppEnv> {
+export function createApp(input: DepsInput): Hono<AppEnv> {
+  const deps = completeDeps(input); // one default cell unless index.ts opened several
   const { config } = deps;
   const app = new Hono<AppEnv>();
   // Map tiles on the Labs page may come from another host (see facilities/map.ts).
