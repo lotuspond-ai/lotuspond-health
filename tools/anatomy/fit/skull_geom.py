@@ -318,25 +318,25 @@ def local_sdf(meshes, h=0.00025, pad=0.002, close=1):
 
 
 class HardField:
-    """Unsigned distance to a set of surfaces on a voxel grid (for fast ray marching)."""
+    """Nearest-surface distance to a set of meshes from dense surface samples (KD-tree), for fast ray marching
+    without a voxel grid (memory stays small)."""
 
-    def __init__(self, meshes, h=0.0005, pad=0.035):
-        pts = np.concatenate([m[0] for m in meshes])
-        self.g = VGrid.around(pts, h, pad)
-        sh = shell(meshes, self.g)
-        self.udf = (ndimage.distance_transform_edt(~sh) * h).astype(np.float32)
+    def __init__(self, meshes, spacing=0.0004):
+        self.pts = np.concatenate([dense_points(v, f, spacing) for v, f in meshes if len(f)])
+        self.tree = cKDTree(self.pts)
+        self.thresh = 0.00045
 
     def march(self, orig, dirs, tmax=0.03, step=0.00025, thresh=None):
         """Distance along each ray to the first point closer than `thresh` to a surface (inf if none)."""
-        thresh = thresh if thresh is not None else 0.75 * self.g.h
+        thresh = thresh or self.thresh
         ts = np.arange(step, tmax + step, step)
         out = np.full(len(orig), np.inf)
-        for i in range(0, len(orig), 2000):
-            o = orig[i:i + 2000]; d = dirs[i:i + 2000]
+        for i in range(0, len(orig), 1000):
+            o = orig[i:i + 1000]; d = dirs[i:i + 1000]
             q = o[:, None, :] + ts[None, :, None] * d[:, None, :]
-            u = self.g.sample(self.udf, q.reshape(-1, 3)).reshape(len(o), len(ts))
-            hit = u < thresh
+            u, _ = self.tree.query(q.reshape(-1, 3), distance_upper_bound=2 * thresh)
+            hit = (u < thresh).reshape(len(o), len(ts))
             any_ = hit.any(1)
             k = np.argmax(hit, 1)
-            out[i:i + 2000][any_] = ts[k[any_]]
+            blk = out[i:i + 1000]; blk[any_] = ts[k[any_]]; out[i:i + 1000] = blk
         return out

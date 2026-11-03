@@ -9,9 +9,9 @@ export function Field({ label, hint, error, children, wide }: { label: string; h
   const id = useId();
   return (
     <div className={`field${wide ? ' field--wide' : ''}${error ? ' has-error' : ''}`}>
-      <label htmlFor={id}>{label}</label>
+      <label htmlFor={id} id={`${id}-label`}>{label}</label>
       {children(id)}
-      {error ? <p className="field__error" role="alert">{error}</p> : hint ? <p className="field__hint">{hint}</p> : null}
+      {error ? <p className="field__error" role="alert">{error}</p> : hint ? <p className="field__hint" id={`${id}-hint`}>{hint}</p> : null}
     </div>
   );
 }
@@ -68,13 +68,27 @@ export function Avatar({ profile, size = 32 }: { profile: Pick<Profile, 'id' | '
   return <span className={`avatar avatar--${tone}`} style={{ width: size, height: size, fontSize: size * 0.4 }} aria-hidden>{initials(profile.displayName)}</span>;
 }
 
-export function SexChoice({ id, value, onChange }: { id: string; value: Sex | ''; onChange: (v: Sex | '') => void }) {
-  const options: { v: Sex | ''; label: string }[] = [{ v: 'female', label: 'Female' }, { v: 'male', label: 'Male' }, { v: 'intersex', label: 'Intersex' }, { v: '', label: 'Not set' }];
+/** Segmented choice built from native radio buttons: one tab stop, arrow keys move the choice, and the group is named
+ *  by `labelledBy` and described by `describedBy`. */
+export function SegRadio<T extends string>({ name, value, options, onChange, labelledBy, describedBy, form }: {
+  name: string; value: T; options: { v: T; label: string }[]; onChange: (v: T) => void; labelledBy: string; describedBy?: string; form?: boolean;
+}) {
   return (
-    <div className="seg seg--form" role="radiogroup" id={id}>
-      {options.map(o => <button key={o.label} type="button" role="radio" aria-checked={value === o.v} aria-pressed={value === o.v} onClick={() => onChange(o.v)}>{o.label}</button>)}
+    <div className={`seg seg--radio${form ? ' seg--form' : ''}`} role="radiogroup" aria-labelledby={labelledBy} aria-describedby={describedBy}>
+      {options.map(o => (
+        <label key={o.v}>
+          <input type="radio" name={name} value={o.v} checked={value === o.v} onChange={() => onChange(o.v)} />
+          <span>{o.label}</span>
+        </label>
+      ))}
     </div>
   );
+}
+
+/** For use inside a Field: the group is named by the field's label and described by its hint. */
+export function SexChoice({ id, value, onChange }: { id: string; value: Sex | ''; onChange: (v: Sex | '') => void }) {
+  const options: { v: Sex | ''; label: string }[] = [{ v: 'female', label: 'Female' }, { v: 'male', label: 'Male' }, { v: 'intersex', label: 'Intersex' }, { v: '', label: 'Not set' }];
+  return <SegRadio name={`${id}-sex`} value={value} options={options} onChange={onChange} labelledBy={`${id}-label`} describedBy={`${id}-hint`} form />;
 }
 
 export function BloodTypeSelect({ id, value, onChange }: { id: string; value: BloodType | ''; onChange: (v: BloodType | '') => void }) {

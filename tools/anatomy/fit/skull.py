@@ -381,7 +381,7 @@ def refine(sex, Wz, Z, T, L, M, zsk, cfg=REF, log=log):
             tgt[vs] = fdisp[vs] - np.minimum(ss[vs] + cfg['soft_min'], cfg['max_step'])[:, None] * nsk[vs]
             wts[vs] = np.where(ss[vs] > 0, cfg['w_skin_out'], cfg['w_skin'])
             # scalp over the vault thicker than the upper bound (not over muscle attachment areas): pull bone outward
-            HF = G.HardField([cur[n] for n in bones + teeth], h=0.0006)
+            HF = G.HardField([cur[n] for n in bones + teeth], spacing=0.0005)
             t = HF.march(hv[vault_all] - vn[vault_all] * 1e-4, -vn[vault_all], tmax=0.03)
             hit = np.isfinite(t)
             hitp = hv[vault_all] - vn[vault_all] * np.where(hit, t, 0)[:, None]
@@ -582,10 +582,20 @@ def run(sex, argv, L, zsk):
     T = M.Targets(sex, hp, hl, hn)
     log(sex, 'targets ready', round(time.time() - t0))
     hist = []
+    fpath = os.path.join(work_dir(sex), 'field.npz')
     if '--warp-only' in argv:
         Wfull = W
     else:
-        D, hist = refine(sex, W, Z, T, L, M, zsk)
+        if '--reuse' in argv and os.path.exists(fpath):
+            d = np.load(fpath, allow_pickle=True)
+            D = MultiField()
+            for k in range(int(d['n'])):
+                f_ = G.Correction(d[f'c{k}'], sigma=float(d[f's{k}'])); f_.w = d[f'w{k}']; D.fields.append(f_)
+            hist = list(d['hist'])
+        else:
+            D, hist = refine(sex, W, Z, T, L, M, zsk)
+            np.savez(fpath, n=len(D.fields), hist=np.array(hist, dtype=object), **{f'c{k}': f_.c for k, f_ in enumerate(D.fields)},
+                     **{f's{k}': f_.sigma for k, f_ in enumerate(D.fields)}, **{f'w{k}': f_.w for k, f_ in enumerate(D.fields)})
         Wfull = lambda x, W=W, D=D: (lambda y: y + D(y))(W(x))
     P = place_all(Z, Wfull)
     rim = Wfull(L['fm_rim']); _, _, Vt = np.linalg.svd(rim - rim.mean(0)); fmn = Vt[2] if Vt[2][1] > 0 else -Vt[2]

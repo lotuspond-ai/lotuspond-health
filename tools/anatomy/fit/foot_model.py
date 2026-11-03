@@ -121,13 +121,26 @@ class ZAFoot:
         _, dn, _, _ = nav.closest(P)
         th_c, th_r = fit_sphere(P[dn < 0.003])
         self.talar_head = th_c; self.talar_head_r = th_r
-        # subtalar axis (Inman mean), positive = supination (inversion + adduction)
+        # subtalar axis: through the talar head centre (the talocalcaneonavicular joint is a ball there), oriented so that
+        # turning the calcaneus about it best keeps its facet distances to the talus (started from Inman's mean axis)
         d = np.cos(INMAN_UP) * (np.cos(INMAN_MED) * self.axis + np.sin(INMAN_MED) * self.med) + np.sin(INMAN_UP) * self.up
+        self.subtalar_inman = d.copy()
+        d, self.subtalar_rms = self._congruence_axis(B['Calcaneus'], tal, th_c, d)
         # sign: a point on the lateral border must go down (inversion) for a positive angle
         probe = th_c + 0.04 * self.lat
         if (rot_axis(d, 0.1) @ (probe - th_c))[1] > (probe - th_c)[1]: d = -d
         self.subtalar = Joint('subtalar', th_c, [d])
-        self.chopart = Joint('chopart', th_c, [self.axis, self.up, self.lat])    # free (rotation vector parts)
+        # transverse tarsal (Chopart) flexion: about the line through the talonavicular and calcaneocuboid centres, which
+        # keeps both joints congruent; small inversion / adduction about the talar head
+        cal = B['Calcaneus']
+        Q = np.concatenate([cal[0], sample_surface(*cal, 6000, seed=6)])
+        _, dc, _, _ = TriMesh(*B['Cuboid_bone']).closest(Q)
+        cc = Q[dc < 0.003]
+        self.cc_centre = cc.mean(0) if len(cc) < 30 else fit_sphere(cc)[0]
+        t = self.cc_centre - th_c; t /= np.linalg.norm(t)
+        probe = th_c + 0.05 * self.axis
+        if (rot_axis(t, 0.1) @ (probe - th_c))[1] > (probe - th_c)[1]: t = -t
+        self.chopart_axis = t
         # toe joints
         self.toes = {}
         for k in range(1, 6):
@@ -157,6 +170,23 @@ class ZAFoot:
                 axes = [tr, dors] if i == 0 else [tr]
                 joints.append(Joint(('mtp' if i == 0 else 'ip%d' % i) + str(k), c, axes))
             self.toes[k] = dict(bones=names, joints=joints, tip=tip, dir=dirs[0])
+
+    @staticmethod
+    def _congruence_axis(moving, fixed, c, d0, angles=np.radians([-20, -10, 10, 20])):
+        from scipy import optimize
+        from fit.foot_geom import VoxelField
+        fv = fixed[0]
+        field = VoxelField([fixed], fv.min(0) - 0.01, fv.max(0) + 0.01, 0.0004)
+        P = dense_points(*moving, 0.0006)
+        sd = field(P); P = P[(sd < 0.0025) & (sd > -0.002)]; sd0 = field(P)
+        e1 = np.cross(d0, [1, 0, 0]); e1 /= np.linalg.norm(e1); e2 = np.cross(d0, e1)
+        def dirn(y):
+            d = d0 + y[0] * e1 + y[1] * e2; return d / np.linalg.norm(d)
+        def cost(y):
+            d = dirn(y)
+            return np.mean([np.mean((field((P - c) @ rot_axis(d, a).T + c) - sd0) ** 2) for a in angles])
+        r = optimize.minimize(cost, np.zeros(2), method='Nelder-Mead', options=dict(xatol=1e-4, fatol=1e-12))
+        return dirn(r.x), float(np.sqrt(cost(r.x)))
 
     @staticmethod
     def _head_centre(a, b, d=0.003):
@@ -201,8 +231,8 @@ class ZAFoot:
     # -------------------------------------------------------------------------------------------- kinematics
     def pose(self, q):
         """Per-bone maps (Z-Anatomy space -> posed Z-Anatomy space, before the mortise map) for parameters q:
-        alpha (ankle, + = plantarflexion), beta (subtalar, + = supination), chopart (3: inversion, adduction,
-        plantarflexion about the talar head), sf / st (foot / talus scale about the trochlea centre), talus_r (3, same
+        alpha (ankle, + = plantarflexion), beta (subtalar, + = supination), chopart (3: inversion and adduction about
+        the talar head, plantarflexion about the talonavicular-calcaneocuboid line), sf / st (foot / talus scale about the trochlea centre), talus_r (3, same
         components, about the trochlea centre), talus_t (3, m), toes {k: [mtp_flex, mtp_abd, ip1, ip2]} (+ = flexion,
         abduction toward the lateral side)."""
         c = self.trochlea_centre
@@ -211,7 +241,7 @@ class ZAFoot:
         Sf = Sim4.about(np.eye(3) * q.get('sf', 1.0), c); St = Sim4.about(np.eye(3) * q.get('st', 1.0), c)
         S = self.subtalar.matrix([q.get('beta', 0.0)])
         ch = np.asarray(q.get('chopart', np.zeros(3)), float)
-        C = Sim4.about(rotvec(ch @ self.frame_axes), self.talar_head)
+        C = Sim4.about(rot_axis(self.chopart_axis, ch[2]), self.talar_head).then(Sim4.about(rotvec(ch[0] * self.frame_axes[0] + ch[1] * self.frame_axes[1]), self.talar_head))
         top = lambda M: M.then(A).then(Sf).then(D)            # noqa: E731 (posed space)
         out = {'Talus': A.then(St).then(D), 'Calcaneus': top(S)}
         mid = C.then(S)

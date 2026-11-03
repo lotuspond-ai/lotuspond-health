@@ -254,7 +254,7 @@ def measure(sex, P, T, L, Wfull, za_skin, extra_info=None, log=print, parts=ALL_
             lo = ec.min(0) - [0.03, 0.03, 0.06]; hi = ec.max(0) + [0.03, 0.03, 0.02]
             orb = [P[n][:2] for n in ('frontal_bone', 'sphenoid_bone', 'ethmoid_bone', 'maxilla_l', 'maxilla_r', 'zygomatic_bone_l', 'zygomatic_bone_r',
                                        'lacrimal_bone_l', 'lacrimal_bone_r', 'palatine_bone_l', 'palatine_bone_r') if n in P]
-            go, so = G.local_sdf(orb, h=0.0004, pad=0.002, close=1)
+            go, so = G.local_sdf(orb, h=0.0005, pad=0.002, close=1)
             oc = {}
             for k, m in T.orbit_contents.items():
                 if not len(m[1]): continue
@@ -270,7 +270,7 @@ def measure(sex, P, T, L, Wfull, za_skin, extra_info=None, log=print, parts=ALL_
     # ---------------- soft tissue and bone inside the skin
     if 'skin' in parts:
         mus_tree = cKDTree(Wfull(L['muscle_area_pts']))
-        HF = G.HardField([P[n][:2] for n in bones + teeth], h=0.0004)
+        HF = G.HardField([P[n][:2] for n in bones + teeth], spacing=0.0004)
         bs = dense_points(*bone_all, spacing=0.001)
         ss = T.skin_signed(bs)
         n_out = int((ss > 0).sum())

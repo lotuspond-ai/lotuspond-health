@@ -15,16 +15,20 @@ export function displayModality(code: string | null | undefined): string | undef
   return c;
 }
 
-const MODALITY_ORGAN: Record<string, OrganId> = { MG: 'reproductive', ECG: 'heart', IVUS: 'heart', BMD: 'marrow' };
+const MODALITY_ORGAN: Record<string, OrganId> = { MG: 'breast', ECG: 'heart', IVUS: 'heart', BMD: 'marrow' };
 
 /** Map DICOM tags (and the file name) to an organ. */
 export function dicomOrgan(d: { bodyPart: string | null; studyDescription: string | null; seriesDescription: string | null; modality: string | null }, fileName: string): OrganId | null {
+  const bp = (d.bodyPart ?? '').toUpperCase();
+  // A pelvic ultrasound looks at the uterus and ovaries (or the prostate), not the bones the body part would suggest;
+  // one of the bladder or kidneys stays with the urinary tract.
+  const words = `${d.studyDescription ?? ''} ${d.seriesDescription ?? ''} ${fileName}`.toUpperCase();
+  if (/PELVIS/.test(bp) && (d.modality ?? '').toUpperCase() === 'US' && !/KUB|BLADDER|RENAL|KIDNEY|URINARY/.test(words)) return 'reproductive';
   const organ = guessOrgan(d.bodyPart, d.studyDescription, d.seriesDescription, fileName);
   if (organ) return organ;
-  const bp = (d.bodyPart ?? '').toUpperCase();
   if (/SPINE|PELVIS|HIP|EXTREMITY|KNEE|ANKLE|SHOULDER|ELBOW|WRIST|HAND|FOOT|LEG|ARM|FEMUR|SKULL/.test(bp)) return /SKULL/.test(bp) ? 'brain' : 'marrow';
   if (/ABDOMEN|ABD/.test(bp)) return 'liver';
-  if (/BREAST/.test(bp)) return 'reproductive';
+  if (/BREAST/.test(bp)) return 'breast';
   return d.modality ? MODALITY_ORGAN[d.modality.toUpperCase()] ?? null : null;
 }
 

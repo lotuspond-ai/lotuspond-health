@@ -240,3 +240,43 @@ def term_regular(body, sig_rot, sig_t):
         J[:3, i0:i0 + 3] = np.eye(3) / sig_rot; J[3:, i0 + 3:i0 + 6] = np.eye(3) / sig_t
         return r, J
     return f
+
+
+def term_body_gap_local(bA, PA0, bB, TB0, lo=None, hi=None, w=1.0, mode='each', tau=0.0003):
+    """As term_body_gap, but B's mesh is a fixed TriMesh (B's pose at the start of the solve) queried in B's own frame
+    (query points are taken back through B's current correction), so nothing is rebuilt per evaluation."""
+    w = w * MM
+    PA0 = np.asarray(PA0, float)
+
+    def f(B):
+        PA = B.apply(bA, PA0)
+        R, t, c = B.R[bB], B.t[bB], B.c[bB]
+        Pl = (PA - c - t) @ R + c                      # inverse of x -> R (x - c) + c + t
+        d, q, fi, nrm = TB0.closest(Pl)
+        s = np.sign(np.einsum('ij,ij->i', Pl - q, nrm)); s[s == 0] = 1
+        sd = d * s
+        g = (Pl - q) / np.maximum(d, 1e-9)[:, None] * s[:, None]
+        tiny = d < 1e-7
+        if tiny.any(): g[tiny] = TB0.fn[fi[tiny]]
+        g = g @ R.T                                    # gradient back in world coordinates
+        qw = (q - c) @ R.T + c + t                     # closest point in world coordinates
+        JA = np.einsum('mi,mij->mj', g, B.dP(bA, PA))
+        JB = -np.einsum('mi,mij->mj', g, B.dP(bB, qw))
+        iA, iB = 6 * B.idx[bA], 6 * B.idx[bB]
+        if mode == 'each':
+            r = np.zeros(len(PA)); J = np.zeros((len(PA), B.n))
+            if lo is not None:
+                m = sd < lo; r[m] += w * (lo - sd[m]); J[m, iA:iA + 6] -= w * JA[m]; J[m, iB:iB + 6] -= w * JB[m]
+            if hi is not None:
+                m = sd > hi; r[m] += w * (sd[m] - hi); J[m, iA:iA + 6] += w * JA[m]; J[m, iB:iB + 6] += w * JB[m]
+            keep = r != 0
+            return r[keep], J[keep]
+        mval, wts = softmin(sd, tau)
+        gA = wts @ JA; gB = wts @ JB
+        r = []; J = []
+        if lo is not None and mval < lo:
+            r.append(w * (lo - mval)); row = np.zeros(B.n); row[iA:iA + 6] = -w * gA; row[iB:iB + 6] = -w * gB; J.append(row)
+        if hi is not None and mval > hi:
+            r.append(w * (mval - hi)); row = np.zeros(B.n); row[iA:iA + 6] = w * gA; row[iB:iB + 6] = w * gB; J.append(row)
+        return np.array(r), np.array(J).reshape(-1, B.n)
+    return f

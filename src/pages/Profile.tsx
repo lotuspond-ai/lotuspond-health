@@ -7,7 +7,7 @@ import { ageFrom, RELATIONSHIP_LABEL, useActiveProfile, useMeasurementSystem, us
 import { useUI } from '../state/ui';
 import { toast } from '../state/toast';
 import {
-  Avatar, BloodTypeSelect, ConfirmButton, Field, SexChoice, TagInput,
+  Avatar, BloodTypeSelect, ConfirmButton, Field, SegRadio, SexChoice, TagInput,
 } from '../components/forms';
 import { bmiOf, checkDraft, fromDraft, toDraft, type ProfileDraft, todayIso } from '../lib/profile';
 import { Icon } from '../components/ui';
@@ -80,7 +80,7 @@ function ProfileEditor({ profile }: { profile: Profile }) {
                 )}</Field>
               )}
               <Field label="Date of birth" error={errors.dateOfBirth}>{id => <input id={id} type="date" value={draft.dateOfBirth} max={todayIso()} onChange={e => patch({ dateOfBirth: e.target.value })} />}</Field>
-              <Field label="Sex assigned at birth" hint="Chooses the body on the map. Some reference ranges differ by sex.">{id => <SexChoice id={id} value={draft.sex} onChange={v => patch({ sex: v })} />}</Field>
+              <Field label="Sex assigned at birth" hint="Picks the body on the map (the female body for Intersex and Not set) unless you choose one under Body map. Some reference ranges differ by sex.">{id => <SexChoice id={id} value={draft.sex} onChange={v => patch({ sex: v })} />}</Field>
               <Field label="Blood type">{id => <BloodTypeSelect id={id} value={draft.bloodType} onChange={v => patch({ bloodType: v })} />}</Field>
             </div>
           </section>
@@ -238,12 +238,9 @@ function BodyMapPanel({ profile, isSelf }: { profile: Profile; isSelf: boolean }
   return (
     <section className="panel" aria-labelledby="bodymap-h">
       <h2 id="bodymap-h">Body map</h2>
-      <p className="note panel__intro">Which body the map shows for {who}. Match profile follows the sex assigned at birth. This choice is kept on this device.</p>
-      <div className="seg" role="radiogroup" aria-labelledby="bodymap-h">
-        {BODY_CHOICES.map(o => (
-          <button key={o.id} type="button" role="radio" aria-checked={choice === o.id} aria-pressed={choice === o.id} onClick={() => pick(o.id)}>{o.label}</button>
-        ))}
-      </div>
+      <p className="note panel__intro" id="bodymap-note">Which body the map shows for {who}. Match profile follows the sex assigned at birth (the female body for Intersex and Not set). This choice is kept on this device.</p>
+      <SegRadio name={`body-${profile.id}`} value={choice} options={BODY_CHOICES.map(o => ({ v: o.id, label: o.label }))} onChange={pick}
+        labelledBy="bodymap-h" describedBy="bodymap-note" />
       {choice === 'profile' && profile.sex !== 'female' && profile.sex !== 'male' && (
         <p className="note">{profile.sex === 'intersex' ? 'For intersex profiles the map shows a female body.' : 'Sex assigned at birth is not set, so the map shows a female body.'} Choose one here to change it.</p>
       )}

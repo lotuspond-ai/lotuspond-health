@@ -251,9 +251,8 @@ export const ORGANS: OrganSpec[] = [
     ],
   },
   {
-    // the breasts are only in the female body (focusOf drops parts a body does not have)
-    id: 'reproductive', name: 'Reproductive organs', short: 'Reproductive', focus: ['reproductive', 'breasts'], view: [0.2, 0.1, 1],
-    systems: ['hormones'], summary: 'The organs that make sex cells and most sex hormones: the testes and prostate in men, the ovaries and uterus in women. Testosterone and other sex hormones relate to them.',
+    id: 'reproductive', name: 'Reproductive organs', short: 'Reproductive', focus: ['reproductive'], view: [0.2, 0.1, 1],
+    systems: ['hormones'], summary: 'The testes and ovaries make sex cells and most sex hormones; the prostate, uterus and the other organs here carry and support them. Testosterone relates to them.',
     facts: [{ label: 'Hormones', value: 'testosterone (testes); estradiol and progesterone (ovaries)' }],
     landmarks: [
       { name: 'Prostate', note: 'Walnut-sized gland below the bladder; it makes PSA and part of semen.' },
@@ -265,7 +264,16 @@ export const ORGANS: OrganSpec[] = [
       { name: 'Ovaries', note: 'Make eggs, estradiol and progesterone.' },
       { name: 'Fallopian tubes', note: 'Carry eggs from the ovaries to the uterus.' },
       { name: 'Vagina', note: 'Muscular passage from the cervix to the outside.' },
-      { name: 'Breast tissue', note: 'Milk-producing lobes and ducts inside each breast.' },
+    ],
+  },
+  {
+    // only the female body has breast tissue to show; the organ is left out of the male body's lists
+    id: 'breast', name: 'Breasts', short: 'Breasts', focus: ['breasts'], view: [0.25, 0.1, 1],
+    systems: ['hormones'], summary: 'Milk-producing lobes and the ducts that carry milk to the nipple, set in fat over the chest muscles. Mammograms and breast ultrasound look at them.',
+    facts: [{ label: 'Lobes', value: '15–20 in each breast' }],
+    landmarks: [
+      { name: 'Mammary lobes', note: 'Groups of milk-producing glands, set in fat.' },
+      { name: 'Lactiferous ducts', note: 'Carry milk from the lobes and widen into small sinuses just behind the nipple.' },
     ],
   },
   {

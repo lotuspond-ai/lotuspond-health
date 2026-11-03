@@ -196,81 +196,90 @@ def fit_side(ctx, side, log=log):
     off_w = za_offset(zp['secs'], zp['zw'], J['wrist'], sg)
     E_t, d_e = hra_point(secs, mj['elbow'], off_e, sg)
     W_t, d_w = hra_point(secs, mj['wrist'], off_w, sg)
-    # 3. humerus: trunk-carried, swung about the GH centre onto GH -> elbow, turned about its own axis so that the
-    #    elbow's hinge can carry the forearm onto the skin forearm's axis; shaft stretched to length ----------------
+    # 3. humerus: carried by the upper thorax (neutral rotation, as in Z-Anatomy's anatomical position: palms
+    #    forward in both bodies) and swung about the glenohumeral centre onto GH -> elbow; shaft stretched to length.
     d_h = J['elbow'] - J['gh']; Lh = np.linalg.norm(d_h)
-    d_f = J['wrist'] - J['elbow']; Lf = np.linalg.norm(d_f)
     R0 = ctx.Rt
     Dh = unit(E_t - GH); tgt = unit(W_t - E_t)
-    Rsw = swing(R0 @ d_h, Dh) @ R0
-    # forearm direction reachable by flexion: a cone about the elbow axis with Z-Anatomy's half-angle
-    alpha = np.arccos(np.clip(unit(d_f) @ unit(J['elbow_axis']), -1, 1))
-    best = None
-    for th in np.radians(np.arange(-60, 60.5, 0.5)):
-        ax = rot_axis(Dh, th) @ Rsw @ unit(J['elbow_axis'])
-        err = abs(np.arccos(np.clip(ax @ tgt, -1, 1)) - alpha)
-        key = (round(np.degrees(err) / 0.5), abs(th))  # smallest residual first (0.5 deg bins), then the smallest turn
-        if best is None or key < best[0]: best = (key, th, err)
-    _, th, err = best
-    Rh = rot_axis(Dh, th) @ Rsw
-    info['humeral_rotation_deg'] = float(np.degrees(th)); info['elbow_cone_residual_deg'] = float(np.degrees(err))
+    Rh = swing(R0 @ d_h, Dh) @ R0
     Ah = Aff(s0 * Rh, GH - s0 * Rh @ J['gh'])
     dLh = (np.linalg.norm(E_t - GH) - s0 * Lh) / s0
     maps['hum'] = BoneMap(Ah, Stretch(J['gh'], J['elbow'], dLh))
     E = maps['hum'](J['elbow'][None])[0]
-    # 4. forearm: carried by the humerus, flexed about the elbow axis onto the skin forearm (any residual taken up as
-    #    valgus, reported) -------------------------------------------------------------------------------------------
     sh_h = Stretch(J['gh'], J['elbow'], dLh).end_shift()
-    Af0 = Aff(np.eye(3), sh_h).then(Ah)
-    ax = unit(Af0.vec(J['elbow_axis']))
-    cur = unit(Af0.vec(d_f))
-    cur_p = unit(cur - (cur @ ax) * ax); tgt_p = unit(tgt - (tgt @ ax) * ax)
-    flex = np.arctan2(np.cross(cur_p, tgt_p) @ ax, cur_p @ tgt_p)
-    Rflex = rot_axis(ax, flex)
-    cur2 = Rflex @ cur
-    Rval = swing(cur2, tgt)
-    info['elbow_flex_deg'] = float(np.degrees(flex)); info['elbow_valgus_adjust_deg'] = float(np.degrees(np.arccos(np.clip(cur2 @ tgt, -1, 1))))
-    Af = Af0.then(Aff.about(Rval @ Rflex, E))
-
-    def forearm(dLf):
-        stf = Stretch(J['elbow'], J['wrist'], dLf)
-        return stf, BoneMap(Af, stf), Aff(np.eye(3), stf.end_shift()).then(Af)
-
-    # 5. hand: carried by the radius, fitted to the skin palm (Z-Anatomy's palm and dorsum skin regions) by rotation
-    #    about the wrist and a slide along the forearm (which sets the forearm's length) ------------------------------
-    dLf = (np.linalg.norm(W_t - E) - s0 * Lf) / s0
-    stf, mrad, Ahd0 = forearm(dLf)
-    Wc = mrad(J['wrist'][None])[0]
-    H = analyse_hand(ctx, Wc, tgt, sg, log=log)
+    Af0 = Aff(np.eye(3), sh_h).then(Ah)          # forearm carried by the humerus (Z-Anatomy elbow relation)
+    # 4-5. forearm and hand. The radius turns about the ulna (pronation axis: radial head centre -> ulnar head
+    #    centre) together with the hand; the pronation angle comes from fitting Z-Anatomy's palm and dorsum skin to the
+    #    skin palm, so it is iterated with the elbow (flexion about the elbow axis onto the skin forearm's axis; any
+    #    residual is the carrying-angle difference, reported as valgus) and the forearm length (the hand fit also
+    #    slides the wrist along the forearm).
+    pa0_za, pa1_za = J['capitulum'], J['ulnar_head']
+    pax_za = unit(pa1_za - pa0_za)
     hv, hf = zp['hand_skin']
     Ph0 = sample_surface(hv, hf, 3000, seed=5)
-    Rw, slide = icp_about_slide(Ahd0(Ph0), H['palm'], Wc, tgt)
-    info['wrist_slide_mm'] = float(slide * 1000)
-    dLf += slide / s0
-    stf, mrad, Ahd0 = forearm(dLf)
-    maps['uln'] = mrad; maps['rad'] = BoneMap(Af, stf)
-    Wc = mrad(J['wrist'][None])[0]
-    Rw, _ = icp_about_slide(Ahd0(Ph0), H['palm'], Wc, tgt, slide=False)
-    # split the hand rotation into pronation (twist about the forearm's pronation axis, done by the radius turning
-    # about the ulna) and the wrist's own swing
-    pa_p0 = maps['rad'](J['capitulum'][None])[0]; pa_p1 = maps['uln'](J['ulnar_head'][None])[0]
-    pax = unit(pa_p1 - pa_p0)
-    q = _quat(Rw); v = q[1:]; proj = (v @ pax) * pax
-    tw = np.r_[q[0], proj]; tw = tw / max(np.linalg.norm(tw), 1e-12)
-    pron = 2 * np.arctan2(np.linalg.norm(tw[1:]) * np.sign(tw[1:] @ pax), tw[0])
-    Rpro = rot_axis(pax, pron)
-    Rsw = Rw @ Rpro.T
-    info['pronation_deg'] = float(np.degrees(pron)); info['wrist_swing_deg'] = float(np.degrees(np.arccos(np.clip((np.trace(Rsw) - 1) / 2, -1, 1))))
-    Apro = Aff.about(Rpro, pa_p0)
-    maps['rad'] = maps['rad'].then(Apro)
-    Wc2 = maps['rad'](J['wrist'][None])[0]
-    Ahand = Ahd0.then(Apro).then(Aff.about(Rsw, Wc2))
+    phi = 0.0; slide_total = 0.0; H = None
+    W_goal = W_t.copy()
+    for it in range(4):
+        Rp = Aff.about(rot_axis(pax_za, phi), pa0_za)          # pronation in Z-Anatomy space (radius + hand)
+        Jw = Rp(J['wrist'][None])[0]
+        d_f = Jw - J['elbow']
+        ax = unit(Af0.vec(J['elbow_axis']))
+        cur = unit(Af0.vec(d_f)); tgt = unit(W_goal - E)
+        cur_p = unit(cur - (cur @ ax) * ax); tgt_p = unit(tgt - (tgt @ ax) * ax)
+        flex = np.arctan2(np.cross(cur_p, tgt_p) @ ax, cur_p @ tgt_p)
+        Rflex = rot_axis(ax, flex); cur2 = Rflex @ cur
+        Rval = swing(cur2, tgt)
+        Af = Af0.then(Aff.about(Rval @ Rflex, E))
+        # forearm length: both bones stretched along the pronation axis (keeps the distal radio-ulnar joint)
+        k = unit(d_f) @ pax_za
+        dLf = (np.linalg.norm(W_goal - E) / s0 - np.linalg.norm(d_f)) / max(k, 0.5)
+        stf = Stretch(pa0_za, pa1_za, dLf)
+        m_uln = BoneMap(Af, stf)
+        m_rad = BoneMap(Af, stf)                               # radius: pronation first (below), then stretch + Af
+        Ahd = Rp.then(Aff(np.eye(3), stf.end_shift())).then(Af)   # hand bones: pronated, shifted with the forearm, carried
+        Wc = Ahd(J['wrist'][None])[0]
+        if H is None: H = analyse_hand(ctx, Wc, tgt, sg, log=log)
+        Rw, slide = icp_about_slide(Ahd(Ph0), H['palm'], Wc, tgt, slide=it < 2)
+        pax = unit(m_uln(pa1_za[None])[0] - m_uln(pa0_za[None])[0])
+        q = _quat(Rw); v = q[1:]; proj = (v @ pax) * pax
+        tw = np.r_[q[0], proj]; tw = tw / max(np.linalg.norm(tw), 1e-12)
+        dphi = 2 * np.arctan2(np.linalg.norm(tw[1:]) * np.sign(tw[1:] @ pax), tw[0])
+        phi += dphi; slide_total += slide
+        W_goal = W_goal + slide * tgt
+        if abs(dphi) < np.radians(0.5) and abs(slide) < 0.0005: break
+    Rpro_h = rot_axis(pax, dphi)
+    Rsw = Rw @ Rpro_h.T
+    info['pronation_deg'] = float(np.degrees(phi)); info['wrist_swing_deg'] = float(np.degrees(np.arccos(np.clip((np.trace(Rsw) - 1) / 2, -1, 1))))
+    info['elbow_flex_deg'] = float(np.degrees(flex)); info['elbow_valgus_adjust_deg'] = float(np.degrees(np.arccos(np.clip(cur2 @ tgt, -1, 1))))
+    info['wrist_slide_mm'] = float(slide_total * 1000); info['forearm_stretch_mm'] = float(dLf * s0 * 1000); info['humerus_stretch_mm'] = float(dLh * s0 * 1000)
+    # final maps: the radius is pronated in Z-Anatomy space (about the ulna), then stretched and carried
+    maps['uln'] = m_uln
+    maps['rad'] = BoneMap(Af, stf)
+    maps['rad'] = _PreRot(Rp, stf, Af)
+    Ahand = Ahd.then(Aff.about(Rpro_h, m_uln(pa0_za[None])[0])).then(Aff.about(Rsw, Wc))
     for b in CARPALS + [f'mc{i}' for i in range(1, 6)]: maps[b] = BoneMap(Ahand)
-    log(f'  {side}: humeral rotation {info["humeral_rotation_deg"]:.1f} deg (cone residual {info["elbow_cone_residual_deg"]:.1f}), elbow flexion {info["elbow_flex_deg"]:.1f} deg (valgus adjust {info["elbow_valgus_adjust_deg"]:.1f}), wrist slide {info["wrist_slide_mm"]:.1f} mm, pronation {info["pronation_deg"]:.1f} deg, wrist swing {info["wrist_swing_deg"]:.1f} deg')
+    log(f'  {side}: elbow flexion {info["elbow_flex_deg"]:.1f} deg (valgus adjust {info["elbow_valgus_adjust_deg"]:.1f}), pronation {info["pronation_deg"]:.1f} deg, wrist swing {info["wrist_swing_deg"]:.1f} deg, wrist slide {info["wrist_slide_mm"]:.1f} mm, humerus {info["humerus_stretch_mm"]:+.1f} mm, forearm {info["forearm_stretch_mm"]:+.1f} mm')
     # 6. fingers -----------------------------------------------------------------------------------------------------
     fit_fingers(L, maps, Ahand, H, ctx, info, log=log)
     info['time_s'] = round(time.time() - t0, 1)
     return dict(L=L, maps=maps, info=info, girdle=G, secs=secs, hand=H, targets=dict(GH=GH, E=E_t, W=W_t))
+
+
+class _PreRot(BoneMap):
+    """Bone map with a Z-Anatomy-space rigid motion first (the radius's pronation about the ulna), then the stretch
+    and the affine."""
+
+    def __init__(self, pre, stretch, aff):
+        super().__init__(aff, stretch); self.pre = pre
+
+    def __call__(self, x):
+        return self.aff(self.stretch(self.pre(np.asarray(x, float))))
+
+    def then(self, aff2):
+        return _PreRot(self.pre, self.stretch, self.aff.then(aff2))
+
+    def to_dict(self):
+        d = super().to_dict(); d['pre'] = self.pre.to_dict(); return d
 
 
 def _quat(R):
@@ -391,28 +400,161 @@ def bone_meshes(L, maps):
     return out
 
 
+DIGIT_COL = {1: '#e8c27a', 2: '#d9e87a', 3: '#7ae8c2', 4: '#7ab8e8', 5: '#c27ae8'}
+
+
+def bone_colour(b):
+    if b in ARM_BONES: return '#efe6d2'
+    if b in CARPALS: return '#d8c8a0'
+    return DIGIT_COL[int(b[-1])]
+
+
+def render_qa(ctx, side, r, odir):
+    from lib.qa import render_views
+    sv, sf = ctx.skin
+    meshes = r['meshes']; L = r['L']; J = L.J; sg = L.sg
+    items = [dict(mesh=(sv, sf), color='#d9b59a', opacity=0.22)]
+    items += [dict(mesh=meshes[b], color=bone_colour(b)) for b in ALL_BONES]
+    GH = r['targets']['GH']; Wt = r['targets']['W']
+    tips = np.array([f['tip'] for f in r['hand']['digits'].values()])
+    c_arm = 0.5 * (meshes['clav'][0].mean(0) + tips.mean(0))
+    rad = 0.5 * np.linalg.norm(tips.mean(0) - meshes['clav'][0].mean(0)) + 0.08
+    cams = {f'{side}-arm-front': dict(dir=(0, 0.02, 1), target=c_arm, radius=rad), f'{side}-arm-back': dict(dir=(0, 0.02, -1), target=c_arm, radius=rad),
+            f'{side}-arm-side': dict(dir=(sg, 0.02, 0.001), target=c_arm, radius=rad)}
+    # hand: palm normal and long axis from the hand's map
+    Ah = r['maps']['cap']
+    o, R = L.hand_frame()
+    n = unit(Ah.aff.vec(R[:, 2])); e1 = unit(Ah.aff.vec(R[:, 0]))
+    hc = np.concatenate([meshes[b][0] for b in ALL_BONES if b not in ARM_BONES]).mean(0)
+    cams[f'{side}-hand-palmar'] = dict(dir=tuple(n), up=tuple(-e1), target=hc, radius=0.115)
+    cams[f'{side}-hand-dorsal'] = dict(dir=tuple(-n), up=tuple(-e1), target=hc, radius=0.115)
+    return render_views(items, cams, os.path.join(odir, 'qa'), size=(900, 900))
+
+
+def save_maps(sex, side, r):
+    d = cache_dir(sex)
+    data = dict(side=side, maps={b: m.to_dict() for b, m in r['maps'].items()})
+    json.dump(data, open(os.path.join(d, f'maps-{side}.json'), 'w'))
+
+
+def load_maps(sex, side):
+    from fit.arms_geom import Aff
+    data = json.load(open(os.path.join(cache_dir(sex), f'maps-{side}.json')))
+    out = {}
+    for b, d in data['maps'].items():
+        m = BoneMap.from_dict(d)
+        if 'pre' in d: m = _PreRot(Aff(np.array(d['pre']['A']), np.array(d['pre']['t'])), m.stretch, m.aff)
+        out[b] = m
+    return out
+
+
 def run(sex):
+    from fit.arms_final import finalize
+    from fit.arms_measure import measure_side
     t0 = time.time()
     log(f'== arms {sex}')
     ctx = Ctx(sex)
-    res = {}
+    res = {}; rep_sides = {}
     for side in SIDES:
-        res[side] = fit_side(ctx, side)
+        r = fit_side(ctx, side)
+        corr, fin = finalize(r['L'], r['maps'], ctx.skinT, log=log)
+        for b in ALL_BONES: r['maps'][b] = r['maps'][b].then(corr[b])
+        r['info']['final_pass'] = fin
+        r['meshes'] = bone_meshes(r['L'], r['maps'])
+        meas = measure_side(r['L'], r['maps'], r['meshes'], ctx.skinT, ctx.height, finger_label=r['hand']['label'], skin_v=ctx.skin[0], girdle=r['girdle'], log=log)
+        r['measure'] = meas
+        rep_sides[side] = dict(measurements=meas, fit=r['info'])
+        save_maps(sex, side, r)
+        res[side] = r
+        log(f'  {side} done ({time.time() - t0:.0f} s)')
     outputs = []
     for side in SIDES:
         r = res[side]
-        meshes = bone_meshes(r['L'], r['maps'])
-        r['meshes'] = meshes
         for b in ALL_BONES:
             part = 'skel_arms' if b in ARM_BONES else 'skel_hands'
-            outputs.append(dict(name=f'{bone_name(b, side)}', part=part, mesh=meshes[b], source=[bone_name(b, side)]))
-    report = dict(sex=sex, height_m=ctx.height, body_scale=ctx.s0, sides={s: res[s]['info'] for s in SIDES})
-    write_group(sex, GROUP, outputs, report)
+            outputs.append(dict(name=bone_name(b, side), part=part, mesh=r['meshes'][b], source=[bone_name(b, side)]))
+    report = dict(sex=sex, height_m=ctx.height, body_scale=ctx.s0, sides=rep_sides,
+                  notes=['Z-Anatomy has no sesamoid bones of the hand (only of the foot), so none are placed.'])
+    d = write_group(sex, GROUP, outputs, _jsonable(report))
+    for side in SIDES:
+        render_qa(ctx, side, res[side], d)
     log(f'== arms {sex} done in {time.time() - t0:.0f} s')
     return ctx, res
+
+
+def _jsonable(x):
+    if isinstance(x, dict): return {str(k): _jsonable(v) for k, v in x.items()}
+    if isinstance(x, (list, tuple)): return [_jsonable(v) for v in x]
+    if isinstance(x, (np.floating,)): return float(x)
+    if isinstance(x, (np.integer,)): return int(x)
+    if isinstance(x, (np.bool_,)): return bool(x)
+    if isinstance(x, np.ndarray): return x.tolist()
+    return x
 
 
 if __name__ == '__main__':
     which = sys.argv[1] if len(sys.argv) > 1 else 'all'
     for sex in (('male', 'female') if which == 'all' else (which,)):
         run(sex)
+
+
+# ------------------------------------------------------------------------------------------------ export for other groups
+_DEFORM = {}
+
+
+def _za_points(name, n=4000, seed=2):
+    from lib.mesh import source
+    v, f = source('za-skeletal').get(name)
+    return np.concatenate([v, sample_surface(v, f, n, seed=seed)])
+
+
+def arm_deform(sex, side, k=4, p=4.0, eps=0.002):
+    """(f, w) for one arm of one body, from the saved fit (.cache/fit/<sex>/arms/cache/maps-<side>.json).
+
+    f(x): Z-Anatomy points (n, 3) of that arm -> body coordinates. Each point is carried by the maps of its k nearest
+          bones of the limb (clavicle and scapula included), blended with weights 1 / (d + eps)^p of its distance to
+          each bone in Z-Anatomy space: rigid on and near a bone, smooth across joints and through the soft tissue.
+    w(x): the arm's share against the trunk warp, in [0, 1]: the same kernel's mass on the limb's bones against its
+          mass on the trunk skeleton (ribs 1-8 of that side, sternum, vertebrae C4-T8), so it is 0 at the chest wall
+          and spine, 1 on the shoulder girdle and the free limb, and smooth in between (axilla, root of the neck).
+    Blend for vessels and nerves: x_body = (1 - w(x)) * get_warp(sex, 'trunk')(x) + w(x) * f(x)."""
+    key = (sex, side, k, p, eps)
+    if key in _DEFORM: return _DEFORM[key]
+    maps = load_maps(sex, side)
+    bones = [b for b in ALL_BONES if b in maps]
+    trees = {b: cKDTree(_za_points(bone_name(b, side), n=1500 if b not in ('scap', 'hum') else 5000)) for b in bones}
+    trunk_names = [f'{o}_rib{side}' for o in ('First', 'Second', 'Third', 'Fourth', 'Fifth', 'Sixth', 'Seventh', 'Eighth')]
+    trunk_names += ['Manubrium_of_sternum', 'Body_of_sternum'] + [f'Vertebra_C{i}' for i in range(4, 8)] + [f'Vertebra_T{i}' for i in range(1, 9)]
+    from lib.mesh import source
+    s = source('za-skeletal')
+    tp = np.concatenate([_za_points(n, n=2000) for n in trunk_names if n in s.by_name])
+    ttree = cKDTree(tp)
+
+    def _dists(x):
+        x = np.atleast_2d(np.asarray(x, float))
+        D = np.stack([trees[b].query(x)[0] for b in bones], 1)
+        return x, D
+
+    def f(x):
+        x, D = _dists(x)
+        kk = min(k, len(bones))
+        idx = np.argsort(D, axis=1)[:, :kk]
+        Wt = (np.take_along_axis(D, idx, 1) + eps) ** -p
+        Wt /= Wt.sum(1, keepdims=True)
+        out = np.zeros_like(x)
+        for j, b in enumerate(bones):
+            m = (idx == j)
+            rows = m.any(1)
+            if not rows.any(): continue
+            wj = (Wt * m).sum(1)[rows]
+            out[rows] += wj[:, None] * maps[b](x[rows])
+        return out
+
+    def w(x):
+        x, D = _dists(x)
+        a = ((D + eps) ** -p).sum(1)
+        t = (ttree.query(x)[0] + eps) ** -p
+        return a / (a + t)
+
+    _DEFORM[key] = (f, w)
+    return f, w

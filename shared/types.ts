@@ -3,7 +3,7 @@
 /** Anatomy groups rendered in the 3D model (one clickable unit each). */
 export type OrganId =
   | 'brain' | 'thyroid' | 'airway' | 'lungs' | 'heart' | 'esophagus' | 'liver' | 'stomach'
-  | 'spleen' | 'pancreas' | 'kidneys' | 'intestine' | 'colon' | 'reproductive' | 'marrow' | 'skin';
+  | 'spleen' | 'pancreas' | 'kidneys' | 'intestine' | 'colon' | 'reproductive' | 'breast' | 'marrow' | 'skin';
 
 /** Body systems used to group biomarkers in the UI. */
 export type SystemId =

@@ -6,6 +6,7 @@ import { HttpBackend } from '../api/http';
 import { useHealth } from '../lib/store';
 import { enterApp, leaveApp } from '../site/links';
 import { useUI } from './ui';
+import { useStage } from '../components/stage/stageSettings';
 import { countryPolicy } from '../../shared/regions';
 
 type Status = 'loading' | 'signed-out' | 'signed-in' | 'offline';
@@ -122,6 +123,7 @@ export const useSession = create<SessionState>((set, get) => {
 
     deleteProfile: async id => {
       await backend.deleteProfile(id);
+      useStage.getState().forgetBodies([id]);
       const profiles = get().profiles.filter(p => p.id !== id);
       set({ profiles });
       if (get().activeId === id) {
@@ -135,6 +137,7 @@ export const useSession = create<SessionState>((set, get) => {
 
     deleteAccount: async password => {
       await backend.deleteAccount(password);
+      useStage.getState().forgetBodies(get().profiles.map(p => p.id));
       reset('Your account and all of its records were deleted.');
     },
 

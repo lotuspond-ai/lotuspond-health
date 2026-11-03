@@ -3,6 +3,8 @@ import { useHealth } from '../lib/store';
 import { SYSTEM_LABELS } from '../lib/catalog';
 import { useUI } from '../state/ui';
 import { ORGANS, organOrNull } from '../anatomy/organs';
+import { organsIn } from '../anatomy/bodies';
+import { useBody } from '../state/body';
 import { buildSeries, seriesForOrgan, systemCounts, type Series } from '../lib/derive';
 import type { OrganId, SystemId } from '../types';
 import { StagePanel } from '../components/stage/StagePanel';
@@ -49,9 +51,12 @@ function SystemButtons({ series }: { series: Series[] }) {
 function OrganButtons({ series }: { series: Series[] }) {
   const selected = useHealth(s => s.selectedOrgan), selectOrgan = useHealth(s => s.selectOrgan);
   const { hovered, setHovered } = useUI();
+  // only the organs this body has (the breasts are in the female body only)
+  const body = useBody();
+  const shown = useMemo(() => organsIn(body), [body]);
   return (
     <>
-      {ORGANS.filter(o => o.id !== 'skin').map(o => (
+      {ORGANS.filter(o => o.id !== 'skin' && shown.has(o.id)).map(o => (
         <button key={o.id} className={`organ-link${hovered === o.id ? ' is-hot' : ''}`} aria-current={selected === o.id}
           onClick={() => selectOrgan(selected === o.id ? null : o.id)} onMouseEnter={() => setHovered(o.id)} onMouseLeave={() => setHovered(null)}>
           <i className={organState(series, o.id)} /><span>{o.name}</span>

@@ -50,6 +50,8 @@ interface StageSettings {
   bodies: Record<string, Body>;
   setMode: (m: StageMode) => void;
   setBody: (profileId: string, choice: BodyChoice) => void;
+  /** Drop the choices kept for these profiles (deleted profiles, or a deleted account's). */
+  forgetBodies: (profileIds: string[]) => void;
   setStudio: (on: boolean) => void;
   setTier: (t: Tier, ceiling?: Tier) => void;
 }
@@ -65,8 +67,17 @@ const stored = load();
 const startTier = (studio: boolean): Tier => pinned ?? (studio ? 3 : lowPowerDevice ? 1 : 2);
 
 export const useStage = create<StageSettings>((set, get) => {
-  // one writer for every persisted field, so changing one setting never drops another
-  const persist = () => { const { mode, studio, bodies } = get(); save({ mode, studio, bodies }); };
+  // One writer for every persisted field, so changing one setting never drops another. Body choices are read back
+  // from storage first and changed one profile at a time, so another open tab's choices are not overwritten.
+  const persist = (change?: (bodies: Record<string, Body>) => void) => {
+    const bodies = { ...(load().bodies ?? get().bodies) };
+    change?.(bodies);
+    set({ bodies });
+    const { mode, studio } = get();
+    save({ mode, studio, bodies });
+  };
+  // a choice made in another tab applies here too
+  if (typeof window !== 'undefined') window.addEventListener('storage', e => { if (e.key === KEY) set({ bodies: load().bodies ?? {} }); });
   return {
     mode: stored.mode ?? 'map',
     studio: stored.studio ?? false,
@@ -79,11 +90,8 @@ export const useStage = create<StageSettings>((set, get) => {
       set({ studio, tier: Math.min(startTier(studio), studio ? 3 : ceiling) as Tier });
       persist();
     },
-    setBody: (profileId, choice) => {
-      const bodies = { ...get().bodies };
-      if (choice === 'profile') delete bodies[profileId]; else bodies[profileId] = choice;
-      set({ bodies }); persist();
-    },
+    setBody: (profileId, choice) => persist(bodies => { if (choice === 'profile') delete bodies[profileId]; else bodies[profileId] = choice; }),
+    forgetBodies: profileIds => persist(bodies => { for (const id of profileIds) delete bodies[id]; }),
     setTier: (tier, ceiling) => set(s => ({ tier, ceiling: ceiling ?? s.ceiling })),
   };
 });

@@ -2,7 +2,7 @@
 import type { BloodType, DocumentKind, OrganId, Relationship, Sex } from './types.ts';
 
 export const ORGAN_IDS: readonly OrganId[] = ['brain', 'thyroid', 'airway', 'lungs', 'heart', 'esophagus', 'liver', 'stomach',
-  'spleen', 'pancreas', 'kidneys', 'intestine', 'colon', 'reproductive', 'marrow', 'skin'];
+  'spleen', 'pancreas', 'kidneys', 'intestine', 'colon', 'reproductive', 'breast', 'marrow', 'skin'];
 
 export const RELATIONSHIPS: readonly Relationship[] = ['self', 'partner', 'child', 'parent', 'sibling', 'other'];
 export const SEXES: readonly Sex[] = ['female', 'male', 'intersex'];

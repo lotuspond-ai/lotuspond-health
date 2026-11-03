@@ -190,7 +190,7 @@ def assemble(sex):
 # the surface that faces the viewer.
 VIEW = dict(brain=(0.55, 0.25, 0.8), thyroid=(0.25, 0.1, 1), airway=(0.3, 0.1, 1), lungs=(0.2, 0.15, 1), heart=(0.35, 0.12, 1), esophagus=(0.8, 0.1, 0.6),
             liver=(-0.45, 0.1, 1), stomach=(0.5, 0.1, 1), spleen=(1, 0.15, -0.3), pancreas=(0.1, 0.4, 1), kidneys=(-0.15, 0.1, -1), intestine=(0.1, 0.2, 1),
-            colon=(0, 0.15, 1), marrow=(0.3, 0.1, 1), reproductive=(0.2, 0.1, 1), skin=(0, 0, 1))
+            colon=(0, 0.15, 1), marrow=(0.3, 0.1, 1), reproductive=(0.2, 0.1, 1), breast=(0.25, 0.1, 1), skin=(0, 0, 1))
 L, R = r'_L$', r'_R$'
 # organ -> [(landmark name, structure regex (on names without the VH_M_/VH_F_ prefix, or 'part:<id>'), rule)].
 # Rules: 'face' (surface point facing the organ's view near the structure's centre), or an extreme point along a
@@ -237,7 +237,8 @@ LANDMARKS = {
                ('Iliac crest', r'^ilium_compact_bone_L$', 'top'), ('Red marrow', r'^ilium_spongy_bone_L$', 'face'), ('Femur', r'^femur_L$', 'face'), ('Thymus', 'part:thymus', 'front')],
     'reproductive': [('Prostate', r'^(peripheral_zone_of_prostate_[LR]|base_of_prostate)$', 'front'), ('Seminal vesicles', r'^seminal_vesicle$', 'back'), ('Vas deferens', r'^vas_deferens_L$', 'face'),
                      ('Testes', r'^testis_[lr]$', 'front'), ('Uterus', r'^fundus_of_uterus$|^uterus$|^body_of_uterus$', 'top'), ('Cervix', r'^cervix$', 'face'),
-                     ('Ovaries', r'^left_ovary$', 'face'), ('Fallopian tubes', r'^ampulla_of_uterine_tube_L$', 'face'), ('Vagina', r'^vagina$', 'face'), ('Breast tissue', 'part:breasts', 'front')],
+                     ('Ovaries', r'^left_ovary$', 'face'), ('Fallopian tubes', r'^ampulla_of_uterine_tube_L$', 'face'), ('Vagina', r'^vagina$', 'face')],
+    'breast': [('Mammary lobes', r'^mammary_lobes_L$', 'face'), ('Lactiferous ducts', r'^main_lactiferous_ducts_R$', 'front')],
 }
 PIN = dict(brain=('part:brain', 'dir:0.2,0.6,0.8'), thyroid=('part:thyroid', 'front'), airway=('part:airway', 'face'), lungs=('part:lung_r_upper', 'face'), heart=(r'^(heart_)?left_ventricle$', 'face'),
            esophagus=('part:esophagus', 'face'), liver=('part:liver', 'dir:-0.6,0.1,0.8'), stomach=('part:stomach', 'face'), spleen=('part:spleen', 'face'), pancreas=('part:pancreas', 'face'),

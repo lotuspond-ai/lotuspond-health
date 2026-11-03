@@ -222,7 +222,7 @@ class FootFit:
         e_toe = 0.0 if skip_toes else self.toe_overlap(W)
         # 7. priors (degrees of freedom stay anatomical)
         r = (x[0] / (45 * DEG)) ** 2 + (x[1] / (20 * DEG)) ** 2
-        r += np.sum((x[2:5] / (8 * DEG)) ** 2)
+        r += (x[2] / (4 * DEG)) ** 2 + (x[3] / (4 * DEG)) ** 2 + (x[4] / (10 * DEG)) ** 2
         r += (x[5] / 0.06) ** 2 + ((x[6] - x[5]) / 0.025) ** 2
         r += np.sum((x[7:10] / (4 * DEG)) ** 2) + np.sum((x[10:13] / 0.4) ** 2)
         for k, n in TOE_SLOTS:

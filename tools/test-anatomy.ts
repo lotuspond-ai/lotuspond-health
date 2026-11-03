@@ -11,7 +11,7 @@ import { ALL_EXTENSIONS } from '@gltf-transform/extensions';
 import { MeshoptDecoder } from 'meshoptimizer';
 import { ORGAN_IDS } from '../shared/constants.ts';
 import { ORGANS, ORGAN_BY_ID, PICKABLE, TISSUE } from '../src/anatomy/organs.ts';
-import { RIGS, focusOf, landmarksOf, meshSpecs, pinOf } from '../src/anatomy/bodies.ts';
+import { RIGS, focusOf, landmarksOf, meshSpecs, organsIn, pinOf } from '../src/anatomy/bodies.ts';
 import { BODIES, DEFAULT_BODY, bodyFor, type Body } from '../src/lib/body.ts';
 import type { OrganId } from '../src/types.ts';
 
@@ -20,9 +20,11 @@ const modelFile = (body: Body) => root(`public/models/anatomy-${body}.glb`);
 
 /** Landmarks only one body has. */
 const ONLY: Record<Body, string[]> = {
-  female: ['Uterus', 'Cervix', 'Ovaries', 'Fallopian tubes', 'Vagina', 'Breast tissue'],
+  female: ['Uterus', 'Cervix', 'Ovaries', 'Fallopian tubes', 'Vagina'],
   male: ['Prostate', 'Seminal vesicles', 'Vas deferens', 'Testes'],
 };
+/** Organs a body does not have at all. */
+const ABSENT: Record<Body, OrganId[]> = { female: [], male: ['breast'] };
 
 const docs = new Map<Body, Document>();
 before(async () => {
@@ -74,8 +76,14 @@ for (const body of BODIES) {
       assert.ok(rig.height > 1.5 && rig.height < 2, `height ${rig.height}`);
     });
 
+    it('has every organ but the ones it lacks', () => {
+      const missing = ORGANS.map(o => o.id).filter(id => !organsIn(body).has(id));
+      assert.deepEqual(missing, ABSENT[body]);
+    });
+
     it('has the parts each organ focuses on', () => {
       for (const o of ORGANS) {
+        if (ABSENT[body].includes(o.id)) continue;
         const ids = focusOf(body, o.id);
         assert.ok(ids.length > 0, `${o.id}: nothing to focus on`);
         for (const id of ids) assert.ok(id in rig.parts, `${o.id}: focus part ${id} is not in the model`);
@@ -85,6 +93,7 @@ for (const body of BODIES) {
     it('has a pin inside the body for every organ you can pick', () => {
       const [lo, hi] = rig.bounds;
       for (const id of PICKABLE) {
+        if (ABSENT[body].includes(id)) { assert.equal(pinOf(body, id), null, `${id}: pin for an organ this body lacks`); continue; }
         const pin = pinOf(body, id);
         assert.ok(pin, `${id}: no pin`);
         for (let k = 0; k < 3; k++) assert.ok(pin[k] >= lo[k] - 0.05 && pin[k] <= hi[k] + 0.05, `${id}: pin outside the body`);
@@ -93,6 +102,7 @@ for (const body of BODIES) {
 
     it('places every landmark that has a note, and has a note for every landmark', () => {
       for (const o of ORGANS) {
+        if (ABSENT[body].includes(o.id)) continue;
         const placed = (rig.landmarks[o.id as OrganId] ?? []).map(l => l.name);
         const noted = new Set(o.landmarks.map(l => l.name));
         for (const name of placed) assert.ok(noted.has(name), `${o.id}: landmark ${name} has no note`);

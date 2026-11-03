@@ -428,6 +428,14 @@ if (dicomOrgan) check('DICOM organ ABDOMEN → liver', dicomOrgan(ct.header, 'y.
 const mrj = decodeDicom(new Uint8Array(readFileSync(join(fixtures, 'mri-brain-jpeg-synthetic.dcm'))));
 check('DICOM JPEG baseline detected as compressed', mrj.header.compressed && mrj.compressedFrame?.[0] === 0xff && mrj.compressedFrame?.[1] === 0xd8 && mrj.values === null);
 if (dicomOrgan) check('DICOM HEAD/MRI BRAIN → brain', dicomOrgan(mrj.header, 'z.dcm') === 'brain');
+if (dicomOrgan) {
+  const tags = (bodyPart, modality, studyDescription = null) => ({ bodyPart, modality, studyDescription, seriesDescription: null });
+  check('DICOM US PELVIS → reproductive', dicomOrgan(tags('PELVIS', 'US'), 'a.dcm') === 'reproductive');
+  check('DICOM US PELVIS bladder study → kidneys', dicomOrgan(tags('PELVIS', 'US', 'US BLADDER PVR'), 'a.dcm') === 'kidneys');
+  check('DICOM CT PELVIS → marrow', dicomOrgan(tags('PELVIS', 'CT'), 'a.dcm') === 'marrow');
+  check('DICOM MG → breast', dicomOrgan(tags(null, 'MG'), 'a.dcm') === 'breast');
+  check('DICOM BREAST → breast', dicomOrgan(tags('BREAST', 'MR'), 'a.dcm') === 'breast');
+}
 check('DICOM JPEG applyWindow → null', applyWindow(mrj) === null);
 const ctw = applyWindow(ct);
 check('DICOM CT soft-tissue window', ctw.center === 40 && ctw.window === 400);
@@ -445,7 +453,9 @@ section('image hints');
 const ORGAN_HINTS = [['chest_xray_2026.jpg', 'lungs'], ['CXR-PA.png', 'lungs'], ['echo report.jpg', 'heart'], ['ECG.png', 'heart'], ['usg_abdomen.jpg', 'liver'],
   ['KUB-ultrasound.png', 'kidneys'], ['MRI Brain.jpg', 'brain'], ['thyroid-usg.jpg', 'thyroid'], ['knee xray.jpeg', 'marrow'], ['DEXA_scan.png', 'marrow'],
   ['IMG_2041.jpg', null], ['lumbarSpine.png', 'marrow'], ['prostate_mri.png', 'reproductive'], ['TVS ultrasound.jpg', 'reproductive'],
-  ['mammogram-2026.png', 'reproductive'], ['scrotal doppler.jpg', 'reproductive'], ['KUB-ultrasound-2.png', 'kidneys']];
+  ['mammogram-2026.png', 'breast'], ['breast_ultrasound.jpg', 'breast'], ['scrotal doppler.jpg', 'reproductive'], ['KUB-ultrasound-2.png', 'kidneys'],
+  ['USG KUB with prostate.pdf', 'kidneys'], ['USG_pelvis.jpg', 'reproductive'], ['pelvic usg.png', 'reproductive'], ['obstetric ultrasound.jpg', 'reproductive'],
+  ['testicle ultrasound.png', 'reproductive'], ['pelvis xray.jpg', 'marrow']];
 for (const [f, want] of ORGAN_HINTS) check(`guessOrgan(${f})`, guessOrgan(f) === want, String(guessOrgan(f)));
 const MOD_HINTS = [['chest_xray.jpg', 'XR'], ['x-ray knee.png', 'XR'], ['CT abdomen.png', 'CT'], ['mri_brain.jpg', 'MR'], ['usg.jpg', 'US'], ['echo.png', 'Echo'], ['ecg.png', 'ECG'], ['photo.jpg', null]];
 for (const [f, want] of MOD_HINTS) check(`guessModality(${f})`, guessModality(f) === want, String(guessModality(f)));

@@ -6,8 +6,10 @@ const ORGAN_RULES: [RegExp, OrganId][] = [
   [/\b(?:thyroid|neck|cervical\s*soft|parathyroid)\b/, 'thyroid'],
   [/\b(?:echo|echocardiogra\w*|ecg|ekg|heart|cardiac|cardio\w*|coronary|angio\w*|cta\s*coronary)\b/, 'heart'],
   [/\b(?:chest|lungs?|cxr|thorax|thoracic|pulmonary|hrct|pa\s*view|cxr\w*)\b/, 'lungs'],
-  [/\b(?:prostat\w*|uterus|uterine|endometri\w*|ovary|ovaries|ovarian|adnex\w*|testis|testes|testicular|scrot\w*|tvs|transvaginal|cervix|mammo\w*|breasts?)\b/, 'reproductive'],
+  [/\b(?:mammo\w*|breasts?|tomosynthesis)\b/, 'breast'],
+  // kidneys first: a "KUB with prostate" ultrasound is a urinary-tract study
   [/\b(?:kidneys?|kub|renal|ivp|urogra\w*|bladder|ureter\w*)\b/, 'kidneys'],
+  [/\b(?:prostat\w*|uterus|uterine|endometri\w*|ovary|ovaries|ovarian|adnex\w*|testis|testes|testicles?|testicular|scrot\w*|tvs|transvaginal|cervix|obstetric\w*|pregnan\w*|f(?:o)?etal|pelvi[cs]\s+(?:usg|us|ultrasound|sonogra\w*)|(?:usg|us|ultrasound|sonogra\w*)\s+(?:of\s+)?(?:the\s+)?pelvi[cs])\b/, 'reproductive'],
   [/\b(?:liver|hepat\w*|abdomen|abdominal|abd|usg|ultrasound|sonogra\w*|gall\s*bladder|gallbladder|biliary|mrcp)\b/, 'liver'],
   [/\b(?:pancrea\w*)\b/, 'pancreas'],
   [/\b(?:spleen|splenic)\b/, 'spleen'],
