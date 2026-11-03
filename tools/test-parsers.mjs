@@ -23,6 +23,8 @@ const { parseValue } = await import(lib('parse/rows.ts'));
 const { SAMPLE } = await import(lib('sample.ts'));
 const store = await import(lib('store.ts'));
 const { buildExport } = await import(lib('export.ts'));
+const units = await import(lib('units.ts'));
+const regions = await import(new URL('../shared/regions.ts', import.meta.url).href);
 
 let pass = 0, fail = 0;
 const failures = [];
@@ -253,6 +255,39 @@ await store.useHealth.getState().loadSample();
 await store.useHealth.getState().openProfile(null);
 check('openProfile(null) clears records', store.useHealth.getState().measurements.length === 0 && store.useHealth.getState().profileId === null);
 check('refreshMeasurement export', typeof refreshMeasurement === 'function');
+
+/* ---------------- display units and country policy ---------------- */
+section('display units');
+{
+  const glu = { markerId: 'glucose_fasting', rawName: 'Glucose', value: 99, valueText: '99', unit: 'mg/dL', range: { low: 70, high: 100, text: '70 - 100', source: 'report' }, status: 'normal', date: null, sourceFile: 'x', confidence: 'high' };
+  const si = units.displayMeasurement(glu, 'si');
+  check('glucose 99 mg/dL → 5.5 mmol/L', si.unit === 'mmol/L' && si.value === 5.5 && si.converted, JSON.stringify(si));
+  check('glucose range converted', si.range.low === 3.89 && si.range.high === 5.55 && si.range.text === '3.89 – 5.55', JSON.stringify(si.range));
+  check('conventional leaves values alone', units.displayMeasurement(glu, 'conventional').text === '99');
+  const crea = units.displayMeasurement({ ...glu, markerId: 'creatinine', value: 0.82, valueText: '0.82', range: { low: 0.6, high: 1.1, source: 'report' } }, 'si');
+  check('creatinine 0.82 mg/dL → 72.5 µmol/L', crea.unit === 'µmol/L' && Math.abs(crea.value - 72.5) < 0.6, JSON.stringify(crea));
+  const hb = units.displayMeasurement({ ...glu, markerId: 'hemoglobin', value: 12.9, valueText: '12.9', unit: 'g/dL', range: null }, 'si');
+  check('hemoglobin 12.9 g/dL → 129 g/L', hb.unit === 'g/L' && hb.value === 129, JSON.stringify(hb));
+  const lt = units.displayMeasurement({ ...glu, markerId: 'ldl', value: 100, valueText: '<100', unit: 'mg/dL' }, 'si');
+  check('keeps < prefix', lt.text === '<2.59', lt.text);
+  check('tsh has no SI conversion', units.siConversion('tsh') === null);
+  check('qualitative untouched', units.displayMeasurement({ ...glu, markerId: 'urine_protein', value: null, valueText: 'Negative', unit: '' }, 'si').text === 'Negative');
+  check('every SI unit exists in the catalog', Object.keys(units).length > 0 && ['total_cholesterol','triglycerides','creatinine','vitamin_d','ft4','cortisol','hematocrit'].every(id => units.siConversion(id)));
+  check('round 3 s.f.', units.roundForDisplay(4.891) === 4.89 && units.roundForDisplay(0.0566) === 0.06 && units.roundForDisplay(129.4) === 129 && units.roundForDisplay(72.46) === 72.5);
+}
+section('country policy');
+{
+  check('249 ISO codes, no duplicates', regions.COUNTRY_CODES.length === 249 && new Set(regions.COUNTRY_CODES).size === 249);
+  const inp = regions.countryPolicy('in');
+  check('India: own cell, partners, grievance officer, adults only', inp.region === 'in' && inp.partnerLabs && inp.grievanceOfficer && inp.minAge === 18 && !inp.crossBorder);
+  check('Germany: EU cell, GDPR', regions.countryPolicy('DE').region === 'eu' && regions.countryPolicy('DE').laws[0].includes('GDPR'));
+  check('UK: stored in EU, cross-border, SI units', regions.countryPolicy('GB').region === 'eu' && regions.countryPolicy('GB').crossBorder && regions.countryPolicy('GB').units === 'si');
+  check('US: US cell, imperial', regions.countryPolicy('US').region === 'us' && regions.countryPolicy('US').measurement === 'us');
+  check('UAE not available (in-country health data)', !regions.countryPolicy('AE').available && /UAE/.test(regions.countryPolicy('AE').unavailableReason));
+  check('Australia: international cell, own law', regions.countryPolicy('AU').region === 'global' && regions.countryPolicy('AU').laws[0].includes('Privacy Act 1988'));
+  check('every country has a region and a law', regions.COUNTRY_CODES.every(c => { const p = regions.countryPolicy(c); return p.region && p.laws.length > 0; }));
+  check('isCountryCode', regions.isCountryCode('in') && !regions.isCountryCode('ZZ'));
+}
 
 /* ---------------- PDF ---------------- */
 section('PDF');

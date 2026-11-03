@@ -130,6 +130,11 @@ export const useSession = create<SessionState>((set, get) => {
   };
 });
 
+/** How lab values are shown for this account (conventional mg/dL until the account says otherwise). */
+export function useUnitSystem(): 'conventional' | 'si' {
+  return useSession(s => s.account?.unitSystem ?? 'conventional');
+}
+
 /** The open profile. */
 export function useActiveProfile(): Profile | null {
   return useSession(s => s.profiles.find(p => p.id === s.activeId) ?? null);

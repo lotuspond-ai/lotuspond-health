@@ -81,6 +81,12 @@ export interface Account {
   id: string;
   email: string;
   createdAt: string;          // ISO timestamp
+  /** ISO 3166-1 alpha-2 country of residence, chosen at sign-up (decides storage region and rules). */
+  country?: string | null;
+  /** Data-residency cell holding this account's records (see shared/regions.ts). */
+  region?: 'in' | 'eu' | 'us' | 'global';
+  /** How lab values are shown. */
+  unitSystem?: 'conventional' | 'si';
 }
 
 /** Who a profile belongs to, relative to the account holder. */
