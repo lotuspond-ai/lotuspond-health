@@ -222,6 +222,10 @@ export class FakeLabAdapter implements LabPartner {
     if (!o || typeof o !== 'object' || typeof o.order_ref !== 'string' || !o.order_ref) {
       throw new PartnerError('invalid_request', 'Webhook body has no order_ref');
     }
-    return { partnerRef: o.order_ref, eventId: typeof o.event_id === 'string' ? o.event_id : null };
+    return {
+      partnerRef: o.order_ref,
+      eventId: typeof o.event_id === 'string' ? o.event_id : null,
+      ...(typeof o.client_ref === 'string' && o.client_ref ? { clientRef: o.client_ref } : {}),
+    };
   }
 }

@@ -256,7 +256,7 @@ describe('webhooks', () => {
     assert.deepEqual(env.webhooks.map(w => w.body.status), ['ORDER_PLACED', 'PHLEBO_ASSIGNED', 'SAMPLE_COLLECTED', 'IN_LAB', 'REPORT_READY']);
     for (const w of env.webhooks) {
       assert.ok(env.adapter.verifyWebhook({ headers: w.req.headers, rawBody: w.req.rawBody, ip: '127.0.0.1' }));
-      assert.deepEqual(env.adapter.parseWebhook(w.body), { partnerRef, eventId: w.body.event_id });
+      assert.deepEqual(env.adapter.parseWebhook(w.body), { partnerRef, eventId: w.body.event_id, clientRef: 'ord_1' });
     }
     assert.equal(new Set(env.webhooks.map(w => w.body.event_id)).size, env.webhooks.length);
   });

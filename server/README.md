@@ -1,10 +1,26 @@
 # LotusPond backend (in progress)
 
-The booking and results service described in [`docs/lab-booking-backend.md`](../docs/lab-booking-backend.md). So far it has the lab partner interface and a simulated lab to build against. There is no HTTP server, database or worker yet.
+The booking and results service described in [`docs/lab-booking-backend.md`](../docs/lab-booking-backend.md). So far it has:
+
+- the lab partner interface and a simulated lab to build against;
+- the order state machine;
+- the webhook receiver, inbox processor and reconciliation poller.
+
+Storage is in memory for now, behind interfaces a Postgres implementation will follow. There is no booking API, database or results pipeline yet.
 
 | Path | What it holds |
 | --- | --- |
-| `src/partners/types.ts` | `LabPartner`, the interface every lab adapter implements, and `PartnerError` |
+| `src/orders/state.ts` | The order state machine: which status moves are allowed, from the partner and from us |
+| `src/orders/sync.ts` | `syncOrder`: asks the partner for an order's status, drops out-of-date reads, applies the state machine, records events, fires hooks |
+| `src/orders/reconcile.ts` | The poller: syncs unfinished orders on a per-status schedule, so missed webhooks only delay updates |
+| `src/webhooks/receiver.ts` | `POST /hooks/:partner/:hookSecret`: checks the secret, allowlist and signature, stores the body sealed and deduplicated, replies 200 |
+| `src/webhooks/processor.ts` | Works through the inbox: finds each order (linking lost-response bookings) and syncs it; retries with backoff, then dead-letters |
+| `src/http/app.ts` | The Hono app: webhook routes and `/healthz` |
+| `src/store/` | Storage interfaces (`types.ts`) and in-memory implementations (`memory.ts`) |
+| `src/crypto/sealer.ts` | AES-256-GCM for data at rest (raw webhook bodies) |
+| `src/log.ts` | Structured logging; `alert: true` marks lines to page on |
+| `src/dev.ts` | Development server (below) |
+| `src/partners/types.ts` | `LabPartner`, the interface every lab adapter implements, `PartnerError` and the partner registry |
 | `src/partners/fake-lab.ts` | `FakeLab`: a simulated lab (catalogue, slots, order timeline, signed webhooks, reports) |
 | `src/partners/fake-lab-data.ts` | Its packages and result rows, in Indian lab report style |
 | `src/partners/fake-pdf.ts` | Writes its text-based PDF reports |
@@ -21,6 +37,23 @@ npm run test:server
 ```
 
 These tests also pass simulated reports through the app's own JSON and PDF parsers (`src/lib/parse/`). This checks that every row lands on the right biomarker with the same value and status either way.
+
+The webhook tests post the simulated lab's signed webhooks into the real Hono app (`app.request`, no network). They cover every scenario tag, retries and dead letters, a storage outage, polling without webhooks, and the receiver's refusals.
+
+## Dev server
+
+```bash
+npm run dev:server
+```
+
+This runs the webhook receiver on `http://127.0.0.1:8787`, with the simulated lab posting to it over HTTP and the processor and poller on timers. There's no booking API yet, so it places four demo orders through the adapter and prints each one's progress:
+
+- a plain order;
+- one with duplicate, out-of-order webhooks and an amended report;
+- one whose booking reply is lost, linked by its first webhook;
+- one with no webhooks, caught up by the poller.
+
+Set `FAKE_LAB_STEP_MS` to change the pace (default 3000). Add `-- --once` to exit when all four reach `report_ready`.
 
 ## The simulated lab
 

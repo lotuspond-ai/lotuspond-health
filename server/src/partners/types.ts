@@ -78,6 +78,11 @@ export interface WebhookInfo {
   partnerRef: string;
   /** Partner's event id when it sends one; otherwise the receiver dedupes on a hash of the body. */
   eventId: string | null;
+  /**
+   * Our order id, when the partner echoes the client reference. Lets a webhook link an order whose booking
+   * reply was lost (still `placing`, no partnerRef yet); the link is confirmed with the partner before use.
+   */
+  clientRef?: string;
 }
 
 export interface LabPartner {
@@ -113,3 +118,14 @@ export class PartnerError extends Error {
     this.retryable = code === 'timeout' || code === 'unavailable';
   }
 }
+
+/** A configured partner: its adapter and its webhook endpoint settings. */
+export interface PartnerConfig {
+  adapter: LabPartner;
+  /** The secret path segment in /hooks/:partner/:hookSecret. Rotatable; compared in constant time. */
+  hookSecret: string;
+  /** If set, webhooks are accepted only from these addresses. */
+  allowIps?: readonly string[];
+}
+
+export type PartnerRegistry = ReadonlyMap<PartnerId, PartnerConfig>;

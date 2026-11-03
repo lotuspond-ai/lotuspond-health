@@ -128,6 +128,8 @@ Every partner sits behind one `LabPartner` interface (§8). The first adapter is
 1. The partner calls `POST /hooks/:partner/:hookSecret`.
 2. The receiver checks the signature (or the secret path and IP allowlist), stores the request in `webhook_inbox` with a uniqueness key, and returns `200`.
 3. The worker extracts the partner reference, calls `adapter.status()`, maps the partner status to ours, and applies it through the state machine (§6). Every change is written to `order_events`.
+   - If no order has that reference but the partner echoed our order id, the order's booking reply was probably lost (it is still `placing`). The worker confirms the reference with `findOrderByClientRef` before linking it.
+   - An order it can't find is retried with backoff (from 1 minute up to 1 hour), then dead-lettered with an alert after 10 attempts. Partner timeouts and outages are retried the same way. An unreadable body goes straight to dead letter.
 4. Changes the user cares about (collector assigned, sample collected, report ready) trigger a Web Push. The partner already texts the user about the collection visit, so we don't duplicate that.
 
 ### 5.3 Results delivery
@@ -150,11 +152,17 @@ created ─▶ payment_pending ─▶ paid ─┐            (payment steps only
                                                      delivered ◀── report_ready ◀── processing
                                                          ▲              ▲               │
                                                          └── expired    └─ partial_report
-   cancelled: allowed from any state before sample_collected
+   cancelled: a user may cancel before sample_collected; the lab may cancel at any unfinished stage
 ```
 
-- Each state has a rank, and transitions only move forward, so out-of-order webhooks are harmless. The one allowed step back is `recollection_needed → booked` (sample rejected, new visit). Rescheduling stays in `booked` and records an event.
-- Each adapter maps the partner's own status names to these. An unknown partner status is logged, raises an alert and leaves the order unchanged.
+The rules live in `server/src/orders/state.ts`. Moves come from two sources: the partner (what the lab reports) and us (payment, placing, a user's cancel or reschedule, pickup, expiry).
+
+- **Forward only.** Each state has a rank, and partner moves only go forward. Skipping ahead is fine: after a missed webhook an order can jump from `booked` to `report_ready`. The exceptions:
+  - `collector_assigned → booked`: the lab rescheduled the visit or reassigned the collector.
+  - `recollection_needed`: can be reported any time from `booked` up to `partial_report`. From there the visit starts again at `booked` or later.
+- **Out-of-date reads are dropped.** Each order stores the partner's last status and the time the partner gave for it. A read with an older time is ignored, so a slow status call that finishes late can't undo a newer one.
+- **A new partner status that doesn't change ours is still recorded**, as an event. Examples: `REPORT_AMENDED` while we're at `report_ready` or `delivered`, which also fires the report hook so the results pipeline checks the version. A newer status that would move backwards is recorded too, with an alert.
+- Each adapter maps the partner's own status names to these. An unknown partner status is recorded, raises an alert and leaves the order unchanged.
 - `delivered` means the device confirmed the final (non-partial) delivery. `expired` means 30 days passed without pickup.
 - Final states: `delivered`, `expired`, `cancelled`, `failed`.
 
@@ -324,7 +332,7 @@ Deleting an account wipes personal details and pending deliveries straight away.
 
 | Failure | Handling |
 | --- | --- |
-| Missed webhook | Reconciliation job polls unfinished orders: around the slot time for `booked`, hourly after `sample_collected`, every 6 hours while `processing` |
+| Missed webhook | Reconciliation job (`server/src/orders/reconcile.ts`) polls unfinished orders: every 3 hours while `booked` (to follow the slot time once orders carry it), every 30 minutes once a collector is assigned, hourly after `sample_collected`, every 6 hours while `processing`, every 3 hours after a partial report |
 | Duplicate webhook | The unique `dedupe_key` drops it; the state machine ignores repeated statuses |
 | Out-of-order webhooks | Forward-only state ranks (§6) |
 | Partner down while the user is booking | That partner's packages are marked unavailable and the others are still shown; no order is created |

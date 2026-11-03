@@ -10,13 +10,16 @@
     "preview": "vite preview",
     "test": "node tools/test-parsers.mjs && npm run test:server",
     "test:server": "node --test \"server/test/**/*.test.ts\"",
+    "dev:server": "node server/src/dev.ts",
     "build:artifact": "node tools/build-artifact.mjs"
   },
   "dependencies": {
+    "@hono/node-server": "2.1.5",
     "@react-three/drei": "^10.7.9",
     "@react-three/fiber": "^9.8.2",
     "@react-three/postprocessing": "^3.2.2",
     "dicom-parser": "^1.8.21",
+    "hono": "4.13.13",
     "idb-keyval": "^6.3.0",
     "papaparse": "^5.7.0",
     "pdfjs-dist": "^6.5.438",
