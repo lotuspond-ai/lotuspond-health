@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import type { OrganId } from '../types';
 
-export type View = 'body' | 'markers' | 'scans';
+export type View = 'body' | 'markers' | 'scans' | 'data';
 export type SectionAxis = 'coronal' | 'sagittal' | 'transverse';
 export type Quality = 'high' | 'fast';
 
@@ -14,6 +14,8 @@ interface UIState {
   quality: Quality;
   uploadOpen: boolean;
   scanOpen: string | null;
+  /** Pixels of the 3D stage covered by the phone bottom sheet; the camera re-centres on the visible part. */
+  stageInset: number;
   setView: (v: View) => void;
   setHovered: (o: OrganId | null) => void;
   toggleLayer: (k: keyof UIState['layers']) => void;
@@ -22,6 +24,7 @@ interface UIState {
   setQuality: (q: Quality) => void;
   setUploadOpen: (v: boolean) => void;
   setScanOpen: (id: string | null) => void;
+  setStageInset: (px: number) => void;
 }
 
 const lowPower = typeof navigator !== 'undefined' && ((navigator.hardwareConcurrency ?? 8) <= 4 || /Mobi|Android/i.test(navigator.userAgent));
@@ -35,6 +38,7 @@ export const useUI = create<UIState>(set => ({
   quality: lowPower ? 'fast' : 'high',
   uploadOpen: false,
   scanOpen: null,
+  stageInset: 0,
   setView: view => set({ view }),
   setHovered: hovered => set({ hovered }),
   toggleLayer: k => set(s => ({ layers: { ...s.layers, [k]: !s.layers[k] } })),
@@ -43,4 +47,5 @@ export const useUI = create<UIState>(set => ({
   setQuality: quality => set({ quality }),
   setUploadOpen: uploadOpen => set({ uploadOpen }),
   setScanOpen: scanOpen => set({ scanOpen }),
+  setStageInset: stageInset => set({ stageInset }),
 }));

@@ -1,6 +1,6 @@
 # LotusPond Health
 
-A personal health dashboard. Upload lab reports and scans, and see each result on a detailed 3D model of the body, organ by organ. Everything is read and stored in your browser; nothing is sent to a server.
+A personal health dashboard for the web, iOS and Android. Upload lab reports and scans, and see each result on a detailed 3D model of the body, organ by organ. Everything is read and stored on your device, in the browser or the app; nothing is sent to a server.
 
 ## What it does
 
@@ -27,6 +27,15 @@ npm run dev        # http://localhost:5173
 npm run build      # static site in dist/ (relative paths, host anywhere)
 ```
 
+## Mobile apps
+
+The iOS and Android apps wrap the same site with [Capacitor](https://capacitorjs.com). On phones they add bottom tabs, a draggable results sheet over the 3D model, camera capture and backup export through the share sheet. See [docs/mobile.md](docs/mobile.md) for setup, live reload and releasing.
+
+```bash
+npm run android    # build, sync and open Android Studio (needs Android Studio, JDK 21)
+npm run ios        # build, sync and open Xcode (needs macOS with Xcode 26+)
+```
+
 ## Project layout
 
 | Path | What it holds |
@@ -36,6 +45,7 @@ npm run build      # static site in dist/ (relative paths, host anywhere)
 | `src/lib/` | Biomarker catalog, file parsers, persistence (IndexedDB) |
 | `src/pages/`, `src/components/` | Interface |
 | `tools/anatomy/` | Python generator for `public/models/anatomy.glb` (signed-distance modelling, surface nets, quadric decimation) |
+| `src/native/`, `android/`, `ios/` | Native app shell and the Android Studio / Xcode projects (see [docs/mobile.md](docs/mobile.md)) |
 
 ## Rebuilding the anatomy model
 
