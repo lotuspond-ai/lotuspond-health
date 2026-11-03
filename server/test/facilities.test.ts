@@ -355,6 +355,16 @@ describe('public config', () => {
     assert.equal(res.status, 206);
     assert.equal(await res.text(), 'PMTiles');
     assert.match(res.headers.get('cache-control') ?? '', /max-age=86400/);
+    // The mobile apps read the same file cross-origin; they need the range headers exposed.
+    const pre = await m.app.request('/api/map/files/tiny.pmtiles', { method: 'OPTIONS', headers: { origin: 'capacitor://localhost', 'access-control-request-method': 'GET', 'access-control-request-headers': 'range' } });
+    assert.equal(pre.status, 204);
+    assert.match(pre.headers.get('access-control-allow-headers') ?? '', /Range/);
+    const fromApp = await m.app.request('/api/map/files/tiny.pmtiles', { headers: { range: 'bytes=0-6', origin: 'capacitor://localhost' } });
+    assert.equal(fromApp.status, 206);
+    assert.equal(fromApp.headers.get('access-control-allow-origin'), 'capacitor://localhost');
+    assert.match(fromApp.headers.get('access-control-expose-headers') ?? '', /Content-Range/);
+    assert.match(fromApp.headers.get('content-range') ?? '', /^bytes 0-6\//);
+    await fromApp.arrayBuffer();
     assert.equal((await m.app.request('/api/map/files/../etc/passwd')).status, 404);
     assert.equal((await m.app.request('/api/map/files/missing.pmtiles')).status, 404);
     fs.rmSync(dir, { recursive: true, force: true });

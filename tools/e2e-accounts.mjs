@@ -219,19 +219,19 @@ if (areaFound && !hasSite) {
   expect(true, 'the preview explains that nearby search needs the server');
   await shot('labs-preview');
 } else if (areaFound) {
-  await page.locator('.fcard').first().waitFor({ timeout: 15000 });
-  const cards = await page.locator('.fcard').count();
+  await page.locator('.labcard').first().waitFor({ timeout: 15000 });
+  const cards = await page.locator('.labcard').count();
   expect(cards >= 5, `nearby facilities are listed (${cards})`);
-  const dir = await page.locator('.fcard').first().getByRole('link', { name: /^Directions to/ }).getAttribute('href');
+  const dir = await page.locator('.labcard').first().getByRole('link', { name: /^Directions to/ }).getAttribute('href');
   expect(/^https:\/\/(www\.google\.com\/maps\/dir\/\?api=1&destination=|maps\.apple\.com\/\?daddr=)-?\d+\.\d+,-?\d+\.\d+$/.test(dir ?? ''), `directions open the maps app (${dir})`);
-  const partners = await page.locator('.fcard--partner').count();
+  const partners = await page.locator('.labcard--partner').count();
   console.log(`note ${partners} partner lab(s) shown (they appear only after partners:import)`);
   await page.getByRole('group', { name: 'Show' }).getByRole('button', { name: /^Imaging/ }).click();
-  const kinds = await page.locator('.fcard .fchip--kind').allInnerTexts();
+  const kinds = await page.locator('.labcard .labchip--kind').allInnerTexts();
   expect(kinds.length > 0 && kinds.every(k => k === 'Imaging'), `the Imaging filter shows imaging only (${kinds.join(', ')})`);
   await page.getByRole('group', { name: 'Show' }).getByRole('button', { name: /^All/ }).click();
-  await page.locator('.fcard__main').first().click();
-  expect(await page.locator('.fcard.is-selected').count() === 1, 'selecting a card highlights it');
+  await page.locator('.labcard__main').first().click();
+  expect(await page.locator('.labcard.is-selected').count() === 1, 'selecting a card highlights it');
   await page.waitForTimeout(1500);
   await shot('labs');
 } else {

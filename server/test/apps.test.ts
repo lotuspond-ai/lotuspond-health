@@ -136,6 +136,7 @@ describe('mobile apps', () => {
       assert.equal(res.headers.get('access-control-allow-origin'), origin);
       assert.match(res.headers.get('access-control-allow-headers') ?? '', /Authorization/);
       assert.match(res.headers.get('access-control-allow-headers') ?? '', /Content-Type/);
+      assert.match(res.headers.get('access-control-allow-headers') ?? '', /Range/, 'map tiles are read in byte ranges');
       assert.equal(res.headers.get('access-control-allow-credentials'), null, 'cookies are never shared with the apps');
     }
     const other = await app.request('/api/profiles', { method: 'OPTIONS', headers: { origin: 'https://evil.example', 'access-control-request-method': 'POST' } });
@@ -150,6 +151,8 @@ describe('mobile apps', () => {
     assert.equal(exported.status, 200);
     assert.equal(exported.headers.get('access-control-allow-origin'), IOS);
     assert.match(exported.headers.get('access-control-expose-headers') ?? '', /Content-Disposition/);
+    assert.match(exported.headers.get('access-control-expose-headers') ?? '', /Content-Range/);
+    assert.match(exported.headers.get('access-control-expose-headers') ?? '', /ETag/);
     assert.match(exported.headers.get('content-disposition') ?? '', /attachment/);
     const denied = await fromApp('GET', '/api/profiles');
     assert.equal(denied.status, 401);
