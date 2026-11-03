@@ -32,3 +32,14 @@ tools/anatomy/job*
 tools/anatomy/__pycache__/
 shots/
 dist-artifact
+
+# API server
+server/.data/
+server/.data-local/
+server/.data-*/
+server/dist/
+.env
+
+# temporary worktrees used by parallel coding agents
+.claude/worktrees/
+dist-mobile

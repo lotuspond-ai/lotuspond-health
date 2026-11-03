@@ -5,7 +5,8 @@ import type { CapacitorConfig } from '@capacitor/cli';
 const config: CapacitorConfig = {
   appId: 'ai.lotuspond.health',
   appName: 'LotusPond Health',
-  webDir: 'dist',
+  // The app shell only (tools/build-mobile.mjs); the public website is not part of the apps.
+  webDir: 'dist-mobile',
   backgroundColor: '#0c2528',
   ios: {
     contentInset: 'never',

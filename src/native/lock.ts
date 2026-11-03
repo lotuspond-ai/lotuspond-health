@@ -5,7 +5,7 @@ import { useStore } from 'zustand';
 import { AndroidBiometryStrength, BiometricAuth, BiometryType, type CheckBiometryResult } from '@aparajita/capacitor-biometric-auth';
 import { PrivacyScreen } from '@capacitor/privacy-screen';
 import { createAppLock, DEFAULT_LOCK, LOCK_DELAYS, type AppLock, type Biometry, type LockSettings, type LockState } from '../lib/applock';
-import { fileOps } from './storage';
+import { fileOps } from './files';
 import { isNative, platform } from './platform';
 
 const DIR = 'lotuspond';

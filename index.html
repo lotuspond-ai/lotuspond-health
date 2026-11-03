@@ -1,15 +1,317 @@
 <!doctype html>
 <html lang="en">
   <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="theme-color" content="#0c2528" />
-    <meta name="description" content="Upload your lab results and scans and see them on a detailed 3D model of the body. Everything stays in your browser." />
-    <title>LotusPond Health</title>
+    <!-- @include head -->
+    <title>LotusPond Health: your health records, mapped to your body</title>
+    <meta name="description" content="Keep lab reports and scans for you and your family in one place, and see every result on a 3D map of the body. Records are stored in your region and never sold." />
+    <link rel="canonical" href="%SITE_URL%/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="%SITE_URL%/" />
+    <meta property="og:title" content="LotusPond Health: your health records, mapped to your body" />
+    <meta property="og:description" content="Keep lab reports and scans for you and your family in one place, and see every result on the organ it relates to." />
+    <meta name="twitter:title" content="LotusPond Health: your health records, mapped to your body" />
+    <meta name="twitter:description" content="Keep lab reports and scans for you and your family in one place, and see every result on the organ it relates to." />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "Organization",
+            "@id": "https://lotuspond.ai/#organization",
+            "name": "LotusPond",
+            "url": "https://lotuspond.ai"
+          },
+          {
+            "@type": "Organization",
+            "@id": "%SITE_URL%/#organization",
+            "name": "LotusPond Health",
+            "url": "%SITE_URL%/",
+            "parentOrganization": { "@id": "https://lotuspond.ai/#organization" }
+          },
+          {
+            "@type": "WebSite",
+            "@id": "%SITE_URL%/#website",
+            "name": "LotusPond Health",
+            "url": "%SITE_URL%/",
+            "inLanguage": "en",
+            "publisher": { "@id": "%SITE_URL%/#organization" }
+          },
+          {
+            "@type": "WebApplication",
+            "@id": "%SITE_URL%/#app",
+            "name": "LotusPond Health",
+            "url": "%SITE_URL%/",
+            "description": "A personal health record for you and your family. Upload lab reports and scans and see each result on a 3D model of the body. LotusPond explains results; it does not diagnose.",
+            "applicationCategory": "HealthApplication",
+            "operatingSystem": "Web browser",
+            "browserRequirements": "Requires JavaScript and WebGL",
+            "isAccessibleForFree": true,
+            "image": "%SITE_URL%/site/og.png",
+            "screenshot": "%SITE_URL%/site/body-map-1600.webp",
+            "publisher": { "@id": "%SITE_URL%/#organization" }
+          }
+        ]
+      }
+    </script>
   </head>
   <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
+    <!-- @include header -->
+    <main id="main">
+      <section class="hero" aria-labelledby="hero-title">
+        <div class="wrap hero__copy">
+          <div>
+            <p class="eyebrow">Personal health records</p>
+            <h1 class="display" id="hero-title">Your health records, <em>mapped to your body.</em></h1>
+          </div>
+          <div class="hero__side">
+            <p class="hero__lede">Keep lab reports and scans for you and your family in one place. LotusPond reads each file and places every result on the organ it relates to, with a note in plain language.</p>
+            <div class="hero__actions">
+              <a class="button button--primary" href="/signup">Create free account <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" /></svg></a>
+              <a class="button button--ghost" href="/login">Sign in</a>
+            </div>
+            <p class="hero__note"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></svg>Stored in your region and never sold. LotusPond explains results; it does not diagnose.</p>
+          </div>
+        </div>
+        <div class="hero__visual">
+          <div class="wrap">
+            <div class="hero__stage">
+              <figure class="frame">
+                <div class="frame__bar" aria-hidden="true"><i></i><i></i><i></i><span>health.lotuspond.ai/app</span></div>
+                <img src="/site/body-map-1600.webp" srcset="/site/body-map-960.webp 960w, /site/body-map-1600.webp 1600w, /site/body-map-2160.webp 2160w" sizes="(min-width: 1280px) 1180px, 92vw" width="1600" height="1000" fetchpriority="high"
+                  alt="The LotusPond body map: a 3D model of the body with dots on the brain, thyroid, heart, liver, spleen and bone marrow where results relate, beside a list of results worth a closer look." />
+              </figure>
+              <figure class="phone">
+                <img src="/site/phone-body-390.webp" srcset="/site/phone-body-390.webp 390w, /site/phone-body-585.webp 585w" sizes="(min-width: 1300px) 248px, (min-width: 640px) 19vw, 112px" width="390" height="844" loading="lazy" decoding="async"
+                  alt="LotusPond on a phone: the body map with dots on the organs where results relate." />
+              </figure>
+            </div>
+            <ul class="formats" aria-label="Files LotusPond reads">
+              <li>Reads your files</li>
+              <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V7z" /><path d="M14 3v4h4M9 13h6M9 17h4" /></svg>Lab report PDFs</li>
+              <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2" /><path d="M4 10h16M10 4v16" /></svg>CSV and JSON exports</li>
+              <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8" /><path d="M12 4v16M4 12h16" opacity=".5" /><circle cx="12" cy="12" r="3" /></svg>DICOM scans</li>
+              <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2" /><circle cx="9" cy="9.5" r="1.6" /><path d="M20 15l-4.5-4.5L6 20" /></svg>Photos of scans</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="features" aria-labelledby="features-title">
+        <div class="wrap">
+          <div class="section__head">
+            <div>
+              <p class="eyebrow">What it does</p>
+              <h2 class="title" id="features-title">Every result, <em>in its place.</em></h2>
+            </div>
+            <p>A lab report is a list of numbers. LotusPond connects each one to the part of the body it describes, so you can see your health at a glance and in detail.</p>
+          </div>
+          <div class="tiles">
+            <article class="tile tile--organ">
+              <div class="tile__media">
+                <img src="/site/organ-heart-1026.webp" srcset="/site/organ-heart-640.webp 640w, /site/organ-heart-1026.webp 1026w" sizes="(min-width: 900px) 640px, 92vw" width="1026" height="1175" loading="lazy" decoding="async"
+                  alt="The heart opened on the body map, with labels for the aortic arch, pulmonary trunk, atria, ventricles and coronary arteries." />
+              </div>
+              <div class="tile__text">
+                <h3>Open any organ</h3>
+                <p>Fly in to the heart, lungs, kidneys or brain, read labelled landmarks, and look inside with x-ray and cross-sections. Results that relate to the organ sit beside it.</p>
+              </div>
+            </article>
+            <article class="tile tile--history">
+              <div class="tile__media">
+                <img src="/site/marker-history-780.webp" srcset="/site/marker-history-520.webp 520w, /site/marker-history-780.webp 780w" sizes="(min-width: 900px) 460px, 92vw" width="780" height="776" loading="lazy" decoding="async"
+                  alt="The history of LDL cholesterol: the latest value, its place in the reference range, and a chart of values over time." />
+              </div>
+              <div class="tile__text">
+                <h3>Each marker over time</h3>
+                <p>See where a value sits in its reference range and how it has moved across reports, with a short note on what it measures.</p>
+              </div>
+            </article>
+            <article class="tile tile--files">
+              <div class="tile__media">
+                <img src="/site/files-1240.webp" srcset="/site/files-720.webp 720w, /site/files-1240.webp 1240w" sizes="(min-width: 900px) 460px, 92vw" width="1240" height="420" loading="lazy" decoding="async"
+                  alt="The Files page listing an uploaded lab report, a results export and a chest x-ray, each with options to open, download or delete." />
+              </div>
+              <div class="tile__text">
+                <h3>Your originals, kept</h3>
+                <p>Every report and scan is stored with the values read from it, ready to open, download or delete.</p>
+              </div>
+            </article>
+            <article class="tile tile--family">
+              <div class="tile__text">
+                <h3>One account for the whole family</h3>
+                <p>Add a profile for each person you care for, from children to parents. Each person’s records stay separate, and you switch between them from the menu.</p>
+              </div>
+              <div class="tile__media">
+                <img src="/site/family-513.webp" srcset="/site/family-400.webp 400w, /site/family-513.webp 513w" sizes="342px" width="513" height="669" loading="lazy" decoding="async"
+                  alt="The profile menu with two people, Asha Rao and her daughter Mira, and an option to add a family member." />
+              </div>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section how" id="how" aria-labelledby="how-title">
+        <div class="wrap">
+          <div class="section__head">
+            <div>
+              <p class="eyebrow">How it works</p>
+              <h2 class="title" id="how-title">Three steps to <em>your first map.</em></h2>
+            </div>
+            <p>There is nothing to install. LotusPond runs in your browser on a computer, tablet or phone.</p>
+          </div>
+          <ol class="steps">
+            <li class="step">
+              <span class="step__num" aria-hidden="true">1</span>
+              <span class="step__icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="8" r="3.6" /><path d="M3.5 20c1.1-3.6 3.6-5.4 6.5-5.4 1.4 0 2.7.4 3.8 1.2M18 14v6M15 17h6" /></svg></span>
+              <h3>Create your account</h3>
+              <p>Sign up with your email and choose your country. Your records are kept in the region that serves it.</p>
+            </li>
+            <li class="step">
+              <span class="step__num" aria-hidden="true">2</span>
+              <span class="step__icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V4M7.5 8.5 12 4l4.5 4.5M4 15v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4" /></svg></span>
+              <h3>Add a report or scan</h3>
+              <p>Upload a lab report PDF, a CSV or JSON export, a DICOM file or a photo. You check every value before it is saved.</p>
+            </li>
+            <li class="step">
+              <span class="step__num" aria-hidden="true">3</span>
+              <span class="step__icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="6" r="3" /><path d="M5.5 21v-4.5a6.5 6.5 0 0 1 13 0V21" /><circle cx="14" cy="16" r="1.8" fill="currentColor" stroke="none" /></svg></span>
+              <h3>See it on your body</h3>
+              <p>Each result appears on the organ it relates to, with its range, its history and a note in plain language.</p>
+            </li>
+          </ol>
+        </div>
+      </section>
+
+      <section class="section" id="labs" aria-labelledby="labs-title">
+        <div class="wrap labs">
+          <div class="labs__copy">
+            <p class="eyebrow">Labs near you</p>
+            <h2 class="title" id="labs-title">Find a lab <em>near you.</em></h2>
+            <p class="labs__lede">Enter an area or postcode to see where you can get tested. Partner labs are listed first, starting in India, followed by diagnostic labs, imaging centres and hospitals nearby.</p>
+            <ul class="ticks">
+              <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7" /></svg><span><b>Partner labs first.</b> Starting in India, with the tests they offer, home collection and booking.</span></li>
+              <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7" /></svg><span><b>Public listings nearby.</b> Diagnostic labs, imaging centres and hospitals, from OpenStreetMap.</span></li>
+              <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7" /></svg><span><b>Directions in one tap.</b> Distance, phone and opening hours, with a route in your maps app.</span></li>
+            </ul>
+            <div class="hero__actions">
+              <a class="button button--primary" href="/app#labs">Find a lab near you</a>
+            </div>
+            <p class="labs__fine">Searches go through our server, which rounds your location to about 1 km before it looks up public listings.</p>
+          </div>
+          <figure class="finder" role="img" aria-label="Illustration of the lab finder: a map with pins around your location, and a list that starts with a partner lab, followed by a diagnostic lab, an imaging centre and a hospital.">
+            <svg class="finder__map" viewBox="0 0 640 560" aria-hidden="true" focusable="false">
+              <rect width="640" height="560" fill="#dfe9e5" />
+              <path d="M-20 420c90-30 150-10 230-50s120-120 220-130 160 30 230 10v330H-20z" fill="#cfe0da" />
+              <path d="M470 -10c-20 70 10 120-30 180s-120 70-130 150 60 120 40 250" fill="none" stroke="#b9d3dc" stroke-width="30" stroke-linecap="round" />
+              <ellipse cx="150" cy="190" rx="90" ry="60" fill="#cde3d3" />
+              <ellipse cx="540" cy="430" rx="80" ry="54" fill="#cde3d3" />
+              <g fill="none" stroke="#f8fbfa" stroke-linecap="round">
+                <path d="M-10 300h660M-10 150h660M210 -10v580M400 -10v580" stroke-width="16" />
+                <path d="M-10 80l300 120 360 60M90 -10l60 580M520 -10l-40 580M-10 470h660M300 -10l-20 580" stroke-width="7" />
+              </g>
+              <g>
+                <circle class="you-ring" cx="300" cy="300" r="46" fill="#5b70c9" opacity=".25" />
+                <circle cx="300" cy="300" r="10" fill="#5b70c9" stroke="#fff" stroke-width="4" />
+              </g>
+              <g stroke="#fff" stroke-width="3">
+                <path d="M372 238c0-11 9-20 20-20s20 9 20 20c0 15-20 32-20 32s-20-17-20-32z" fill="#b9506d" />
+                <path d="M196 352c0-9 7-16 16-16s16 7 16 16c0 12-16 26-16 26s-16-14-16-26z" fill="#12353a" />
+                <path d="M436 372c0-9 7-16 16-16s16 7 16 16c0 12-16 26-16 26s-16-14-16-26z" fill="#12353a" />
+                <path d="M120 236c0-9 7-16 16-16s16 7 16 16c0 12-16 26-16 26s-16-14-16-26z" fill="#12353a" />
+                <path d="M510 174c0-9 7-16 16-16s16 7 16 16c0 12-16 26-16 26s-16-14-16-26z" fill="#12353a" />
+              </g>
+              <circle cx="392" cy="238" r="6" fill="#fff" />
+            </svg>
+            <div class="finder__search" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7-6.2-7-12a7 7 0 0 1 14 0c0 5.8-7 12-7 12z" /><circle cx="12" cy="9" r="2.5" /></svg>
+              <span><b>Near you</b> · within 5 km</span>
+            </div>
+            <ul class="finder__list" aria-hidden="true">
+              <li class="is-partner"><i></i><b>Partner lab</b><em>0.6 km</em><small>Home collection · Book a test</small></li>
+              <li><i></i><b>Diagnostic lab</b><em>1.2 km</em><small>Blood tests · Directions</small></li>
+              <li><i></i><b>Imaging centre</b><em>1.9 km</em><small>X-ray and ultrasound · Directions</small></li>
+              <li><i></i><b>Hospital</b><em>3.2 km</em><small>Open 24 hours · Directions</small></li>
+            </ul>
+          </figure>
+        </div>
+      </section>
+
+      <section class="section dark" id="privacy" aria-labelledby="privacy-title">
+        <div class="wrap">
+          <div class="section__head">
+            <div>
+              <p class="eyebrow">Privacy and availability</p>
+              <h2 class="title" id="privacy-title">Your records stay <em>in your region.</em></h2>
+            </div>
+            <p>Your country of residence decides where your records are kept. Each region has its own database and file storage, and sign-up tells you which one holds yours.</p>
+          </div>
+          <ul class="regions"><!-- @regions region-cards -->
+          </ul>
+          <ul class="promises">
+            <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7 3v5c0 4.6-3 8.4-7 10-4-1.6-7-5.4-7-10V6z" /><path d="M9 12l2 2 4-4" /></svg><b>Nothing shared or sold</b><span>We do not sell health data or share it for advertising.</span></li>
+            <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3l18 18M10.6 5.6A9.8 9.8 0 0 1 12 5.5c6 0 9.5 6.5 9.5 6.5a17 17 0 0 1-3 3.8M6.2 6.9C3.9 8.6 2.5 12 2.5 12S6 18.5 12 18.5c1.6 0 3-.4 4.2-1" /><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2" /></svg><b>No ads or trackers</b><span>No advertising, and no third-party trackers on our pages or in the app.</span></li>
+            <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><circle cx="9" cy="9.5" r="1" fill="currentColor" /><circle cx="14.5" cy="14" r="1.2" fill="currentColor" /><circle cx="9.5" cy="15" r=".8" fill="currentColor" /></svg><b>One cookie</b><span>A single cookie keeps you signed in. There are no tracking cookies.</span></li>
+            <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M4 20h16" /></svg><b>Export or delete</b><span>Download a profile as JSON, or delete a profile or your whole account, at any time.</span></li>
+          </ul>
+          <div class="availability">
+            <p><b>Open in <!-- @regions available-count --> countries and territories.</b> Sign-up is not offered yet in <!-- @regions unavailable-names -->, because of local data rules or restrictions.</p>
+            <a class="arrow-link" href="/trust/#availability"><span>Where and why</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" /></svg></a>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="faq" aria-labelledby="faq-title">
+        <div class="wrap faq">
+          <div class="faq__head">
+            <p class="eyebrow">FAQ</p>
+            <h2 class="title" id="faq-title">Questions, <em>answered.</em></h2>
+            <p>More detail is in the <a class="link" href="/privacy/">Privacy Policy</a> and on the <a class="link" href="/trust/">Trust and compliance</a> page.</p>
+          </div>
+          <div class="faq__list">
+            <details>
+              <summary>Does LotusPond diagnose conditions?</summary>
+              <div><p>No. LotusPond explains results; it does not diagnose. It shows each value next to its reference range with a short note in plain language.</p><p>A single result outside its range is common and is not a diagnosis. Talk to a doctor about what your results mean for you.</p></div>
+            </details>
+            <details>
+              <summary>What files can I upload?</summary>
+              <div><p>Lab report PDFs that contain text, CSV and JSON exports, DICOM files (.dcm) and photos of scans. Files are read in your browser, and every value is shown for you to check before it is saved. The original file is kept with your records.</p></div>
+            </details>
+            <details>
+              <summary>Where are my records stored?</summary>
+              <div><p>In the region that serves your country: India, Europe, the United States, or our international region. Sign-up shows the region before you agree, and the <a class="link" href="/trust/#storage">Trust page</a> lists which countries go where.</p></div>
+            </details>
+            <details>
+              <summary>Who can see my records?</summary>
+              <div><p>Your records belong to your account, and every request for a profile’s data is checked against the account that is signed in. We do not sell health data, and we do not share it for advertising.</p></div>
+            </details>
+            <details>
+              <summary>Can I keep records for my children or parents?</summary>
+              <div><p>Yes. One account holds your own profile and one for each family member you add. Accounts are for adults, so a parent or guardian adds children as family profiles.</p></div>
+            </details>
+            <details>
+              <summary>Which reference ranges does it use?</summary>
+              <div><p>The range printed on your report, when there is one. Otherwise LotusPond shows a typical adult range and labels it as such, because labs use different methods.</p></div>
+            </details>
+            <details>
+              <summary>How do I delete my data?</summary>
+              <div><p>In Profile details you can export a profile as JSON, delete its records or remove the profile. In Account and sign-in you can delete your whole account with everything in it. The <a class="link" href="/privacy/#retention">Privacy Policy</a> explains how deletion works.</p></div>
+            </details>
+          </div>
+        </div>
+      </section>
+
+      <section class="closing" aria-labelledby="closing-title">
+        <div class="wrap">
+          <h2 class="title" id="closing-title">Start your record. <em>See where it leads.</em></h2>
+          <p>Create a free account, add your first report, and see where each result belongs.</p>
+          <div class="hero__actions">
+            <a class="button button--primary" href="/signup">Create free account <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" /></svg></a>
+            <a class="button button--ghost" href="/login">Sign in</a>
+          </div>
+        </div>
+        <!-- @include pads -->
+      </section>
+    </main>
+    <!-- @include footer -->
   </body>
 </html>

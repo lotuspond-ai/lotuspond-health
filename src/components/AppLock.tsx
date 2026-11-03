@@ -27,7 +27,7 @@ export function LockScreen() {
 
 const DELAY_LABEL: Record<LockDelay, string> = { 0: 'as soon as you leave the app', 60_000: '1 minute after you leave', 300_000: '5 minutes after you leave' };
 
-/** "App lock" section of the Your data page; only in the iOS / Android apps. */
+/** "App lock" panel of the Account page; only in the iOS / Android apps. */
 export function AppLockSettings() {
   const settings = useLock(s => s.settings), biometry = useLock(s => s.biometry), message = useLock(s => s.message);
   const [busy, setBusy] = useState(false);
@@ -44,9 +44,9 @@ export function AppLockSettings() {
   }
 
   return (
-    <div className="section">
-      <h3>App lock</h3>
-      <p className="lede">Ask for {method} when LotusPond opens, so someone holding your unlocked phone can't see your results. {method === 'passcode' || method === 'screen lock' ? '' : `If ${method} doesn't work, ${fallback} does.`}</p>
+    <section className="panel">
+      <h2>App lock</h2>
+      <p className="lede">Ask for {method} when LotusPond opens on this phone, so someone holding your unlocked phone can't see your records. {method === 'passcode' || method === 'screen lock' ? '' : `If ${method} doesn't work, ${fallback} does.`}</p>
       <div className="tools" style={{ marginTop: 12 }}>
         <button className="toggle" aria-pressed={settings.enabled} disabled={busy || (!usable && !settings.enabled)}
           onClick={() => void run(() => lock.setEnabled(!settings.enabled))}><i />Require {method}</button>
@@ -62,9 +62,9 @@ export function AppLockSettings() {
       {(error || message) && <p className="note" role="status" style={{ marginTop: 8 }}>{error ?? message}</p>}
       {!usable && <p className="note" style={{ marginTop: 8 }}>Set up Face ID, a fingerprint or a passcode in your phone's settings to use the app lock.</p>}
       <p className="note" style={{ marginTop: 8 }}>
-        The lock hides LotusPond; your saved results are protected by your phone's own encryption, as before.
+        The lock only applies to this phone; signing in anywhere else still needs your password.
         {platform === 'android' ? ' While the lock is on, screenshots of the app are blocked.' : ''}
       </p>
-    </div>
+    </section>
   );
 }

@@ -1,0 +1,158 @@
+/* Phone and app-shell layer, loaded after the main stylesheets (src/main.tsx). Everything specific to the iOS and
+   Android apps and to phone-width browsers lives here, so the shared styles can change on their own. */
+
+/* Safe areas (notch, status bar, home indicator). Android's app shell injects --safe-area-inset-*; iOS and browsers
+   provide env(). Both are 0 on ordinary desktop browsers. */
+:root {
+  --sat: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
+  --sab: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
+  --sal: var(--safe-area-inset-left, env(safe-area-inset-left, 0px));
+  --sar: var(--safe-area-inset-right, env(safe-area-inset-right, 0px));
+}
+html, body { overscroll-behavior: none; }
+body { -webkit-tap-highlight-color: transparent; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+
+/* ---------- shell ---------- */
+.app { grid-template-rows: auto minmax(0, 1fr); height: 100dvh; padding: 0 var(--sar) 0 var(--sal); }
+.topbar { padding-top: calc(14px + var(--sat)); }
+.brand b, .nav button { white-space: nowrap; }
+.tabbar, .files-switch { display: none; }
+.bodymap { padding-bottom: calc(20px + var(--sab)); }
+.page { padding-bottom: calc(40px + var(--sab)); }
+.scrim { padding: var(--sat) var(--sar) var(--sab) var(--sal); }
+.toggle:disabled { opacity: 0.5; cursor: default; }
+.btn:disabled { opacity: 0.5; cursor: default; }
+.inline-select { border: 1px solid var(--line); background: var(--paper); border-radius: 8px; padding: 5px 8px; color: var(--ink); }
+.only-touch { display: none !important; }
+@media (hover: none) and (pointer: coarse) { .only-fine { display: none !important; } .only-touch { display: revert !important; } .btn.only-touch { display: inline-flex !important; } }
+/* App shells: chrome behaves like native controls (no long-press callouts or text selection on it). */
+.native .topbar, .native .tabbar, .native .chip, .native .btn, .native .sheet__grip, .native .stage, .native .nav, .native .seg { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+
+/* app lock */
+.lock { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; background: var(--pond); color: #e6f3f1; padding: calc(24px + var(--sat)) 24px calc(24px + var(--sab)); -webkit-user-select: none; user-select: none; }
+.lock__card { display: grid; justify-items: center; gap: 14px; max-width: 340px; text-align: center; }
+.lock__card svg { width: 76px; height: 76px; }
+.lock__card h1 { font-size: 28px; line-height: 1.15; }
+.lock__card p { color: #9cc0bc; }
+.lock__card .btn { margin-top: 8px; min-width: 220px; padding: 12px 18px; font-size: 15px; }
+.lock__msg { color: var(--pollen-bright) !important; font-size: 14px; }
+
+/* touch */
+.landmark { cursor: pointer; }
+.landmark.is-open .landmark__note { display: block; }
+@media (pointer: coarse) { .pin::before { inset: -14px; } .landmark__dot { width: 12px; height: 12px; } }
+
+/* upload and scan viewer */
+.dialog__actions { margin-top: 20px; justify-content: flex-end; }
+.drop__actions { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
+.viewer input[type='range'] { accent-color: var(--lotus); }
+
+/* ---------- phone layout (keep the width in step with COMPACT in src/lib/useMedia.ts) ---------- */
+@media (max-width: 760px) {
+  .files-switch { display: inline-flex; margin: 12px 16px 0; align-self: flex-start; }
+  /* The sheet header already names the open organ or the overview. */
+  .sheet .ov-head h2, .sheet .org-head h2 { display: none; }
+  input, select, textarea { font-size: 16px; } /* iOS zooms into fields smaller than 16px */
+  .app { grid-template-rows: auto minmax(0, 1fr) auto; }
+  .topbar { gap: 10px; padding: calc(8px + var(--sat)) 16px 8px; }
+  .brand svg { width: 26px; height: 26px; }
+  .brand b { font-size: 19px; }
+  .nav, .topbar__upload { display: none; }
+  .privacy { display: flex; font-size: 12.5px; } /* room for it again once the nav moves to the tab bar */
+
+  /* bottom tabs */
+  .tabbar { display: grid; grid-template-columns: repeat(5, 1fr); align-items: end; background: var(--paper); border-top: 1px solid var(--line); padding: 2px 4px calc(2px + var(--sab)); position: relative; z-index: 30; }
+  .tabbar button { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 2px; min-height: 52px; background: none; border: 0; padding: 6px 0 4px; color: var(--reed); font-size: 11.5px; font-weight: 600; }
+  .tabbar button svg { width: 24px; height: 24px; }
+  .tabbar button[aria-current='page'] { color: var(--ink); }
+  .tabbar button[aria-current='page'] svg { color: var(--lotus-deep); }
+  .tabbar .tabbar__add { color: var(--ink-2); }
+  .tabbar__plus { display: grid; place-items: center; width: 46px; height: 46px; border-radius: 16px; background: var(--lotus-deep); color: #fff; margin-top: -20px; box-shadow: 0 8px 18px -8px rgba(185, 80, 109, 0.8); }
+  .tabbar__plus svg { width: 24px; height: 24px; }
+  .tabbar button:active { opacity: 0.7; }
+
+  /* body map: full-bleed stage, results in a bottom sheet */
+  .bodymap { display: block; position: relative; padding: 0; overflow: hidden; }
+  .stage { position: absolute; inset: 0; border-radius: 0; min-height: 0; box-shadow: none; }
+  .stage__title { left: 16px; top: 14px; }
+  .stage__tools { top: 12px; right: 12px; max-width: calc(100% - 24px); flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .stage__tools::-webkit-scrollbar { display: none; }
+  .stage__back { top: 12px; left: 12px; bottom: auto; }
+  .stage__back ~ .stage__tools { max-width: calc(100% - 156px); }
+  .chip { flex: none; padding: 7px 12px; }
+
+  .sheet { position: absolute; left: 0; right: 0; bottom: 0; z-index: 25; background: var(--mist); border-radius: 22px 22px 0 0; box-shadow: 0 -14px 40px -18px rgba(0, 0, 0, 0.6); transition: transform 0.34s cubic-bezier(0.2, 0.8, 0.2, 1); will-change: transform; }
+  .sheet.is-dragging { transition: none; }
+  .sheet__inner { display: flex; flex-direction: column; }
+  .sheet__grip { flex: none; padding: 0 16px 10px; touch-action: none; cursor: grab; -webkit-user-select: none; user-select: none; }
+  .sheet__handle { display: block; width: 100%; height: 20px; background: none; border: 0; padding: 0; }
+  .sheet__handle i { display: block; width: 40px; height: 5px; border-radius: 3px; background: #b9cdc8; margin: 8px auto 0; }
+  .sheet__head { display: flex; align-items: flex-start; gap: 8px; }
+  .sheet__head > div { flex: 1; min-width: 0; }
+  .sheet__head h2 { font-size: 26px; line-height: 1.1; }
+  .sheet__head p { color: var(--reed); font-size: 13.5px; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sheet__x { padding: 8px; margin: -2px -8px 0 0; }
+  .sheet__x svg { width: 20px; height: 20px; }
+  .sheet__body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 16px 24px; }
+  .sheet--peek:not(.is-dragging) .sheet__body { visibility: hidden; }
+  .sheet__row { display: flex; gap: 6px; overflow-x: auto; margin: 0 -16px; padding: 2px 16px 12px; scrollbar-width: none; }
+  .sheet__row::-webkit-scrollbar { display: none; }
+  .sheet__row .sys { flex: none; }
+  .organ-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+  .organ-grid .organ-link { width: auto; border: 1px solid var(--line); background: var(--paper); padding: 7px 12px; border-radius: 999px; }
+  .organ-grid .organ-link span { flex: none; }
+
+  /* pages */
+  .page { padding: 4px 16px 28px; }
+  .page__head { gap: 12px; padding: 14px 0; }
+  .page__head h1 { font-size: 32px; }
+  .page__head p { font-size: 14px; }
+  .page__head .spacer { display: none; }
+  .search { min-width: 0; flex: 1 1 100%; }
+  .tally b { font-size: 28px; }
+  .gallery { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+
+  /* tables become cards */
+  .table, .table tbody { display: block; }
+  .table thead { display: none; }
+  .table tr { display: grid; gap: 4px 12px; align-items: center; padding: 12px 2px; border-bottom: 1px solid var(--line); }
+  .table td { display: block; padding: 0; border: 0; min-width: 0; }
+  .table tr.click:hover td { background: none; }
+  .table tr.click:active { background: var(--paper); }
+  .table tr.group { display: block; padding: 18px 0 0; border: 0; }
+  .table .group td { padding: 0; font-size: 20px; }
+  /* biomarkers: name | value, range bar | trend, range | date */
+  .table:not(.review) tr:not(.group) { grid-template-columns: minmax(0, 1fr) auto; }
+  .table:not(.review) td:nth-child(1) { grid-area: 1 / 1; }
+  .table:not(.review) td:nth-child(2) { grid-area: 1 / 2; text-align: right; }
+  .table:not(.review) td:nth-child(3) { grid-area: 2 / 1; }
+  .table:not(.review) td:nth-child(4) { grid-area: 3 / 1; font-size: 12.5px; }
+  .table:not(.review) td:nth-child(5) { grid-area: 2 / 2; justify-self: end; }
+  .table:not(.review) td:nth-child(6) { grid-area: 3 / 2; text-align: right; font-size: 12.5px; }
+  /* upload review: marker, remove / value, unit / date, range, check */
+  .review tr { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; grid-template-areas: 'm m x' 'v u u' 'd r c'; }
+  .review td:nth-child(1) { grid-area: m; } .review td:nth-child(2) { grid-area: v; } .review td:nth-child(3) { grid-area: u; }
+  .review td:nth-child(4) { grid-area: r; font-size: 13px; } .review td:nth-child(5) { grid-area: d; }
+  .review td:nth-child(6) { grid-area: c; } .review td:nth-child(7) { grid-area: x; }
+  .review td input, .review td select { border-color: var(--line); background: var(--paper); padding: 7px 8px; }
+  .review td select { font-weight: 600; }
+
+  /* dialogs fill the screen and pad around the notch / home indicator themselves */
+  .scrim { padding: 0; }
+  .dialog { width: 100%; height: 100%; max-height: none; margin: 0; border-radius: 0; padding: calc(14px + var(--sat)) 16px calc(20px + var(--sab)); }
+  .dialog__head h2 { font-size: 26px; }
+  .drop { padding: 28px 16px; }
+  /* Keep "Add results" reachable below a long review list. */
+  .dialog__actions { position: sticky; bottom: calc(-20px - var(--sab)); margin: 16px -16px calc(-20px - var(--sab)); padding: 12px 16px calc(12px + var(--sab)); background: var(--mist); border-top: 1px solid var(--line); z-index: 2; }
+  .dialog__actions .btn { flex: 1 1 auto; }
+  .drawer { width: 100%; padding: calc(14px + var(--sat)) 16px calc(24px + var(--sab)); animation-name: slideup; }
+  .drawer h2 { font-size: 30px; }
+  .viewer { width: 100%; height: 100%; border-radius: 0; padding: var(--sat) 0 var(--sab); }
+  .viewer header { padding: 10px 14px; gap: 4px 12px; }
+  .viewer header h2 { font-size: 19px; flex: 1 1 60%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .viewer header .muted { order: 3; flex-basis: 100%; font-size: 13px; }
+  .viewer footer { padding: 10px 14px; gap: 10px 14px; }
+  .viewer footer label { flex: 1 1 140px; }
+  .viewer footer input[type='range'] { flex: 1; min-width: 0; }
+}
+@keyframes slideup { from { transform: translateY(40px); opacity: 0; } }

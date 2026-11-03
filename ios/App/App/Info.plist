@@ -26,6 +26,14 @@
 	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Find labs and clinics near you. Your location is rounded to about 1 km before it is used.</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<!-- Plain http to local network addresses only, for testing against a server on your computer. -->
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Unlock LotusPond Health with Face ID so only you can open your results.</string>
 	<key>NSCameraUsageDescription</key>

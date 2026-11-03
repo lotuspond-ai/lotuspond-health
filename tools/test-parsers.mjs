@@ -23,6 +23,8 @@ const { parseValue } = await import(lib('parse/rows.ts'));
 const { SAMPLE } = await import(lib('sample.ts'));
 const store = await import(lib('store.ts'));
 const { buildExport } = await import(lib('export.ts'));
+const units = await import(lib('units.ts'));
+const regions = await import(new URL('../shared/regions.ts', import.meta.url).href);
 
 let pass = 0, fail = 0;
 const failures = [];
@@ -229,9 +231,9 @@ check('organSummary heart has LDL high', sum.heart.high >= 1 && sum.heart.total 
 const liverRows = store.measurementsForOrgan({ measurements: sm }, 'liver');
 check('measurementsForOrgan liver history', liverRows.find(s => s.key === 'alt')?.history.length === 3);
 const s = store.useHealth.getState();
-s.loadSample();
+await s.loadSample();
 check('store loadSample', store.useHealth.getState().measurements.length === sm.length);
-store.useHealth.getState().loadSample();
+await store.useHealth.getState().loadSample();
 check('store dedupes on re-add', store.useHealth.getState().measurements.length === sm.length);
 const tshRow = store.useHealth.getState().measurements.find(m => m.markerId === 'tsh' && m.date === '2026-10-20');
 store.useHealth.getState().updateMeasurement(tshRow.id, { value: 6.1, valueText: '6.1' });
@@ -245,11 +247,47 @@ store.useHealth.getState().removeMeasurement(tshRow.id);
 check('removeMeasurement', store.useHealth.getState().measurements.length === sm.length - 1);
 store.useHealth.getState().selectOrgan('liver');
 check('selectOrgan', store.useHealth.getState().selectedOrgan === 'liver');
-await store.hydrate();
-check('hydrate without IndexedDB keeps data', store.useHealth.getState().hydrated && store.useHealth.getState().measurements.length === sm.length - 1);
-store.useHealth.getState().clearAll();
-check('clearAll', store.useHealth.getState().measurements.length === 0);
+store.useHealth.getState().removeDocument('missing-doc');
+check('removeDocument of unknown id keeps results', store.useHealth.getState().measurements.length === sm.length - 1);
+await store.useHealth.getState().clearAll();
+check('clearAll', store.useHealth.getState().measurements.length === 0 && store.useHealth.getState().selectedOrgan === null);
+await store.useHealth.getState().loadSample();
+await store.useHealth.getState().openProfile(null);
+check('openProfile(null) clears records', store.useHealth.getState().measurements.length === 0 && store.useHealth.getState().profileId === null);
 check('refreshMeasurement export', typeof refreshMeasurement === 'function');
+
+/* ---------------- display units and country policy ---------------- */
+section('display units');
+{
+  const glu = { markerId: 'glucose_fasting', rawName: 'Glucose', value: 99, valueText: '99', unit: 'mg/dL', range: { low: 70, high: 100, text: '70 - 100', source: 'report' }, status: 'normal', date: null, sourceFile: 'x', confidence: 'high' };
+  const si = units.displayMeasurement(glu, 'si');
+  check('glucose 99 mg/dL → 5.5 mmol/L', si.unit === 'mmol/L' && si.value === 5.5 && si.converted, JSON.stringify(si));
+  check('glucose range converted', si.range.low === 3.89 && si.range.high === 5.55 && si.range.text === '3.89 – 5.55', JSON.stringify(si.range));
+  check('conventional leaves values alone', units.displayMeasurement(glu, 'conventional').text === '99');
+  const crea = units.displayMeasurement({ ...glu, markerId: 'creatinine', value: 0.82, valueText: '0.82', range: { low: 0.6, high: 1.1, source: 'report' } }, 'si');
+  check('creatinine 0.82 mg/dL → 72.5 µmol/L', crea.unit === 'µmol/L' && Math.abs(crea.value - 72.5) < 0.6, JSON.stringify(crea));
+  const hb = units.displayMeasurement({ ...glu, markerId: 'hemoglobin', value: 12.9, valueText: '12.9', unit: 'g/dL', range: null }, 'si');
+  check('hemoglobin 12.9 g/dL → 129 g/L', hb.unit === 'g/L' && hb.value === 129, JSON.stringify(hb));
+  const lt = units.displayMeasurement({ ...glu, markerId: 'ldl', value: 100, valueText: '<100', unit: 'mg/dL' }, 'si');
+  check('keeps < prefix', lt.text === '<2.59', lt.text);
+  check('tsh has no SI conversion', units.siConversion('tsh') === null);
+  check('qualitative untouched', units.displayMeasurement({ ...glu, markerId: 'urine_protein', value: null, valueText: 'Negative', unit: '' }, 'si').text === 'Negative');
+  check('every SI unit exists in the catalog', Object.keys(units).length > 0 && ['total_cholesterol','triglycerides','creatinine','vitamin_d','ft4','cortisol','hematocrit'].every(id => units.siConversion(id)));
+  check('round 3 s.f.', units.roundForDisplay(4.891) === 4.89 && units.roundForDisplay(0.0566) === 0.06 && units.roundForDisplay(129.4) === 129 && units.roundForDisplay(72.46) === 72.5);
+}
+section('country policy');
+{
+  check('249 ISO codes, no duplicates', regions.COUNTRY_CODES.length === 249 && new Set(regions.COUNTRY_CODES).size === 249);
+  const inp = regions.countryPolicy('in');
+  check('India: own cell, partners, grievance officer, adults only', inp.region === 'in' && inp.partnerLabs && inp.grievanceOfficer && inp.minAge === 18 && !inp.crossBorder);
+  check('Germany: EU cell, GDPR', regions.countryPolicy('DE').region === 'eu' && regions.countryPolicy('DE').laws[0].includes('GDPR'));
+  check('UK: stored in EU, cross-border, SI units', regions.countryPolicy('GB').region === 'eu' && regions.countryPolicy('GB').crossBorder && regions.countryPolicy('GB').units === 'si');
+  check('US: US cell, imperial', regions.countryPolicy('US').region === 'us' && regions.countryPolicy('US').measurement === 'us');
+  check('UAE not available (in-country health data)', !regions.countryPolicy('AE').available && /UAE/.test(regions.countryPolicy('AE').unavailableReason));
+  check('Australia: international cell, own law', regions.countryPolicy('AU').region === 'global' && regions.countryPolicy('AU').laws[0].includes('Privacy Act 1988'));
+  check('every country has a region and a law', regions.COUNTRY_CODES.every(c => { const p = regions.countryPolicy(c); return p.region && p.laws.length > 0; }));
+  check('isCountryCode', regions.isCountryCode('in') && !regions.isCountryCode('ZZ'));
+}
 
 /* ---------------- PDF ---------------- */
 section('PDF');
@@ -410,163 +448,6 @@ const ORGAN_HINTS = [['chest_xray_2026.jpg', 'lungs'], ['CXR-PA.png', 'lungs'], 
 for (const [f, want] of ORGAN_HINTS) check(`guessOrgan(${f})`, guessOrgan(f) === want, String(guessOrgan(f)));
 const MOD_HINTS = [['chest_xray.jpg', 'XR'], ['x-ray knee.png', 'XR'], ['CT abdomen.png', 'CT'], ['mri_brain.jpg', 'MR'], ['usg.jpg', 'US'], ['echo.png', 'Echo'], ['ecg.png', 'ECG'], ['photo.jpg', null]];
 for (const [f, want] of MOD_HINTS) check(`guessModality(${f})`, guessModality(f) === want, String(guessModality(f)));
-
-/* ---------------- app file storage (iOS / Android) ---------------- */
-section('file storage');
-const { createFileBackend, extFor } = await import(lib('storage/files.ts'));
-
-/** In-memory stand-in for Capacitor Filesystem, with switches to make operations fail. */
-function memFs() {
-  const files = new Map(), dirs = new Set();
-  const parentOf = p => p.slice(0, p.lastIndexOf('/'));
-  const fs = {
-    files, dirs, writes: 0, chunks: [], failList: false, failWriteText: false, failBase64For: null,
-    async ensureDir(p) { let cur = ''; for (const part of p.split('/')) { cur = cur ? `${cur}/${part}` : part; dirs.add(cur); } },
-    async list(p) {
-      if (fs.failList) throw new Error('EIO');
-      if (!dirs.has(p)) throw new Error(`no directory ${p}`);
-      return [...files.keys()].filter(f => parentOf(f) === p).map(f => f.slice(p.length + 1));
-    },
-    async readText(p) { if (!files.has(p)) throw new Error(`missing ${p}`); return new TextDecoder().decode(files.get(p)); },
-    async writeText(p, t) { if (fs.failWriteText) throw new Error('disk full'); fs.writes++; files.set(p, new TextEncoder().encode(t)); },
-    async writeBase64(p, b64, append) {
-      if (fs.failBase64For && p.includes(fs.failBase64For)) throw new Error('disk full');
-      fs.chunks.push(append);
-      const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
-      const prev = append ? files.get(p) ?? new Uint8Array(0) : new Uint8Array(0);
-      const out = new Uint8Array(prev.length + bytes.length); out.set(prev); out.set(bytes, prev.length);
-      files.set(p, out);
-    },
-    async readBlob(p, type) { if (!files.has(p)) throw new Error(`missing ${p}`); return new Blob([files.get(p)], { type }); },
-    async rename(a, b) { if (files.has(b)) throw new Error('target exists'); files.set(b, files.get(a)); files.delete(a); },
-    async remove(p) { files.delete(p); },
-    async removeDir(p) { for (const f of [...files.keys()]) if (f.startsWith(`${p}/`)) files.delete(f); dirs.delete(p); },
-  };
-  return fs;
-}
-
-/** In-memory stand-in for the IndexedDB backend. */
-function memLegacy(payload, blobs) {
-  const store = { payload, blobs: new Map(Object.entries(blobs)) };
-  return Object.assign(store, {
-    name: 'legacy',
-    async loadPayload() { return store.payload; },
-    async savePayload(p) { store.payload = p; },
-    async deletePayload() { store.payload = null; },
-    async loadBlob(k) { return store.blobs.get(k) ?? null; },
-    async saveBlob(k, b) { store.blobs.set(k, b); },
-    async deleteBlob(k) { store.blobs.delete(k); },
-    async clearBlobs() { store.blobs.clear(); },
-  });
-}
-
-const bytesOf = async b => [...new Uint8Array(await b.arrayBuffer())];
-const P = n => ({ version: 1, measurements: [{ id: `m${n}` }], scans: [] });
-{
-  const fs = memFs();
-  const be = createFileBackend(fs);
-  check('files: nothing saved yet → null', (await be.loadPayload()) === null);
-  await be.savePayload(P(1));
-  await be.savePayload(P(2));
-  check('files: payload written to both slots in turn', fs.files.has('lotuspond/data-0.json') && fs.files.has('lotuspond/data-1.json'));
-  check('files: reload returns the newest save', eq(await createFileBackend(fs).loadPayload(), P(2)));
-  // A crash while writing the newest slot leaves it truncated: the save before it must survive.
-  const newest = [...fs.files.keys()].find(k => k.endsWith('.json') && new TextDecoder().decode(fs.files.get(k)).includes('"m2"'));
-  fs.files.set(newest, fs.files.get(newest).slice(0, 20));
-  const be2 = createFileBackend(fs);
-  check('files: truncated newest slot → previous save', eq(await be2.loadPayload(), P(1)));
-  await be2.savePayload(P(3));
-  check('files: next save after recovery is the newest', eq(await createFileBackend(fs).loadPayload(), P(3)));
-  // Rapid saves while one is being written collapse into the latest.
-  const be3 = createFileBackend(fs); await be3.loadPayload();
-  const before = fs.writes;
-  await Promise.all([1, 2, 3, 4, 5].map(i => be3.savePayload(P(10 + i))));
-  check('files: rapid saves coalesce', fs.writes - before <= 2, `${fs.writes - before} writes`);
-  check('files: coalesced save keeps the last payload', eq(await createFileBackend(fs).loadPayload(), P(15)));
-}
-{
-  const fs = memFs();
-  const be = createFileBackend(fs, { chunkSize: 1000 });
-  const data = Uint8Array.from({ length: 2500 }, (_, i) => (i * 37) % 256);
-  await be.saveBlob('k1', new Blob([data], { type: 'image/png' }));
-  check('files: scan file written in chunks', eq(fs.chunks, [false, true, true]), JSON.stringify(fs.chunks));
-  check('files: scan file renamed into place', fs.files.has('lotuspond/scans/k1.png') && ![...fs.files.keys()].some(k => k.endsWith('.part')));
-  const back = await createFileBackend(fs).loadBlob('k1');
-  check('files: scan file reads back byte for byte', back && eq(await bytesOf(back), [...data]));
-  check('files: scan file keeps its type', back?.type === 'image/png', back?.type);
-  check('files: DICOM extension', extFor('application/dicom') === 'dcm' && extFor('') === 'bin');
-  await be.saveBlob('k0', new Blob([], { type: '' }));
-  check('files: empty scan file', (await createFileBackend(fs).loadBlob('k0'))?.size === 0);
-  // An interrupted write leaves only a .part file: ignored and cleaned up.
-  fs.files.set('lotuspond/scans/k2.jpg.part', new Uint8Array([1, 2, 3]));
-  const be2 = createFileBackend(fs);
-  check('files: half-written scan file is not used', (await be2.loadBlob('k2')) === null);
-  check('files: half-written scan file is removed', !fs.files.has('lotuspond/scans/k2.jpg.part'));
-  await be2.deleteBlob('k1');
-  check('files: deleteBlob removes the file', !fs.files.has('lotuspond/scans/k1.png') && (await be2.loadBlob('k1')) === null);
-  await be2.saveBlob('k3', new Blob([data]));
-  await be2.clearBlobs();
-  check('files: clearBlobs removes every scan file', ![...fs.files.keys()].some(k => k.startsWith('lotuspond/scans/')));
-  await be2.saveBlob('k4', new Blob([data], { type: 'image/jpeg' }));
-  check('files: saving works again after clearBlobs', (await be2.loadBlob('k4'))?.size === data.length);
-}
-{
-  // First launch after the update: results and scan files move over from IndexedDB.
-  const old = { version: 1, measurements: [{ id: 'x' }], scans: [{ blobKey: 'a' }, { blobKey: 'b' }, { blobKey: 'gone' }] };
-  const legacy = memLegacy(old, { a: new Blob([new Uint8Array([9, 8, 7])], { type: 'image/jpeg' }), b: new Blob([new Uint8Array([1])], { type: 'image/png' }) });
-  const fs = memFs();
-  fs.failBase64For = 'scans/b.';
-  const be = createFileBackend(fs, { legacy });
-  check('migrate: payload returned on first launch', eq(await be.loadPayload(), old));
-  check('migrate: payload now in a file', eq(await createFileBackend(memFsCopy(fs)).loadPayload(), old));
-  check('migrate: copied scan file is in files', fs.files.has('lotuspond/scans/a.jpg'));
-  check('migrate: copied scan file removed from IndexedDB', !legacy.blobs.has('a'));
-  check('migrate: old payload removed from IndexedDB', legacy.payload === null);
-  check('migrate: scan file that failed to copy stays in IndexedDB', legacy.blobs.has('b'));
-  check('migrate: and is still found', (await be.loadBlob('b'))?.size === 1);
-  check('migrate: copied scan file reads from files', eq(await bytesOf(await be.loadBlob('a')), [9, 8, 7]));
-  legacy.payload = { version: 1, measurements: [{ id: 'stale' }], scans: [] };
-  check('migrate: runs once (files win on the next launch)', eq(await createFileBackend(fs, { legacy }).loadPayload(), old));
-  await createFileBackend(fs, { legacy }).clearBlobs();
-  check('migrate: delete-all also clears what is left in IndexedDB', legacy.blobs.size === 0 && legacy.payload === null);
-}
-{
-  const fs = memFs(); fs.failList = true;
-  check('files: unreadable folder rejects (so nothing overwrites it)', await createFileBackend(fs).loadPayload().then(() => false, () => true));
-  const old = { version: 1, measurements: [{ id: 'keep' }], scans: [] };
-  const legacy = memLegacy(old, {});
-  const fs2 = memFs(); fs2.failWriteText = true;
-  check('migrate: failed write rejects', await createFileBackend(fs2, { legacy }).loadPayload().then(() => false, () => true));
-  check('migrate: failed write leaves IndexedDB untouched', legacy.payload === old);
-}
-function memFsCopy(fs) { const c = memFs(); for (const [k, v] of fs.files) c.files.set(k, v); for (const d of fs.dirs) c.dirs.add(d); return c; }
-{
-  // The store stops saving for the session when saved data exists but cannot be read.
-  const fresh = await import(`${lib('store.ts')}?read-failure`);
-  let saves = 0;
-  fresh.setStorageBackend({
-    name: 'broken', loadPayload: async () => { throw new Error('EIO'); }, savePayload: async () => { saves++; },
-    deletePayload: async () => {}, loadBlob: async () => null, saveBlob: async () => { saves++; }, deleteBlob: async () => {}, clearBlobs: async () => { saves++; },
-  });
-  const warn = console.warn; console.warn = () => {}; // the expected "could not be read" warning
-  await fresh.hydrate();
-  console.warn = warn;
-  check('store: unreadable storage is reported', fresh.useHealth.getState().saveBlocked === true);
-  fresh.useHealth.getState().loadSample();
-  await new Promise(r => setTimeout(r, 400));
-  await fresh.flushPersist();
-  check('store: unreadable storage is not overwritten', saves === 0, `${saves} writes`);
-
-  const ok = await import(`${lib('store.ts')}?flush`);
-  const saved = [];
-  ok.setStorageBackend({ ...memLegacy(null, {}), savePayload: async p => { saved.push(p); } });
-  await ok.hydrate();
-  await new Promise(r => setTimeout(r, 400)); saved.length = 0;
-  ok.useHealth.getState().loadSample();
-  await ok.flushPersist();
-  check('store: flushPersist saves a pending change at once', saved.length === 1 && saved[0].measurements.length === SAMPLE.measurements.length);
-  check('store: readable storage is not blocked', ok.useHealth.getState().saveBlocked === false);
-}
 
 /* ---------------- app lock (Face ID / fingerprint) ---------------- */
 section('app lock');
