@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <!-- @include head -->
+    <title>Trust and compliance · LotusPond Health</title>
+    <meta name="description" content="Where LotusPond Health is available, where records are stored in India, Europe, the United States and elsewhere, the laws we follow by region, our security measures and your data rights." />
+    <link rel="canonical" href="%SITE_URL%/trust/" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="%SITE_URL%/trust/" />
+    <meta property="og:title" content="Trust and compliance · LotusPond Health" />
+    <meta property="og:description" content="Availability, storage by region, laws by region, security and your data rights." />
+    <meta name="twitter:title" content="Trust and compliance · LotusPond Health" />
+    <meta name="twitter:description" content="Availability, storage by region, laws by region, security and your data rights." />
+  </head>
+  <body>
+    <!-- @include header -->
+    <main id="main">
+      <header class="doc-hero">
+        <div class="wrap">
+          <p class="eyebrow">Trust and compliance</p>
+          <h1>How we look after your records</h1>
+          <p class="doc-hero__lede">Where LotusPond Health is available, where records are kept, which laws we follow, and how we keep your data safe. The <a class="link" href="/privacy/">Privacy Policy</a> has the full detail.</p>
+          <p class="doc-meta"><span><b>Last updated</b> <time datetime="2026-11-03">3 November 2026</time></span></p>
+        </div>
+      </header>
+
+      <div class="wrap doc">
+        <nav class="toc" aria-label="On this page">
+          <h2>On this page</h2>
+          <ol>
+            <li><a href="#glance">At a glance</a></li>
+            <li><a href="#availability">1. Global availability</a></li>
+            <li><a href="#storage">2. Storage by region</a></li>
+            <li><a href="#laws">3. Laws by region</a></li>
+            <li><a href="#everywhere">4. Rules we apply everywhere</a></li>
+            <li><a href="#security">5. Security measures</a></li>
+            <li><a href="#rights">6. Your data rights</a></li>
+            <li><a href="#breach">7. Breach readiness</a></li>
+            <li><a href="#medical">8. Medical scope</a></li>
+            <li><a href="#contact">9. Contact and reporting</a></li>
+          </ol>
+        </nav>
+
+        <article class="prose">
+          <section id="glance" aria-labelledby="glance-title">
+            <h2 id="glance-title" class="sr-only">At a glance</h2>
+            <ul class="cards">
+              <li><b>4 storage regions</b><span>India, Europe, the United States and international, each with its own database and file store.</span></li>
+              <li><b><!-- @regions available-count --> countries and territories</b><span>Sign-up asks where you live and stores your records in that region.</span></li>
+              <li><b>Nothing sold</b><span>No sale of health data, no sharing for advertising, no third-party trackers.</span></li>
+              <li><b>One cookie</b><span>A strictly necessary session cookie keeps you signed in.</span></li>
+            </ul>
+          </section>
+
+          <section id="availability" aria-labelledby="availability-title">
+            <h2 id="availability-title"><span class="num">1</span>Global availability</h2>
+            <p>LotusPond Health is open to adults in <!-- @regions available-count --> countries and territories. In a few places, local law requires health data to stay inside the country, or other restrictions apply. We do not offer sign-up there yet, and sign-up shows the reason below to anyone who picks one of these countries.</p>
+            <!-- @regions unavailable-table -->
+            <p>Partner-lab booking starts in India. Elsewhere, the lab finder shows public diagnostic labs, imaging centres and hospitals from OpenStreetMap, wherever they are listed.</p>
+          </section>
+
+          <section id="storage" aria-labelledby="storage-title">
+            <h2 id="storage-title"><span class="num">2</span>Storage by region</h2>
+            <p>Each region is a separate database and file store, deployed in its own location. Sign-up picks the region from your country of residence and shows it to you before you agree. Where that region is outside your country, sign-up says so and asks for your agreement.</p>
+            <!-- @regions storage-table -->
+            <ul>
+              <li>A small directory maps a keyed hash of each email address to its region, so sign-in knows where to look without keeping your email in readable form outside your region.</li>
+              <li>Your sign-in session remembers your region, so every later request goes straight there.</li>
+              <li>Data that is not about people, such as partner-lab details and cached public facility listings, is kept separately from records.</li>
+              <li>Hosting providers and data-centre locations: <span class="ph">[Hosting providers and locations for each region — to be completed by LotusPond]</span>.</li>
+            </ul>
+          </section>
+
+          <section id="laws" aria-labelledby="laws-title">
+            <h2 id="laws-title"><span class="num">3</span>Laws by region</h2>
+            <p>These are the main data-protection laws for the people whose records each region holds, as our sign-up applies them.</p>
+            <!-- @regions laws-table -->
+          </section>
+
+          <section id="everywhere" aria-labelledby="everywhere-title">
+            <h2 id="everywhere-title"><span class="num">4</span>Rules we apply everywhere</h2>
+            <p>Some rules differ from country to country. We apply the strictest common ones to everyone:</p>
+            <ul>
+              <li><b>Adults only for accounts.</b> Anyone under 18 is added by a parent or guardian as a family profile.</li>
+              <li><b>Explicit, recorded consent.</b> Accepting the Terms and Privacy Policy, consenting to the processing of health data and, where storage is abroad, agreeing to the region are separate steps. Each is stored with the text version, the time and your country.</li>
+              <li><b>No sale or sharing of health data,</b> and no advertising trackers.</li>
+              <li><b>Data rights built in:</b> export, correction and deletion are controls in the app that work straight away.</li>
+              <li><b>One cookie,</b> and it is strictly necessary, so there is no cookie banner.</li>
+            </ul>
+          </section>
+
+          <section id="security" aria-labelledby="security-title">
+            <h2 id="security-title"><span class="num">5</span>Security measures</h2>
+            <ul class="cards">
+              <li><b>Passwords</b><span>Hashed with Argon2id. We never see or store them in readable form.</span></li>
+              <li><b>Sessions</b><span>Random 256-bit tokens in an HttpOnly, HTTPS-only cookie. We store only a SHA-256 hash.</span></li>
+              <li><b>Account isolation</b><span>Every request for a profile’s data is checked against the signed-in account.</span></li>
+              <li><b>Cross-site protection</b><span>Changes are accepted only from our own pages.</span></li>
+              <li><b>Rate limits</b><span>Repeated sign-in and sign-up attempts are slowed by address and by email.</span></li>
+              <li><b>Content Security Policy</b><span>Each page may load code only from our own site. The public pages run no scripts at all.</span></li>
+              <li><b>Safe file handling</b><span>Uploaded files are served in a sandbox, and types a browser could run are only offered as downloads.</span></li>
+              <li><b>Encryption</b><span>HTTPS everywhere with HSTS, and encrypted storage for records and files in each region.</span></li>
+              <li><b>Audit log</b><span>Security events on each account are recorded, which helps us investigate quickly.</span></li>
+            </ul>
+          </section>
+
+          <section id="rights" aria-labelledby="rights-title">
+            <h2 id="rights-title"><span class="num">6</span>Your data rights</h2>
+            <div class="table-wrap">
+              <table class="table table--stack">
+                <thead><tr><th scope="col">Right</th><th scope="col">Where to use it</th></tr></thead>
+                <tbody>
+                  <tr><th scope="row">See and export your data</th><td>Profile details, then Export (a JSON file you can keep or import again)</td></tr>
+                  <tr><th scope="row">Correct it</th><td>Profile details for personal and health details; edit or delete any result</td></tr>
+                  <tr><th scope="row">Delete it</th><td>Files for a single file; Profile details for all records of a person or the whole profile; Account and sign-in for your account</td></tr>
+                  <tr><th scope="row">Withdraw consent</th><td>Delete your account in Account and sign-in, or write to us</td></tr>
+                  <tr><th scope="row">Know who has your data</th><td>Nobody outside our hosting providers. Ask us for the list at any time.</td></tr>
+                  <tr><th scope="row">Complain</th><td>Our privacy contact or, in India, our Grievance Officer; then your regulator (see the <a href="/privacy/#contact">Privacy Policy</a>)</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p>Rights by law, including GDPR, the DPDP Act, the Washington My Health My Data Act, Nevada law and the CCPA, are set out in <a href="/privacy/#rights">section 8 of the Privacy Policy</a> and in our <a href="/privacy/#consumer-health-data">Consumer Health Data Privacy Policy</a>.</p>
+          </section>
+
+          <section id="breach" aria-labelledby="breach-title">
+            <h2 id="breach-title"><span class="num">7</span>Breach readiness</h2>
+            <p>Per-region storage and the account audit log let us find out quickly which records a problem touched. Our incident plan meets the strictest timelines that apply to us: notice to authorities within 72 hours under the GDPR and India’s DPDP Rules, and notice to affected people in the United States within 60 days under the FTC Health Breach Notification Rule. People affected are told directly.</p>
+          </section>
+
+          <section id="medical" aria-labelledby="medical-title">
+            <h2 id="medical-title"><span class="num">8</span>Medical scope</h2>
+            <p>LotusPond explains results; it does not diagnose. It is a personal health record that you keep for yourself and your family, and we offer it to you directly. Read the <a href="/terms/#medical">medical disclaimer</a> in the Terms of Use.</p>
+          </section>
+
+          <section id="contact" aria-labelledby="contact-title">
+            <h2 id="contact-title"><span class="num">9</span>Contact and reporting</h2>
+            <dl>
+              <dt>Report a security issue</dt><dd><span class="ph">[Security contact email — to be completed by LotusPond]</span></dd>
+              <dt>Privacy and data rights</dt><dd><span class="ph">[Privacy contact email — to be completed by LotusPond]</span></dd>
+              <dt>Grievance Officer (India)</dt><dd><span class="ph">[Grievance Officer name, email and address in India — to be completed by LotusPond]</span></dd>
+              <dt>Data Protection Officer</dt><dd><span class="ph">[Data Protection Officer name and email — to be completed by LotusPond]</span></dd>
+            </dl>
+          </section>
+        </article>
+      </div>
+    </main>
+    <!-- @include footer -->
+  </body>
+</html>
