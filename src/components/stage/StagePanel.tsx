@@ -37,13 +37,18 @@ function useSeen(ref: RefObject<HTMLElement | null>) {
   return onScreen && tab;
 }
 
+/** A failed download of the 3D code itself (not the model). Browsers keep a failed module import for the life of the
+ *  page, so only a reload can fetch it again. Messages from Chromium, Firefox, Safari and Vite's preloader. */
+const codeFailed = (e: unknown) => /dynamically imported module|Importing a module script failed|Unable to preload/i.test(String((e as Error)?.message ?? e));
+
 /** Catches a failed model or 3D-code download (offline, interrupted) and offers to try again. */
-class StageBoundary extends Component<{ body: Body; onRetry: () => void; children: ReactNode }, { failed: boolean; body: Body }> {
-  state = { failed: false, body: this.props.body };
-  static getDerivedStateFromError() { return { failed: true }; }
+class StageBoundary extends Component<{ body: Body; onRetry: () => void; children: ReactNode }, { failed: boolean; code: boolean; body: Body }> {
+  state = { failed: false, code: false, body: this.props.body };
+  static getDerivedStateFromError(e: unknown) { return { failed: true, code: codeFailed(e) }; }
   // another body is another download: try it even if the last one failed
   static getDerivedStateFromProps(props: { body: Body }, state: { body: Body }) { return props.body !== state.body ? { failed: false, body: props.body } : null; }
   retry = () => {
+    if (this.state.code) { location.reload(); return; }
     // forget the failed model download (the loader caches errors) and the failed 3D code, then render again
     import('../../three/model').then(m => m.clearAnatomyModel(this.props.body)).catch(() => {})
       .finally(() => { this.props.onRetry(); this.setState({ failed: false }); });

@@ -136,8 +136,7 @@ def term_surface_band(body, P0, surf, lo=None, hi=None, w=1.0, inside=True, mode
                 m = cl > hi; r[m] += w * (cl[m] - hi); J[m, i0:i0 + 6] += w * Jc[m]
             keep = r != 0
             return r[keep], J[keep]
-        mval, wts = softmin(cl, tau)
-        gm = wts @ Jc
+        k = int(np.argmin(cl)); mval = cl[k]; gm = Jc[k]   # exact minimum (a soft-min sits ~tau*log(n) below it)
         r = []; J = []
         if lo is not None and mval < lo: r.append(w * (lo - mval)); row = np.zeros(B.n); row[i0:i0 + 6] = -w * gm; J.append(row)
         if hi is not None and mval > hi: r.append(w * (mval - hi)); row = np.zeros(B.n); row[i0:i0 + 6] = w * gm; J.append(row)
@@ -175,8 +174,7 @@ def term_body_gap(bA, PA0, bB, VB0, FB, lo=None, hi=None, w=1.0, mode='each', ta
                 m = sd > hi; r[m] += w * (sd[m] - hi); J[m, iA:iA + 6] += w * JA[m]; J[m, iB:iB + 6] += w * JB[m]
             keep = r != 0
             return r[keep], J[keep]
-        mval, wts = softmin(sd, tau)
-        gA = wts @ JA; gB = wts @ JB
+        k = int(np.argmin(sd)); mval = sd[k]; gA = JA[k]; gB = JB[k]
         r = []; J = []
         if lo is not None and mval < lo:
             r.append(w * (lo - mval)); row = np.zeros(B.n); row[iA:iA + 6] = -w * gA; row[iB:iB + 6] = -w * gB; J.append(row)
@@ -271,8 +269,7 @@ def term_body_gap_local(bA, PA0, bB, TB0, lo=None, hi=None, w=1.0, mode='each', 
                 m = sd > hi; r[m] += w * (sd[m] - hi); J[m, iA:iA + 6] += w * JA[m]; J[m, iB:iB + 6] += w * JB[m]
             keep = r != 0
             return r[keep], J[keep]
-        mval, wts = softmin(sd, tau)
-        gA = wts @ JA; gB = wts @ JB
+        k = int(np.argmin(sd)); mval = sd[k]; gA = JA[k]; gB = JB[k]
         r = []; J = []
         if lo is not None and mval < lo:
             r.append(w * (lo - mval)); row = np.zeros(B.n); row[iA:iA + 6] = -w * gA; row[iB:iB + 6] = -w * gB; J.append(row)

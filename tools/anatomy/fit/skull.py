@@ -296,7 +296,7 @@ def load_za(sex):
 # ------------------------------------------------------------------------------------------------ refinement
 REF = dict(gap_brain=0.0016, soft_min=0.0034, soft_max_vault=0.0095, eye_clear=0.0010, condyle_gap=0.0015, ball=0.005,
            sigma=0.012, sigma_fine=0.006, ridge=1e-3, iters=4, iters_fine=3, w_brain=3.0, w_brain_out=5.0, w_skin_out=6.0, w_skin=2.0, w_skin_far=1.0,
-           w_eye=3.0, w_condyle=3.0, w_keep=0.6, max_step=0.0015)
+           w_eye=3.0, w_condyle=3.0, w_keep=0.6, max_step=0.0015, skin_hard=0.0008, orbit_clear=0.0003)
 
 
 def voxel_subsample(p, h):
@@ -344,6 +344,7 @@ def refine(sex, Wz, Z, T, L, M, zsk, cfg=REF, log=log):
     dz, jz = cKDTree(wzp0).query(hv)
     vault_all = np.flatnonzero((dz < 0.008) & (zl[jz] == 1))[::2]
     hist = []
+    relaxed = np.zeros(len(S0), bool)
     stages = [(cfg['sigma'], cfg['iters']), (cfg['sigma_fine'], cfg['iters_fine'])]
     it = 0
     for si, (sigma, n_it) in enumerate(stages):
@@ -377,9 +378,20 @@ def refine(sex, Wz, Z, T, L, M, zsk, cfg=REF, log=log):
                     wts[js] = np.maximum(wts[js], cfg['w_brain_out'] if not inside[kk] else cfg['w_brain'])
             ss = T.skin_signed(S)
             _, js_ = T.skin_signed.tree.query(S); nsk = T.skin_signed.n[js_]
-            vs = ss > -cfg['soft_min']
-            tgt[vs] = fdisp[vs] - np.minimum(ss[vs] + cfg['soft_min'], cfg['max_step'])[:, None] * nsk[vs]
-            wts[vs] = np.where(ss[vs] > 0, cfg['w_skin_out'], cfg['w_skin'])
+            # where the brain needs the bone to move out (the Allen brain lies within a few mm of the skin) the brain
+            # wins over the soft-tissue minimum; only bone closer than `skin_hard` to the skin is pulled back in
+            relaxed |= best > 0
+            smin = np.where(relaxed, cfg['skin_hard'], cfg['soft_min'])
+            vs = ss > -smin
+            tgt[vs] = fdisp[vs] - np.minimum(ss[vs] + smin[vs], cfg['max_step'])[:, None] * nsk[vs]
+            wts[vs] = np.where(ss[vs] > -cfg['skin_hard'], cfg['w_skin_out'], cfg['w_skin'])
+            # orbital contents (extraocular muscles, optic nerves, ophthalmic vessels): orbital walls clear them
+            near_orb = np.flatnonzero(np.min([np.linalg.norm(S - E['c'], axis=1) for E in T.eyes.values()], axis=0) < 0.045)
+            so_ = T.orbit_signed(S[near_orb]); _, ko = T.orbit_signed.tree.query(S[near_orb]); no_ = T.orbit_signed.n[ko]
+            # only near the contents' surfaces (the sign of a thin tube's signed distance is unreliable far from it)
+            bado = (so_ < cfg['orbit_clear']) & (so_ > -0.002)
+            jo = near_orb[bado]
+            tgt[jo] = fdisp[jo] + np.minimum(cfg['orbit_clear'] - so_[bado], cfg['max_step'])[:, None] * no_[bado]; wts[jo] = np.maximum(wts[jo], cfg['w_eye'])
             # scalp over the vault thicker than the upper bound (not over muscle attachment areas): pull bone outward
             HF = G.HardField([cur[n] for n in bones + teeth], spacing=0.0005)
             t = HF.march(hv[vault_all] - vn[vault_all] * 1e-4, -vn[vault_all], tmax=0.03)
@@ -408,7 +420,7 @@ def refine(sex, Wz, Z, T, L, M, zsk, cfg=REF, log=log):
             stat = dict(it=it, sigma_mm=sigma * 1000, brain_viol_1p6=round(float(vb[above].mean()), 4),
                         brain_within_1mm=round(float(((sgn < 0.001) & above).mean()), 4), brain_out=int((above & ~inside).sum()),
                         min_gap_mm=round(float(sgn[above].min() * 1000), 2), skin_viol=int(vs.sum()), bone_out=int((ss > 0).sum()),
-                        vault_thick=int(far.sum()), eye_viol=n_eye, condyle_gap_mm=round(float(np.mean(np.abs(s1)) * 1000), 2),
+                        vault_thick=int(far.sum()), eye_viol=n_eye, orbit_viol=int(bado.sum()), condyle_gap_mm=round(float(np.mean(np.abs(s1)) * 1000), 2),
                         max_disp_mm=round(float(np.linalg.norm(disp, axis=1).max() * 1000), 2))
             hist.append(stat); log(sex, 'refine', stat); it += 1
             if si == len(stages) - 1 and k == n_it: break
@@ -561,6 +573,23 @@ def hyoid_check(sex, Wfull, T):
                 mean_vertex_offset_mm=round(float(np.linalg.norm(ph - tw, axis=1).mean() * 1000), 2))
 
 
+def shape_metrics(Z, P, P_warp=None):
+    """How far each placed bone departs from a similarity copy of its Z-Anatomy source (non-rigid shape change), and how
+    much the collision refinement moved it relative to the plain head warp."""
+    out = {}
+    for n in Z:
+        if Z[n][2] != 'skel_skull' and not n.startswith(('upper', 'lower')): continue
+        zv = Z[n][0]; pv = P[n][0]
+        T = umeyama(zv, pv, scale=True)
+        r = np.linalg.norm(T(zv) - pv, axis=1) * 1000
+        e = dict(similarity_scale=round(float(T.s), 3), nonrigid_rms_mm=round(float(np.sqrt((r ** 2).mean())), 2), nonrigid_max_mm=round(float(r.max()), 2))
+        if P_warp is not None:
+            dd = np.linalg.norm(pv - P_warp[n][0], axis=1) * 1000
+            e['refinement_shift_mean_mm'] = round(float(dd.mean()), 2); e['refinement_shift_max_mm'] = round(float(dd.max()), 2)
+        out[n] = e
+    return out
+
+
 def place_all(Z, Wfull):
     return {n: (Wfull(v), f, part) for n, (v, f, part, _) in Z.items()}
 
@@ -603,6 +632,7 @@ def run(sex, argv, L, zsk):
     log(sex, 'placed', round(time.time() - t0))
     crits, det, aux = M.measure(sex, P, T, L, Wfull, zsk, log=log)
     det['hyoid_method_check'] = hyoid_check(sex, Wfull, T)
+    det['bone_shape'] = shape_metrics(Z, P, place_all(Z, W))
     base_path = os.path.join(work_dir(sex), 'za_baseline.json')
     if os.path.exists(base_path):
         base = json.load(open(base_path))

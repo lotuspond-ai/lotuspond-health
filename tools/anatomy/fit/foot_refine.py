@@ -14,7 +14,7 @@ import numpy as np
 from scipy import sparse
 from scipy.spatial import cKDTree
 
-from lib.mesh import sample_surface, dense_points
+from lib.mesh import sample_surface, dense_points, face_normals
 from fit.foot_geom import TriMesh, Sim4
 
 
@@ -39,14 +39,17 @@ class Seat:
         self.pts = {b: np.concatenate([m[0], sample_surface(*m, n, seed=int(rng.integers(1 << 30)))]) for b, m in bones.items()}
         lo = {b: m[0].min(0) for b, m in bones.items()}; hi = {b: m[0].max(0) for b, m in bones.items()}
         self.facets = []   # (a, b, rest points of a facing b, rest signed distance)
+        self.contact_pairs = []
         for i, a in enumerate(self.names):
             for b in self.names[i + 1:]:
+                self.contact_pairs.append((a, b))
                 if np.any(lo[a] > hi[b] + pair_d) or np.any(lo[b] > hi[a] + pair_d): continue
                 for x, y in ((a, b), (b, a)):
                     P = self.pts[x]
                     sd = self.tm[y].signed(P)
                     m = sd < pair_d
                     if m.sum() >= 8: self.facets.append((x, y, P[m], sd[m]))
+        self.articulated = {(a, b) for a, b, _, _ in self.facets}
 
     def joint_spaces(self, W):
         """Per articulated pair: (current median, rest median scaled) facet distance in mm."""
@@ -57,7 +60,7 @@ class Seat:
             out[f'{a}|{b}'] = (float(np.median(sd) * 1000), float(np.median(s * np.maximum(sd0, 0)) * 1000))
         return out
 
-    def relax(self, W, constraints, iters=40, damp=0.6, anchor=0.02, log=None):
+    def relax(self, W, constraints, iters=40, damp=0.6, anchor=0.02, gap=0.0006, log=None):
         """W: name -> Sim4 (rest -> body). constraints(name, X) -> (sources, displacements, weights) or None, for the
         body-side constraints of bone `name` whose current surface samples are X. Returns the updated maps."""
         W = dict(W)
@@ -70,9 +73,26 @@ class Seat:
                 sgn = np.sign(np.einsum('ij,ij->i', Y - q, n)); sgn[sgn == 0] = 1
                 sd = s * sgn * d
                 nw = W[b].vec(n); nw /= np.linalg.norm(nw, axis=1, keepdims=True)
-                target = s * np.maximum(sd0, 0.0)
+                target = s * np.maximum(sd0, 0.0002)
                 delta = (target - sd)[:, None] * nw * 0.5
-                moves[a].append((X, delta, np.ones(len(X))))
+                moves[a].append((X, delta, np.where(sd0 < 0.0002, 3.0, 1.0)))
+            # one-sided contacts between bones that do not articulate (e.g. neighbouring toes): keep `gap` apart
+            Xs = {b: W[b](self.pts[b]) for b in self.names}
+            lo = {b: Xs[b].min(0) for b in self.names}; hi = {b: Xs[b].max(0) for b in self.names}
+            for a, b in self.contact_pairs:
+                if (a, b) in self.articulated or (b, a) in self.articulated: continue
+                if np.any(lo[a] > hi[b] + 0.002) or np.any(lo[b] > hi[a] + 0.002): continue
+                for x, y in ((a, b), (b, a)):
+                    X = Xs[x]; m = np.all((X > lo[y] - 0.002) & (X < hi[y] + 0.002), axis=1)
+                    if not m.any(): continue
+                    s = W[y].scale(); Y = W[y].inverse()(X[m])
+                    q, d, _, n = self.tm[y].closest(Y)
+                    sgn = np.sign(np.einsum('ij,ij->i', Y - q, n)); sgn[sgn == 0] = 1
+                    sd = s * sgn * d
+                    bad = sd < gap
+                    if not bad.any(): continue
+                    nw = W[y].vec(n[bad]); nw /= np.linalg.norm(nw, axis=1, keepdims=True)
+                    moves[x].append((X[m][bad], (gap - sd[bad])[:, None] * nw * 0.5, np.full(bad.sum(), 10.0)))
             maxmove = 0.0
             newW = {}
             for b in self.names:
@@ -100,17 +120,37 @@ def _adjacency(f, n):
     return A, deg
 
 
-def push_out(meshes, fixed=(), gap=0.0003, iters=25, smooth=3, extra=None, log=None):
-    """Separate overlapping bones by moving their vertices apart (half each; a bone listed in `fixed` does not move)
-    with Laplacian-smoothed displacements. extra(name, V) -> per-vertex displacement for body-side constraints."""
+def _face_samples(v, f, n, seed):
+    """Vertices plus area-weighted face samples, as (face or -1, barycentrics, vertex index or -1)."""
+    rng = np.random.default_rng(seed)
+    a = 0.5 * np.linalg.norm(np.cross(v[f[:, 1]] - v[f[:, 0]], v[f[:, 2]] - v[f[:, 0]]), axis=1)
+    fi = rng.choice(len(f), size=n, p=a / a.sum())
+    r1, r2 = rng.random(n), rng.random(n); s = np.sqrt(r1)
+    bary = np.stack([1 - s, s * (1 - r2), s * r2], 1)
+    return fi, bary
+
+
+def push_out(meshes, fixed=(), gap=0.00005, iters=40, smooth=4, extra=None, cap=0.0014, n=3000, step=0.6, log=None):
+    """Separate overlapping bones by moving their surfaces apart (half each; a bone in `fixed` does not move). Overlap is
+    tested on vertices and dense face samples; a sample that is too deep asks its face's vertices to move (shared by
+    barycentric weight, averaged per vertex); the displacements are spread to the neighbouring ring(s) by Laplacian smoothing (never below what a vertex asked for)
+    and no vertex moves more than `cap` in total. extra(name, V) -> per-vertex displacement for body-side constraints."""
     V = {b: m[0].copy() for b, m in meshes.items()}
+    V0 = {b: m[0].copy() for b, m in meshes.items()}
     F = {b: m[1] for b, m in meshes.items()}
+    N0 = {b: face_normals(V[b], F[b]) for b in V}
     adj = {b: _adjacency(F[b], len(V[b])) for b in V}
+    smp = {b: _face_samples(V[b], F[b], n, seed=i) for i, b in enumerate(V)}
     names = list(V)
     for it in range(iters):
         tms = {b: TriMesh(V[b], F[b]) for b in names}
+        P = {}
+        for b in names:
+            fi, bary = smp[b]
+            P[b] = np.concatenate([V[b], np.einsum('ij,ijk->ik', bary, V[b][F[b][fi]])])
         lo = {b: V[b].min(0) for b in names}; hi = {b: V[b].max(0) for b in names}
-        disp = {b: np.zeros_like(V[b]) for b in names}
+        num = {b: np.zeros_like(V[b]) for b in names}
+        den = {b: np.zeros(len(V[b])) for b in names}
         worst = 0.0
         for i, a in enumerate(names):
             for b in names[i + 1:]:
@@ -118,16 +158,26 @@ def push_out(meshes, fixed=(), gap=0.0003, iters=25, smooth=3, extra=None, log=N
                 for x, y in ((a, b), (b, a)):
                     if x in fixed: continue
                     share = 1.0 if y in fixed else 0.5
-                    p = V[x]; m = np.all((p > lo[y] - gap) & (p < hi[y] + gap), axis=1)
+                    p = P[x]; m = np.all((p > lo[y] - gap) & (p < hi[y] + gap), axis=1)
                     if not m.any(): continue
-                    q, d, _, n = tms[y].closest(p[m])
-                    sgn = np.sign(np.einsum('ij,ij->i', p[m] - q, n)); sgn[sgn == 0] = 1
+                    q, d, _, nn = tms[y].closest(p[m])
+                    sgn = np.sign(np.einsum('ij,ij->i', p[m] - q, nn)); sgn[sgn == 0] = 1
                     sd = sgn * d
                     bad = sd < gap
                     if not bad.any(): continue
                     worst = max(worst, float(gap - sd[bad].min()))
                     idx = np.flatnonzero(m)[bad]
-                    disp[x][idx] += ((gap - sd[bad]) * share)[:, None] * n[bad]
+                    need = ((gap - sd[bad]) * share)[:, None] * nn[bad]
+                    nv = len(V[x])
+                    isv = idx < nv
+                    # vertex demands count fully for their vertex; face-sample demands are shared by the face's
+                    # vertices in proportion to the barycentric weights (averaged per vertex below)
+                    np.add.at(num[x], idx[isv], need[isv]); np.add.at(den[x], idx[isv], 1.0)
+                    fs = idx[~isv] - nv
+                    tri = F[x][smp[x][0][fs]]; bw = smp[x][1][fs]
+                    for c in range(3):
+                        np.add.at(num[x], tri[:, c], need[~isv] * bw[:, c:c + 1]); np.add.at(den[x], tri[:, c], bw[:, c])
+        disp = {b: np.where(den[b][:, None] > 0, num[b] / np.maximum(den[b], 1e-12)[:, None], 0.0) for b in names}
         if extra is not None:
             for b in names:
                 if b in fixed: continue
@@ -139,12 +189,22 @@ def push_out(meshes, fixed=(), gap=0.0003, iters=25, smooth=3, extra=None, log=N
             D = disp[b]
             if not D.any(): continue
             A, deg = adj[b]
-            # spread the displacement to the neighbouring ring(s), never below what each vertex asked for
             need = np.linalg.norm(D, axis=1)
             S = D.copy()
             for _ in range(smooth): S = 0.5 * S + 0.5 * (A @ S) / deg[:, None]
-            ns = np.linalg.norm(S, axis=1)
-            scale = np.where((need > 0) & (ns > 1e-12), np.maximum(need / np.maximum(ns, 1e-12), 1.0), 1.0)
-            V[b] = V[b] + S * scale[:, None] * 1.1
+            # every vertex that asked to move gets at least its own demand along its own direction
+            dh = np.where(need[:, None] > 0, D / np.maximum(need, 1e-12)[:, None], 0.0)
+            along = np.einsum('ij,ij->i', S, dh)
+            S = step * (S + np.maximum(need - along, 0)[:, None] * dh)
+            tot = V[b] + S - V0[b]; L = np.linalg.norm(tot, axis=1)
+            over = L > cap
+            if over.any(): tot[over] *= (cap / L[over])[:, None]
+            Vn = V0[b] + tot
+            # refuse moves that would fold the surface (a face turning by more than ~70 degrees)
+            n1 = face_normals(Vn, F[b])
+            bad = np.einsum('ij,ij->i', n1, N0[b]) < 0.35
+            if bad.any():
+                vb = np.unique(F[b][bad]); Vn[vb] = V[b][vb]
+            V[b] = Vn
         if log and (it % 5 == 0): log(f'      push-out {it}: worst overlap {worst * 1000:.3f} mm')
     return {b: (V[b], F[b]) for b in names}

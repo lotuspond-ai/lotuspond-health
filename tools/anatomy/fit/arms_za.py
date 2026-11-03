@@ -158,6 +158,12 @@ class Limb:
         J['sc'] = sc.mean(0)
         ac = np.concatenate([contact(P['clav'], T['scap'], 0.004)[0], contact(P['scap'], T['clav'], 0.004)[0]])
         J['ac'] = ac.mean(0)
+        # Z-Anatomy's own joint spaces (closest approach, negative = the meshes overlap)
+        self.gaps = {}
+        pairs = [('scap', 'hum'), ('hum', 'uln'), ('hum', 'rad'), ('rad', 'sca'), ('rad', 'lun')]
+        for d, ch in CHAINS.items(): pairs += list(zip(ch[:-1], ch[1:]))
+        for a, b in pairs:
+            self.gaps[(a, b)] = float(min(T[b].signed(P[a]).min(), T[a].signed(P[b]).min()))
 
     # ---------------------------------------------------------------- frames
     def joint_chain(self, digit):

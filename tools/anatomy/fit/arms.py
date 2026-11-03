@@ -171,8 +171,17 @@ def icp_about(P, target_pts, c, iters=30, trim=0.8):
 
 
 # ------------------------------------------------------------------------------------------------ one arm
+GAP_TARGET = dict(gh=2.5, hu=1.5, hr=3.0, rs=1.6, finger=1.2, cmc1=1.0)   # joint spaces set in the chain (mm)
+OLECRANON_DEPTH = 4.0      # mm: the olecranon is subcutaneous; the elbow may move back up to OLECRANON_MAX_SHIFT
+OLECRANON_MAX_SHIFT = 0.012
+
+
+def _gap(Pa, Tb):
+    return float(Tb.signed(Pa).min())
+
+
 def fit_side(ctx, side, log=log):
-    sex = ctx.sex
+    from fit.arms_measure import landmark_zones
     t0 = time.time()
     L = Limb(side); J = L.J; sg = L.sg
     s0 = ctx.s0
@@ -183,11 +192,11 @@ def fit_side(ctx, side, log=log):
     G = fit_girdle(L, ctx.W, ctx.skinT, ctx.lungsT, log=log)
     maps['clav'] = BoneMap(G['clav']); maps['scap'] = BoneMap(G['scap'])
     info['girdle'] = G['info']
-    GH = G['scap'](J['gh'][None])[0]
+    GH0 = G['scap'](J['gh'][None])[0]
     # 2. skin arm sections from the glenohumeral centre, elbow and wrist by profile matching ----------------------
     m = sg * sv[:, 0] > 0.28
-    tip = sv[m][np.argmax(np.linalg.norm(sv[m] - GH, axis=1))]
-    secs = arm_sections(sv, sf, GH, tip, sg)
+    tip = sv[m][np.argmax(np.linalg.norm(sv[m] - GH0, axis=1))]
+    secs = arm_sections(sv, sf, GH0, tip, sg)
     zp = za_profile(L)
     mj = match_joints(zp['secs'], zp['ze'], zp['zw'], secs)
     info['joints_profile'] = mj
@@ -196,31 +205,40 @@ def fit_side(ctx, side, log=log):
     off_w = za_offset(zp['secs'], zp['zw'], J['wrist'], sg)
     E_t, d_e = hra_point(secs, mj['elbow'], off_e, sg)
     W_t, d_w = hra_point(secs, mj['wrist'], off_w, sg)
-    # 3. humerus: carried by the upper thorax (neutral rotation, as in Z-Anatomy's anatomical position: palms
-    #    forward in both bodies) and swung about the glenohumeral centre onto GH -> elbow; shaft stretched to length.
-    d_h = J['elbow'] - J['gh']; Lh = np.linalg.norm(d_h)
-    R0 = ctx.Rt
-    Dh = unit(E_t - GH); tgt = unit(W_t - E_t)
-    Rh = swing(R0 @ d_h, Dh) @ R0
-    Ah = Aff(s0 * Rh, GH - s0 * Rh @ J['gh'])
-    dLh = (np.linalg.norm(E_t - GH) - s0 * Lh) / s0
-    maps['hum'] = BoneMap(Ah, Stretch(J['gh'], J['elbow'], dLh))
-    E = maps['hum'](J['elbow'][None])[0]
-    sh_h = Stretch(J['gh'], J['elbow'], dLh).end_shift()
-    Af0 = Aff(np.eye(3), sh_h).then(Ah)          # forearm carried by the humerus (Z-Anatomy elbow relation)
-    # 4-5. forearm and hand. The radius turns about the ulna (pronation axis: radial head centre -> ulnar head
-    #    centre) together with the hand; the pronation angle comes from fitting Z-Anatomy's palm and dorsum skin to the
-    #    skin palm, so it is iterated with the elbow (flexion about the elbow axis onto the skin forearm's axis; any
-    #    residual is the carrying-angle difference, reported as valgus) and the forearm length (the hand fit also
-    #    slides the wrist along the forearm).
+    post = -frame_perp(d_e, sg)[0]
+    # articular samples (Z-Anatomy contact regions) for measuring the joint spaces while placing
+    def art(a, b, d=0.006): return L.P[a][np.abs(L.T[b].signed(L.P[a])) < d]
+    head = art('hum', 'scap', 0.010); notch_u = art('uln', 'hum'); head_r = art('rad', 'hum'); prow = np.concatenate([art('sca', 'rad'), art('lun', 'rad')])
+    zones = dict((k, v) for k, v in (z for b in ('uln',) for z in landmark_zones(L)[b]))
+    olec = L.P['uln'][zones['olecranon']]
+    Tscap = TriMesh(G['scap'](L.M['scap'][0]), L.M['scap'][1], k=10)
+    n_g = unit(G['scap'].vec(J['glenoid_n']))
     pa0_za, pa1_za = J['capitulum'], J['ulnar_head']
     pax_za = unit(pa1_za - pa0_za)
     hv, hf = zp['hand_skin']
     Ph0 = sample_surface(hv, hf, 3000, seed=5)
-    phi = 0.0; slide_total = 0.0; H = None
-    W_goal = W_t.copy()
-    for it in range(4):
-        Rp = Aff.about(rot_axis(pax_za, phi), pa0_za)          # pronation in Z-Anatomy space (radius + hand)
+    R0 = ctx.Rt
+    # unknowns iterated together: GH distraction, elbow shift (olecranon), pronation, wrist slide, forearm distraction,
+    # radius shift relative to the ulna, wrist distraction
+    gh_d = 0.0; e_sh = 0.0; phi = 0.0; W_goal = W_t.copy(); f_d = 0.0; r_d = 0.0; w_d = 0.0
+    H = None
+    for it in range(6):
+        GH = GH0 + n_g * gh_d
+        E_goal = E_t + post * e_sh
+        # 3. humerus: carried by the upper thorax (neutral rotation, palms forward in both bodies), swung about the GH
+        #    centre onto GH -> elbow, shaft stretched to length
+        d_h = J['elbow'] - J['gh']; Lh = np.linalg.norm(d_h)
+        Rh = swing(R0 @ d_h, E_goal - GH) @ R0
+        Ah = Aff(s0 * Rh, GH - s0 * Rh @ J['gh'])
+        dLh = (np.linalg.norm(E_goal - GH) - s0 * Lh) / s0
+        st_h = Stretch(J['gh'], J['elbow'], dLh)
+        m_hum = BoneMap(Ah, st_h)
+        E = m_hum(J['elbow'][None])[0]
+        # 4. forearm: carried by the humerus; the radius pronated about the ulna (ZA space) with the hand; flexed about
+        #    the elbow axis onto the skin forearm (the rest of the angle is the carrying-angle difference, as valgus);
+        #    distracted at the elbow, the radius slid along the ulna, stretched so the wrist lands on W_goal
+        Af0 = Aff(np.eye(3), st_h.end_shift()).then(Ah)
+        Rp = Aff.about(rot_axis(pax_za, phi), pa0_za)
         Jw = Rp(J['wrist'][None])[0]
         d_f = Jw - J['elbow']
         ax = unit(Af0.vec(J['elbow_axis']))
@@ -230,39 +248,56 @@ def fit_side(ctx, side, log=log):
         Rflex = rot_axis(ax, flex); cur2 = Rflex @ cur
         Rval = swing(cur2, tgt)
         Af = Af0.then(Aff.about(Rval @ Rflex, E))
-        # forearm length: both bones stretched along the pronation axis (keeps the distal radio-ulnar joint)
-        k = unit(d_f) @ pax_za
-        dLf = (np.linalg.norm(W_goal - E) / s0 - np.linalg.norm(d_f)) / max(k, 0.5)
+        A_ul = Af.then(Aff(np.eye(3), f_d * tgt)); A_ra = Af.then(Aff(np.eye(3), (f_d - r_d) * tgt))
+        kk = unit(d_f) @ pax_za
+        dLf = ((np.linalg.norm(W_goal - E) - (f_d - r_d) - w_d) / s0 - np.linalg.norm(d_f)) / max(kk, 0.5)
         stf = Stretch(pa0_za, pa1_za, dLf)
-        m_uln = BoneMap(Af, stf)
-        m_rad = BoneMap(Af, stf)                               # radius: pronation first (below), then stretch + Af
-        Ahd = Rp.then(Aff(np.eye(3), stf.end_shift())).then(Af)   # hand bones: pronated, shifted with the forearm, carried
+        m_uln = BoneMap(A_ul, stf); m_rad = _PreRot(Rp, stf, A_ra)
+        # 5. hand: carried by the radius (with the wrist distraction), fitted to the skin palm with Z-Anatomy's palm
+        #    and dorsum skin regions: rotation about the wrist (its twist about the forearm is pronation, done by the
+        #    radius next round) and a slide along the forearm (the forearm's length)
+        Ahd = Rp.then(Aff(np.eye(3), stf.end_shift())).then(A_ra).then(Aff(np.eye(3), w_d * tgt))
         Wc = Ahd(J['wrist'][None])[0]
         if H is None: H = analyse_hand(ctx, Wc, tgt, sg, log=log)
-        Rw, slide = icp_about_slide(Ahd(Ph0), H['palm'], Wc, tgt, slide=it < 2)
+        Rw, slide = icp_about_slide(Ahd(Ph0), H['palm'], Wc, tgt, slide=it < 4)
         pax = unit(m_uln(pa1_za[None])[0] - m_uln(pa0_za[None])[0])
         q = _quat(Rw); v = q[1:]; proj = (v @ pax) * pax
         tw = np.r_[q[0], proj]; tw = tw / max(np.linalg.norm(tw), 1e-12)
         dphi = 2 * np.arctan2(np.linalg.norm(tw[1:]) * np.sign(tw[1:] @ pax), tw[0])
-        phi += dphi; slide_total += slide
-        W_goal = W_goal + slide * tgt
-        if abs(dphi) < np.radians(0.5) and abs(slide) < 0.0005: break
-    Rpro_h = rot_axis(pax, dphi)
-    Rsw = Rw @ Rpro_h.T
-    info['pronation_deg'] = float(np.degrees(phi)); info['wrist_swing_deg'] = float(np.degrees(np.arccos(np.clip((np.trace(Rsw) - 1) / 2, -1, 1))))
-    info['elbow_flex_deg'] = float(np.degrees(flex)); info['elbow_valgus_adjust_deg'] = float(np.degrees(np.arccos(np.clip(cur2 @ tgt, -1, 1))))
-    info['wrist_slide_mm'] = float(slide_total * 1000); info['forearm_stretch_mm'] = float(dLf * s0 * 1000); info['humerus_stretch_mm'] = float(dLh * s0 * 1000)
-    # final maps: the radius is pronated in Z-Anatomy space (about the ulna), then stretched and carried
-    maps['uln'] = m_uln
-    maps['rad'] = BoneMap(Af, stf)
-    maps['rad'] = _PreRot(Rp, stf, Af)
-    Ahand = Ahd.then(Aff.about(Rpro_h, m_uln(pa0_za[None])[0])).then(Aff.about(Rsw, Wc))
+        Rsw = Rw @ rot_axis(pax, dphi).T
+        # joint spaces and the olecranon's depth in this placement
+        Thum = TriMesh(m_hum(L.M['hum'][0]), L.M['hum'][1], k=10)
+        Trad = TriMesh(m_rad(L.M['rad'][0]), L.M['rad'][1], k=10)
+        Ahand_try = Ahd.then(Aff.about(Rsw, Wc))
+        g_gh = _gap(m_hum(head), Tscap) * 1e3
+        g_hu = _gap(m_uln(notch_u), Thum) * 1e3; g_hr = _gap(m_rad(head_r), Thum) * 1e3
+        g_rs = _gap(Ahand_try(prow), Trad) * 1e3
+        c_ol = float(-ctx.skinT.signed(m_uln(olec)).max() * 1e3)
+        log(f'    round {it}: GH {g_gh:.2f} HU {g_hu:.2f} HR {g_hr:.2f} RC {g_rs:.2f} mm, olecranon {c_ol:.1f} mm deep, pronation {np.degrees(phi):.1f}+{np.degrees(dphi):.1f} deg, slide {slide * 1e3:.1f} mm')
+        done = (abs(dphi) < np.radians(0.3) and abs(slide) < 3e-4 and abs(g_gh - GAP_TARGET['gh']) < 0.15 and abs(g_hu - GAP_TARGET['hu']) < 0.15
+                and abs(g_hr - GAP_TARGET['hr']) < 0.2 and abs(g_rs - GAP_TARGET['rs']) < 0.15)
+        if it == 5 or done: break
+        phi += dphi; W_goal = W_goal + slide * tgt
+        gh_d += (GAP_TARGET['gh'] - g_gh) * 1e-3
+        df = (GAP_TARGET['hu'] - g_hu) * 1e-3; f_d += df
+        r_d += (g_hr * 1e-3 + df) - GAP_TARGET['hr'] * 1e-3
+        w_d += (GAP_TARGET['rs'] - g_rs) * 1e-3
+        e_sh = float(np.clip(e_sh + (c_ol - OLECRANON_DEPTH) * 1e-3, 0.0, OLECRANON_MAX_SHIFT))
+    maps['hum'] = m_hum; maps['uln'] = m_uln; maps['rad'] = m_rad
+    Ahand = Ahand_try
     for b in CARPALS + [f'mc{i}' for i in range(1, 6)]: maps[b] = BoneMap(Ahand)
-    log(f'  {side}: elbow flexion {info["elbow_flex_deg"]:.1f} deg (valgus adjust {info["elbow_valgus_adjust_deg"]:.1f}), pronation {info["pronation_deg"]:.1f} deg, wrist swing {info["wrist_swing_deg"]:.1f} deg, wrist slide {info["wrist_slide_mm"]:.1f} mm, humerus {info["humerus_stretch_mm"]:+.1f} mm, forearm {info["forearm_stretch_mm"]:+.1f} mm')
+    info.update(pronation_deg=float(np.degrees(phi)), wrist_swing_deg=float(np.degrees(np.arccos(np.clip((np.trace(Rsw) - 1) / 2, -1, 1)))),
+                elbow_flex_deg=float(np.degrees(flex)), elbow_valgus_adjust_deg=float(np.degrees(np.arccos(np.clip(cur2 @ tgt, -1, 1)))),
+                wrist_slide_mm=float(np.linalg.norm(W_goal - W_t) * 1e3), elbow_back_shift_mm=float(e_sh * 1e3),
+                gh_distraction_mm=float(gh_d * 1e3), elbow_distraction_mm=float(f_d * 1e3), radius_shift_proximal_mm=float(r_d * 1e3),
+                wrist_distraction_mm=float(w_d * 1e3), humerus_stretch_mm=float(dLh * s0 * 1e3), forearm_stretch_mm=float(dLf * s0 * 1e3),
+                gaps_after_chain_mm=dict(gh=g_gh, hu=g_hu, hr=g_hr, radiocarpal=g_rs), olecranon_depth_mm=c_ol)
+    log(f'  {side}: elbow flexion {info["elbow_flex_deg"]:.1f} deg (valgus {info["elbow_valgus_adjust_deg"]:.1f}), pronation {info["pronation_deg"]:.1f}, wrist swing {info["wrist_swing_deg"]:.1f} deg; '
+        f'humerus {info["humerus_stretch_mm"]:+.1f} mm, forearm {info["forearm_stretch_mm"]:+.1f} mm, elbow back {info["elbow_back_shift_mm"]:.1f} mm, radius up {info["radius_shift_proximal_mm"]:.1f} mm')
     # 6. fingers -----------------------------------------------------------------------------------------------------
     fit_fingers(L, maps, Ahand, H, ctx, info, log=log)
     info['time_s'] = round(time.time() - t0, 1)
-    return dict(L=L, maps=maps, info=info, girdle=G, secs=secs, hand=H, targets=dict(GH=GH, E=E_t, W=W_t))
+    return dict(L=L, maps=maps, info=info, girdle=G, secs=secs, hand=H, targets=dict(GH=GH, E=E_goal, W=W_goal))
 
 
 class _PreRot(BoneMap):
@@ -324,70 +359,66 @@ def polyline_point_at(P, dist_from, start):
 
 def fit_fingers(L, maps, Ahand, H, ctx, info, log=log):
     """Each digit's chain follows its skin finger. The centerline (web -> tip) is extended proximally in a straight
-    line; the chain's joint centres are placed on it at the bones' lengths, with the distal phalanx's tip kept
-    `pulp` short of the skin fingertip; each phalanx turns about its proximal joint (MCP: flexion + abduction, no
-    twist; PIP / DIP / IP: flexion about the hinge axis), its length set by a shaft stretch."""
+    line; the chain's joint centres are placed on it at the bones' lengths plus the joint spaces (Z-Anatomy's finger
+    joints overlap by up to 1.2 mm, they are opened to GAP_TARGET['finger']), with the distal phalanx's tip kept a
+    pulp's thickness short of the skin fingertip. Each bone turns about its proximal joint without axial twist
+    (relative to its parent). A digit shorter or longer than Z-Anatomy's (scale k) gets smaller or larger phalanges
+    (isotropic scale k clipped to 0.88-1.12, keeping the joints congruent) and the rest of k in the shafts."""
     J = L.J; s0 = ctx.s0
     info['fingers'] = {}
     for dg, chain in CHAINS.items():
         f = H['digits'][dg]
         cl = f['cl']
         if len(cl) < 3: raise RuntimeError(f'digit {dg}: skin centerline too short')
-        # straight proximal extension of the centerline (into the palm)
         d0 = unit(cl[min(3, len(cl) - 1)] - cl[0])
-        ext = np.array([cl[0] - d0 * k * 0.004 for k in range(12, 0, -1)])
+        ext = np.array([cl[0] - d0 * k * 0.004 for k in range(14, 0, -1)])
         path = np.concatenate([ext, cl])
-        # the skin fingertip and the tip target (pulp thickness short of it, along the finger)
         tipv = f['tip']; dtip = unit(cl[-1] - cl[-3])
-        pulp = 0.0045 * s0
-        tip_t = tipv - dtip * pulp
-        # proximal joint of the first moving bone of the chain
+        tip_t = tipv - dtip * 0.0045 * s0
         movers = chain[1:] if dg > 1 else chain   # thumb: the metacarpal moves too (carpometacarpal joint)
         if dg == 1:
-            piv_za = J['cmc1']
-        else:
-            piv_za = J[f'{chain[0]}>{chain[1]}']
-        piv = maps[chain[0]](piv_za[None])[0] if dg > 1 else Ahand(piv_za[None])[0]
-        # Z-Anatomy segment lengths (joint to joint, last to the tip) along the chain
-        za_pts = [piv_za] + [J[f'{a}>{b}'] for a, b in zip(chain[:-1], chain[1:]) if dg == 1 or a != chain[0]] + [J[f'{chain[-1]}_tip']]
-        if dg == 1:
             za_pts = [J['cmc1'], J['mc1>pp1'], J['pp1>dp1'], J['dp1_tip']]
+            g_za = [float(min(L.T['tpm'].signed(L.P['mc1']).min(), L.T['mc1'].signed(L.P['tpm']).min()) * 1e3),
+                    L.gaps[('mc1', 'pp1')] * 1e3, L.gaps[('pp1', 'dp1')] * 1e3]
+            gaps = [GAP_TARGET['cmc1'] - g_za[0]] + [GAP_TARGET['finger'] - g for g in g_za[1:]]
+            piv = Ahand(J['cmc1'][None])[0]
+        else:
+            za_pts = [J[f'{a}>{b}'] for a, b in zip(chain[:-1], chain[1:])] + [J[f'{chain[-1]}_tip']]
+            gaps = [GAP_TARGET['finger'] - L.gaps[(a, b)] * 1e3 for a, b in zip(chain[:-1], chain[1:])]
+            piv = maps[chain[0]](za_pts[0][None])[0]
+        gaps = np.maximum(np.array(gaps), 0.0) * 1e-3          # opening along the chain at each joint (m)
         za_len = np.array([np.linalg.norm(b - a) for a, b in zip(za_pts[:-1], za_pts[1:])]) * s0
-        # total skin length from the pivot to the tip target along the path
-        target_total = np.linalg.norm(tip_t - piv) if dg > 1 else None
-        # place joints: successive points on the path at the (scaled) bone lengths; scale lengths so the chain ends at tip_t
+
         def place(k):
-            pts = [piv]
-            for Lseg in za_len * k:
-                pts.append(polyline_point_at(path, Lseg, pts[-1]))
-            return pts
-        lo, hi = 0.75, 1.35
-        for _ in range(40):  # bisection on the chain scale: last joint (tip) at the tip target's arc position
+            starts, ends = [], []
+            cur = piv
+            for Lseg, g in zip(za_len * k, gaps):
+                st = polyline_point_at(path, g, cur) if g > 0 else cur
+                en = polyline_point_at(path, Lseg, st)
+                starts.append(st); ends.append(en); cur = en
+            return starts, ends
+        lo, hi = 0.7, 1.4
+        for _ in range(40):
             k = 0.5 * (lo + hi)
-            pts = place(k)
-            # compare along the finger: projection of tip on dtip
-            if (pts[-1] - tip_t) @ dtip > 0: hi = k
+            _, ends = place(k)
+            if (ends[-1] - tip_t) @ dtip > 0: hi = k
             else: lo = k
-        k = 0.5 * (lo + hi); pts = place(k)
-        info['fingers'][dg] = dict(length_scale=float(k), tip_err_mm=float(np.linalg.norm(pts[-1] - tip_t) * 1000))
-        # now pose each moving bone: aim from its proximal joint to the next joint target, stretch to length
-        prev_map = maps[chain[0]] if dg > 1 else BoneMap(Ahand)
+        k = 0.5 * (lo + hi); starts, ends = place(k)
+        s_iso = float(np.clip(k, 0.88, 1.12))
+        info['fingers'][dg] = dict(length_scale=float(k), iso_scale=s_iso, tip_err_mm=float(np.linalg.norm(ends[-1] - tip_t) * 1e3),
+                                   joint_opening_mm=[round(g * 1e3, 2) for g in gaps])
+        prev = maps[chain[0]] if dg > 1 else BoneMap(Ahand)
         for i, b in enumerate(movers):
-            if dg == 1:
-                p_za, q_za = za_pts[i], za_pts[i + 1]
-            else:
-                p_za, q_za = za_pts[i], za_pts[i + 1]
-            # the bone starts carried by its parent (Z-Anatomy relation), including the parent's stretch shift
-            par_shift = prev_map.stretch.end_shift() if prev_map.stretch is not None else np.zeros(3)
-            A0 = Aff(np.eye(3), par_shift).then(prev_map.aff)
-            P0 = A0(p_za[None])[0]
-            cur = unit(A0.vec(q_za - p_za)); tgt = unit(pts[i + 1] - pts[i])
-            R = swing(cur, tgt)
-            A1 = A0.then(Aff.about(R, P0, pts[i]))
-            dL = (np.linalg.norm(pts[i + 1] - pts[i]) - s0 * np.linalg.norm(q_za - p_za)) / s0
-            maps[b] = BoneMap(A1, Stretch(p_za, q_za, dL, zone=(0.2, 0.35, 0.65, 0.8)))
-            prev_map = maps[b]
-        log(f'    digit {dg}: chain length scale {k:.3f}, tip error {info["fingers"][dg]["tip_err_mm"]:.1f} mm')
+            p_za, q_za = za_pts[i], za_pts[i + 1]
+            A0 = prev.aff if prev.stretch is None else Aff(np.eye(3), prev.stretch.end_shift()).then(prev.aff)
+            Rpar = A0.A / np.cbrt(np.linalg.det(A0.A))
+            R = swing(Rpar @ (q_za - p_za), ends[i] - starts[i]) @ Rpar
+            A = s0 * s_iso * R
+            aff = Aff(A, starts[i] - A @ p_za)
+            dL = np.linalg.norm(q_za - p_za) * (k / s_iso - 1.0)
+            maps[b] = BoneMap(aff, Stretch(p_za, q_za, dL, zone=(0.2, 0.35, 0.65, 0.8)))
+            prev = maps[b]
+        log(f'    digit {dg}: length scale {k:.3f} (bones x{s_iso:.3f}), tip error {info["fingers"][dg]["tip_err_mm"]:.1f} mm, joints opened {np.round(gaps * 1e3, 1).tolist()} mm')
 
 
 # ------------------------------------------------------------------------------------------------ outputs
@@ -425,9 +456,10 @@ def render_qa(ctx, side, r, odir):
     Ah = r['maps']['cap']
     o, R = L.hand_frame()
     n = unit(Ah.aff.vec(R[:, 2])); e1 = unit(Ah.aff.vec(R[:, 0]))
-    hc = np.concatenate([meshes[b][0] for b in ALL_BONES if b not in ARM_BONES]).mean(0)
-    cams[f'{side}-hand-palmar'] = dict(dir=tuple(n), up=tuple(-e1), target=hc, radius=0.115)
-    cams[f'{side}-hand-dorsal'] = dict(dir=tuple(-n), up=tuple(-e1), target=hc, radius=0.115)
+    hp = np.concatenate([meshes[b][0] for b in ALL_BONES if b not in ARM_BONES] + [tips])
+    lo_, hi_ = hp.min(0), hp.max(0); hc = 0.5 * (lo_ + hi_); hr = 0.5 * np.linalg.norm(hi_ - lo_) + 0.015
+    cams[f'{side}-hand-palmar'] = dict(dir=tuple(n), up=tuple(-e1), target=hc, radius=hr)
+    cams[f'{side}-hand-dorsal'] = dict(dir=tuple(-n), up=tuple(-e1), target=hc, radius=hr)
     return render_views(items, cams, os.path.join(odir, 'qa'), size=(900, 900))
 
 

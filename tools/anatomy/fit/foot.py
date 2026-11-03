@@ -44,6 +44,7 @@ from fit.common import build_warp, write_group, FIT, skin  # noqa: E402
 from fit.foot_geom import TriMesh, VoxelField, Sim4, rotvec, smoothstep  # noqa: E402
 from fit.foot_model import ZAFoot, toe_bones, METATARSALS, BASES  # noqa: E402
 from fit.foot_target import Target, hra_bone  # noqa: E402
+from fit.foot_refine import Seat, push_out  # noqa: E402
 
 GROUP = 'foot'
 DEG = np.pi / 180
@@ -79,6 +80,19 @@ def unpack(x):
         toes[k] = a if n == 4 else a + [0.0]
     q['toes'] = toes
     return q
+
+
+def toe_prior(x):
+    """MTP: flexion / extension free within ~25 deg, abduction ~10 deg; IP joints flex freely but barely extend
+    (PIP / DIP extend at most a few degrees, the hallux IP somewhat more)."""
+    r = 0.0
+    for k, n in TOE_SLOTS:
+        i = toe_index(k)
+        r += (x[i[0]] / (25 * DEG)) ** 2 + (x[i[1]] / (10 * DEG)) ** 2
+        for j in i[2:]:
+            lim = (10 if k == 1 else 3) * DEG
+            r += (x[j] / (30 * DEG)) ** 2 + (relu(-lim - x[j]) / (2 * DEG)) ** 2
+    return r
 
 
 def toe_index(k):
@@ -207,10 +221,9 @@ class FootFit:
         notal = np.concatenate([W[b](p) for b, p in self.bone_pts.items() if b != 'Talus' and b not in self.toe_bone])
         e_leg = np.mean(relu(0.001 - tg.leg_field(notal)) ** 2) / 0.001 ** 2
         e_tl = np.mean(relu(0.001 - tg.leg_field(W['Talus'](self.bone_pts['Talus']))) ** 2) / 0.001 ** 2
-        # 4. joint space in the mortise: facet points at GAP0 from the talus, never closer than 1.2 mm. The talus is
-        #    seated on the tibia (plafond, medial malleolus); the fibular facet counts half (see the module notes)
+        # 4. joint space in the mortise: facet points at GAP0 from the talus, never closer than 1.2 mm
         e_m = 0.0
-        for k, wk in (('plafond', 1.0), ('medial', 1.0), ('lateral', 0.5)):
+        for k, wk in (('plafond', 1.0), ('medial', 1.0), ('lateral', 1.0)):
             g = self.talus_gap(W, self.articular[k])
             e_m += wk * (np.mean(phuber(g - GAP0, 0.001)) / 0.001 ** 2 + 30 * np.mean(relu(0.0012 - g) ** 2) / 0.001 ** 2)
         # 5. pads under the heel and the metatarsal heads
@@ -225,19 +238,38 @@ class FootFit:
         r += (x[2] / (4 * DEG)) ** 2 + (x[3] / (4 * DEG)) ** 2 + (x[4] / (10 * DEG)) ** 2
         r += (x[5] / 0.06) ** 2 + ((x[6] - x[5]) / 0.025) ** 2
         r += np.sum((x[7:10] / (4 * DEG)) ** 2) + np.sum((x[10:13] / 0.4) ** 2)
-        for k, n in TOE_SLOTS:
-            i = toe_index(k)
-            r += (x[i[0]] / (25 * DEG)) ** 2 + (x[i[1]] / (10 * DEG)) ** 2 + np.sum((x[i[2:]] / (25 * DEG)) ** 2)
+        r += toe_prior(x)
         terms = dict(skin=1.0 * e_skin, inside=4.0 * e_in, leg=2.0 * e_leg + 5.0 * e_tl, mortise=1.5 * e_m, pads=0.5 * e_pad, toes=0.5 * e_toe, prior=0.3 * r)
         return terms if parts else sum(terms.values())
 
-    def _opt(self, x, idx, method='L-BFGS-B', skip_toes=False, maxiter=300):
+    def energy_toes(self, x):
+        """The terms that depend on the toe joints only (stage B): toe skin, toe bones inside, toes apart, toe priors."""
+        q = unpack(x)
+        W = self.world_maps(q)
+        tg = self.tg
+        if not hasattr(self, '_toe_groups'):
+            sel = np.flatnonzero(self.skin_toe & self.skin_use)
+            pos = -np.ones(len(self.F.skin_pts), int); pos[sel] = np.arange(len(sel))
+            self._toe_groups = [(b, pos[idx[np.isin(idx, sel)]], w[np.isin(idx, sel)]) for b, idx, w in self.skin_groups]
+            self._toe_groups = [(b, i, w) for b, i, w in self._toe_groups if len(i)]
+            self._toe_sel = sel
+        P = self.F.skin_pts[self._toe_sel]
+        S = np.zeros_like(P)
+        for b, i, w in self._toe_groups:
+            S[i] += w * (self.M if b == 'leg' else W[b])(P[i])
+        e_skin = np.mean(phuber(tg.skin_sd(S), 0.003)) / 0.003 ** 2 * len(P) / max(1, self.skin_use.sum())
+        Q = np.concatenate([W[b](self.bone_pts[b]) for b in self.toe_bone])
+        e_in = np.sum(relu(tg.skin_sd(Q) + CLEAR) ** 2) / 0.001 ** 2 / sum(len(p) for p in self.bone_pts.values())
+        r = toe_prior(x)
+        return e_skin + 4.0 * e_in + 0.5 * self.toe_overlap(W) + 0.3 * r
+
+    def _opt(self, x, idx, fun=None, maxiter=300, skip_toes=False):
         idx = np.asarray(idx)
+        fun = fun or (lambda z: self.energy(z, skip_toes=skip_toes))
         def f(y):
             z = x.copy(); z[idx] = y
-            return self.energy(z, skip_toes=skip_toes)
-        opts = dict(maxiter=maxiter, eps=2e-4) if method == 'L-BFGS-B' else dict(maxiter=maxiter, xtol=1e-3, ftol=1e-6)
-        r = optimize.minimize(f, x[idx], method=method, options=opts)
+            return fun(z)
+        r = optimize.minimize(f, x[idx], method='L-BFGS-B', options=dict(maxiter=maxiter, eps=2e-4))
         z = x.copy(); z[idx] = r.x
         return z, r.nfev
 
@@ -248,21 +280,74 @@ class FootFit:
         best = (np.inf, x0)
         for a in np.arange(-10, 41, 10):
             for b in np.arange(-10, 36, 9):
-                for ad in (-8, 0, 8, 16):
+                for ad in (-6, 0, 6):
                     for lsf in (-0.08, -0.04, 0.0, 0.04, 0.08):
                         x = x0.copy(); x[0] = a * DEG; x[1] = b * DEG; x[3] = ad * DEG; x[5] = lsf; x[6] = lsf
                         e = self.energy(x, skip_toes=True)
                         if e < best[0]: best = (e, x)
         x = best[1]
         self.log(f'    grid: alpha {np.degrees(x[0]):.0f} beta {np.degrees(x[1]):.0f} add {np.degrees(x[3]):.0f} sf {np.exp(x[5]):.3f} ({time.time() - t0:.1f}s)')
-        x, n1 = self._opt(x, range(NG), skip_toes=True)
-        # B. toes on their own, then C. everything together
-        x, n2 = self._opt(x, range(NG, NX))
-        x, n3 = self._opt(x, range(NX), maxiter=400)
+        x, n1 = self._opt(x, range(NG), skip_toes=True, maxiter=200)
+        # B. toes on their own (cheap terms), then C. everything together
+        x, n2 = self._opt(x, range(NG, NX), fun=self.energy_toes, maxiter=200)
+        x, n3 = self._opt(x, range(NX), maxiter=60)
         P = self.energy(x, parts=True)
         self.log('    fit: ' + ' '.join(f'{k} {v:.3f}' for k, v in P.items()) + f'  ({time.time() - t0:.1f}s, {n1}+{n2}+{n3} evals)')
         self.x = x
         return x
+
+    # ---------------------------------------------------------------------------------------- step 4: seating
+    def refine(self):
+        t0 = time.time()
+        F, tg = self.F, self.tg
+        W = self.world_maps(unpack(self.x))
+        seat = Seat(F.bones)
+        self.seat = seat
+        facet_w = {'plafond': 1.0, 'medial': 1.0, 'lateral': 1.0}
+        tib_n = lambda P: _unit(tg.leg_field.gradient(P))   # noqa: E731
+        skin_n = lambda P: _unit(tg.skin_field.gradient(P))  # noqa: E731
+        def constraints(b, X, W):
+            src, dsp, wts = [], [], []
+            # inside the skin with clearance
+            sd = tg.skin_sd(X); m = sd > -CLEAR
+            if m.any():
+                src.append(X[m]); dsp.append(-(sd[m] + CLEAR)[:, None] * skin_n(X[m])); wts.append(np.full(m.sum(), 2.0))
+            # clear of the HRA tibia / fibula by 1 mm
+            sl = tg.leg_field(X); m = sl < 0.001
+            if m.any():
+                src.append(X[m]); dsp.append((0.001 - sl[m])[:, None] * tib_n(X[m])); wts.append(np.full(m.sum(), 3.0))
+            if b == 'Talus':
+                Wt = W['Talus']; s = Wt.scale(); tm = seat.tm['Talus']
+                for k, A in self.articular.items():
+                    Y = Wt.inverse()(A)
+                    q, d, _, n = tm.closest(Y)
+                    sgn = np.sign(np.einsum('ij,ij->i', Y - q, n)); sgn[sgn == 0] = 1
+                    g = s * sgn * d
+                    nw = _unit(Wt.vec(n)); qw = Wt(q)
+                    src.append(qw); dsp.append((g - GAP0)[:, None] * nw); wts.append(np.full(len(A), facet_w[k] * 2000.0 / len(A)))
+            if not src: return None
+            return np.concatenate(src), np.concatenate(dsp), np.concatenate(wts)
+        W = seat.relax(W, constraints, iters=40, log=self.log)
+        self.W = W
+        meshes = {b: (W[b](m[0]), m[1]) for b, m in F.bones.items()}
+        self.relaxed = meshes
+        # remaining overlaps (Z-Anatomy's own) and small residual contacts: local push-out
+        def extra(b, V):
+            e = np.zeros_like(V)
+            sd = tg.skin_sd(V); m = sd > -CLEAR * 0.8
+            if m.any(): e[m] += -(sd[m] + CLEAR * 0.8)[:, None] * skin_n(V[m])
+            sl = tg.leg_field(V); m = sl < 0.0008
+            if m.any(): e[m] += (0.0008 - sl[m])[:, None] * tib_n(V[m])
+            return e if e.any() else None
+        self.meshes = push_out(meshes, extra=extra, log=self.log)
+        disp = {b: float(np.linalg.norm(self.meshes[b][0] - meshes[b][0], axis=1).max() * 1000) for b in meshes}
+        self.pushed_mm = {b: round(d, 2) for b, d in sorted(disp.items(), key=lambda kv: -kv[1]) if d > 0.05}
+        self.log(f'    seating done ({time.time() - t0:.1f}s); largest local push-outs (mm): ' + ', '.join(f'{b} {d}' for b, d in list(self.pushed_mm.items())[:5]))
+        return self.meshes
+
+
+def _unit(v):
+    return v / np.maximum(np.linalg.norm(v, axis=1, keepdims=True), 1e-12)
 
 
 def _seg_dist(p, a, c):
@@ -277,18 +362,155 @@ def _seg_seg(p1, q1, p2, q2):
     return float(_seg_dist(A, p2, q2).min())
 
 
-# ------------------------------------------------------------------------------------------------ driver
+# ------------------------------------------------------------------------------------------------ leg warp
+def leg_warp(sex, side, out_dir=None, rebuild=False):
+    """Thin-plate-spline warp of the leg (femur, patella, tibia, fibula anchors of the catalog), cached as its control
+    points in .cache/fit/<sex>/foot/warp-leg_<side>.npz (same storage as fit.common.get_warp)."""
+    out_dir = out_dir or os.path.join(FIT, sex, GROUP)
+    path = os.path.join(out_dir, f'warp-leg_{side}.npz')
+    if os.path.exists(path) and not rebuild:
+        d = np.load(path)
+        return Warp(d['src'], d['dst'], pre=Sim(float(d['s']), d['R'], d['t']), smoothing=float(d['smoothing']), max_points=10 ** 9)
+    sm = 1e-4
+    warp, anchors, T0, res = build_warp(sex, f'leg_{side}', smoothing=sm, report_path=os.path.join(out_dir, f'warp-leg_{side}-report.json'))
+    os.makedirs(out_dir, exist_ok=True)
+    np.savez(path, src=T0.inverse()(warp.centres), dst=warp.centres + warp.rbf(warp.centres), s=T0.s, R=T0.R, t=T0.t, smoothing=sm)
+    return leg_warp(sex, side, out_dir)
+
+
+class LegDeform:
+    """Z-Anatomy points of one leg (thigh to toes) -> body. See the module docstring."""
+
+    def __init__(self, sex, side, sigma=0.006):
+        d = os.path.join(FIT, sex, GROUP)
+        pf = os.path.join(d, f'pose-{side}.json')
+        if not os.path.exists(pf): fit(sex)
+        pose = json.load(open(pf))
+        self.sex, self.side, self.sigma = sex, side, sigma
+        self.maps = {b: Sim4.from_list(L) for b, L in pose['maps'].items()}
+        self.leg = leg_warp(sex, side)
+        zs = source('za-skeletal')
+        self.trees = {}
+        for b in self.maps:
+            v, f = zs.get(b + side); self.trees[b] = cKDTree(dense_points(v, f, 0.0015))
+        legm = [zs.get(n + side) for n in ('Femur', 'Patella', 'Tibia', 'Fibula')]
+        self.trees['leg'] = cKDTree(np.concatenate([dense_points(v, f, 0.002) for v, f in legm]))
+        # hip: centre of the femoral head (sphere through the most proximal-medial part of the femur) and shaft axis
+        fv = legm[0][0]
+        sg = 1.0 if side == 'l' else -1.0
+        top = fv[np.argmax(fv[:, 1] - 0.5 * sg * fv[:, 0])]
+        from fit.foot_geom import fit_sphere
+        c, r = fit_sphere(fv[np.linalg.norm(fv - top, axis=1) < 0.03])
+        for _ in range(2): c, r = fit_sphere(fv[np.abs(np.linalg.norm(fv - c, axis=1) - r) < 0.004])
+        self.hip_centre, self.hip_radius = c, r
+        cc = fv.mean(0); w_, V_ = np.linalg.eigh(np.cov((fv - cc).T)); a = V_[:, -1]
+        self.shaft = a if a[1] < 0 else -a          # pointing distally
+
+    def foot_weights(self, p):
+        names = list(self.trees)
+        D = np.stack([self.trees[b].query(p)[0] for b in names], 1)
+        W = np.exp(-((D - D.min(1, keepdims=True)) / self.sigma) ** 2)
+        return names, W / W.sum(1, keepdims=True)
+
+    def foot_weight(self, p):
+        names, W = self.foot_weights(np.atleast_2d(p))
+        return 1.0 - W[:, names.index('leg')]
+
+    def __call__(self, p):
+        p = np.atleast_2d(np.asarray(p, float))
+        names, W = self.foot_weights(p)
+        out = np.zeros_like(p)
+        for i, b in enumerate(names):
+            m = W[:, i] > 1e-6
+            if not m.any(): continue
+            out[m] += W[m, i:i + 1] * (self.leg(p[m]) if b == 'leg' else self.maps[b](p[m]))
+        return out
+
+    def hip_weight(self, p):
+        t = (np.atleast_2d(p) - self.hip_centre) @ self.shaft
+        return smoothstep((t + 0.02) / 0.12)
+
+
+def leg_deform(sex, side):
+    """-> LegDeform for that body and leg ('l' = the person's left, +x). See the module docstring."""
+    return LegDeform(sex, side)
+
+
+# ------------------------------------------------------------------------------------------------ outputs
+def out_name(b, side):
+    n = b.replace('_bone', '').replace('_of_foot', '').replace('_finger', '_toe').replace('Sesamoid_bones', 'sesamoids').lower()
+    return f'{n}_{side}'
+
+
+def qa(sex, side, ff, meshes, out_dir):
+    from lib.qa import render_views
+    F, tg = ff.F, ff.tg
+    pal = {0: '#efe4c8', 1: '#e7c98f', 2: '#cfe0f0', 3: '#cde8c8', 4: '#f0cccc', 5: '#dccdf0'}
+    items = [dict(mesh=tg.tibia, color='#d9d4c7'), dict(mesh=tg.fibula, color='#c9c3e8')]
+    for b, m in meshes.items():
+        k = next((k for k in range(1, 6) if b in toe_bones(k)), 0)
+        items.append(dict(mesh=m, color=pal[k] if b not in ('Talus', 'Calcaneus') else '#f3dcb5'))
+    items.append(dict(mesh=tg.skin, color='#e8b89a', opacity=0.22))
+    allv = np.concatenate([m[0] for m in meshes.values()])
+    c = allv.mean(0); sg = F.sg
+    fr = ff.frame
+    ax, up, lat = fr['axis'], fr['up'], fr['lat']
+    tal = meshes['Talus'][0].mean(0)
+    cams = {f'{side}-medial': dict(dir=-lat + 0.05 * up, target=c, radius=0.14), f'{side}-lateral': dict(dir=lat + 0.05 * up, target=c, radius=0.14),
+            f'{side}-dorsal': dict(dir=up + 0.001 * ax, up=ax, target=c, radius=0.14), f'{side}-plantar': dict(dir=-up + 0.001 * ax, up=ax, target=c, radius=0.14),
+            f'{side}-ankle-back': dict(dir=-ax + 0.15 * up, target=tal + 0.01 * up, radius=0.06)}
+    files = render_views(items, cams, os.path.join(out_dir, 'qa'))
+    # coronal section through the trochlea, seen from the front (mortise joint space)
+    ct = ff.W['Talus'](F.trochlea_centre[None])[0]
+    clip = [dict(normal=-ax, constant=float(ax @ ct))]
+    sec = [it for it in items if it.get('opacity', 1) == 1]
+    files += render_views(sec, {f'{side}-ankle-section': dict(dir=ax + 0.05 * up, target=ct, radius=0.045)}, os.path.join(out_dir, 'qa'), clip=clip)
+    return files
+
+
 def fit(sex):
+    t_all = time.time()
     out_dir = os.path.join(FIT, sex, GROUP); os.makedirs(out_dir, exist_ok=True)
-    res = {}
+    outputs, report = [], dict(sex=sex, group=GROUP, sides={}, notes=[])
     for side in 'lr':
+        t0 = time.time()
+        sname = 'left' if side == 'l' else 'right'
+        print(f'{sex} {sname} foot')
+        lw = leg_warp(sex, side, out_dir)
         ff = FootFit(sex, side, out_dir)
-        x = ff.fit()
-        q = unpack(x)
-        print(sex, side, 'alpha %.1f beta %.1f chopart %s sf %.3f st %.3f talus_r %s talus_t(mm) %s' % (
-            np.degrees(q['alpha']), np.degrees(q['beta']), np.round(np.degrees(q['chopart']), 1), q['sf'], q['st'], np.round(np.degrees(q['talus_r']), 1), np.round(q['talus_t'] * 1000, 1)))
-        res[side] = ff
-    return res
+        ff.fit()
+        meshes = ff.refine()
+        from fit.foot_measure import measure, skin_toes, toes_in_skin
+        m, fr = measure(meshes, ff.W, ff.F, ff.tg, ff.articular)
+        ff.frame = fr
+        clefts, info = skin_toes(ff.tg, meshes, ff.W, ff.F, fr)
+        toes = toes_in_skin(ff.tg, meshes, clefts, info, fr)
+        ok_t = all(t['inside_skin_toe'] >= 0.995 for t in toes.values())
+        m['toes_in_skin_toes'] = dict(value=toes, threshold='>= 99.5% of each toe\'s phalanx surface inside the skin and on its side of every cleft found on the skin',
+                                      ok=bool(ok_t), clefts={f'{a}/{b}': c for (a, b), c in clefts.items()})
+        q = unpack(ff.x)
+        # how well the posed Z-Anatomy foot skin matches the HRA skin, and how far the leg warp and the foot agree at the ankle
+        S = ff.skin_world(ff.W); sd = ff.tg.skin_sd(S)
+        za_t = dense_points(*ff.F.tibia, 0.002); za_t = za_t[za_t[:, 1] < za_t[:, 1].min() + 0.03]
+        ank = float(np.median(np.linalg.norm(lw(za_t) - ff.M(za_t), axis=1)) * 1000)
+        m['pose'] = dict(ankle_plantarflexion_deg=round(float(np.degrees(q['alpha'])), 1), subtalar_supination_deg=round(float(np.degrees(q['beta'])), 1),
+                         chopart_deg=[round(float(v), 1) for v in np.degrees(q['chopart'])], foot_scale=round(q['sf'] * ff.M.scale(), 4), talus_scale=round(q['st'] * ff.M.scale(), 4),
+                         talus_offset_mm=[round(float(v), 1) for v in q['talus_t'] * 1000], toes_deg={k: [round(float(a), 1) for a in np.degrees(v)] for k, v in q['toes'].items()},
+                         mortise_similarity=repr(ff.tg.T_m), mortise_icp_rms_mm=round(ff.tg.T_m_rms * 1000, 2), za_skin_to_hra_skin_mm=dict(median=round(float(np.median(sd) * 1000), 1), p10=round(float(np.quantile(sd, 0.1) * 1000), 1), p90=round(float(np.quantile(sd, 0.9) * 1000), 1)),
+                         leg_warp_vs_mortise_map_at_ankle_mm=round(ank, 2), local_push_out_mm=ff.pushed_mm, hra_bones=ff.tg.names)
+        report['sides'][sname] = m
+        json.dump(dict(maps={b: M.to_list() for b, M in ff.W.items()}, x=list(map(float, ff.x)), T_m=dict(s=ff.tg.T_m.s, R=ff.tg.T_m.R.tolist(), t=ff.tg.T_m.t.tolist())),
+                  open(os.path.join(out_dir, f'pose-{side}.json'), 'w'))
+        for b, (v, f) in meshes.items():
+            outputs.append(dict(name=out_name(b, side), part='skel_feet', mesh=(v.astype(np.float64), f), source=[b + side]))
+        report['sides'][sname]['qa'] = [os.path.basename(x) for x in qa(sex, side, ff, meshes, out_dir)]
+        crit = {k: v['ok'] for k, v in m.items() if isinstance(v, dict) and 'ok' in v}
+        print(f'  {sname}: ' + ', '.join(f'{k} {"ok" if v else "FAIL"}' for k, v in crit.items()) + f'  ({time.time() - t0:.0f}s)')
+    report['ok'] = bool(all(v['ok'] for sd_ in report['sides'].values() for v in sd_.values() if isinstance(v, dict) and 'ok' in v))
+    report['seconds'] = round(time.time() - t_all, 1)
+    write_group(sex, GROUP, outputs, report)
+    print(f'{sex}: wrote {len(outputs)} meshes to {out_dir} ({report["seconds"]}s), all criteria ok: {report["ok"]}')
+    return report
 
 
 if __name__ == '__main__':

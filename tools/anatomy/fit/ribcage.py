@@ -54,6 +54,7 @@ def rib_geoms(sex, ZA):
                 rg = RB.RibGeom.__new__(RB.RibGeom)
                 st = d[f'{n}{s}'].item()
                 rg.__dict__.update(st); rg.f = ZA[f'rib_{n}_{s}'][1]; rg.v_za = ZA[f'rib_{n}_{s}'][0]
+                rg.s_rigid = RB.rigid_end(rg)
                 out[(n, s)] = rg
         return out
     out = {(n, s): RB.RibGeom(n, s, ZA[f'rib_{n}_{s}'][0], ZA[f'rib_{n}_{s}'][1], za_vert) for n in range(1, 13) for s in 'lr'}
@@ -65,11 +66,12 @@ def rib_geoms(sex, ZA):
 def fit_ribs(sex, W, RG, T, verts):
     out, info = {}, {}
     obstacles = [(T[k], c) for k, c in RIB_OBSTACLES if k in T]
+    radial = RB.Radial(T['lungs'])
     for key, rg in RG.items():
         n, s = key
         v = W[f'rib_{n}_{s}'][0]
         v1, i1 = RB.seat(rg, v, verts, T['lungs'])
-        v2, i2 = RB.bend(v1, RB.rib_basis(rg.s, rg.length, rg.s_rigid + 0.004), obstacles, T['skin'])
+        v2, i2 = RB.bend(v1, RB.rib_basis(rg.s, rg.length, rg.s_rigid + 0.004), obstacles, T['skin'], radial=radial)
         out[key] = v2
         info[f'{n}{s}'] = dict(seat=i1, bend=i2)
         log(sex, f'rib {n}{s}: seat {i1["rot_deg"]:.1f} deg / {i1["shift_mm"]:.1f} mm, bend max {i2["max_mm"]:.1f} mm')
@@ -245,10 +247,12 @@ def fit_cartilages(sex, W, T, C, ribs_v, st_v):
 
 # ------------------------------------------------------------------------------------------------ stage 4: discs
 def fit_discs(sex, verts):
+    from fit.ribcage_data import _hra_entries, _load_entries
     lv = DS.levels(verts.keys())
+    cord = merge(_load_entries(sex, _hra_entries(sex, r'spinal_cord')))[0]      # locates the canal behind each disc
     out, info = {}, {}
     for name, a, b in lv:
-        r = DS.build_disc(verts[a], verts[b])
+        r = DS.build_disc(verts[a], verts[b], cord=cord)
         if r is None:
             log(sex, f'{name}: no disc space found'); continue
         mesh, top, bot, inf = r

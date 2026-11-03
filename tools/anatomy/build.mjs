@@ -102,8 +102,12 @@ async function build(sex) {
   }
   const asset = doc.getRoot().getAsset();
   asset.generator = 'LotusPond anatomy build (tools/anatomy)';
-  asset.copyright = `${sources.outputLicense.text} ${sources.outputLicense.url}`;
-  asset.extras = { license: sources.outputLicense.spdx, sex, credits: [sources.hra.files[sex].credit, sources.hra.basedOn, sources.zanatomy.credit] };
+  asset.copyright = `${sources.outputLicense.text} ${sources.outputLicense.url} ${sources.outputLicense.details}`;
+  asset.extras = {
+    license: sources.outputLicense.spdx, licenseUrl: sources.outputLicense.url, sex,
+    credits: [sources.hra.files[sex].credit, sources.hra.brain[sex], sources.hra.brain.basedOn, sources.hra.library, sources.hra.basedOn, sources.zanatomy.credit],
+    changes: sources.outputLicense.changes, details: sources.outputLicense.details,
+  };
   await doc.transform(meshopt({ encoder: MeshoptEncoder, level: 'medium' }));
   const io = new NodeIO().registerExtensions(ALL_EXTENSIONS).registerDependencies({ 'meshopt.encoder': MeshoptEncoder });
   const glb = path.join(root, 'public', 'models', `anatomy-${sex}.glb`);

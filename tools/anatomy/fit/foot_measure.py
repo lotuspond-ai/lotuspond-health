@@ -143,3 +143,74 @@ def measure(meshes, maps, F, tg, facets, skin_toes=None, n_inside=4000):
     worst = max(bb.values()) if bb else 0.0
     out['bone_bone_penetration_mm'] = item(worst, hi=1.0, worst_pairs=dict(sorted(bb.items(), key=lambda kv: -kv[1])[:6]))
     return out, fr
+
+
+def skin_toes(tg, meshes, maps, F, fr, step=0.003, prom=0.0004):
+    """Inter-toe clefts on the HRA skin of the forefoot. In the foot frame (u along the foot, w lateral, n dorsal), slices
+    across the toes are scanned for dorsal grooves (local minima of the dorsal height) and plantar sulci (local maxima of
+    the plantar height) deeper than `prom`; a groove belongs to the cleft between toes k and k+1 when it lies within
+    5 mm of the midpoint between their proximal phalanges. Clefts seen in fewer than two slices count as absent (the
+    skin toes are fused there). Returns {(k, k+1): dict(found, w (m), u0 (m), slices)} and the frame used."""
+    ax, up, lat = fr['axis'], fr['up'], fr['lat']
+    sv, sf = tg.skin
+    P = dense(tg.skin, spacing=0.0008, seed=9)
+    u, w, n = P @ ax, P @ lat, P @ up
+    mtp = {k: maps[METATARSALS[k - 1]](F.toes[k]['joints'][0].c[None])[0] for k in range(1, 6)}
+    pp = {k: dense(meshes[toe_bones(k)[0]], n=600, seed=1) for k in range(1, 6)}
+    wc = {k: float(np.median(pp[k] @ lat)) for k in range(1, 6)}
+    u_start = max(float(mtp[k] @ ax) for k in range(1, 6)) + 0.008
+    u_tip = float(u.max())
+    toe_zone = (u > u_start - 0.01)
+    clefts = {}
+    for k in range(1, 5):
+        clefts[(k, k + 1)] = dict(found=False, w=0.5 * (wc[k] + wc[k + 1]), expected_w=0.5 * (wc[k] + wc[k + 1]), slices=0, grooves=[])
+    for u0 in np.arange(u_start, u_tip - 0.004, step):
+        sl = toe_zone & (np.abs(u - u0) < 0.0012)
+        if sl.sum() < 50: continue
+        ws, ns = w[sl], n[sl]
+        bins = np.arange(ws.min(), ws.max() + 0.001, 0.001)
+        top = np.full(len(bins), np.nan); bot = np.full(len(bins), np.nan)
+        ib = np.clip(np.round((ws - bins[0]) / 0.001).astype(int), 0, len(bins) - 1)
+        for i in range(len(bins)):
+            m = ib == i
+            if m.any(): top[i] = ns[m].max(); bot[i] = ns[m].min()
+        for prof, sign in ((top, 1), (bot, -1)):
+            for i in range(3, len(bins) - 3):
+                if not np.isfinite(prof[i]): continue
+                lo_, hi_ = max(0, i - 8), min(len(bins), i + 9)
+                left, right = prof[lo_:i], prof[i + 1:hi_]
+                if not (np.isfinite(left).any() and np.isfinite(right).any()): continue
+                v = sign * prof[i]
+                if v <= np.nanmin(sign * prof[max(0, i - 2):i + 3]) and \
+                        np.nanmax(sign * left) - v > prom and np.nanmax(sign * right) - v > prom:
+                    for key, c in clefts.items():
+                        if abs(bins[i] - c['expected_w']) < 0.005: c['grooves'].append((float(u0), float(bins[i])))
+    for key, c in clefts.items():
+        us = sorted({g[0] for g in c['grooves']})
+        c['slices'] = len(us)
+        if len(us) >= 2:
+            c['found'] = True; c['w'] = float(np.median([g[1] for g in c['grooves']])); c['u0'] = float(min(us))
+        del c['grooves']
+    return clefts, dict(u_start=u_start, wc=wc)
+
+
+def toes_in_skin(tg, meshes, clefts, info, fr):
+    """Per toe: fraction of phalanx surface inside the skin, and inside its skin toe (on the right side of each found
+    cleft, distal to where the cleft begins)."""
+    out = {}
+    ax, lat = fr['axis'], fr['lat']
+    for k in range(1, 6):
+        P = np.concatenate([dense(meshes[b], n=1500, seed=2) for b in toe_bones(k)])
+        sd = tg.skin_tm.signed(P)
+        inside = float((sd < 0).mean())
+        ok_side = np.ones(len(P), bool)
+        bounds = []
+        for (a, b), c in clefts.items():
+            if not c['found']: continue
+            zone = (P @ ax) > c['u0']
+            if a == k: ok_side &= ~zone | ((P @ lat) < c['w']); bounds.append(f'lateral cleft {a}/{b}')
+            if b == k: ok_side &= ~zone | ((P @ lat) > c['w']); bounds.append(f'medial cleft {a}/{b}')
+        fused = [f'{a}/{b}' for (a, b), c in clefts.items() if not c['found'] and k in (a, b)]
+        out[k] = dict(inside_skin=round(inside, 4), inside_skin_toe=round(float(((sd < 0) & ok_side).mean()), 4), min_clearance_mm=round(float(-sd.max() * 1000), 2),
+                      bounded_by=bounds, fused_with=fused)
+    return out

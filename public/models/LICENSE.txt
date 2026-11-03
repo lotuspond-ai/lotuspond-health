@@ -23,12 +23,15 @@ anatomy-female.glb and anatomy-male.glb are adapted from:
 
 Changes: the Z-Anatomy structures were registered (moved, scaled and warped) to each Visible Human body; some organ
 surfaces were rebuilt as closed shapes; reference points, lymph nodes and pregnancy structures were removed; the meshes
-were simplified, grouped into organs and given material names. The pre-rendered body map images (bodymap/) are renders
+were simplified and grouped into organs, with organ and tissue names in each node's extras (the files have no
+materials: the app colours each tissue when it draws them). The pre-rendered body map images (bodymap/) are renders
 of these models. tools/anatomy/ in the LotusPond Health source builds them from the pinned sources in
 tools/anatomy/sources.json.
 
 Licence: these models, and the body map images made from them, are shared under the Creative Commons
 Attribution-ShareAlike 4.0 International licence (CC BY-SA 4.0), https://creativecommons.org/licenses/by-sa/4.0/
+If you share them or something made from them, keep these credits and this list of changes, say what you changed,
+and share it under the same licence.
 The licence does not cover the LotusPond name or logo. HuBMAP, the U.S. National Library of Medicine, the Allen
 Institute, The Database Center for Life Science and the authors of Z-Anatomy do not endorse LotusPond Health.
 

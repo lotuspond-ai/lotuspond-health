@@ -1,49 +1,78 @@
 {
-  "note": "Pinned inputs of the anatomy build. fetch.py clones each repository at the given commit (blobless), checks out only these paths and verifies their SHA-256.",
-  "hra": {
-    "title": "HuBMAP Human Reference Atlas, 3D Reference Object Library (release v2.0)",
-    "repo": "https://github.com/hubmapconsortium/ccf-releases",
-    "commit": "b036a91aaf7234f462b1249d4a5f4fb0e982f412",
-    "license": "CC BY 4.0",
-    "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
-    "files": {
-      "male": {
-        "path": "v2.0/models/3d-vh-m-united.glb.zip",
-        "sha256": "8e7e941afaf685b13b614586ae078444fdbbdd1ca4ded8cf62b7d766e3fd41d5",
-        "member": "3d-vh-m-united.glb",
-        "memberSha256": "34c45c90aa4acd36be19edf8b878a8e7137db9e8cb90e8e6332c2abd49d7cf9d",
-        "credit": "Kristen Browne; Heidi Schlehlein. 2023. 3D Reference Organ Set for Male v1.5. HuBMAP. https://doi.org/10.48539/HBM646.RKKC.257"
-      },
-      "female": {
-        "path": "v2.0/models/3d-vh-f-united.glb.7z",
-        "sha256": "b84f820009075c154edcf1491539516ef475e788528cdc0cd670c04ee151b99d",
-        "member": "3d-vh-f-united.glb",
-        "memberSha256": "472567a56896b9b7890508da6501fbf858e56aaa30745365f7a71ade782b529c",
-        "credit": "Kristen Browne; Heidi Schlehlein. 2023. 3D Reference Organ Set for Female, v1.5. HuBMAP. https://doi.org/10.48539/HBM352.BTSQ.586"
-      }
-    },
-    "basedOn": "Visible Human Project, U.S. National Library of Medicine"
+ "note": "Pinned inputs of the anatomy build. fetch.py clones each repository at the given commit (blobless), checks out only these paths and verifies their SHA-256.",
+ "hra": {
+  "title": "HuBMAP Human Reference Atlas, 3D Reference Object Library (release v2.0)",
+  "repo": "https://github.com/hubmapconsortium/ccf-releases",
+  "commit": "b036a91aaf7234f462b1249d4a5f4fb0e982f412",
+  "license": "CC BY 4.0",
+  "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+  "files": {
+   "male": {
+    "path": "v2.0/models/3d-vh-m-united.glb.zip",
+    "sha256": "8e7e941afaf685b13b614586ae078444fdbbdd1ca4ded8cf62b7d766e3fd41d5",
+    "member": "3d-vh-m-united.glb",
+    "memberSha256": "34c45c90aa4acd36be19edf8b878a8e7137db9e8cb90e8e6332c2abd49d7cf9d",
+    "credit": "Kristen Browne; Heidi Schlehlein. 2023. 3D Reference Organ Set for Male v1.5. HuBMAP. https://doi.org/10.48539/HBM646.RKKC.257"
+   },
+   "female": {
+    "path": "v2.0/models/3d-vh-f-united.glb.7z",
+    "sha256": "b84f820009075c154edcf1491539516ef475e788528cdc0cd670c04ee151b99d",
+    "member": "3d-vh-f-united.glb",
+    "memberSha256": "472567a56896b9b7890508da6501fbf858e56aaa30745365f7a71ade782b529c",
+    "credit": "Kristen Browne; Heidi Schlehlein. 2023. 3D Reference Organ Set for Female, v1.5. HuBMAP. https://doi.org/10.48539/HBM352.BTSQ.586"
+   }
   },
-  "zanatomy": {
-    "title": "Z-Anatomy",
-    "repo": "https://github.com/LluisV/Z-Anatomy",
-    "commit": "6c7f9016bd5899ac8edafd31b9900c151df42ed6",
-    "license": "CC BY-SA 4.0",
-    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/",
-    "credit": "Z-Anatomy (Gauthier Kervyn, Lluís Vinent), CC BY-SA 4.0, based on BodyParts3D, (c) The Database Center for Life Science, CC BY-SA 2.1 Japan",
-    "files": {
-      "visceral": { "path": "Z-Anatomy PC/Assets/Models/1.0 Models/VisceralSystem100.fbx", "sha256": "22b301c93327929c9a14ee582d1848b550a950376e221a6d1078c7256bb83d0e" },
-      "skeletal": { "path": "Z-Anatomy PC/Assets/Models/1.0 Models/SkeletalSystem100.fbx", "sha256": "294a649765cd060a62a4095da52b9c8ef2d97769aa447e196448aa5f7d596dea" },
-      "muscular": { "path": "Z-Anatomy PC/Assets/Models/1.0 Models/MuscularSystem100.fbx", "sha256": "4c19df534d5d84aabbce08604306aa0485b43e8a2483c72a95b569e1dfea2279" },
-      "cardio": { "path": "Z-Anatomy PC/Assets/Models/1.0 Models/CardioVascular41.fbx", "sha256": "ed7d049117cc944a8c47a416b16ade642cbd1392bbcce3c677450d3234dbf680" },
-      "regions": { "path": "Z-Anatomy PC/Assets/Models/1.0 Models/Regions of human body100.fbx", "sha256": "9d8da01d4719f9a61ee6ccfcaef85f788c4c67e9bcd74f5725c6946ab8b44199" },
-      "nervous": { "path": "Z-Anatomy PC/Assets/Models/1.0 Models/NervousSystem100.fbx", "sha256": "3ea1aad64956cad27348a27b8fb50494b7cc307c6bc77bee0810ec2a67dff2b1" },
-      "lymphoid": { "path": "Z-Anatomy PC/Assets/Models/1.0 Models/LymphoidOrgans100.fbx", "sha256": "310ff82f502f4f3a79e85f99ddc2009bba9514338119af9edff87b20cf1b3609" }
-    }
+  "basedOn": "Visible Human Project, U.S. National Library of Medicine",
+  "brain": {
+   "female": "Kristen Browne; Heidi Schlehlein. 2023. 3D Reference Organ for Brain, Female v1.3. HuBMAP. https://doi.org/10.48539/HBM425.NDKM.969",
+   "male": "Kristen Browne; Heidi Schlehlein. 2023. 3D Reference Organ for Brain, Male v1.3. HuBMAP. https://doi.org/10.48539/HBM929.XKCL.339",
+   "basedOn": "Made from the Allen Human Reference Atlas - 3D, 2020 (Ding et al., 2016, https://doi.org/10.1002/cne.24080)"
   },
-  "outputLicense": {
-    "spdx": "CC-BY-SA-4.0",
-    "url": "https://creativecommons.org/licenses/by-sa/4.0/",
-    "text": "The anatomy models in public/models/ are adapted from the HuBMAP Human Reference Atlas (CC BY 4.0, from the NLM Visible Human Project) and Z-Anatomy (CC BY-SA 4.0, based on BodyParts3D, CC BY-SA 2.1 Japan), and are shared under CC BY-SA 4.0."
+  "library": "Kristen Browne, Heidi Schlehlein, Bruce W. Herr II, Ellen Quardokus, Andreas Bueckle, Katy Borner. 2023. HuBMAP CCF 3D Reference Object Library. https://humanatlas.io/3d-reference-library"
+ },
+ "zanatomy": {
+  "title": "Z-Anatomy",
+  "repo": "https://github.com/LluisV/Z-Anatomy",
+  "commit": "6c7f9016bd5899ac8edafd31b9900c151df42ed6",
+  "license": "CC BY-SA 4.0",
+  "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/",
+  "credit": "Z-Anatomy (Gauthier Kervyn, Lluis Vinent), CC BY-SA 4.0, https://github.com/LluisV/Z-Anatomy, based on BodyParts3D, (c) The Database Center for Life Science, CC BY-SA 2.1 Japan, https://lifesciencedb.jp/bp3d/",
+  "files": {
+   "visceral": {
+    "path": "Z-Anatomy PC/Assets/Models/1.0 Models/VisceralSystem100.fbx",
+    "sha256": "22b301c93327929c9a14ee582d1848b550a950376e221a6d1078c7256bb83d0e"
+   },
+   "skeletal": {
+    "path": "Z-Anatomy PC/Assets/Models/1.0 Models/SkeletalSystem100.fbx",
+    "sha256": "294a649765cd060a62a4095da52b9c8ef2d97769aa447e196448aa5f7d596dea"
+   },
+   "muscular": {
+    "path": "Z-Anatomy PC/Assets/Models/1.0 Models/MuscularSystem100.fbx",
+    "sha256": "4c19df534d5d84aabbce08604306aa0485b43e8a2483c72a95b569e1dfea2279"
+   },
+   "cardio": {
+    "path": "Z-Anatomy PC/Assets/Models/1.0 Models/CardioVascular41.fbx",
+    "sha256": "ed7d049117cc944a8c47a416b16ade642cbd1392bbcce3c677450d3234dbf680"
+   },
+   "regions": {
+    "path": "Z-Anatomy PC/Assets/Models/1.0 Models/Regions of human body100.fbx",
+    "sha256": "9d8da01d4719f9a61ee6ccfcaef85f788c4c67e9bcd74f5725c6946ab8b44199"
+   },
+   "nervous": {
+    "path": "Z-Anatomy PC/Assets/Models/1.0 Models/NervousSystem100.fbx",
+    "sha256": "3ea1aad64956cad27348a27b8fb50494b7cc307c6bc77bee0810ec2a67dff2b1"
+   },
+   "lymphoid": {
+    "path": "Z-Anatomy PC/Assets/Models/1.0 Models/LymphoidOrgans100.fbx",
+    "sha256": "310ff82f502f4f3a79e85f99ddc2009bba9514338119af9edff87b20cf1b3609"
+   }
   }
+ },
+ "outputLicense": {
+  "spdx": "CC-BY-SA-4.0",
+  "url": "https://creativecommons.org/licenses/by-sa/4.0/",
+  "text": "The anatomy models in public/models/ are adapted from the HuBMAP Human Reference Atlas (CC BY 4.0, from the NLM Visible Human Project) and Z-Anatomy (CC BY-SA 4.0, based on BodyParts3D, CC BY-SA 2.1 Japan), and are shared under CC BY-SA 4.0.",
+  "changes": "Adapted by LotusPond Health: Z-Anatomy structures registered (moved, scaled and warped) into each Visible Human body, some organ surfaces rebuilt as closed shapes, reference points, lymph nodes and pregnancy structures removed, meshes simplified and grouped into organs, with organ and tissue names in each node’s extras.",
+  "details": "Full credits and changes: https://health.lotuspond.ai/credits/ and models/LICENSE.txt"
+ }
 }

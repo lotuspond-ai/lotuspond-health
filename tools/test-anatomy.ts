@@ -132,6 +132,16 @@ for (const body of BODIES) {
   });
 }
 
+describe('website pictures', () => {
+  it('show the current female body', () => {
+    const file = root('public/site/shots.json');
+    assert.ok(fs.existsSync(file), 'no public/site/shots.json: run node tools/site/shots.mjs with the dev stack');
+    const shots = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const sha = crypto.createHash('sha256').update(fs.readFileSync(modelFile('female'))).digest('hex');
+    assert.ok(sha.startsWith(shots.model.sha), 'the site pictures show an older model: run node tools/site/shots.mjs with the dev stack');
+  });
+});
+
 describe('which body the map shows', () => {
   it('follows the profile sex unless a body was chosen', () => {
     assert.equal(bodyFor('female'), 'female');

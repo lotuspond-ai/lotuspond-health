@@ -7,6 +7,7 @@
 // data, uploads the fixtures and adds a family member, then captures the body map, an organ, a result's history,
 // the files list and the profile menu. Re-run it after visible changes to the app.
 import { createRequire } from 'node:module';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -142,6 +143,12 @@ if (!ogOnly) {
   await settle(4000);
   await saveWebp(await page.screenshot(), 'phone-body', [390, 585]);
   await context.close();
+
+  // The pictures show the demo profile's (female) body, which is CC BY-SA: record which model they show, so that
+  // npm run test:anatomy fails when the model changes and the pictures were not taken again.
+  const model = 'models/anatomy-female.glb';
+  const sha = crypto.createHash('sha256').update(fs.readFileSync(path.join(root, 'public', model))).digest('hex').slice(0, 12);
+  fs.writeFileSync(path.join(out, 'shots.json'), JSON.stringify({ note: 'Written by tools/site/shots.mjs: the model the site pictures show.', body: 'female', model: { path: model, sha } }, null, 1) + '\n');
 }
 
 console.log('Rendering the social preview');

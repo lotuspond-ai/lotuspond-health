@@ -149,6 +149,8 @@ class Targets:
             extraocular_muscles=hra_mesh(sex, ('path', r'_muscles_of_eye/')),
             optic_nerves_and_sheaths=hra_mesh(sex, ('path', r'_nerves_of_eye/')),
             ophthalmic_vessels=hra_mesh(sex, r'^VH_[MF]_(ophthalmic|superior_ophthalmic|inferior_ophthalmic|opthalmic|central_retinal|long_posterior_ciliary)_(vein|artery)_[LR]$'))
+        oc_all = merge([oriented(m) for m in self.orbit_contents.values() if len(m[1])])
+        self.orbit_signed = G.SignedSurface(*oc_all, spacing=0.0004)
         v, f = self.skin
         keep = v[:, 1] > v[:, 1].max() - 0.35
         fk = f[keep[f].all(1)]
@@ -191,7 +193,7 @@ def groups(P):
     return bones, cranium, teeth
 
 
-ALL_PARTS = ('brain', 'eyes', 'skin', 'c1', 'fm', 'tmj', 'teeth', 'pit', 'hyoid')
+ALL_PARTS = ('brain', 'eyes', 'skin', 'c1', 'fm', 'tmj', 'teeth', 'pit', 'ossicles', 'hyoid')
 
 
 def measure(sex, P, T, L, Wfull, za_skin, extra_info=None, log=print, parts=ALL_PARTS):
@@ -213,8 +215,12 @@ def measure(sex, P, T, L, Wfull, za_skin, extra_info=None, log=print, parts=ALL_
         plug = (Wfull(L['fm_plug'][0]), L['fm_plug'][1])
         C = Cavity([P[n][:2] for n in cranium], plug, h=0.001, ball=0.005)
         bp = T.brain_p
-        above = (bp - fmc) @ fmn > 0
+        hgt = (bp - fmc) @ fmn
+        above = hgt > 0
         inside, _ = C.status(bp)
+        # the medulla passes through the foramen magnum: there it is judged by its distance to bone only
+        rad = np.linalg.norm((bp - fmc) - hgt[:, None] * fmn, axis=1)
+        inside |= (hgt < 0.008) & (rad < 0.022)
         d = SB.dist(bp)
         outside = ~inside
         close = d < 0.001
@@ -261,10 +267,12 @@ def measure(sex, P, T, L, Wfull, za_skin, extra_info=None, log=print, parts=ALL_
                 q = sample_surface(*m, 8000, seed=6)
                 q = q[np.all((q > lo + 0.003) & (q < hi - 0.003), axis=1)]
                 sd = go.sample(so, q)
-                oc[k] = dict(fraction_inside_bone=r1((sd < 0).mean(), 4), max_depth_mm=r1(max(0.0, -sd.min()) * MM), n=int(len(q)))
-            worst = max((v['fraction_inside_bone'] for v in oc.values()), default=0.0)
-            out.append(crit('orbital contents (extraocular muscles, optic nerves and sheaths, ophthalmic vessels) inside orbital bone', r1(worst * 100, 2),
-                            'report (<= 1 %)', worst <= 0.01, unit='% of surface samples (worst group)', groups=oc))
+                oc[k] = dict(fraction_touching_or_inside=r1((sd < 0).mean(), 4), fraction_deeper_than_0p5mm=r1((sd < -0.0005).mean(), 4),
+                             max_depth_mm=r1(max(0.0, -sd.min()) * MM), n=int(len(q)))
+            worst = max((v['fraction_deeper_than_0p5mm'] for v in oc.values()), default=0.0)
+            out.append(crit('orbital contents (extraocular muscles, optic nerves and sheaths, ophthalmic vessels) penetrating orbital bone deeper than 0.5 mm',
+                            r1(worst * 100, 2), 'report (<= 1 %)', worst <= 0.01, unit='% of surface samples (worst group)', groups=oc,
+                            note='bone SDF at 0.5 mm voxels: depths up to ~0.5 mm are surface contact (periorbita, optic canal, muscle origins)'))
         log(f'  measure: eyes {time.time() - t0:.0f}s')
 
     # ---------------- soft tissue and bone inside the skin
@@ -391,6 +399,16 @@ def measure(sex, P, T, L, Wfull, za_skin, extra_info=None, log=print, parts=ALL_
                         gland_body_top_below_hypothalamus_bottom_mm=r1(((T.hypothalamus[0] @ up_ax).min() - body_top) * MM)))
         log(f'  measure: pituitary {time.time() - t0:.0f}s')
 
+    # ---------------- auditory ossicles in the tympanic cavities
+    if 'ossicles' in parts:
+        oss = {}
+        for S, tn in (('l', 'temporal_bone_l'), ('r', 'temporal_bone_r')):
+            g_, sdf_ = G.local_sdf([P[tn][:2]], h=0.0003, pad=0.003, close=1)
+            q = np.concatenate([sample_surface(*P[f'{k}_{S}'][:2], 2000, seed=3) for k in ('malleus', 'incus', 'stapes')])
+            sd = g_.sample(sdf_, q)
+            oss[S.upper()] = dict(fraction_touching_or_inside_temporal_bone=r1((sd < 0).mean(), 4), fraction_deeper_than_0p3mm=r1((sd < -0.0003).mean(), 4),
+                                  max_distance_to_temporal_bone_mm=r1(np.abs(sd).max() * MM), median_distance_mm=r1(np.median(np.abs(sd)) * MM))
+        det['ossicles'] = oss
     # ---------------- hyoid (placed only in the female; the male HRA body has its own)
     if 'hyoid' in parts:
         if 'hyoid_bone' in P:
@@ -420,6 +438,12 @@ class ZTargets:
         self.c1_signed = G.SignedSurface(*self.c1, spacing=0.0004)
         self.chiasm = merge([nv.get('Optic_chiasml'), nv.get('Optic_chiasmr')])
         self.hypothalamus = nv.get('Hypothalamus')
+        cv = nv.get('White_matter_of_spinal_cord')[0]
+        top = zs.get('Atlas_(C1)')[0][:, 1].max()
+        self.cord = [(cv[(cv[:, 1] < top - k * 0.012) & (cv[:, 1] > top - k * 0.012 - 0.008)], np.zeros((0, 3), np.int64)) for k in range(4)]
+
+    def cord_axis(self):
+        return Targets.cord_axis(self)
 
 
 def za_baseline(Z, L, zp, zl, log=print):
@@ -427,5 +451,5 @@ def za_baseline(Z, L, zp, zl, log=print):
     T = ZTargets(zp, zl)
     P = {n: (v, f, part) for n, (v, f, part, _) in Z.items()}
     ident = lambda x: np.asarray(x, float)
-    crits, det, _ = measure('za', P, T, L, ident, None, log=log, parts=('brain', 'eyes', 'c1', 'tmj', 'teeth', 'pit'))
+    crits, det, _ = measure('za', P, T, L, ident, None, log=log, parts=('brain', 'eyes', 'c1', 'fm', 'tmj', 'teeth', 'pit', 'ossicles'))
     return crits, det

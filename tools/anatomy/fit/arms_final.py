@@ -8,7 +8,7 @@ corrections of every bone (fit/arms_solve.py).
                  styloids, acromion, clavicle, knuckles) at least 0.6 mm and, softly, no deeper than 5 mm
   contacts       neighbouring bones (Z-Anatomy pairs closer than 4 mm: carpals, metacarpal bases, radius-ulna, ...)
                  kept from interpenetrating
-Small motions are preferred (rotation 3 deg, translation 3 mm scales).
+Small motions are preferred (rotation 2 deg, translation 2 mm scales; girdle 1 deg, 1 mm).
 """
 import numpy as np
 
@@ -19,12 +19,13 @@ from fit.arms_measure import landmark_zones
 
 JOINT_BANDS = {  # (proximal bone, distal bone): (lo, hi) mm of closest approach
     ('scap', 'hum'): (2.0, 4.0),
-    ('hum', 'uln'): (1.5, 3.0), ('hum', 'rad'): (1.5, 3.0),
-    ('rad', 'sca'): (1.5, 3.0), ('rad', 'lun'): (1.5, 3.0),
+    ('hum', 'uln'): (1.2, 3.0), ('hum', 'rad'): (1.5, 3.5),
+    ('rad', 'sca'): (1.2, 3.0), ('rad', 'lun'): (1.5, 3.5),
 }
-FINGER_BAND = (0.8, 2.0)
-CLEAR = 1.2
-LANDMARK_LO, LANDMARK_HI = 0.7, 5.0
+FINGER_BAND = (0.7, 2.0)
+CLEAR = 1.4
+LANDMARK_LO, LANDMARK_HI = 0.8, 4.8
+LANDMARK_W = {'acromion': 0.5}   # depth upper bounds are set by the chain (olecranon) and the girdle (acromion)
 
 
 def neighbour_pairs(L, d=0.004):
@@ -66,7 +67,7 @@ def finalize(L, maps, skinT, log=print, iters=25):
         # articular samples of the distal bone facing the proximal one (Z-Anatomy contact, 6 mm)
         _, dd = contact(L.P[b], L.T[a], 0.006)
         m = np.abs(L.T[a].signed(L.P[b])) < 0.006
-        Pb = sub(P[b][m], 300)
+        Pb = sub(P[b][m], 600)
         if len(Pb) < 10: continue
         terms.append(term_body_gap_local(b, Pb, a, T0[a], lo=lo * 1e-3, hi=hi * 1e-3, w=2.0, mode='min'))
         names.append(f'gap {a}-{b}')
@@ -76,9 +77,10 @@ def finalize(L, maps, skinT, log=print, iters=25):
     joint_set = set(pairs) | {(b, a) for a, b in pairs}
     for a, b in neighbour_pairs(L):
         if (a, b) in joint_set: continue
-        m = np.abs(L.T[b].signed(L.P[a])) < 0.004
-        if m.sum() < 5: continue
-        terms.append(term_body_gap_local(a, sub(P[a][m], 200), b, T0[b], lo=0.2e-3, w=2.0)); names.append(f'contact {a}-{b}')
+        for x, y in ((a, b), (b, a)):
+            m = np.abs(L.T[y].signed(L.P[x])) < 0.004
+            if m.sum() < 5: continue
+            terms.append(term_body_gap_local(x, sub(P[x][m], 600), y, T0[y], lo=0.3e-3, w=2.0)); names.append(f'contact {x}-{y}')
     # skin
     zones = landmark_zones(L)
     for b in ALL_BONES:
@@ -88,13 +90,14 @@ def finalize(L, maps, skinT, log=print, iters=25):
             if msk.any():
                 lm |= msk
                 Pz = P[b][msk]
-                terms.append(term_surface_band(b, sub(Pz, 300), skinT, lo=LANDMARK_LO * 1e-3, w=3.0)); names.append(f'skin {name} lo')
-                terms.append(term_surface_band(b, sub(Pz, 300), skinT, hi=LANDMARK_HI * 1e-3, w=0.3, mode='min')); names.append(f'skin {name} hi')
+                terms.append(term_surface_band(b, sub(Pz, 600), skinT, lo=LANDMARK_LO * 1e-3, w=3.0)); names.append(f'skin {name} lo')
+                if name in LANDMARK_W:
+                    terms.append(term_surface_band(b, sub(Pz, 600), skinT, hi=LANDMARK_HI * 1e-3, w=LANDMARK_W[name], mode='min')); names.append(f'skin {name} hi')
         near = (~lm) & (cl < 0.008)
         if near.any():
-            terms.append(term_surface_band(b, sub(P[b][near], 400), skinT, lo=CLEAR * 1e-3, w=3.0)); names.append(f'skin {b}')
+            terms.append(term_surface_band(b, sub(P[b][near], 1500), skinT, lo=CLEAR * 1e-3, w=3.0)); names.append(f'skin {b}')
     for b in ALL_BONES:
-        sr, st = (np.radians(2), 0.002) if b in ('clav', 'scap') else (np.radians(3), 0.003)
+        sr, st = (np.radians(1), 0.001) if b in ('clav', 'scap') else (np.radians(2), 0.002)
         terms.append(term_regular(b, sr, st)); names.append(f'reg {b}')
     def report():
         out = {}

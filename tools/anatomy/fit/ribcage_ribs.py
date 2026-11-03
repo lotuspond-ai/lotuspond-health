@@ -92,7 +92,7 @@ class RibGeom:
         self.s_tub = float(np.median(self.s[self.facets['tub'][0]])) if 'tub' in self.facets else None
         self.s_head = float(np.median(self.s[head]))
         # end of the rigid posterior segment: just past the tubercle (ribs 1-10) or 3 cm along the neck (11, 12)
-        self.s_rigid = (self.s_tub + 0.012) if self.s_tub is not None else self.s_head + 0.03
+        self.s_rigid = rigid_end(self)
         # anterior end (costal cartilage side): the last 8 mm of arc length
         self.end = np.flatnonzero(self.s > self.length - 0.008)
 
@@ -107,6 +107,11 @@ class RibGeom:
             d = ((p - q) ** 2).sum(1)
             m = d < best; best[m] = d[m]; out[m] = self.cl_s[i] + t[m] * np.sqrt(L2[i])
         return out
+
+
+def rigid_end(rg):
+    """End of the rigid posterior segment: just past the tubercle (ribs 1-10) or 2.5 cm along the neck (11, 12)."""
+    return (rg.s_tub + 0.006) if rg.s_tub is not None else rg.s_head + 0.025
 
 
 def smoothstep(x):
@@ -130,8 +135,20 @@ def seat(rg, v, verts, lung):
     head_idx = np.concatenate([rg.facets[k][0] for k in ('head_lo', 'head_up') if k in rg.facets])
     post = np.flatnonzero(rg.s <= rg.s_rigid + 0.01)
     post_s = post[::3]
+    # lung clearance is asked of the neck and the part past the tubercle, not of the head: where the HRA lung
+    # overlaps the vertebral body itself the head cannot leave it without leaving its joint
+    s_free = (rg.s_tub + 0.004) if rg.s_tub is not None else rg.s_head + 0.025
+    neck = np.flatnonzero((rg.s >= s_free) & (rg.s <= rg.s_rigid + 0.03))[::3]
+    w_neck = 1 - smoothstep((rg.s[neck] - rg.s_rigid) / FADE)
     near = [verts[k] for k in (f'T{n - 1}', f'T{n}', f'T{n + 1}', 'C7' if n == 1 else 'L1' if n == 12 else None) if k in verts]
     c = v[head_idx].mean(0)
+    # the rib's neck axis (head to tubercle; for 11 and 12 the first 2.5 cm of the rib): turning about it is the
+    # rib's elevation, which the rest of the rib (already placed by the warp) decides, so it is held tightly
+    if 'tub' in rg.facets:
+        na = v[rg.facets['tub'][0]].mean(0) - c
+    else:
+        na = v[(rg.s > rg.s_head + 0.015) & (rg.s < rg.s_head + 0.03)].mean(0) - c
+    na /= np.linalg.norm(na)
 
     def apply(x, p):
         R = Rotation.from_rotvec(x[:3]).as_matrix()
@@ -141,8 +158,8 @@ def seat(rg, v, verts, lung):
         r = []
         for idx, tgt, gap, w in terms:
             d = tgt.sdf(apply(x, v[idx]))
-            ww = w * np.exp(-gap / 0.0015)
-            r.append(ww * (d - np.clip(gap, 0.0003, 0.0015)) / 0.0005 / np.sqrt(len(idx)) * 4)
+            ww = w / (1 + gap / 0.0015)
+            r.append(ww * (d - np.clip(gap, 0.0005, 0.002)) / 0.0005 / np.sqrt(len(idx)) * 4)
         if not two and up is not None:
             # level: the head centre sits on its own vertebra, at least 1.5 mm nearer it than the one above
             hc = apply(x, v[head_idx].mean(0)[None])
@@ -150,8 +167,11 @@ def seat(rg, v, verts, lung):
         P = apply(x, v[post_s])
         for tgt in near:
             r.append(np.maximum(0.0003 - tgt.sdf(P), 0) / 0.0002 / np.sqrt(len(P)) * 6)
-        r.append(np.maximum(LUNG_CLEAR - lung.sdf(P), 0) / 0.0005 / np.sqrt(len(P)) * 3)
-        r.append(x[:3] / np.radians(4.0))
+        Pn = v[neck] + w_neck[:, None] * (apply(x, v[neck]) - v[neck])
+        r.append(np.maximum(LUNG_CLEAR - lung.sdf(Pn), 0) / 0.0005 / np.sqrt(len(Pn)) * 2)
+        wn = x[:3] @ na
+        r.append(np.array([wn / np.radians(2.0)]))
+        r.append((x[:3] - wn * na) / np.radians(5.0))
         r.append(x[3:] / 0.004)
         return np.concatenate(r)
 
@@ -160,7 +180,7 @@ def seat(rg, v, verts, lung):
     w = 1 - smoothstep((rg.s - rg.s_rigid) / FADE)
     moved = apply(x, v)
     out = v + w[:, None] * (moved - v)
-    info = dict(rot_deg=float(np.degrees(np.linalg.norm(x[:3]))), shift_mm=float(np.linalg.norm(x[3:]) * 1000), cost=float(sol.cost))
+    info = dict(rot_deg=float(np.degrees(np.linalg.norm(x[:3]))), neck_rot_deg=float(np.degrees(x[:3] @ na)), shift_mm=float(np.linalg.norm(x[3:]) * 1000), cost=float(sol.cost))
     return out, info
 
 
@@ -214,43 +234,96 @@ def bar_basis(s, length, spacing=0.012, end=0.005):
     return bspline_basis(s, knots) * w[:, None]
 
 
-def bend(v, Bf, obstacles, skin=None, skin_clear=SKIN_CLEAR, iters=8, spacing=0.02, sub=2):
+class Radial:
+    """Outward direction of the chest wall at a point: horizontal, away from the thorax's centre line (the centre of
+    the lungs' cross-section at that height). Used to push bone out of a lung where it lies deep inside, where the
+    distance field's gradient no longer points the way out through the chest wall."""
+
+    def __init__(self, lungs):
+        v = lungs.mesh[0]
+        self.ys = np.arange(v[:, 1].min(), v[:, 1].max() + 0.01, 0.01)
+        c = []
+        for y in self.ys:
+            m = np.abs(v[:, 1] - y) < 0.01
+            c.append(v[m].mean(0) if m.sum() > 50 else [np.nan] * 3)
+        c = np.array(c)
+        ok = np.isfinite(c[:, 0])
+        self.cx = np.interp(self.ys, self.ys[ok], c[ok, 0]); self.cz = np.interp(self.ys, self.ys[ok], c[ok, 2])
+
+    def __call__(self, p):
+        cx = np.interp(p[:, 1], self.ys, self.cx); cz = np.interp(p[:, 1], self.ys, self.cz)
+        d = np.stack([p[:, 0] - cx, np.zeros(len(p)), p[:, 2] - cz], 1)
+        return d / np.maximum(np.linalg.norm(d, axis=1, keepdims=True), 1e-9)
+
+
+def exit_along(tgt, p, d, clear, tmax=0.03, step=0.0003):
+    """Distance along directions d to get from p to where tgt's distance reaches clear."""
+    t = np.zeros(len(p)); live = np.ones(len(p), bool)
+    for _ in range(int(tmax / step)):
+        s = tgt.sdf(p[live] + t[live, None] * d[live])
+        done = s >= clear
+        idx = np.flatnonzero(live)
+        live[idx[done]] = False
+        t[idx[~done]] += np.maximum(step, (clear - s[~done]) * 0.5)
+        if not live.any(): break
+    return np.minimum(t, tmax)
+
+
+def bend(v, Bf, obstacles, skin=None, skin_clear=SKIN_CLEAR, iters=5, sub=2, w_smooth=20.0, band=0.003, radial=None,
+         mu=1000.0, min_capacity=0.25):
     """Smallest smooth displacement v + Bf @ C (one vector per arc length, so whole cross-sections move together)
-    that clears `obstacles` [(Target, clearance)] and keeps `skin_clear` inside the skin. Constraints are linearised
-    with the obstacle's field gradient and re-linearised `iters` times. Returns (vertices, info)."""
+    that clears `obstacles` [(Target, clearance)] and keeps `skin_clear` inside the skin.
+    Minimises |C|^2 + w_smooth |D2 C|^2 + mu * sum(hinge^2) (mm): the clearances are soft, so conflicting ones
+    give a compromise instead of a failure. Each clearance is linearised along its push direction: the field
+    gradient near the surface, the chest wall's outward direction (`radial`) for points deep inside a lung.
+    Points the field cannot move (near the fixed end, basis capacity < min_capacity) are left out."""
     nf = Bf.shape[1]
     D = np.diff(np.eye(nf), 2, axis=0) if nf > 2 else np.zeros((0, nf))
+    H = np.eye(3 * nf) + w_smooth * np.kron(np.eye(3), D.T @ D)
     idx_all = np.arange(len(v))[::sub]
-    live = np.abs(Bf[idx_all]).sum(1) > 1e-9
-    idx_all = idx_all[live]
-    C = np.zeros((nf, 3))
-    info = dict(active=0)
+    cap = np.abs(Bf[idx_all]).sum(1)
+    idx_all = idx_all[cap >= min_capacity]
+    c = np.zeros(3 * nf)
+    info = dict(violated_before_mm=0.0)
+    if not len(idx_all): return v.copy(), dict(info, max_mm=0.0)
     for it in range(iters):
-        cur = v + Bf @ C
+        cur = v + Bf @ (c.reshape(3, nf).T / 1000)
         P = cur[idx_all]
-        rows = []
-        for tgt, clear in obstacles:
+        A, b = [], []
+        worst = 0.0
+        for k_, (tgt, clear) in enumerate(obstacles):
             d = tgt.sdf(P)
-            m = d < clear + 0.0005
-            if m.any(): rows.append((idx_all[m], tgt.field.grad(P[m]), clear + 0.0002 - d[m]))
+            m = d < clear + band
+            if not m.any(): continue
+            g = tgt.field.grad(P[m]); need = clear - d[m]
+            if radial is not None and tgt.name == 'lungs':
+                deep = d[m] < -0.002
+                if deep.any():
+                    r = radial(P[m][deep])
+                    g[deep] = r
+                    need[deep] = exit_along(tgt, P[m][deep], r, clear)
+            Bi = Bf[idx_all[m]]
+            A.append(np.hstack([Bi * g[:, k:k + 1] for k in range(3)])); b.append(need * 1000)
+            worst = max(worst, float(need.max()))
         if skin is not None:
             d = skin.sdf(P)
-            m = d > -skin_clear - 0.001
-            if m.any(): rows.append((idx_all[m], -skin.field.grad(P[m]), d[m] + skin_clear + 0.0002))
-        A, b = [], []
-        for idx, g, need in rows:
-            viol = need > 0
-            if not viol.any(): continue
-            Bi = Bf[idx[viol]]
-            A.append(np.hstack([Bi * g[viol, k:k + 1] for k in range(3)]) * 30.0)
-            b.append(need[viol] * 30.0)
-        if not A: break
-        A = np.concatenate(A); b = np.concatenate(b)
-        info['active'] = int(len(b))
-        R = [np.kron(np.eye(3), D) * 3.0 / spacing, np.eye(3 * nf) * 0.02]
-        c0 = C.T.ravel()
-        dC, *_ = np.linalg.lstsq(np.concatenate([A] + R), np.concatenate([b] + [-(r @ c0) for r in R]), rcond=None)
-        C = C + dC.reshape(3, nf).T
-    disp = Bf @ C
+            m = d > -skin_clear - band
+            if m.any():
+                g = -skin.field.grad(P[m]); Bi = Bf[idx_all[m]]
+                A.append(np.hstack([Bi * g[:, k:k + 1] for k in range(3)])); b.append((d[m] + skin_clear) * 1000)
+                worst = max(worst, float((d[m] + skin_clear).max()))
+        if it == 0: info['violated_before_mm'] = round(worst * 1000, 2)
+        if not A or worst <= 0.00002: break
+        A = np.concatenate(A); b = np.concatenate(b) + A @ c          # constraints on the total: A c >= b
+        # squared-hinge QP by active sets
+        act = (A @ c) < b
+        for _ in range(30):
+            Aa, ba = A[act], b[act]
+            c_new = np.linalg.solve(H + mu * Aa.T @ Aa, mu * Aa.T @ ba)
+            act_new = (A @ c_new) < b
+            c = c_new
+            if np.array_equal(act_new, act): break
+            act = act_new
+    disp = Bf @ (c.reshape(3, nf).T / 1000)
     info['max_mm'] = float(np.linalg.norm(disp, axis=1).max() * 1000)
     return v + disp, info

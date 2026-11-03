@@ -148,12 +148,13 @@ def point_from_frame(off, line, sg, along=None):
     return c + off[0] * ant + off[1] * lat + a * d
 
 
-def match_joints(za_secs, ze, zw, hra_secs, e_range=(0.22, 0.38), w_range=(0.44, 0.62), tail=0.03, tau=0.0015, sigma=0.06,
+def match_joints(za_secs, ze, zw, hra_secs, e_range=(0.22, 0.38), w_range=(0.44, 0.62), tail=0.03, tau=0.0015, sigma=0.035,
                  step=0.0025):
     """Where are the elbow and wrist along the HRA arm? Z-Anatomy's arm profile (its skin regions' cross-section
     extents: width, depth, front, back, medial and lateral extents) is mapped onto the HRA profile piecewise linearly with
     knots at the shoulder (s = 0), elbow and wrist; the profile correlation is high and flat over about +-1 cm, so it
-    is combined with a prior on the forearm / upper-arm length ratio (Z-Anatomy's, sigma 6 %).
+    is combined with a prior on the forearm / upper-arm length ratio (Z-Anatomy's; sigma 3.5 %, about the population spread of the
+    brachial index).
     Returns dict(elbow, wrist, corr, ratio, table)."""
     def chans(secs):
         s = np.array([x['s'] for x in secs])
