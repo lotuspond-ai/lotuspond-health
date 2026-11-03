@@ -84,9 +84,60 @@ Then point the app at it. Either:
   VITE_API_ORIGIN=http://192.168.1.20:8787 npm run build:mobile
   ```
 
-Use your computer's LAN address for a phone on the same Wi-Fi, `http://localhost:8787` for the iOS Simulator, or `http://10.0.2.2:8787` for the Android emulator. Plain http is allowed only for this: Android debug builds allow cleartext (`android/app/src/debug/AndroidManifest.xml`; release builds are https only), and iOS allows local network addresses (`NSAllowsLocalNetworking`).
+Which address to use:
+- **Phone on the same Wi-Fi:** your computer's address. On a Mac, its local name is the safest choice, for example `srujans-macbook.local:8787` (*System Settings → General → Sharing → Local hostname*). Its LAN IP also works.
+- **iOS Simulator:** `http://localhost:8787`.
+- **Android emulator:** `http://10.0.2.2:8787`.
+
+The first time, macOS may ask whether `node` can accept incoming connections: allow it.
+
+Plain http only works in test builds:
+- **Android:** debug builds allow cleartext (`android/app/src/debug/AndroidManifest.xml`), and test builds let the web view send http requests from its https page (`allowMixedContent` in `capacitor.config.ts`, set by `VITE_SERVER_PICKER=1` or an http `VITE_API_ORIGIN`). Release builds allow neither.
+- **iOS:** `NSAllowsLocalNetworking` permits http to `.local` names and other local addresses. The first connection asks to allow local network access (`NSLocalNetworkUsageDescription`).
+
+**If the phone can't connect** (local http hasn't been tried on physical devices yet), give the server an https address with a tunnel instead. This works from any network and avoids the http rules above. Test data then passes through Cloudflare:
+
+```bash
+brew install cloudflared
+```
+
+```bash
+cloudflared tunnel --url http://localhost:8787
+```
+
+Enter the `https://….trycloudflare.com` address it prints into the server picker.
 
 Debug builds can be inspected with Chrome (`chrome://inspect`) for Android, or Safari's Develop menu for iOS.
+
+### On your iPhone with a free Apple ID
+
+This needs a Mac with Xcode 26 or later, and an iPhone on iOS 16 or later. A free Apple ID is enough: Xcode signs the app with a *Personal Team*. Free signing has limits: the app stops opening after 7 days (run it from Xcode again to renew), and at most 3 such apps can be on a phone.
+
+1. **Prepare the project** in a clone of the repository:
+
+   ```bash
+   npm install
+   ```
+
+   ```bash
+   VITE_SERVER_PICKER=1 npm run build:mobile
+   ```
+
+   ```bash
+   npx cap open ios
+   ```
+
+   The first opening downloads the Swift packages, which takes a minute.
+2. **Sign in.** In *Xcode → Settings → Accounts*, add your Apple ID.
+3. **Sign the app.** Select the *App* project, then the *App* target, then *Signing & Capabilities*:
+   - Set *Team* to *Your Name (Personal Team)*.
+   - Change *Bundle Identifier* to one of your own, for example `ai.lotuspond.health.dev.yourname`. This keeps `ai.lotuspond.health` free for the App Store release. Don't commit this change.
+4. **Connect the iPhone** with a cable, unlock it and tap *Trust*. On iOS 16 and later, turn on *Settings → Privacy & Security → Developer Mode* and let the phone restart. The option appears once the phone has been connected to Xcode.
+5. **Run.** Choose the iPhone as the run destination in Xcode's toolbar and press *Run* (⌘R).
+6. **Trust the developer.** The first launch is refused until you allow it. On the iPhone, go to *Settings → General → VPN & Device Management*, tap your Apple ID and choose *Trust*. Then open LotusPond Health.
+7. **Choose the server.** On the sign-in screen, tap *Change* next to "Test build · server …", and enter `health.lotuspond.ai` or your Mac (see *Against a server on your computer* above). Allow local network access when asked.
+
+After pulling new code, run `VITE_SERVER_PICKER=1 npm run build:mobile` again, then Run in Xcode.
 
 ## Layout
 
