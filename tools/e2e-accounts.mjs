@@ -70,7 +70,8 @@ await page.getByRole('heading', { name: 'Check what was read' }).waitFor({ timeo
 await shot('upload-review');
 await page.getByRole('button', { name: /^Add \d+ results/ }).click();
 await page.locator('.toast').filter({ hasText: /Added/ }).waitFor();
-expect((await text('.toast')).match(/Added \d+ results? and 1 scan/) !== null, `upload saved results and a scan (${await text('.toast')})`);
+const added = await page.locator('.toast').filter({ hasText: /Added/ }).first().innerText(); // the sample-data toast may still be showing
+expect(added.match(/Added \d+ results? and 1 scan/) !== null, `upload saved results and a scan (${added})`);
 
 // 5. Files page
 await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Files' }).click();
