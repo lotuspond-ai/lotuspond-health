@@ -1,10 +1,12 @@
 // Screens shown before the main app: loading, storage or server unavailable, and sign in / create account.
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { errorMessage, isPreview } from '../api';
 import { useSession } from '../state/session';
 import { LIMITS } from '../../shared/constants';
 import { Field } from './forms';
 import { Icon, Logo } from './ui';
+import { onAuthHash, showAuthMode, siteHref, siteLinkProps, type AuthMode } from '../site/links';
+import '../styles/auth-site.css';
 
 export function Splash() {
   return (
@@ -39,7 +41,7 @@ export function Offline() {
 function PondPanel() {
   return (
     <section className="auth__pond" aria-hidden={false}>
-      <div className="auth__brand"><Logo /><b>LotusPond <span>Health</span></b></div>
+      <a className="auth__brand" href={siteHref('/')} {...siteLinkProps} aria-label="LotusPond Health home"><Logo /><b>LotusPond <span>Health</span></b></a>
       <div className="auth__pitch">
         <h1>Your health records, mapped to your body.</h1>
         <p>Keep lab reports and scans for you and your family in one place, and see every result on the organ it relates to.</p>
@@ -61,9 +63,9 @@ function PondPanel() {
   );
 }
 
-export function AuthScreen() {
+export function AuthScreen({ initialMode = 'in' }: { initialMode?: AuthMode }) {
   const { signIn, signUp, notice } = useSession();
-  const [mode, setMode] = useState<'in' | 'up'>('in');
+  const [mode, setMode] = useState<AuthMode>(initialMode);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -86,6 +88,8 @@ export function AuthScreen() {
   }
 
   const switchTo = (m: 'in' | 'up') => { setMode(m); setError(null); };
+  useEffect(() => showAuthMode(mode), [mode]);
+  useEffect(() => onAuthHash(m => { setMode(m); setError(null); }), []);
 
   return (
     <div className="auth">
@@ -128,6 +132,11 @@ export function AuthScreen() {
               ? 'Preview: your account and records are saved in this browser only. Nothing is sent to a server.'
               : 'Files are read on your device, then stored in your account. LotusPond explains results; it does not diagnose.'}
           </p>
+          <nav className="auth__site" aria-label="LotusPond Health website">
+            <a href={siteHref('/privacy/')} {...siteLinkProps}>Privacy</a>
+            <a href={siteHref('/terms/')} {...siteLinkProps}>Terms</a>
+            <a href={siteHref('/trust/')} {...siteLinkProps}>Trust and compliance</a>
+          </nav>
         </form>
       </section>
     </div>

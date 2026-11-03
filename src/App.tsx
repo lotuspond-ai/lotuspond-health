@@ -12,6 +12,7 @@ import { AddProfileDialog, ProfileMenu, Toasts } from './components/ProfileMenu'
 import { Icon, Logo } from './components/ui';
 import { isPreview } from './api';
 import { useSession } from './state/session';
+import { authModeFromLocation } from './site/links';
 import { useUI, VIEWS, type View } from './state/ui';
 
 const NAV: { id: View; label: string }[] = [
@@ -30,7 +31,7 @@ export default function App() {
   useEffect(() => { void useSession.getState().init(); }, []);
   return (
     <>
-      {!ready && (status === 'loading' ? <Splash /> : status === 'offline' ? <Offline /> : status === 'signed-out' ? <AuthScreen /> : <Onboarding />)}
+      {!ready && (status === 'loading' ? <Splash /> : status === 'offline' ? <Offline /> : status === 'signed-out' ? <AuthScreen initialMode={authModeFromLocation()} /> : <Onboarding />)}
       {shellMounted && <Shell hidden={!ready} />}
       <Toasts />
     </>
