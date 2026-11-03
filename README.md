@@ -46,7 +46,7 @@ npm install
 npm run local
 ```
 
-Then open **http://localhost:8787**. `npm run local` builds the app and runs the production server exactly as a deployment would, over plain http on your computer only. Stop it with Ctrl+C; run it again to pick up new changes.
+Then open **http://localhost:8787**: the public website, with **Create free account** and **Sign in** leading into the app (`/signup`, `/login`, then `/app`). `npm run local` builds the app and runs the production server exactly as a deployment would, over plain http on your computer only. Stop it with Ctrl+C; run it again to pick up new changes.
 
 | Command | What runs | Data kept in |
 | --- | --- | --- |
@@ -80,7 +80,7 @@ To use your own PostgreSQL server instead of the embedded database, copy `server
 npm test                                   # parser tests and API integration tests
 npm run typecheck                          # frontend and server
 TEST_DATABASE_URL=postgres://… npm test -w server   # API tests against a real PostgreSQL
-node tools/e2e-accounts.mjs http://localhost:5173/  # browser walk-through (needs Playwright and the dev stack)
+node tools/e2e-accounts.mjs http://localhost:5173/  # browser walk-through: website pages, then accounts (needs Playwright and a running stack)
 ```
 
 ## Production
@@ -131,6 +131,24 @@ All routes are under `/api` and use JSON unless noted.
 | `POST /profiles/:id/documents` (multipart), `GET …/documents/:did/file`, `DELETE …/documents/:did` | Store, fetch or delete original files |
 | `POST /profiles/:id/scans`, `PATCH`/`DELETE …/scans/:sid` | Save, edit or delete scans |
 
+## Public website
+
+The product's own site, **https://health.lotuspond.ai**, is built by the same Vite build as the app (a multi-page build):
+
+| Address | File | What it is |
+| --- | --- | --- |
+| `/` | `index.html` | Landing page: static HTML and CSS, no JavaScript |
+| `/privacy/`, `/terms/`, `/trust/` | `privacy/index.html`, `terms/index.html`, `trust/index.html` | Privacy Policy (with the Consumer Health Data Privacy Policy), Terms of Use, Trust and compliance |
+| `/app`, `/login`, `/signup` | `app.html` (entry `src/main.tsx`) | The app. `/signup` and `/login` open the auth screen in that mode; after sign-in the address becomes `/app` (views stay in the hash, e.g. `/app#markers`); signing out goes to `/login` |
+| anything else | `404.html` | Not-found page, sent with a 404 status |
+
+- **Shared pieces** live in `src/site/`: `site.css` (styles, using the app's colour tokens), `fonts.css` with self-hosted Newsreader and Hanken Grotesk (SIL OFL; no third-party requests), and HTML partials in `src/site/partials/` included with `<!-- @include header -->`.
+- **Region tables** on the landing, Privacy and Trust pages are rendered at build time from `shared/regions.ts` with markers such as `<!-- @regions storage-table -->` (see `tools/site/regions.ts`), so the pages always match sign-up.
+- **`SITE_URL`** (build-time, default `https://health.lotuspond.ai`) sets canonical and social URLs (`%SITE_URL%` in HTML), and the generated `robots.txt` and `sitemap.xml`. Build for another host with `SITE_URL=https://staging.example.com npm run build`.
+- **Imagery**: `public/site/*.webp` are real screenshots of the app, and `public/site/og.png` (1200×630) is the social preview, rendered from `tools/site/og.html`. Regenerate both after visible app changes, with the dev stack running: `node tools/site/shots.mjs http://localhost:5173/`.
+- **Legal text** has placeholders in the form `[Legal entity name — to be completed by LotusPond]` for details only LotusPond can supply (entity, address, officers, contacts, periods). Search for `to be completed` before launch, and have each market's text reviewed.
+- **Serving** (`server/src/app.ts`): pages get their own Content Security Policy (the website allows no WebAssembly and no inline styles; the app shell adds `'wasm-unsafe-eval'` for the model decoder), hashed files in `/assets/` are cached for a year as immutable, and the build writes `.br` and `.gz` copies of text files that the server sends when the browser accepts them. `vite` and `vite preview` follow the same routes (`tools/site/vite-plugin.ts`).
+
 ## Project layout
 
 | Path | What it holds |
@@ -141,6 +159,8 @@ All routes are under `/api` and use JSON unless noted.
 | `src/api/` | Data access: `http.ts` talks to the API, `browser.ts` keeps everything in IndexedDB for server-less previews |
 | `src/state/` | Session (account, profiles, open profile), interface state, toasts |
 | `src/pages/`, `src/components/` | Interface |
+| `index.html`, `privacy/`, `terms/`, `trust/`, `404.html`, `src/site/` | Public website (see above); `app.html` is the app shell |
+| `tools/site/` | Build plugin for the website, region tables, screenshot and social-image tool |
 | `server/src/` | API: routes, auth, database schema, file storage |
 | `server/drizzle/` | SQL migrations (generate with `npm run db:generate` after changing `server/src/db/schema.ts`) |
 | `shared/` | Types and limits used by both sides |
@@ -163,4 +183,4 @@ Model coordinates are metres with `+x` toward the person's left, `+y` up and `+z
 
 ## Server-less preview
 
-`npm run build:artifact` writes `dist-artifact/`: the same app built with `VITE_BACKEND=browser`, which keeps accounts, profiles, records and files in the visitor's browser (IndexedDB) instead of on a server. It is meant for static hosts such as a Claude artifact. The 3D model ships as base64 text (`models/anatomy.b64.txt`) for hosts that don't serve `.glb` files, and `index.html` is body-only.
+`npm run build:artifact` writes `dist-artifact/`: the app alone (`vite build --mode artifact`, relative paths) built with `VITE_BACKEND=browser`, which keeps accounts, profiles, records and files in the visitor's browser (IndexedDB) instead of on a server. It is meant for static hosts such as a Claude artifact. Such hosts have no server routes and only pass a `#hash` into the page, so the preview's `index.html` is the app: it opens sign-in, or sign-up with `#signup`, and its links to the website (home, Privacy, Terms, Trust) open the live site in a new tab. The 3D model ships as base64 text (`models/anatomy.b64.txt`) for hosts that don't serve `.glb` files, and `index.html` is body-only. Check it locally with `npx vite preview --outDir dist-artifact` and the browser walk-through.
