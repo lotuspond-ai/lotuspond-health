@@ -1,6 +1,6 @@
 // Screens shown before the main app: loading, storage or server unavailable, and sign in / create account.
 import { useEffect, useState, type FormEvent } from 'react';
-import { errorMessage, isPreview } from '../api';
+import { errorMessage, inApp, isPreview } from '../api';
 import { useSession } from '../state/session';
 import { LIMITS } from '../../shared/constants';
 import type { SignUpProblem } from '../../shared/regions';
@@ -36,7 +36,8 @@ export function Offline() {
       ) : (
         <>
           <h1>The LotusPond server can’t be reached</h1>
-          <p className="lede">Check your connection. If you run LotusPond yourself, make sure the API server is running (<code>npm run dev</code> starts both parts).</p>
+          <p className="lede">{inApp ? 'Check that your phone is online, then try again.'
+            : <>Check your connection. If you run LotusPond yourself, make sure the API server is running (<code>npm run dev</code> starts both parts).</>}</p>
         </>
       )}
       <button className="btn btn--primary" onClick={() => void init()}>Try again</button>

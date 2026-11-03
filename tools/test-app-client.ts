@@ -163,6 +163,23 @@ describe('app client', () => {
     assert.equal(store.value, null);
   });
 
+  it('resolves self-hosted map tile paths against the API host', async () => {
+    const config = loadConfig({ NODE_ENV: 'test', TRUST_PROXY: 'true', MAP_PMTILES_URL: '/api/map/files/india.pmtiles', MAP_ASSETS_URL: '/api/map/files/assets/' });
+    const usual = app;
+    app = createApp({ db: database.db, files: new DiskFileStore(filesDir), config });
+    try {
+      const map = (await client().backend.publicConfig()).map;
+      assert.equal(map?.type, 'pmtiles');
+      if (map?.type !== 'pmtiles') return;
+      assert.equal(map.url, `${API}/api/map/files/india.pmtiles`);
+      assert.equal(map.assetsUrl, `${API}/api/map/files/assets`);
+    } finally {
+      app = usual;
+    }
+    const raster = (await client().backend.publicConfig()).map;
+    assert.ok(raster?.type === 'raster' && raster.tiles.every(t => t.startsWith('https://') && t.includes('{z}')), 'absolute tile templates are left alone');
+  });
+
   it('follows wrong_region to the host that holds the account, and keeps using it', async () => {
     const { backend, store } = client();
     const address = email();

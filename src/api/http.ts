@@ -166,7 +166,20 @@ export class HttpBackend implements Backend {
   updateScan(pid: string, id: string, patch: ScanPatch) { return this.request<ScanItem>('PATCH', `/profiles/${pid}/scans/${id}`, patch); }
   deleteScan(pid: string, id: string) { return this.request<void>('DELETE', `/profiles/${pid}/scans/${id}`); }
 
-  publicConfig() { return this.request<PublicConfig>('GET', '/config'); }
+  async publicConfig() {
+    const config = await this.request<PublicConfig>('GET', '/config');
+    const map = config.map;
+    if (!this.app || !map) return config;
+    // Self-hosted tiles are given as paths on the API host (for example /api/map/files/...). The website resolves
+    // them against its own address; the apps are not served from that host, so they resolve them here.
+    const at = (u: string) => (u.startsWith('/') && !u.startsWith('//') ? `${this.app!.origin}${u}` : u);
+    return {
+      ...config,
+      map: map.type === 'pmtiles' ? { ...map, url: at(map.url), assetsUrl: at(map.assetsUrl) }
+        : map.type === 'style' ? { ...map, url: at(map.url) }
+        : { ...map, tiles: map.tiles.map(at) },
+    };
+  }
   nearbyFacilities(q: FacilityQuery) {
     const params = new URLSearchParams({ lat: q.lat.toFixed(5), lon: q.lon.toFixed(5), radius: String(q.radiusKm) });
     if (q.kinds?.length) params.set('kinds', q.kinds.join(','));

@@ -20,6 +20,12 @@ body { -webkit-tap-highlight-color: transparent; -webkit-text-size-adjust: 100%;
 .bodymap { padding-bottom: calc(20px + var(--sab)); }
 .page { padding-bottom: calc(40px + var(--sab)); }
 .scrim { padding: var(--sat) var(--sar) var(--sab) var(--sal); }
+/* full-screen states outside the shell */
+.splash { padding: calc(24px + var(--sat)) 24px calc(24px + var(--sab)); }
+.auth__pond { padding-top: calc(40px + var(--sat)); }
+.auth__panel { padding-bottom: calc(40px + var(--sab)); }
+.onboard { padding-top: calc(32px + var(--sat)); padding-bottom: calc(32px + var(--sab)); }
+@media (max-width: 960px) { .auth__pond { padding-top: calc(28px + var(--sat)); } }
 .toggle:disabled { opacity: 0.5; cursor: default; }
 .btn:disabled { opacity: 0.5; cursor: default; }
 .inline-select { border: 1px solid var(--line); background: var(--paper); border-radius: 8px; padding: 5px 8px; color: var(--ink); }
@@ -49,11 +55,20 @@ body { -webkit-tap-highlight-color: transparent; -webkit-text-size-adjust: 100%;
 
 /* ---------- phone layout (keep the width in step with COMPACT in src/lib/useMedia.ts) ---------- */
 @media (max-width: 760px) {
-  .files-switch { display: inline-flex; margin: 12px 16px 0; align-self: flex-start; }
+  /* Rows: top bar, the Files / Scans switch (when shown), the page, the tab bar. Placed explicitly so the page
+     keeps the stretching row whether or not the switch is there. */
+  .app { grid-template-rows: auto auto minmax(0, 1fr) auto; }
+  .app > * { grid-row: 3; }
+  .app > .topbar { grid-row: 1; }
+  .app > .files-switch { grid-row: 2; }
+  .app > .tabbar { grid-row: 4; }
+  .files-switch { display: flex; margin: 10px 16px 0; }
+  .files-switch button { flex: 1; }
+  /* Toasts sit above the tab bar and its raised Add button. */
+  .app:not([hidden]) ~ .toasts { bottom: calc(84px + var(--sab)); }
   /* The sheet header already names the open organ or the overview. */
   .sheet .ov-head h2, .sheet .org-head h2 { display: none; }
   input, select, textarea { font-size: 16px; } /* iOS zooms into fields smaller than 16px */
-  .app { grid-template-rows: auto minmax(0, 1fr) auto; }
   .topbar { gap: 10px; padding: calc(8px + var(--sat)) 16px 8px; }
   .brand svg { width: 26px; height: 26px; }
   .brand b { font-size: 19px; }
@@ -74,12 +89,13 @@ body { -webkit-tap-highlight-color: transparent; -webkit-text-size-adjust: 100%;
   /* body map: full-bleed stage, results in a bottom sheet */
   .bodymap { display: block; position: relative; padding: 0; overflow: hidden; }
   .stage { position: absolute; inset: 0; border-radius: 0; min-height: 0; box-shadow: none; }
-  .stage__title { left: 16px; top: 14px; }
-  .stage__tools { top: 12px; right: 12px; max-width: calc(100% - 24px); flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
-  .stage__tools::-webkit-scrollbar { display: none; }
+  /* The sheet names the organ or the overview, so the stage drops its title; the back button takes its place. */
+  .stage__title { display: none; }
   .stage__back { top: 12px; left: 12px; bottom: auto; }
-  .stage__back ~ .stage__tools { max-width: calc(100% - 156px); }
-  .chip { flex: none; padding: 7px 12px; }
+  /* --cover is the height of the stage under the settled sheet (BodyMap): the 2D map and the controls at the
+     bottom fit in what is left, as the 3D camera does (ViewInset in src/three/Stage.tsx). */
+  .bm2d { bottom: var(--cover, 0px); container-type: size; transition: bottom 0.3s ease-out; }
+  .stage__legend { bottom: calc(var(--cover, 0px) + 12px); transition: bottom 0.3s ease-out; }
 
   .sheet { position: absolute; left: 0; right: 0; bottom: 0; z-index: 25; background: var(--mist); border-radius: 22px 22px 0 0; box-shadow: 0 -14px 40px -18px rgba(0, 0, 0, 0.6); transition: transform 0.34s cubic-bezier(0.2, 0.8, 0.2, 1); will-change: transform; }
   .sheet.is-dragging { transition: none; }
@@ -110,7 +126,8 @@ body { -webkit-tap-highlight-color: transparent; -webkit-text-size-adjust: 100%;
   .page__head .spacer { display: none; }
   .search { min-width: 0; flex: 1 1 100%; }
   .tally b { font-size: 28px; }
-  .gallery { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+  /* Result filters scroll sideways; each chip keeps its full width (labs.css also styles a .fchip, with min-width 0). */
+  .fchips > .fchip { flex: none; max-width: none; }
 
   /* tables become cards */
   .table, .table tbody { display: block; }
@@ -121,15 +138,21 @@ body { -webkit-tap-highlight-color: transparent; -webkit-text-size-adjust: 100%;
   .table tr.click:active { background: var(--paper); }
   .table tr.group { display: block; padding: 18px 0 0; border: 0; }
   .table .group td { padding: 0; font-size: 20px; }
-  /* biomarkers: name | value, range bar | trend, range | date */
-  .table:not(.review) tr:not(.group) { grid-template-columns: minmax(0, 1fr) auto; }
-  .table:not(.review) td:nth-child(1) { grid-area: 1 / 1; }
-  .table:not(.review) td:nth-child(2) { grid-area: 1 / 2; text-align: right; }
-  .table:not(.review) td:nth-child(3) { grid-area: 2 / 1; }
-  .table:not(.review) td:nth-child(4) { grid-area: 3 / 1; font-size: 12.5px; }
-  .table:not(.review) td:nth-child(5) { grid-area: 2 / 2; justify-self: end; }
-  .table:not(.review) td:nth-child(6) { grid-area: 3 / 2; text-align: right; font-size: 12.5px; }
+  /* results table: name, status / value, trend / range bar / range, date */
+  .bm-table tr:not(.group) { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: 'n s' 'v t' 'b b' 'r d'; }
+  .bm-table td:nth-child(1) { grid-area: n; } .bm-table td:nth-child(2) { grid-area: s; justify-self: end; }
+  .bm-table td:nth-child(3) { grid-area: v; } .bm-table td:nth-child(4) { grid-area: b; min-width: 0 !important; }
+  .bm-table td:nth-child(5) { grid-area: r; font-size: 12.5px; } .bm-table td:nth-child(6) { grid-area: t; justify-self: end; }
+  .bm-table td:nth-child(7) { grid-area: d; text-align: right; font-size: 12.5px; }
+  /* files table: name, actions / type, size / linked to, uploaded */
+  .table.files tr { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: 'n a' 'k s' 'l u'; }
+  .table.files td:nth-child(1) { grid-area: n; } .table.files td:nth-child(2) { grid-area: k; font-size: 13px; }
+  .table.files td:nth-child(3) { grid-area: l; font-size: 13px; } .table.files td:nth-child(4) { grid-area: s; text-align: right; font-size: 13px; }
+  .table.files td:nth-child(5) { grid-area: u; text-align: right; font-size: 13px; } .table.files td:nth-child(6) { grid-area: a; justify-self: end; }
   /* upload review: marker, remove / value, unit / date, range, check */
+  .review, .bm-table { min-width: 0; } /* the shared styles scroll these sideways on phones; here they are cards */
+  .table.files td { white-space: normal; }
+  .review__alt { white-space: normal; }
   .review tr { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; grid-template-areas: 'm m x' 'v u u' 'd r c'; }
   .review td:nth-child(1) { grid-area: m; } .review td:nth-child(2) { grid-area: v; } .review td:nth-child(3) { grid-area: u; }
   .review td:nth-child(4) { grid-area: r; font-size: 13px; } .review td:nth-child(5) { grid-area: d; }

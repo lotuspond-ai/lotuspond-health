@@ -125,8 +125,9 @@ function BodySheet({ series }: { series: Series[] }) {
 export default function BodyMap({ hidden }: { hidden?: boolean }) {
   const series = useSeries();
   const compact = useMedia(COMPACT);
+  const cover = useUI(s => s.stageInset);
   return (
-    <main className="bodymap" hidden={hidden}>
+    <main className="bodymap" hidden={hidden} style={compact ? { ['--cover' as string]: `${cover}px` } : undefined}>
       {!compact && <IndexPanel series={series} />}
       <StagePanel />
       {compact ? <BodySheet series={series} /> : (
