@@ -86,42 +86,42 @@
 .lattrib a { color: inherit; }
 
 /* card */
-.fcard { --kind: var(--lily); background: var(--paper); border: 1px solid var(--line); border-radius: 18px; transition: border-color 0.15s, box-shadow 0.15s; min-width: 0; }
-.fcard:hover { border-color: color-mix(in srgb, var(--kind) 45%, var(--line)); }
-.fcard.is-selected { border-color: var(--kind); box-shadow: 0 0 0 3px color-mix(in srgb, var(--kind) 22%, transparent); }
-.fcard--partner { border-color: #efc6d2; background: linear-gradient(180deg, #fcf1f4 0, var(--paper) 74px); }
-.fcard__main { width: 100%; display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 12px; padding: 14px 16px 10px; background: none; border: 0; text-align: left; border-radius: 18px 18px 0 0; }
-.fcard__main:focus-visible { outline-offset: -3px; border-radius: 18px; }
-.fcard__icon { width: 44px; height: 44px; border-radius: 14px; background: color-mix(in srgb, var(--kind) 13%, var(--paper)); color: var(--kind); display: grid; place-items: center; }
-.fcard__icon svg { width: 22px; height: 22px; }
-.fcard.is-selected .fcard__icon { background: var(--kind); color: #fff; }
-.fcard__body { display: grid; gap: 6px; min-width: 0; }
-.fcard__title { display: flex; align-items: center; gap: 4px 8px; flex-wrap: wrap; }
-.fcard__title b { font: 500 19px/1.2 var(--serif); letter-spacing: -0.01em; overflow-wrap: anywhere; }
-.fcard__partner { display: inline-flex; gap: 4px; align-items: center; font-size: 11px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; background: var(--pollen-soft); color: #7a5608; padding: 2px 8px 2px 6px; border-radius: 999px; }
-.fcard__partner svg { width: 12px; height: 12px; fill: currentColor; }
-.fcard__meta { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
-.fchip { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; font-weight: 600; padding: 3px 9px; border-radius: 999px; background: var(--mist); color: var(--ink-2); max-width: 100%; min-width: 0; }
-.fchip svg { width: 13px; height: 13px; flex: none; }
-.fchip small { font-weight: 500; font-size: 12px; }
-.fchip--dist { background: var(--ink); color: var(--paper); }
-.fchip--kind { background: color-mix(in srgb, var(--kind) 12%, var(--paper)); color: color-mix(in srgb, var(--kind) 78%, #000); }
-.fchip--open { background: var(--lily-soft); color: #1f5a46; }
-.fchip--closed { background: var(--mist-2); color: var(--ink-2); }
-.fchip--open i, .fchip--closed i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: none; }
-.fchip--closed i { background: var(--reed); }
-.fchip--hours span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.fcard__addr { color: var(--reed); font-size: 13.5px; overflow-wrap: anywhere; }
-.fcard__tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.labcard { --kind: var(--lily); background: var(--paper); border: 1px solid var(--line); border-radius: 18px; transition: border-color 0.15s, box-shadow 0.15s; min-width: 0; }
+.labcard:hover { border-color: color-mix(in srgb, var(--kind) 45%, var(--line)); }
+.labcard.is-selected { border-color: var(--kind); box-shadow: 0 0 0 3px color-mix(in srgb, var(--kind) 22%, transparent); }
+.labcard--partner { border-color: #efc6d2; background: linear-gradient(180deg, #fcf1f4 0, var(--paper) 74px); }
+.labcard__main { width: 100%; display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 12px; padding: 14px 16px 10px; background: none; border: 0; text-align: left; border-radius: 18px 18px 0 0; }
+.labcard__main:focus-visible { outline-offset: -3px; border-radius: 18px; }
+.labcard__icon { width: 44px; height: 44px; border-radius: 14px; background: color-mix(in srgb, var(--kind) 13%, var(--paper)); color: var(--kind); display: grid; place-items: center; }
+.labcard__icon svg { width: 22px; height: 22px; }
+.labcard.is-selected .labcard__icon { background: var(--kind); color: #fff; }
+.labcard__body { display: grid; gap: 6px; min-width: 0; }
+.labcard__title { display: flex; align-items: center; gap: 4px 8px; flex-wrap: wrap; }
+.labcard__title b { font: 500 19px/1.2 var(--serif); letter-spacing: -0.01em; overflow-wrap: anywhere; }
+.labcard__partner { display: inline-flex; gap: 4px; align-items: center; font-size: 11px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; background: var(--pollen-soft); color: #7a5608; padding: 2px 8px 2px 6px; border-radius: 999px; }
+.labcard__partner svg { width: 12px; height: 12px; fill: currentColor; }
+.labcard__meta { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.labchip { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; font-weight: 600; padding: 3px 9px; border-radius: 999px; background: var(--mist); color: var(--ink-2); max-width: 100%; min-width: 0; }
+.labchip svg { width: 13px; height: 13px; flex: none; }
+.labchip small { font-weight: 500; font-size: 12px; }
+.labchip--dist { background: var(--ink); color: var(--paper); }
+.labchip--kind { background: color-mix(in srgb, var(--kind) 12%, var(--paper)); color: color-mix(in srgb, var(--kind) 78%, #000); }
+.labchip--open { background: var(--lily-soft); color: #1f5a46; }
+.labchip--closed { background: var(--mist-2); color: var(--ink-2); }
+.labchip--open i, .labchip--closed i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: none; }
+.labchip--closed i { background: var(--reed); }
+.labchip--hours span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.labcard__addr { color: var(--reed); font-size: 13.5px; overflow-wrap: anywhere; }
+.labcard__tags { display: flex; flex-wrap: wrap; gap: 6px; }
 .ftag { display: inline-flex; gap: 5px; align-items: center; font-size: 12.5px; font-weight: 600; color: #1f5a46; border: 1px solid #bfe0d2; background: #f2faf6; padding: 2px 9px 2px 7px; border-radius: 999px; }
 .ftag svg { width: 13px; height: 13px; }
 .ftag--siren { color: var(--danger); border-color: #edc3cf; background: #fdf3f6; }
-.fcard__actions { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 16px 14px 72px; }
-.fcard__actions .btn { padding: 7px 12px; font-size: 13.5px; border-radius: 999px; text-decoration: none; color: var(--ink); }
-.fcard__actions .btn--primary { color: #fff; }
-.fcard__actions .btn--ink { background: var(--ink); border-color: var(--ink); color: var(--paper); }
-.fcard__actions .btn--ink:hover { background: var(--pond-2); border-color: var(--pond-2); }
-.fcard__actions .btn svg { width: 15px; height: 15px; }
+.labcard__actions { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 16px 14px 72px; }
+.labcard__actions .btn { padding: 7px 12px; font-size: 13.5px; border-radius: 999px; text-decoration: none; color: var(--ink); }
+.labcard__actions .btn--primary { color: #fff; }
+.labcard__actions .btn--ink { background: var(--ink); border-color: var(--ink); color: var(--paper); }
+.labcard__actions .btn--ink:hover { background: var(--pond-2); border-color: var(--pond-2); }
+.labcard__actions .btn svg { width: 15px; height: 15px; }
 
 /* loading */
 .fskel { display: grid; gap: 10px; }
@@ -210,10 +210,10 @@
   .rchips button { flex: 1; }
   .labs__map { height: 260px; }
   .fmap { border-radius: 18px; }
-  .fcard__main { grid-template-columns: 40px minmax(0, 1fr); padding: 12px 14px 8px; gap: 10px; }
-  .fcard__icon { width: 40px; height: 40px; }
-  .fcard__actions { padding: 0 14px 12px; }
-  .fcard__title b { font-size: 18px; }
+  .labcard__main { grid-template-columns: 40px minmax(0, 1fr); padding: 12px 14px 8px; gap: 10px; }
+  .labcard__icon { width: 40px; height: 40px; }
+  .labcard__actions { padding: 0 14px 12px; }
+  .labcard__title b { font-size: 18px; }
   .lempty--find h2 { font-size: 30px; }
   .lempty { padding: 22px 14px 24px; }
 }

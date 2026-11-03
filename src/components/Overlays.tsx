@@ -222,7 +222,7 @@ export function UploadDialog() {
             <div className="tools" style={{ marginTop: 20, justifyContent: 'flex-end' }}>
               <button className="btn" disabled={saving} onClick={() => { setDraft(null); setFiles([]); setSaveError(null); }}>Choose other files</button>
               <button className="btn btn--primary" disabled={saving || (!draft.measurements.length && !draft.scans.length)}
-                onClick={() => void save(draft)}>{saving ? 'Saving…' : <>Add {draft.measurements.length ? `${draft.measurements.length} results` : ''}{draft.measurements.length && draft.scans.length ? ' and ' : ''}{draft.scans.length ? `${draft.scans.length} scans` : ''}</>}</button>
+                onClick={() => void save(draft)}>{saving ? 'Saving…' : <>Add {[draft.measurements.length && `${draft.measurements.length} result${draft.measurements.length === 1 ? '' : 's'}`, draft.scans.length && `${draft.scans.length} scan${draft.scans.length === 1 ? '' : 's'}`].filter(Boolean).join(' and ')}</>}</button>
             </div>
           </>
         )}
