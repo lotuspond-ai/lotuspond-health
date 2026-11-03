@@ -10,7 +10,8 @@
     "typecheck": "tsc -p tsconfig.json",
     "test": "node --import tsx --test --test-reporter=spec test/*.test.ts",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "tsx src/db/migrate-cli.ts"
+    "db:migrate": "tsx src/db/migrate-cli.ts",
+    "files:rekey": "tsx src/index.ts files:rekey"
   },
   "devDependencies": {
     "@types/pg": "^8.23.1",

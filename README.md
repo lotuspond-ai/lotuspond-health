@@ -4,7 +4,7 @@ A personal health record. Create an account, keep a profile for yourself and eac
 
 ## What it does
 
-- **Accounts and profiles.** Sign up with email and password. One account holds your own profile plus any family members you add (children, partner, parents). Each profile keeps date of birth, sex, height, weight (with BMI), blood type, conditions, medications, allergies and notes. Switch between people from the menu at the top.
+- **Accounts and profiles.** Sign up with email, password and the country you live in, which decides where your records are stored and which rules apply (see [Data residency](#data-residency)). One account holds your own profile plus any family members you add (children, partner, parents). Each profile keeps date of birth, sex, height, weight (with BMI), blood type, conditions, medications, allergies and notes. Switch between people from the menu at the top.
 - **Upload** lab report PDFs (text-based), CSV/JSON exports, DICOM files (`.dcm`) and scan photos. Files are read in the browser and every value is shown for review before it is saved. The original file is kept with the values read from it.
 - **Body map**: a 3D anatomy with 33 structures, including:
   - a four-chambered heart with valves and coronary vessels
@@ -18,7 +18,7 @@ A personal health record. Create an account, keep a profile for yourself and eac
 - **Biomarkers**: latest value of each marker grouped by body system, with its position in the reference range and its trend over time.
 - **Scans**: assign scans to body areas; view with zoom, and brightness/contrast for DICOM.
 - **Files**: every original report and scan, with links to open, download or delete it.
-- **Account**: change password, sign out other devices, export a profile as JSON, delete a profile or the whole account.
+- **Account**: where your records are stored, the consents you gave (with date and version), recent sign-ins and changes, units for lab values (conventional or SI), contacts for data questions; change password, sign out other devices, export a profile as JSON, delete a profile or the whole account.
 
 Reference ranges come from your report when it prints one; otherwise a typical adult range is used and labelled. LotusPond explains results; it does not diagnose.
 
@@ -30,7 +30,8 @@ Reference ranges come from your report when it prints one; otherwise a typical a
 | API | Node.js 22, [Hono](https://hono.dev), Zod validation (`server/`, an npm workspace) |
 | Database | PostgreSQL via Drizzle ORM. Without `DATABASE_URL` the server uses embedded [PGlite](https://pglite.dev) (Postgres in WebAssembly), so development needs no database install |
 | Sign-in | Email and password hashed with Argon2id; server-side sessions in an HttpOnly, SameSite=Lax cookie |
-| Files | Disk storage behind a small `FileStore` interface (`server/src/lib/files.ts`); swap in object storage for multi-server deployments |
+| Files | Disk storage behind a small `FileStore` interface (`server/src/lib/files.ts`), encrypted with AES-256-GCM (`files-encrypted.ts`); swap in object storage for multi-server deployments |
+| Residency | One database and file store per data region ("cell"), chosen from the country of residence (`server/src/cells.ts`, `shared/regions.ts`) |
 
 Types shared by the browser and the server live in `shared/`.
 
@@ -52,7 +53,7 @@ Then open **http://localhost:8787**. `npm run local` builds the app and runs the
 | --- | --- | --- |
 | `npm run local` | Production build on http://localhost:8787 | `server/.data-local/` |
 | `npm run dev` | Development with live reload: app on http://localhost:5173, API on :8787 | `server/.data/` |
-| `POSTGRES_PASSWORD=pick-one docker compose up --build` | Production image with a real PostgreSQL, on http://localhost:8787 | Docker volumes |
+| `docker compose up --build` with `POSTGRES_PASSWORD`, `DIRECTORY_SECRET` and `FILE_ENCRYPTION_KEY` set (see [Production](#production)) | Production image with a real PostgreSQL, on http://localhost:8787 | Docker volumes |
 
 Delete the data folder to start over with no accounts.
 
@@ -83,6 +84,8 @@ TEST_DATABASE_URL=postgres://… npm test -w server   # API tests against a real
 node tools/e2e-accounts.mjs http://localhost:5173/  # browser walk-through (needs Playwright and the dev stack)
 ```
 
+The cell tests (`server/test/compliance.test.ts`) run three cells at once: the default database, an India cell and an EU cell, each in-memory PGlite. `TEST_DATABASE_URL` puts the default database on PostgreSQL; `TEST_CELL_IN_DATABASE_URL` and `TEST_CELL_EU_DATABASE_URL` do the same for the two cells (each must be a separate test database).
+
 ## Production
 
 ```bash
@@ -93,26 +96,66 @@ npm start          # serves the API and the app on :8787
 Or with Docker (PostgreSQL included):
 
 ```bash
-POSTGRES_PASSWORD=choose-a-password docker compose up --build
+# Put these in a .env file next to docker-compose.yml and keep it: the same secrets are needed on every start.
+POSTGRES_PASSWORD=choose-a-password
+DIRECTORY_SECRET=...      # openssl rand -base64 32
+FILE_ENCRYPTION_KEY=...   # openssl rand -base64 32
+docker compose up --build
 ```
 
 Run it behind HTTPS (a reverse proxy or your platform's load balancer) and set:
 
+- `DIRECTORY_SECRET` and `FILE_ENCRYPTION_KEY`: **required**; the server refuses to start without them. Generate each with `openssl rand -base64 32`, keep them in your secret store and back them up. Without the directory secret no account can be found at sign-in; without the file key no stored file can be read. (`FILE_ENCRYPTION=off` starts without a file key, storing files unencrypted, and says so in the log.)
 - `COOKIE_SECURE=true` (the default when `NODE_ENV=production`; set `false` only for plain http on localhost)
 - `TRUST_PROXY=true` so rate limits see real client addresses
 - `DATA_DIR` on persistent storage; uploaded originals are kept there
+- `GRIEVANCE_CONTACT` if you serve India (the DPDP Act requires a published grievance contact) and `DPO_CONTACT`; both are shown on the Account page
+- `SERVED_REGIONS` and `CELL_*` settings to keep each region's records in its own database (next section)
+
+To try the production server locally: `npm run build`, then `cd server && PORT=8841 COOKIE_SECURE=false DATA_DIR=.data-prod NODE_ENV=production DIRECTORY_SECRET=… FILE_ENCRYPTION_KEY=… node dist/index.js`. `npm run local` sets `LOCAL_SECRETS=true` instead, which lets the production build generate both secrets in its data folder; never set that on a server. In development (`npm run dev`) the secrets are generated in `server/.data/secrets/`, with a warning.
 
 All settings are listed in `server/.env.example`. Any host that runs a Node.js container works (Render, Fly.io, Railway, a VM); pair it with managed PostgreSQL.
 
+### Data residency
+
+Each data region (`in`, `eu`, `us`, `global`) is a **cell**: its own database and file store ([research notes, section 2](docs/research.md)). The country chosen at sign-up decides the cell (`shared/regions.ts`): India in `in`; the EU and EEA, the UK and Switzerland in `eu`; the US and Canada in `us`; everyone else in `global`. Countries whose law requires in-country hosting we do not have yet (for example the UAE and Saudi Arabia) cannot sign up, and the form says why.
+
+- **What lives in a cell:** accounts, sessions, profiles, results, scans, documents and their files, consent records, the audit log. Everything under `/api/profiles` and the account endpoints uses the request's cell (`c.var.cell`), never the default database.
+- **What lives in the default database (`DATABASE_URL`):** the directory and non-personal data (partner labs, the facility cache). The directory maps an HMAC of the email (keyed with `DIRECTORY_SECRET`) to the region and user id, so sign-in finds the cell without any email stored outside it.
+- **Routing:** session tokens start with their region (`in.…`), so each request goes straight to its cell. Tokens from before cells existed are looked up in the default cell. Migrations run on every cell at start-up (`npm run db:migrate -w server` does the same without starting the server).
+- **Configuration:** with no `CELL_*` settings, every served region uses the default database and `DATA_DIR/files`, which is how a single server runs. Give a region its own storage with `CELL_<REGION>_DATABASE_URL` (PostgreSQL) and/or `CELL_<REGION>_DATA_DIR` (files, plus an embedded database when there is no URL), and optionally its own `CELL_<REGION>_FILE_ENCRYPTION_KEY`:
+
+  ```bash
+  SERVED_REGIONS=in,eu,global
+  CELL_IN_DATABASE_URL=postgres://…@db-mumbai/lotuspond_in    CELL_IN_DATA_DIR=/mnt/in
+  CELL_EU_DATABASE_URL=postgres://…@db-frankfurt/lotuspond_eu CELL_EU_DATA_DIR=/mnt/eu
+  # global stays in DATABASE_URL and DATA_DIR/files
+  ```
+
+  The server refuses settings that would mix cells (two cells on one database or directory). Sign-up for a region the deployment does not serve is refused with a message saying where that country's records are kept.
+- **Strict localisation:** to keep the India cell in India, run an API in each region behind regional hostnames, each with `SERVED_REGIONS` set to its own region and `DATABASE_URL` pointing at one shared default database, so all of them share the directory. Signing in on the wrong regional host gives a "kept on servers in …" message.
+- Accounts created before cells existed have no country; they stay in the default cell. Move them before giving their region a cell of its own.
+
 ### Security notes
 
-- Every request for a profile's data checks that the profile belongs to the signed-in account.
-- Session tokens are random 256-bit values; the database stores only their SHA-256.
+- Every request for a profile's data checks that the profile belongs to the signed-in account, in the account's own cell.
+- Session tokens are random 256-bit values with a region prefix; the database stores only their SHA-256.
+- Sign-up records explicit consent (Terms, Privacy, processing of health data, and storage abroad where that applies) with the text version (`CONSENT_VERSION`), time and country. Product emails are opt-in. Withdrawing a required consent means deleting the account; the Account page explains that rather than leaving a half state. Own accounts are for adults (18+); children are family profiles of a parent or guardian.
+- An audit log per cell records sign-ins (and failed ones), sign-outs, password changes, exports, deletions, consent and preference changes, with an HMAC of the client address and a short device name ("Firefox on Windows"). It never holds health data, names or emails. Deleting an account removes its history and leaves one `account_deleted` record. Events are kept for `AUDIT_RETENTION_DAYS` (default 400).
 - Sign-in and sign-up are rate-limited per address and per email (in memory, so per server process).
 - Changes must come from the app's own origin (checked with `Sec-Fetch-Site` / `Origin`).
 - Uploaded files are served with `X-Content-Type-Options: nosniff` and a sandboxing CSP; types a browser could run (HTML, SVG) are only ever sent as downloads.
 - The app is served with a strict Content Security Policy.
-- Health data deserves encrypted storage: use a database and disk with encryption at rest, and HTTPS everywhere.
+- Uploaded files are encrypted at rest with AES-256-GCM and a random IV per file. Each file starts with a 37-byte header (magic `LPEF`, format version, key id, IV, tag); the header and the file's storage key are authenticated, so a changed, truncated or moved file fails to decrypt and is never served. Use a database and disks with encryption at rest too, and HTTPS everywhere.
+
+### Rotating the file key
+
+1. Generate a new key (`openssl rand -base64 32`). Set it as `FILE_ENCRYPTION_KEY` and move the old one to `FILE_ENCRYPTION_PREVIOUS_KEYS` (comma-separated if there are several). Do the same per cell for `CELL_<REGION>_FILE_ENCRYPTION_KEY` if you use those.
+2. Restart. New files use the new key. Files under the old key stay readable, because each file's header names its key.
+3. Re-encrypt the stored files: `node dist/index.js files:rekey` in production (in development, `npm run files:rekey -w server`). It reports what it changed in each cell, and it is safe to run while the server is up and to run again. It also encrypts files saved before encryption was turned on, so run it once when upgrading an existing deployment.
+4. When it reports no failures, remove the old key from `FILE_ENCRYPTION_PREVIOUS_KEYS` and restart.
+
+`DIRECTORY_SECRET` is not rotated this way: changing it orphans the directory. Accounts are still found by searching each cell at sign-in (and re-added to the directory), but keep the secret stable.
 
 ## API
 
@@ -121,12 +164,16 @@ All routes are under `/api` and use JSON unless noted.
 | Method and path | What it does |
 | --- | --- |
 | `POST /auth/register`, `POST /auth/login`, `POST /auth/logout` | Create an account (with its own profile), sign in, sign out |
-| `GET /auth/me` | The signed-in account and its profiles, or `null` |
+| `GET /auth/me` | The signed-in account (with country, storage region and unit system) and its profiles, or `null` |
+| `GET /auth/config` | Regions this server holds records for, the consent version and published contacts (no sign-in needed) |
+| `PATCH /auth/preferences` | Change the unit system: `{ "unitSystem": "si" }` or `"conventional"` |
+| `GET`, `PATCH /auth/consents` | Every consent decision, newest first; grant or withdraw the optional ones (`{ kind, granted }`) |
+| `GET /auth/activity` | Recent account events |
 | `POST /auth/password`, `DELETE /auth/sessions`, `DELETE /auth/account` | Change password, sign out other devices, delete the account |
 | `GET`, `POST /profiles` | List or add profiles |
 | `GET`, `PATCH`, `DELETE /profiles/:id` | Read, update or remove a profile |
 | `GET`, `DELETE /profiles/:id/records` | Everything stored for a profile, or delete it all |
-| `GET /profiles/:id/export` | JSON export (re-importable through the upload dialog) |
+| `GET /profiles/:id/export` | JSON export (re-importable through the upload dialog); the account holder's own profile also includes the account's consents and activity |
 | `POST /profiles/:id/measurements`, `PATCH`/`DELETE …/measurements/:mid` | Save, edit or delete results |
 | `POST /profiles/:id/documents` (multipart), `GET …/documents/:did/file`, `DELETE …/documents/:did` | Store, fetch or delete original files |
 | `POST /profiles/:id/scans`, `PATCH`/`DELETE …/scans/:sid` | Save, edit or delete scans |
@@ -141,7 +188,7 @@ All routes are under `/api` and use JSON unless noted.
 | `src/api/` | Data access: `http.ts` talks to the API, `browser.ts` keeps everything in IndexedDB for server-less previews |
 | `src/state/` | Session (account, profiles, open profile), interface state, toasts |
 | `src/pages/`, `src/components/` | Interface |
-| `server/src/` | API: routes, auth, database schema, file storage |
+| `server/src/` | API: routes, auth, database schema, file storage, cells (`cells.ts`) and compliance records (`compliance/`: directory, consents, audit log, secrets) |
 | `server/drizzle/` | SQL migrations (generate with `npm run db:generate` after changing `server/src/db/schema.ts`) |
 | `shared/` | Types and limits used by both sides |
 | `tools/anatomy/` | Python generator for `public/models/anatomy.glb` (signed-distance modelling, surface nets, quadric decimation) |
