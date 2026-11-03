@@ -75,14 +75,15 @@ export function createApp(input: DepsInput): Hono<AppEnv> {
       return c.body(null, 204, {
         'Access-Control-Allow-Origin': origin,
         'Access-Control-Allow-Methods': 'GET, POST, PATCH, PUT, DELETE',
-        'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-LotusPond-Client',
+        // Range: map tiles (.pmtiles) are read in byte ranges; some web views preflight it.
+        'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-LotusPond-Client, Range',
         'Access-Control-Max-Age': '600',
         Vary: 'Origin',
       });
     }
     await next();
     c.res.headers.set('Access-Control-Allow-Origin', origin);
-    c.res.headers.set('Access-Control-Expose-Headers', 'Content-Disposition');
+    c.res.headers.set('Access-Control-Expose-Headers', 'Content-Disposition, Content-Range, ETag');
     c.res.headers.append('Vary', 'Origin');
   });
 
