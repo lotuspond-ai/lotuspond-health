@@ -83,10 +83,11 @@ class Target:
     def skin_sd(self, p):
         return self.skin_field(p)
 
-    def facets_from_za(self, za_foot, d=0.0055):
-        """HRA mortise facets: the Z-Anatomy tibia / fibula surface within d of its own talus and facing it (plafond,
-        medial malleolar facet, lateral malleolar facet), carried by the mortise similarity and projected onto the HRA
-        tibia / fibula (points that land more than 4 mm away are dropped)."""
+    def facets_from_za(self, za_foot, d=0.004):
+        """HRA mortise facets: the Z-Anatomy tibia / fibula surface within d (4 mm: the congruent articular region; the
+        surfaces part beyond it) of its own talus and facing it (plafond, medial malleolar facet, lateral malleolar
+        facet), carried by the mortise similarity and projected onto the HRA tibia / fibula (points that land more than
+        4 mm away are dropped)."""
         F = za_foot
         tal = TriMesh(*F.bones['Talus'])
         out = {}

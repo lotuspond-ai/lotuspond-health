@@ -1,26 +1,49 @@
-"""Arms group: clavicles, scapulae, humeri, radii, ulnae and all hand bones of both sides, from Z-Anatomy
-(za-skeletal) into each HRA body (whose arms are raised ~30 deg in an A-pose, hands open, fingers spread).
+"""Arms group: clavicles, scapulae, humeri, radii, ulnae and all hand bones (8 carpals, 5 metacarpals, 14 phalanges)
+of both sides, from Z-Anatomy (za-skeletal) into each HRA body, whose arms are raised ~30-35 deg in an A-pose with the
+hands open and the fingers spread (Z-Anatomy stands in anatomical position: arms at the sides, palms forward).
 
     python3 fit/arms.py [male|female|all]
+    parts: clavicle, scapula, humerus, radius, ulna -> 'skel_arms'; hand bones -> 'skel_hands'
 
-Method (per side)
-  1. Shoulder girdle (fit/arms_girdle.py): the clavicle's sternal end is seated on the clavicular notch of the
-     trunk-warped manubrium; clavicle and scapula then move as a kinematic chain (clavicle about the SC joint, scapula
-     about the AC joint) so the lateral clavicle and the acromion are subcutaneous, both bones are inside the skin,
-     the scapula keeps off the chest wall and the humeral head sits under the deltoid.
+Method (per side; +x is the person's left, sides are matched by position)
+  1. Shoulder girdle (fit/arms_girdle.py, cached): the clavicle's sternal end is seated on the clavicular notch of the
+     manubrium where the trunk warp puts Z-Anatomy's 'Manubrium_of_sternum' (as the ribcage group places it); clavicle
+     and scapula then move as a kinematic chain (clavicle about the SC joint, scapula about the AC joint) so the
+     clavicle and the acromion are subcutaneous, both bones are inside the skin, the scapula keeps off the chest wall,
+     the glenoid faces the humeral head and the head sits under the deltoid.
   2. Skin arm (fit/arms_skin.py): cross-sections perpendicular to the skin arm's centerline; elbow and wrist found by
      matching Z-Anatomy's arm profile (from its skin regions, with its joints known) to the HRA profile, with a prior
      on the forearm / upper-arm ratio.
-  3. Articulated chain (fit/arms_chain.py): humerus about the glenohumeral centre, forearm about the elbow (flexion
-     about the elbow axis, the rest reported as valgus), radius pronated about the ulna, hand about the wrist (fitted to
-     the skin's palm with Z-Anatomy's palm and dorsum skin regions), each finger about MCP / PIP / DIP to follow its
-     skin finger's centerline (fit/arms_hand.py segments the skin fingers). Long bones change length in the shaft
-     only (articular ends keep their shape), all bones keep the body scale of the trunk warp.
-  4. Joint spaces set (glenohumeral, elbow, wrist, MCP / PIP / DIP) and a final rigid push-out pass keeps every bone
-     inside the skin with its clearance target and off its neighbours.
-Exports arm_deform(sex, side) -> (f, w): f maps Z-Anatomy points of that arm into the body (bone-weighted blend of
-the per-bone maps), w(x) in [0, 1] is the arm's share against the trunk warp (0 in the trunk, 1 from the shoulder
-joint outwards).
+  3. Articulated chain: humerus about the glenohumeral centre, forearm about the elbow (flexion about the elbow axis,
+     the remaining carrying angle as valgus about the elbow centre), radius pronated about the
+     ulna, hand about the wrist (fitted to the skin palm with Z-Anatomy's palm and dorsum skin regions), each finger
+     about MCP / PIP / DIP to follow its skin finger's centerline (fit/arms_hand.py segments the skin fingers). Long
+     bones change length in the shaft only (articular ends keep their shape and the trunk warp's body scale); a digit
+     whose skin finger is shorter or longer than Z-Anatomy's gets phalanges scaled by up to +-12 % and the rest in the
+     shafts. Joint spaces are opened to their targets along the chain.
+  4. Limb pass (fit/arms_limb.py): humerus (about the shoulder), forearm and hand moved as rigid segments so the
+     subcutaneous landmarks (olecranon, epicondyles, styloid processes) lie 1-4 mm under the skin, every other bone
+     surface >= 1.6 mm, with the elbow and wrist joints kept articulated.
+  5. Final pass (fit/arms_final.py): small rigid corrections of every bone together (joint spaces in their bands in
+     both directions, skin clearance, neighbouring bones apart), then a shape-preserving local push-out of any
+     overlap Z-Anatomy's own meshes leave between neighbouring carpals / metacarpal bases.
+  Distances to the skin and between bones are exact closest-point distances (fit/arms_geom.TriMesh).
+
+Outputs: .cache/fit/<sex>/arms/ (one .npz per bone, manifest.json, report.json, qa-<side>-arm-{front,back,side}.png
+and qa-<side>-hand-{palmar,dorsal}.png). report.json: `criteria` = {side: {criterion: {value, threshold, ok}}} for
+every acceptance criterion (l = the left arm), `summary` (both sides per criterion), `failing`, `all_ok`, and per side
+the full measurements and fit parameters.
+
+Export for other groups: arm_deform(sex, side) -> (f, w), from the saved per-bone maps
+(.cache/fit/<sex>/arms/cache/maps-<side>.json):
+  f(x)  maps Z-Anatomy-space points (n, 3) of that arm into the body: each point is carried by the rigid(+shaft
+        stretch) maps of its k = 4 nearest bones of the limb (clavicle and scapula included), blended with weights
+        1 / (d + 1 mm)^4 of its distance to each bone surface in Z-Anatomy space: rigid on and near a bone, smooth across joints
+        and through the soft tissue.
+  w(x)  in [0, 1], the arm's share against the trunk warp: the same kernel's mass on the limb's bones against its mass
+        on the trunk skeleton (ribs 1-8 of that side, sternum, vertebrae C4-T8): 0 at the chest wall and spine, 1 on
+        the shoulder girdle and the free limb, smooth in between (axilla, root of the neck). Blend:
+        x_body = (1 - w(x)) * get_warp(sex, 'trunk')(x) + w(x) * f(x).
 """
 import os, sys, json, time, pickle
 import numpy as np
@@ -61,12 +84,45 @@ class Ctx:
         self.W = get_warp(sex, 'trunk')
         self.s0 = float(self.W.pre.s)
         self.skin = skin(sex)
-        self.skinT = TriMesh(*self.skin)
-        self.lungsT = TriMesh(*hra_mesh(sex, ('path', r'lung')))
+        # skin distances inside the solvers: nearest of 24 candidate triangles (fast); the measurements are exact
+        self.skinT = TriMesh(*self.skin, k=24, sub_r=1.0, exact_within=0.0)
+        self._lungsT = None
         sv = self.skin[0]
         self.height = float(sv[:, 1].max() - sv[:, 1].min())
         self.Gu = upper_thorax_rigid(self.W, self.s0)
         self.Rt = self.Gu.A / self.s0  # rotation of the upper thoracic spine (ZA -> HRA)
+
+    @property
+    def lungsT(self):
+        if self._lungsT is None: self._lungsT = TriMesh(*hra_mesh(self.sex, ('path', r'lung')))
+        return self._lungsT
+
+
+GIRDLE_KEYS = ('clav', 'scap', 'info', 'notch_pts', 'notch_pts_warp', 'se', 'ae', 'af', 'acr')
+
+
+def girdle_cached(ctx, L, side, log=log):
+    """fit_girdle, cached in .cache/fit/<sex>/arms/cache/girdle-<side>.pkl (keyed on the girdle and solver code and the
+    trunk warp file; ARMS_REBUILD=1 forces a refit)."""
+    import hashlib
+    h = hashlib.sha1()
+    for fn in ('arms_girdle.py', 'arms_solve.py', 'arms_za.py', 'arms_geom.py'):
+        h.update(open(os.path.join(HERE, 'fit', fn), 'rb').read())
+    wp = os.path.join(FIT, ctx.sex, 'warp-trunk.npz')
+    h.update(str(os.path.getmtime(wp) if os.path.exists(wp) else 0).encode())
+    key = h.hexdigest()[:16]
+    path = os.path.join(cache_dir(ctx.sex), f'girdle-{side}.pkl')
+    if os.path.exists(path) and not os.environ.get('ARMS_REBUILD'):
+        try:
+            d = pickle.load(open(path, 'rb'))
+            if d.get('key') == key:
+                log(f'  girdle {side}: cached ({path})'); return d['G']
+        except Exception as e:  # noqa: BLE001
+            log(f'  girdle {side}: cache unreadable ({e}), refitting')
+    G = fit_girdle(L, ctx.W, ctx.skinT, ctx.lungsT, log=log)
+    G = {k: G[k] for k in GIRDLE_KEYS}
+    pickle.dump(dict(key=key, G=G), open(path, 'wb'))
+    return G
 
 
 # ------------------------------------------------------------------------------------------------ Z-Anatomy profile
@@ -171,7 +227,7 @@ def icp_about(P, target_pts, c, iters=30, trim=0.8):
 
 
 # ------------------------------------------------------------------------------------------------ one arm
-GAP_TARGET = dict(gh=2.5, hu=1.5, hr=3.0, rs=1.6, finger=1.2, cmc1=1.0)   # joint spaces set in the chain (mm)
+GAP_TARGET = dict(gh=2.5, hu=1.5, hr=2.0, rs=1.6, finger=1.2, cmc1=1.0)   # joint spaces set in the chain (mm)
 OLECRANON_DEPTH = 4.0      # mm: the olecranon is subcutaneous; the elbow may move back up to OLECRANON_MAX_SHIFT
 OLECRANON_MAX_SHIFT = 0.012
 
@@ -189,7 +245,7 @@ def fit_side(ctx, side, log=log):
     maps = {}
     info = dict(side=side)
     # 1. girdle -------------------------------------------------------------------------------------------------
-    G = fit_girdle(L, ctx.W, ctx.skinT, ctx.lungsT, log=log)
+    G = girdle_cached(ctx, L, side, log=log)
     maps['clav'] = BoneMap(G['clav']); maps['scap'] = BoneMap(G['scap'])
     info['girdle'] = G['info']
     GH0 = G['scap'](J['gh'][None])[0]
@@ -209,7 +265,6 @@ def fit_side(ctx, side, log=log):
     # articular samples (Z-Anatomy contact regions) for measuring the joint spaces while placing
     def art(a, b, d=0.006): return L.P[a][np.abs(L.T[b].signed(L.P[a])) < d]
     head = art('hum', 'scap', 0.010); notch_u = art('uln', 'hum'); head_r = art('rad', 'hum'); prow = np.concatenate([art('sca', 'rad'), art('lun', 'rad')])
-    hu = art('uln', 'hum', 0.003); med_hu = hu[np.argmin((hu - J['elbow']) @ J['elbow_axis'])]   # medial end of the humero-ulnar contact
     zones = dict((k, v) for k, v in (z for b in ('uln',) for z in landmark_zones(L)[b]))
     olec = L.P['uln'][zones['olecranon']]
     Tscap = TriMesh(G['scap'](L.M['scap'][0]), L.M['scap'][1], k=10)
@@ -259,10 +314,11 @@ def fit_side(ctx, side, log=log):
         flex = np.arctan2(np.cross(cur_p, tgt_p) @ ax, cur_p @ tgt_p)
         Rflex = rot_axis(ax, flex); cur2 = Rflex @ cur
         Rval = swing(cur2, tgt)
-        # the hinge first (about the elbow centre), then the remaining carrying angle about the medial edge of the
-        # humero-ulnar joint, so the valgus opens the joint laterally instead of driving the ulna into the trochlea
-        piv_v = Af0.then(Aff.about(Rflex, E))(med_hu[None])[0]
-        Af = Af0.then(Aff.about(Rflex, E)).then(Aff.about(Rval, piv_v))
+        # the hinge first (about the elbow centre), then the remaining carrying angle, also about the elbow centre
+        # (midway between the capitulum and trochlea centres): a valgus closes the lateral (radiocapitellar) compartment
+        # and opens the medial one, so pivoting there shares it between the two instead of driving the radial head
+        # into the capitulum (as a pivot on the medial edge of the humero-ulnar joint would)
+        Af = Af0.then(Aff.about(Rval @ Rflex, E))
         A_ul = Af.then(Aff(np.eye(3), f_d * tgt)); A_ra = Af.then(Aff(np.eye(3), (f_d - r_d) * tgt))
         kk = unit(d_f) @ pax_za
         dLf = ((np.linalg.norm(W_goal - E) - (f_d - r_d) - w_d) / s0 - np.linalg.norm(d_f)) / max(kk, 0.5)
@@ -497,20 +553,34 @@ def load_maps(sex, side):
     return out
 
 
+NOTES = (
+    'Z-Anatomy has no sesamoid bones of the hand (only of the foot), so none are placed.',
+    'criteria: {side: {name: {value, threshold, ok}}}, l = the left arm (+x), r = the right arm; lengths in mm unless named otherwise.',
+)
+
+
 def run(sex):
-    from fit.arms_final import finalize
-    from fit.arms_measure import measure_side
+    from fit.arms_final import finalize, residual_pushout
+    from fit.arms_limb import limb_pass
+    from fit.arms_measure import measure_side, criteria
     t0 = time.time()
     log(f'== arms {sex}')
     ctx = Ctx(sex)
     res = {}; rep_sides = {}
     for side in SIDES:
         r = fit_side(ctx, side)
+        corr_l, lim = limb_pass(r['L'], r['maps'], ctx.skinT, log=log)
+        for b, A in corr_l.items(): r['maps'][b] = r['maps'][b].then(A)
+        r['info']['limb_pass'] = lim
         corr, fin = finalize(r['L'], r['maps'], ctx.skinT, log=log)
         for b in ALL_BONES: r['maps'][b] = r['maps'][b].then(corr[b])
         r['info']['final_pass'] = fin
         r['meshes'] = bone_meshes(r['L'], r['maps'])
-        meas = measure_side(r['L'], r['maps'], r['meshes'], ctx.skinT, ctx.height, finger_label=r['hand']['label'], skin_v=ctx.skin[0], girdle=r['girdle'], log=log)
+        disp, po = residual_pushout(r['L'], r['maps'], r['meshes'], log=log)
+        for b, D in disp.items(): r['meshes'][b] = (r['meshes'][b][0] + D, r['meshes'][b][1])
+        r['info']['pushout_mm'] = po
+        meas = measure_side(r['L'], r['maps'], r['meshes'], ctx.skinT, ctx.height, finger_label=r['hand']['label'], skin_v=ctx.skin[0], girdle=r['girdle'],
+                            disp=disp, log=log)
         r['measure'] = meas
         rep_sides[side] = dict(measurements=meas, fit=r['info'])
         save_maps(sex, side, r)
@@ -522,9 +592,14 @@ def run(sex):
         for b in ALL_BONES:
             part = 'skel_arms' if b in ARM_BONES else 'skel_hands'
             outputs.append(dict(name=bone_name(b, side), part=part, mesh=r['meshes'][b], source=[bone_name(b, side)]))
-    report = dict(sex=sex, height_m=ctx.height, body_scale=ctx.s0, sides=rep_sides,
-                  notes=['Z-Anatomy has no sesamoid bones of the hand (only of the foot), so none are placed.'])
+    crit = {side: criteria(res[side]['measure']) for side in SIDES}
+    summary = {k: dict(threshold=crit['l'][k]['threshold'], **{side: dict(value=crit[side][k]['value'], ok=crit[side][k]['ok']) for side in SIDES if k in crit[side]})
+               for k in crit['l']}
+    failing = [f'{k} ({side}: {crit[side][k]["value"]})' for k in crit['l'] for side in SIDES if k in crit[side] and not crit[side][k]['ok']]
+    report = dict(sex=sex, height_m=ctx.height, body_scale=ctx.s0, all_ok=not failing, failing=failing, criteria=crit, summary=summary,
+                  sides=rep_sides, notes=list(NOTES))
     d = write_group(sex, GROUP, outputs, _jsonable(report))
+    log('  failing: ' + ('; '.join(failing) if failing else 'none'))
     for side in SIDES:
         render_qa(ctx, side, res[side], d)
     log(f'== arms {sex} done in {time.time() - t0:.0f} s')
@@ -551,18 +626,20 @@ if __name__ == '__main__':
 _DEFORM = {}
 
 
-def _za_points(name, n=4000, seed=2):
-    from lib.mesh import source
+def _za_points(name, spacing=0.0007):
+    """Dense surface points of a Z-Anatomy bone (vertices plus samples about `spacing` apart)."""
+    from lib.mesh import source, dense_points
     v, f = source('za-skeletal').get(name)
-    return np.concatenate([v, sample_surface(v, f, n, seed=seed)])
+    return dense_points(v, f, spacing)
 
 
-def arm_deform(sex, side, k=4, p=4.0, eps=0.002):
+def arm_deform(sex, side, k=4, p=4.0, eps=0.001):
     """(f, w) for one arm of one body, from the saved fit (.cache/fit/<sex>/arms/cache/maps-<side>.json).
 
     f(x): Z-Anatomy points (n, 3) of that arm -> body coordinates. Each point is carried by the maps of its k nearest
-          bones of the limb (clavicle and scapula included), blended with weights 1 / (d + eps)^p of its distance to
-          each bone in Z-Anatomy space: rigid on and near a bone, smooth across joints and through the soft tissue.
+          bones of the limb (clavicle and scapula included), blended with weights 1 / (d + eps)^p of its distance d to
+          each bone's surface in Z-Anatomy space (dense surface points, ~0.4 mm accuracy): rigid on and near a bone,
+          smooth across joints and through the soft tissue.
     w(x): the arm's share against the trunk warp, in [0, 1]: the same kernel's mass on the limb's bones against its
           mass on the trunk skeleton (ribs 1-8 of that side, sternum, vertebrae C4-T8), so it is 0 at the chest wall
           and spine, 1 on the shoulder girdle and the free limb, and smooth in between (axilla, root of the neck).
@@ -571,12 +648,12 @@ def arm_deform(sex, side, k=4, p=4.0, eps=0.002):
     if key in _DEFORM: return _DEFORM[key]
     maps = load_maps(sex, side)
     bones = [b for b in ALL_BONES if b in maps]
-    trees = {b: cKDTree(_za_points(bone_name(b, side), n=1500 if b not in ('scap', 'hum') else 5000)) for b in bones}
+    trees = {b: cKDTree(_za_points(bone_name(b, side))) for b in bones}
     trunk_names = [f'{o}_rib{side}' for o in ('First', 'Second', 'Third', 'Fourth', 'Fifth', 'Sixth', 'Seventh', 'Eighth')]
     trunk_names += ['Manubrium_of_sternum', 'Body_of_sternum'] + [f'Vertebra_C{i}' for i in range(4, 8)] + [f'Vertebra_T{i}' for i in range(1, 9)]
     from lib.mesh import source
     s = source('za-skeletal')
-    tp = np.concatenate([_za_points(n, n=2000) for n in trunk_names if n in s.by_name])
+    tp = np.concatenate([_za_points(n, spacing=0.003) for n in trunk_names if n in s.by_name])
     ttree = cKDTree(tp)
 
     def _dists(x):

@@ -5,30 +5,49 @@ Method (per sex and foot; everything is measured, nothing is placed by eye):
   1. Ankle mortise. The Z-Anatomy distal tibia and fibula are seated on the HRA ones by trimmed similarity ICP (the HRA
      leg bones are picked by position, never by name). The Z-Anatomy foot keeps its own articulations and is moved as
      an articulated skeleton (fit/foot_model.py): talocrural rotation about the axis of revolution of the trochlea,
-     subtalar rotation about Inman's axis, a small ball-joint (Chopart) correction at the talar head, toe joints, a foot
-     scale and a separately constrained talus scale.
+     subtalar rotation about its congruence axis (started from Inman's), a small ball-joint (Chopart) correction at the
+     talar head, toe joints (MTP flexion / abduction, IP flexion), a foot scale, the skeleton's width and height relative
+     to its length (priors of 3.5 %: the VH female foot is long and low, the male one short and wide), a scale per toe
+     (its phalanges about the MTP centre, prior 5 %), the convergence of the 1st and 5th rays about their
+     tarsometatarsal joints (prior 3 deg) and a separately constrained talus scale and width (its trochlea fits the
+     subject's own mortise; priors 2.5 % / 4 %).
   2. Skin. The Z-Anatomy foot skin (outer layer of the za-regions foot/ankle regions, skinned to the bones) is fitted to
-     the HRA skin of the foot (signed distances), while every bone is kept inside the skin with clearance and the talus
-     is kept in the HRA mortise with a uniform joint space (gap to the HRA plafond and malleolar facets ~2.5 mm).
-  3. Toes. Each toe's MTP (flexion, abduction) and IP joints are fitted to the HRA skin of the forefoot.
-  4. Refinement. Remaining bone-bone overlaps (several already present in Z-Anatomy, e.g. 1st metatarsal / medial
-     cuneiform 2.6 mm) and contacts with the HRA tibia/fibula are pushed apart with a smooth, local surface displacement
-     (Laplacian-smoothed, so the bones keep their shape away from the joint surfaces).
-  5. Measurements (report.json) and QA renders (qa-*.png).
+     the HRA skin of the foot (signed distances), while every bone is kept inside the skin with 2.5 mm of soft tissue
+     (averaged per bone, so a phalanx counts as much as the calcaneus), the pads under the heel and metatarsal heads are
+     kept in range, and the talus is kept in the HRA mortise with a joint space of ~2.5 mm.
+  3. Toes. Each toe's MTP (flexion, abduction), IP joints and size are fitted to the HRA skin of the forefoot.
+  4. Refinement (fit/foot_refine.py). Rigid seating of every bone (each articulation gets back its Z-Anatomy joint space,
+     bones clear of the skin and of the HRA tibia / fibula), then a smooth local surface push-out (Laplacian-smoothed,
+     at most 1.4 mm per vertex, fold-safe) that removes the remaining overlaps (several already present in Z-Anatomy,
+     e.g. 1st metatarsal / medial cuneiform 1.5 mm) and keeps 2.1 mm of soft tissue; the talar trochlea and malleolar
+     facets are drawn to a uniform 2.5 mm joint space to the HRA plafond and malleoli (congruence with the subject's own
+     mortise, smooth falloff to the facet rims, never closer than 1.2 mm).
+  5. Measurements (fit/foot_measure.py -> report.json) and QA renders (qa-*.png: medial, lateral, dorsal, plantar with
+     the skin ghosted, the ankle from behind and a coronal section through the mortise).
 
 For the vessels group:
   leg_deform(sex, side) -> LegDeform, a callable mapping Z-Anatomy points of that leg (thigh to toes, side 'l' = the
   person's left = +x) into the body:  q = leg_deform('male', 'l')(p)  with p, q (n, 3) metres.
-    * thigh, knee and leg: the leg warp (thin-plate spline fitted to femur, patella, tibia and fibula; fit.common.build_warp
-      with the catalog's leg anchors), cached in .cache/fit/<sex>/foot/warp-leg_<side>.npz;
-    * ankle and foot: the fitted per-bone similarity maps of the foot skeleton, blended by distance to the bones
-      (the same linear-blend weights that carry the foot skin), so soft tissue follows the nearest bones and joins the
-      leg warp smoothly across the ankle.
+    * thigh, knee and leg: the leg warp, a thin-plate spline through control pairs on the catalog's leg anchors (femur,
+      patella, tibia, fibula of that side) with their global similarity (fit.common.global_similarity) as its affine
+      part. The pairs come from joint-local alignments (hip, knee, and the ankle mortise map the foot is seated with),
+      interpolated along the shafts and projected onto the HRA bones: aligning each anchor bone as a whole (what
+      fit.common.build_warp does) lets it slide ~1 cm along its shaft at the joints. Residuals ~1 mm mean
+      (warp-leg_<side>-report.json); cached in .cache/fit/<sex>/foot/warp-leg_<side>.npz;
+    * ankle and foot: the fitted rigid/similarity map of each foot bone (after seating, pose-<side>.json; the final local
+      push-out of <= 1.4 mm is not included), blended by distance to the bones (Gaussian weights, sigma 6 mm, with the
+      tibia / fibula standing for the leg warp), so soft tissue follows the nearest bones and joins the leg warp
+      smoothly across the ankle (the two agree to ~2 mm at the distal tibia: leg_warp_vs_mortise_map_at_ankle_mm).
   LegDeform.hip_weight(p) -> (n,) in [0, 1]: blending weight across the hip, 1 = use this leg's map, 0 = use the trunk
   warp (fit.common.get_warp(sex, 'trunk')). It is a smoothstep of the distance below the hip joint centre along the
   Z-Anatomy femoral shaft axis: 0 at 2 cm above the femoral head centre, 1 at 10 cm below it. Blend as
       w = L.hip_weight(p)[:, None];  q = w * L(p) + (1 - w) * trunk_warp(p)
   LegDeform.foot_weight(p) gives the share of the foot maps (0 in the thigh and leg, 1 in the foot) for diagnostics.
+  Limits: the leg warp is constrained by the bones only, so soft tissue hugging a bone can land inside the HRA bone
+  (report.json, pose.leg_warp_soft_tissue: fraction of Z-Anatomy points 3 / 8 mm off the tibia / fibula mapped inside;
+  male: ~16 % of the posterior tibial artery ends up in the HRA tibia, up to 5 mm deep, behind the medial malleolus and in
+  the upper shank, and ~17 % of the fibular artery in the fibula; female: 3 % and 11-13 %). Push mapped vessels out of the
+  HRA bones (fit.common.Solid / penetration) after mapping.
   The fitted poses are read from .cache/fit/<sex>/foot/pose-<side>.json; if missing, the fit for that sex is run.
 """
 import os, sys, json, time
@@ -44,13 +63,14 @@ from fit.common import build_warp, write_group, FIT, skin  # noqa: E402
 from fit.foot_geom import TriMesh, VoxelField, Sim4, rotvec, smoothstep  # noqa: E402
 from fit.foot_model import ZAFoot, toe_bones, METATARSALS, BASES  # noqa: E402
 from fit.foot_target import Target, hra_bone  # noqa: E402
-from fit.foot_refine import Seat, push_out  # noqa: E402
+from fit.foot_refine import Seat, push_out, vertex_normals  # noqa: E402
 
 GROUP = 'foot'
 DEG = np.pi / 180
 GAP0 = 0.0025          # target joint space talus <-> HRA plafond / malleoli (m)
 CLEAR = 0.0025         # minimum soft tissue over bone kept by the fit (m)
 SEAT_CLEAR = 0.0024    # ... and by the seating step (criterion: dorsal clearance >= 2 mm)
+TALUS_MIN = 0.0012     # smallest joint space talus <-> HRA tibia / fibula kept by the final local push-out (criterion >= 1 mm)
 
 
 def phuber(r, d):
@@ -62,24 +82,32 @@ def relu(x):
 
 
 # ------------------------------------------------------------------------------------------------ articulated fit
-# parameter vector: 13 foot parameters, then the toe joints (hallux: MTP flexion, MTP abduction, IP; toes 2-5: MTP
-# flexion, MTP abduction, PIP, DIP). Angles in radians, scales as logarithms, the talus offset in cm.
-GLOBAL = ['alpha', 'beta', 'c_inv', 'c_add', 'c_pf', 'ln_sf', 'ln_st', 'r_inv', 'r_add', 'r_pf', 'tx', 'ty', 'tz']
+# parameter vector: 18 foot parameters, then the toe joints (hallux: MTP flexion, MTP abduction, IP; toes 2-5: MTP
+# flexion, MTP abduction, PIP, DIP), then one scale per toe (its phalanges about the MTP centre). Angles in radians,
+# scales as logarithms, the talus offset in cm.
+GLOBAL = ['alpha', 'beta', 'c_inv', 'c_add', 'c_pf', 'ln_sf', 'ln_st', 'r_inv', 'r_add', 'r_pf', 'tx', 'ty', 'tz', 'ln_sw', 'ln_sh', 'ray1', 'ray5', 'ln_stw']
 TOE_SLOTS = [(1, 3)] + [(k, 4) for k in range(2, 6)]
 NG = len(GLOBAL)
-NX = NG + sum(n for _, n in TOE_SLOTS)
+NT = NG + sum(n for _, n in TOE_SLOTS)        # first toe-scale slot
+NX = NT + 5
+SIG_PROP = 0.035       # prior on the skeleton's width / height relative to its length (log scale, ~1 SD of people)
+SIG_TOE = 0.05         # prior on a toe's size relative to the foot (log scale)
+SIG_RAY = 3 * DEG      # prior on the convergence of the 1st / 5th ray (intermetatarsal angles vary by a few degrees)
+SIG_TALUS_W = 0.04     # prior on the talus' extra width (its trochlea fits the subject's own mortise)
 HEEL_PAD = (0.011, 0.020)     # aimed heel pad (criterion 8-25 mm)
 FORE_PAD = (0.0085, 0.0125)   # aimed forefoot pad under each metatarsal head (criterion 6-15 mm)
 
 
 def unpack(x):
     x = np.asarray(x, float)
-    q = dict(alpha=x[0], beta=x[1], chopart=x[2:5], sf=float(np.exp(x[5])), st=float(np.exp(x[6])), talus_r=x[7:10], talus_t=x[10:13] * 0.01)
+    q = dict(alpha=x[0], beta=x[1], chopart=x[2:5], sf=float(np.exp(x[5])), st=float(np.exp(x[6])), talus_r=x[7:10], talus_t=x[10:13] * 0.01,
+             sw=float(np.exp(x[13])), sh=float(np.exp(x[14])), rays={1: float(x[15]), 5: float(x[16])}, stw=float(np.exp(x[17])))
     toes, i = {}, NG
     for k, n in TOE_SLOTS:
         a = list(x[i:i + n]); i += n
         toes[k] = a if n == 4 else a + [0.0]
     q['toes'] = toes
+    q['toe_scale'] = {k: float(np.exp(x[NT + k - 1])) for k in range(1, 6)}
     return q
 
 
@@ -93,6 +121,7 @@ def toe_prior(x):
         for j in i[2:]:
             lim = (10 if k == 1 else 3) * DEG
             r += (x[j] / (30 * DEG)) ** 2 + (relu(-lim - x[j]) / (2 * DEG)) ** 2
+        r += (x[NT + k - 1] / SIG_TOE) ** 2
     return r
 
 
@@ -116,6 +145,8 @@ class FootFit:
             n = int(np.clip(len(m[0]) * 0.6, 80, 400))
             self.bone_pts[b] = sample_surface(*m, n, seed=int(rng.integers(1 << 30)))
         self.toe_bone = {b for k in range(1, 6) for b in toe_bones(k)}
+        self.bone_order = list(self.bone_pts)
+        self.bone_of = np.concatenate([np.full(len(self.bone_pts[b]), i) for i, b in enumerate(self.bone_order)])
         tv = F.bones['Talus'][0]
         self.talus_field = VoxelField([F.bones['Talus']], tv.min(0) - 0.008, tv.max(0) + 0.008, 0.0004)
         # skin points grouped by bone for fast blending; which skin points belong to the toes
@@ -206,6 +237,14 @@ class FootFit:
                 e += relu(r1 + r2 + 0.0006 - d) ** 2
         return e / 0.001 ** 2
 
+    def inside_term(self, W, bones):
+        """Bones inside the skin with CLEAR of soft tissue: mean squared shortfall per bone, averaged over the bones (so a
+        small phalanx counts as much as the calcaneus)."""
+        Q = np.concatenate([W[b](self.bone_pts[b]) for b in bones])
+        r = relu(self.tg.skin_sd(Q) + CLEAR) ** 2 / 0.001 ** 2
+        ids = np.concatenate([np.full(len(self.bone_pts[b]), i) for i, b in enumerate(bones)])
+        return float(np.mean(np.bincount(ids, weights=r) / np.bincount(ids)))
+
     # ---------------------------------------------------------------------------------------- energy
     def energy(self, x, parts=False, skip_toes=False):
         q = unpack(x)
@@ -217,8 +256,7 @@ class FootFit:
         sd = sd[~self.skin_toe] if skip_toes else sd[self.skin_use]
         e_skin = np.mean(phuber(sd, 0.003)) / 0.003 ** 2
         # 2. bones inside the skin with clearance; 3. bones clear of the HRA tibia / fibula
-        Q = np.concatenate([W[b](p) for b, p in self.bone_pts.items() if not (skip_toes and b in self.toe_bone)])
-        e_in = np.mean(relu(tg.skin_sd(Q) + CLEAR) ** 2) / 0.001 ** 2
+        e_in = self.inside_term(W, [b for b in self.bone_order if not (skip_toes and b in self.toe_bone)])
         notal = np.concatenate([W[b](p) for b, p in self.bone_pts.items() if b != 'Talus' and b not in self.toe_bone])
         e_leg = np.mean(relu(0.001 - tg.leg_field(notal)) ** 2) / 0.001 ** 2
         e_tl = np.mean(relu(0.001 - tg.leg_field(W['Talus'](self.bone_pts['Talus']))) ** 2) / 0.001 ** 2
@@ -239,6 +277,7 @@ class FootFit:
         r += (x[2] / (4 * DEG)) ** 2 + (x[3] / (4 * DEG)) ** 2 + (x[4] / (10 * DEG)) ** 2
         r += (x[5] / 0.06) ** 2 + ((x[6] - x[5]) / 0.025) ** 2
         r += np.sum((x[7:10] / (4 * DEG)) ** 2) + np.sum((x[10:13] / 0.4) ** 2)
+        r += (x[13] / SIG_PROP) ** 2 + (x[14] / SIG_PROP) ** 2 + (x[15] / SIG_RAY) ** 2 + (x[16] / SIG_RAY) ** 2 + (x[17] / SIG_TALUS_W) ** 2
         r += toe_prior(x)
         terms = dict(skin=1.0 * e_skin, inside=4.0 * e_in, leg=2.0 * e_leg + 5.0 * e_tl, mortise=1.5 * e_m, pads=0.5 * e_pad, toes=0.5 * e_toe, prior=0.3 * r)
         return terms if parts else sum(terms.values())
@@ -259,8 +298,8 @@ class FootFit:
         for b, i, w in self._toe_groups:
             S[i] += w * (self.M if b == 'leg' else W[b])(P[i])
         e_skin = np.mean(phuber(tg.skin_sd(S), 0.003)) / 0.003 ** 2 * len(P) / max(1, self.skin_use.sum())
-        Q = np.concatenate([W[b](self.bone_pts[b]) for b in self.toe_bone])
-        e_in = np.sum(relu(tg.skin_sd(Q) + CLEAR) ** 2) / 0.001 ** 2 / sum(len(p) for p in self.bone_pts.values())
+        toeb = [b for b in self.bone_order if b in self.toe_bone]
+        e_in = self.inside_term(W, toeb) * len(toeb) / len(self.bone_order)
         r = toe_prior(x)
         return e_skin + 4.0 * e_in + 0.5 * self.toe_overlap(W) + 0.3 * r
 
@@ -333,14 +372,27 @@ class FootFit:
         meshes = {b: (W[b](m[0]), m[1]) for b, m in F.bones.items()}
         self.relaxed = meshes
         # remaining overlaps (Z-Anatomy's own) and small residual contacts: local push-out
+        tal_f = F.bones['Talus'][1]
+        facet_tree = cKDTree(self.articular_all)
         def extra(b, V):
             e = np.zeros_like(V)
-            sd = tg.skin_sd(V); m = sd > -SEAT_CLEAR * 0.85
-            if m.any(): e[m] += -(sd[m] + SEAT_CLEAR * 0.85)[:, None] * skin_n(V[m])
-            sl = tg.leg_field(V); m = sl < 0.0008
-            if m.any(): e[m] += (0.0008 - sl[m])[:, None] * tib_n(V[m])
+            sd = tg.skin_sd(V); m = sd > -SEAT_CLEAR * 0.88
+            if m.any(): e[m] += -(sd[m] + SEAT_CLEAR * 0.88)[:, None] * skin_n(V[m])
+            sl = tg.leg_field(V)
+            if b == 'Talus':
+                # congruence with the HRA mortise (the subject's talus is congruent with its own plafond and malleoli):
+                # talus vertices that face an HRA articular facet within 6.5 mm are drawn to the joint space GAP0, with a
+                # smooth falloff toward the facet rims; elsewhere the talus only keeps TALUS_MIN from the tibia / fibula
+                g = tib_n(V)
+                vn = vertex_normals(V, tal_f)
+                dfac, _ = facet_tree.query(V - sl[:, None] * g)
+                w = smoothstep((0.0065 - sl) / 0.002) * smoothstep((0.0025 - dfac) / 0.001) * smoothstep((-np.einsum('ij,ij->i', vn, g) - 0.3) / 0.3)
+                e += (w * (GAP0 - sl) + (1 - w) * relu(TALUS_MIN - sl))[:, None] * g
+            else:
+                m = sl < 0.0008
+                if m.any(): e[m] += (0.0008 - sl[m])[:, None] * tib_n(V[m])
             return e if e.any() else None
-        self.meshes = push_out(meshes, extra=extra, log=self.log)
+        self.meshes = push_out(meshes, extra=extra, log=self.log, cap=0.0014)
         disp = {b: float(np.linalg.norm(self.meshes[b][0] - meshes[b][0], axis=1).max() * 1000) for b in meshes}
         self.pushed_mm = {b: round(d, 2) for b, d in sorted(disp.items(), key=lambda kv: -kv[1]) if d > 0.05}
         self.log(f'    seating done ({time.time() - t0:.1f}s); largest local push-outs (mm): ' + ', '.join(f'{b} {d}' for b, d in list(self.pushed_mm.items())[:5]))
@@ -435,12 +487,27 @@ def leg_warp(sex, side, out_dir=None, rebuild=False, log=print):
     rep = {}
     for k in Z:
         P = sample_surface(*Z[k], 2000, seed=7)
-        d = np.abs(TriMesh(*H[k]).signed(warp(P)))
-        rep[k] = dict(mean_mm=round(float(d.mean() * 1000), 2), p90_mm=round(float(np.quantile(d, 0.9) * 1000), 2))
+        Ht = TriMesh(*H[k])
+        d = np.abs(Ht.signed(warp(P)))
+        # soft tissue next to the bone must stay outside it: Z-Anatomy points 3 / 8 mm off the bone surface
+        n = TriMesh(*Z[k]).closest(P)[3]
+        fold = {f'{o}mm_off_bone_mapped_inside': round(float((Ht.signed(warp(P + o * 0.001 * n)) < 0).mean()), 4) for o in (3, 8)}
+        rep[k] = dict(mean_mm=round(float(d.mean() * 1000), 2), p90_mm=round(float(np.quantile(d, 0.9) * 1000), 2), **fold)
     json.dump(dict(sex=sex, side=side, joints={r: repr(S) for r, S in sims.items()}, residuals=rep, seconds=round(time.time() - t0, 1)),
               open(os.path.join(out_dir, f'warp-leg_{side}-report.json'), 'w'), indent=1)
     log(f'    leg warp {sex}/{side}: residuals ' + ', '.join(f'{k} {v["mean_mm"]}/{v["p90_mm"]} mm' for k, v in rep.items()) + f' ({time.time() - t0:.0f}s)')
     return leg_warp(sex, side, out_dir)
+
+
+def leg_soft_tissue_check(sex, side, warp, tg):
+    """Leg warp vs soft tissue next to the bones (for the vessels group): the fraction of Z-Anatomy points 3 / 8 mm off
+    the tibia / fibula surface that the warp maps inside the HRA bone (a bone-only warp cannot see soft tissue)."""
+    zs = source('za-skeletal'); out = {}
+    for k, H in (('tibia', tg.tib_tm), ('fibula', tg.fib_tm)):
+        v, f = zs.get(k.capitalize() + side); f = orient_outward(v, f)
+        P = sample_surface(v, f, 2000, seed=7); n = TriMesh(v, f).closest(P)[3]
+        out[k] = {f'{o}mm_off_mapped_inside': round(float((H.signed(warp(P + o * 0.001 * n)) < 0).mean()), 3) for o in (3, 8)}
+    return out
 
 
 class LegDeform:
@@ -533,6 +600,54 @@ def qa(sex, side, ff, meshes, out_dir):
     return files
 
 
+def skin_extent_from_ankle(sex, side):
+    """Skin of the foot measured from the lowest point of the HRA tibia, horizontally along the foot (mm): how far the heel
+    skin reaches behind it and the toe skin in front of it. The skeleton hangs from the ankle mortise, so skin that one
+    foot has and the other lacks (a left / right difference) cannot be filled by bone."""
+    from lib.mesh import compact
+    from fit.foot_target import hra_bone
+    v, f = skin(sex); tv = hra_bone(sex, 'tibia', side)[0]; sg = 1.0 if side == 'l' else -1.0
+    keep = (np.sign(v[f].mean(1)[:, 0]) == sg) & (v[f].max(1)[:, 1] < tv[:, 1].min() + 0.16)
+    sv = compact(v, f[keep])[0]
+    low = tv[np.argmin(tv[:, 1])]
+    s = sv[sv[:, 1] < low[1] + 0.01]
+    X = s[:, [0, 2]] - s[:, [0, 2]].mean(0); a = np.linalg.eigh(np.cov(X.T))[1][:, -1]
+    ax = np.array([a[0], 0.0, a[1]]); ax = ax if ax[2] > 0 else -ax
+    u = (sv - low) @ ax
+    band = (sv[:, 1] - sv[:, 1].min() > 0.01) & (sv[:, 1] - sv[:, 1].min() < 0.06)
+    return dict(heel_behind_tibia_mm=round(float(-u[band].min() * 1000), 1), toes_ahead_of_tibia_mm=round(float(u[band].max() * 1000), 1))
+
+
+def report_notes(report, sex):
+    """Plain-language notes on the criteria that fail, with the numbers that explain them."""
+    notes = []
+    sides = report['sides']
+    ext = {s: skin_extent_from_ankle(sex, s[0]) for s in sides}
+    for s, d in sides.items():
+        d['pose']['skin_extent_from_ankle'] = ext[s]
+    for s, d in sides.items():
+        o = 'right' if s == 'left' else 'left'
+        fl = d['foot_length_ratio']
+        if not fl['ok']:
+            notes.append(f"{s} foot_length_ratio {fl['value']}: bone {fl['bone_mm']} mm in {fl['skin_mm']} mm of skin, soft tissue {fl['heel_soft_mm']} mm behind "
+                         f"the heel bone and {fl['toe_soft_mm']} mm beyond the toe tips. The skeleton hangs from the ankle mortise; the heel skin reaches "
+                         f"{ext[s]['heel_behind_tibia_mm']} mm behind the tibia here vs {ext[o]['heel_behind_tibia_mm']} mm on the {o} "
+                         f"(toes {ext[s]['toes_ahead_of_tibia_mm']} vs {ext[o]['toes_ahead_of_tibia_mm']} mm ahead). Lengthening the bones further would push "
+                         f"them out of the low, narrow forefoot skin (fit scale {d['pose']['foot_scale']}, height {d['pose']['width_height_rel_length'][1]} of length).")
+        mg = d['mortise_gap_mm']
+        if not mg['ok']:
+            bad = [f"{k} (p10 {x['p10']}, median {x['median']}, p75 {x['p75']}, p90 {x['p90']} mm, {x['in_1_4mm'] * 100:.0f} % in 1..4 mm; Z-Anatomy's own "
+                   f"{x['za_reference']['in_1_4mm'] * 100:.0f} %)" for k, x in mg['value'].items() if not (1 <= x['median'] <= 4 and x['p10'] >= 1 and x['p75'] <= 4)]
+            notes.append(f"{s} mortise: " + '; '.join(bad) + ". The posterior part of the HRA lateral malleolar facet stands 5-7 mm off the talus, more "
+                         "than the rigid talus (scaled and widened within its priors) and the 1.4 mm congruence adaptation can close without "
+                         "pressing the plafond and medial facet below 1 mm.")
+        dc = d['dorsal_clearance_mm']
+        if not dc['ok']:
+            notes.append(f"{s} dorsal_clearance {dc['value']} mm at the {dc['at']}: the rigid seating leaves it that close to the dorsal skin and the "
+                         "local push-out is capped at 1.4 mm to keep the bone's shape.")
+    return notes
+
+
 def fit(sex):
     t_all = time.time()
     out_dir = os.path.join(FIT, sex, GROUP); os.makedirs(out_dir, exist_ok=True)
@@ -558,11 +673,14 @@ def fit(sex):
         S = ff.skin_world(ff.W); sd = ff.tg.skin_sd(S)
         za_t = dense_points(*ff.F.tibia, 0.002); za_t = za_t[za_t[:, 1] < za_t[:, 1].min() + 0.03]
         ank = float(np.median(np.linalg.norm(lw(za_t) - ff.M(za_t), axis=1)) * 1000)
+        legchk = leg_soft_tissue_check(sex, side, lw, ff.tg)
         m['pose'] = dict(ankle_plantarflexion_deg=round(float(np.degrees(q['alpha'])), 1), subtalar_supination_deg=round(float(np.degrees(q['beta'])), 1),
                          chopart_deg=[round(float(v), 1) for v in np.degrees(q['chopart'])], foot_scale=round(q['sf'] * ff.M.scale(), 4), talus_scale=round(q['st'] * ff.M.scale(), 4),
+                         width_height_rel_length=[round(q['sw'], 4), round(q['sh'], 4)], toe_scale={k: round(v, 4) for k, v in q['toe_scale'].items()},
+                         ray_convergence_deg={k: round(float(np.degrees(v)), 2) for k, v in q['rays'].items()}, talus_extra_width=round(q['stw'], 4),
                          talus_offset_mm=[round(float(v), 1) for v in q['talus_t'] * 1000], toes_deg={k: [round(float(a), 1) for a in np.degrees(v)] for k, v in q['toes'].items()},
                          mortise_similarity=repr(ff.tg.T_m), mortise_icp_rms_mm=round(ff.tg.T_m_rms * 1000, 2), za_skin_to_hra_skin_mm=dict(median=round(float(np.median(sd) * 1000), 1), p10=round(float(np.quantile(sd, 0.1) * 1000), 1), p90=round(float(np.quantile(sd, 0.9) * 1000), 1)),
-                         leg_warp_vs_mortise_map_at_ankle_mm=round(ank, 2), local_push_out_mm=ff.pushed_mm, hra_bones=ff.tg.names)
+                         leg_warp_vs_mortise_map_at_ankle_mm=round(ank, 2), leg_warp_soft_tissue=legchk, local_push_out_mm=ff.pushed_mm, hra_bones=ff.tg.names)
         report['sides'][sname] = m
         json.dump(dict(maps={b: M.to_list() for b, M in ff.W.items()}, x=list(map(float, ff.x)), T_m=dict(s=ff.tg.T_m.s, R=ff.tg.T_m.R.tolist(), t=ff.tg.T_m.t.tolist())),
                   open(os.path.join(out_dir, f'pose-{side}.json'), 'w'))
@@ -572,6 +690,7 @@ def fit(sex):
         crit = {k: v['ok'] for k, v in m.items() if isinstance(v, dict) and 'ok' in v}
         print(f'  {sname}: ' + ', '.join(f'{k} {"ok" if v else "FAIL"}' for k, v in crit.items()) + f'  ({time.time() - t0:.0f}s)')
     report['ok'] = bool(all(v['ok'] for sd_ in report['sides'].values() for v in sd_.values() if isinstance(v, dict) and 'ok' in v))
+    report['notes'] = report_notes(report, sex)
     report['seconds'] = round(time.time() - t_all, 1)
     write_group(sex, GROUP, outputs, report)
     print(f'{sex}: wrote {len(outputs)} meshes to {out_dir} ({report["seconds"]}s), all criteria ok: {report["ok"]}')

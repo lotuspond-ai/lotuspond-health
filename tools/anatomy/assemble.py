@@ -243,7 +243,7 @@ LANDMARKS = {
 PIN = dict(brain=('part:brain', 'dir:0.2,0.6,0.8'), thyroid=('part:thyroid', 'front'), airway=('part:airway', 'face'), lungs=('part:lung_r_upper', 'face'), heart=(r'^(heart_)?left_ventricle$', 'face'),
            esophagus=('part:esophagus', 'face'), liver=('part:liver', 'dir:-0.6,0.1,0.8'), stomach=('part:stomach', 'face'), spleen=('part:spleen', 'face'), pancreas=('part:pancreas', 'face'),
            kidneys=(r'^kidneys_R$', 'face'), intestine=(r'^je[jn][eu]num$', 'face'), colon=(r'^ascending_colon$', 'face'), marrow=(r'^ilium_compact_bone_L$', 'top'),
-           reproductive=('part:reproductive', 'face'), skin=('part:skin', 'front'))
+           reproductive=('part:reproductive', 'face'), breast=(r'^mammary_lobes_R$', 'face'), skin=('part:skin', 'front'))
 DIRS = dict(top=(0, 1, 0), bottom=(0, -1, 0), left=(1, 0, 0), right=(-1, 0, 0), front=(0, 0, 1), back=(0, 0, -1))
 
 

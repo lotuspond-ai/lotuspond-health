@@ -109,7 +109,21 @@ class TriMesh:
         self.A, self.B, self.C = A, B, C
         self.cent = (A + B + C) / 3
         self.rad = np.max(np.stack([np.linalg.norm(X - self.cent, axis=1) for X in (A, B, C)], 1), 1)
-        self.tree = cKDTree(self.cent)
+        # candidate search: a KD-tree over face samples (the centroid, plus a barycentric grid of spacing <= 1 mm on larger
+        # faces), so that the nearest samples always include the closest face even where triangle sizes vary a lot
+        # (Z-Anatomy bones mix 0.3 mm and 13 mm edges; centroids alone miss the closest face next to a large triangle)
+        L = np.max(np.stack([np.linalg.norm(B - A, axis=1), np.linalg.norm(C - B, axis=1), np.linalg.norm(A - C, axis=1)], 1), 1)
+        sub = np.maximum(1, np.ceil(L / 0.001).astype(int))
+        pts, own = [self.cent], [np.arange(len(self.f))]
+        big = np.flatnonzero(sub > 1)
+        for k in np.unique(sub[big]):
+            ids = big[sub[big] == k]
+            i, j = np.meshgrid(np.arange(k + 1), np.arange(k + 1), indexing='ij'); sel = (i + j) <= k
+            u = (i[sel] / k)[None, :, None]; w = (j[sel] / k)[None, :, None]
+            P = A[ids][:, None] + u * (B[ids] - A[ids])[:, None] + w * (C[ids] - A[ids])[:, None]
+            pts.append(P.reshape(-1, 3)); own.append(np.repeat(ids, int(sel.sum())))
+        self.sown = np.concatenate(own)
+        self.tree = cKDTree(np.concatenate(pts))
         n = np.cross(B - A, C - A); self.fn = n / np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-30)
         # angle-weighted vertex normals
         vn = np.zeros_like(self.v)
@@ -131,9 +145,10 @@ class TriMesh:
     def closest(self, p, k=12):
         """(closest points, distances, face ids, feature normals)."""
         p = np.atleast_2d(np.asarray(p, float))
-        k = min(k, len(self.f))
+        k = min(k, len(self.sown))
         _, cand = self.tree.query(p, k=k)
         if cand.ndim == 1: cand = cand[:, None]
+        cand = self.sown[cand]
         best_d = np.full(len(p), np.inf); best_q = np.zeros_like(p); best_f = np.zeros(len(p), np.int64); best_n = np.zeros_like(p)
         for j in range(cand.shape[1]):
             t = cand[:, j]

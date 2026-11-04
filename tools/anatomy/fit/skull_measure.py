@@ -93,7 +93,9 @@ def za_landmarks():
 
 
 def skin_regions_za():
-    """Z-Anatomy head skin samples labelled 1 = vault (frontal, parietal, occipital regions), 2 = face, 0 = other."""
+    """Z-Anatomy head skin samples labelled 1 = vault (frontal, parietal, occipital regions), 2 = face, 3 = cheek
+    (parotideomasseteric and buccal regions: masseter, parotid, buccinator and buccal fat pad, normally 15-30 mm deep),
+    0 = other."""
     rg = source('za-regions')
     P, Lb = [], []
     for o in rg.index:
@@ -102,6 +104,7 @@ def skin_regions_za():
         path = o['path']
         if re.search(r'Eyebrow', path): lab = 2
         elif re.search(r'(Frontal_region|Parietal_region|Occipital_region)[lr]$', path): lab = 1
+        elif re.search(r'(Parotideomasseteric_region|Buccal_region)[lr]$', path): lab = 3
         elif 'Regions_of_faceg' in path and 'Orbital_region' not in path: lab = 2
         else: lab = 0
         v, f = rg.load_entry(o)
@@ -290,7 +293,8 @@ def measure(sex, P, T, L, Wfull, za_skin, extra_info=None, log=print, parts=ALL_
         hv, hf = T.head_skin; vn = T.skin_vn
         dz, jz = cKDTree(wz).query(hv)
         vlab = np.where(dz < 0.008, zlab[jz], 0)
-        for lab_id, name, lo, hi in ((1, 'vault', 3.0, 10.0), (2, 'face', 3.0, 20.0)):
+        allface = []
+        for lab_id, name, lo, hi in ((1, 'vault', 3.0, 10.0), (2, 'face', 3.0, 20.0), (3, 'cheek', None, None)):
             idx = np.flatnonzero(vlab == lab_id)
             if len(idx) > 3000: idx = np.random.default_rng(1).choice(idx, 3000, replace=False)
             o = hv[idx] - vn[idx] * 1e-4
@@ -306,6 +310,17 @@ def measure(sex, P, T, L, Wfull, za_skin, extra_info=None, log=print, parts=ALL_
             aux[f'soft_{name}_muscle'] = (hv[idx][musc], t[musc] * MM)
             hit = hit & ~musc
             th = t[hit] * MM
+            if lab_id in (2, 3): allface.append(th)
+            if lab_id == 3:
+                if len(th):
+                    det['soft_tissue_cheek_mm'] = dict(n=int(len(th)), p5=r1(np.quantile(th, 0.05), 1), median=r1(np.median(th), 1), p95=r1(np.quantile(th, 0.95), 1),
+                                                       note='parotideomasseteric and buccal regions (masseter, parotid gland, buccinator, buccal fat pad: '
+                                                            'normally 15-30 mm deep), reported separately from the face statistic')
+                    th_all = np.concatenate(allface)
+                    det['soft_tissue_face_including_cheeks_mm'] = dict(n=int(len(th_all)), p5=r1(np.quantile(th_all, 0.05), 1), p95=r1(np.quantile(th_all, 0.95), 1),
+                                                                       fraction_3_to_20mm=r1(float(((th_all >= 3) & (th_all <= 20)).mean()), 3))
+                    aux['soft_cheek'] = (hv[idx][hit], th, -vn[idx][hit])
+                continue
             if not len(th):
                 out.append(crit(f'soft tissue over the {name}', None, f'{lo:g}-{hi:g} mm', False)); continue
             p5, p50, p95 = np.quantile(th, [0.05, 0.5, 0.95])

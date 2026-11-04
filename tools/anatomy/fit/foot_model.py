@@ -170,6 +170,21 @@ class ZAFoot:
                 axes = [tr, dors] if i == 0 else [tr]
                 joints.append(Joint(('mtp' if i == 0 else 'ip%d' % i) + str(k), c, axes))
             self.toes[k] = dict(bones=names, joints=joints, tip=tip, dir=dirs[0])
+        # border rays: the 1st and 5th metatarsals (with their toes, and the sesamoids for the 1st) can converge toward
+        # the 2nd / 4th about the centre of their tarsometatarsal joint (dorsal axis; + = toward the middle of the foot):
+        # the intermetatarsal angles differ between people by several degrees (narrow vs splayed forefoot)
+        self.rays = {}
+        for k, base in ((1, 'Medial_cuneiform_bone'), (5, 'Cuboid_bone')):
+            mt = B[METATARSALS[k - 1]]
+            Q = np.concatenate([mt[0], sample_surface(*mt, 4000, seed=8)])
+            _, dq, _, _ = TriMesh(*B[base]).closest(Q)
+            c = Q[dq < 0.003].mean(0) if (dq < 0.003).sum() >= 10 else Q[np.argsort(dq)[:30]].mean(0)
+            ax_ = self.up if k == 1 else -self.up
+            probe = c + 0.05 * self.axis
+            # positive angle moves the ray toward the foot's middle: lateral for the 1st ray, medial for the 5th
+            toward = self.lat if k == 1 else self.med
+            if (rot_axis(ax_, 0.1) @ (probe - c) + c - probe) @ toward < 0: ax_ = -ax_
+            self.rays[k] = Joint(f'tmt{k}', c, [ax_])
 
     @staticmethod
     def _congruence_axis(moving, fixed, c, d0, angles=np.radians([-20, -10, 10, 20])):
@@ -232,13 +247,22 @@ class ZAFoot:
     def pose(self, q):
         """Per-bone maps (Z-Anatomy space -> posed Z-Anatomy space, before the mortise map) for parameters q:
         alpha (ankle, + = plantarflexion), beta (subtalar, + = supination), chopart (3: inversion and adduction about
-        the talar head, plantarflexion about the talonavicular-calcaneocuboid line), sf / st (foot / talus scale about the trochlea centre), talus_r (3, same
-        components, about the trochlea centre), talus_t (3, m), toes {k: [mtp_flex, mtp_abd, ip1, ip2]} (+ = flexion,
-        abduction toward the lateral side)."""
+        the talar head, plantarflexion about the talonavicular-calcaneocuboid line), sf / st (foot / talus scale about the
+        trochlea centre), sw / sh (width / height of the skeleton relative to its length), stw (extra width of the talus),
+        talus_r (3, same components,
+        about the trochlea centre), talus_t (3, m), toes {k: [mtp_flex, mtp_abd, ip1, ip2]} (+ = flexion, abduction
+        toward the lateral side), toe_scale {k: s} (phalanges of toe k about its MTP centre), rays {1: a, 5: a} (1st / 5th
+        ray toward the middle of the foot about its tarsometatarsal joint)."""
         c = self.trochlea_centre
         D = Sim4.about(rotvec(np.asarray(q.get('talus_r', np.zeros(3))) @ self.frame_axes), c).then(Sim4(np.eye(3), q.get('talus_t', np.zeros(3))))
         A = self.ankle.matrix([q.get('alpha', 0.0)])
-        Sf = Sim4.about(np.eye(3) * q.get('sf', 1.0), c); St = Sim4.about(np.eye(3) * q.get('st', 1.0), c)
+        # foot proportions: a scale along the foot (sf), with the width and height of the whole skeleton scaled by
+        # sw / sh relative to it (Z-Anatomy foot frame), about the trochlea centre; the talus has its own overall scale st
+        sw, sh = q.get('sw', 1.0), q.get('sh', 1.0)
+        P = np.eye(3) + (sw - 1.0) * np.outer(self.lat, self.lat) + (sh - 1.0) * np.outer(self.up, self.up)
+        # the talus may in addition be wider or narrower (stw): the subject's trochlea is as wide as its own mortise
+        Pt = np.eye(3) + (sw * q.get('stw', 1.0) - 1.0) * np.outer(self.lat, self.lat) + (sh - 1.0) * np.outer(self.up, self.up)
+        Sf = Sim4.about(q.get('sf', 1.0) * P, c); St = Sim4.about(q.get('st', 1.0) * Pt, c)
         S = self.subtalar.matrix([q.get('beta', 0.0)])
         ch = np.asarray(q.get('chopart', np.zeros(3)), float)
         C = Sim4.about(rot_axis(self.chopart_axis, ch[2]), self.talar_head).then(Sim4.about(rotvec(ch[0] * self.frame_axes[0] + ch[1] * self.frame_axes[1]), self.talar_head))
@@ -246,7 +270,11 @@ class ZAFoot:
         out = {'Talus': A.then(St).then(D), 'Calcaneus': top(S)}
         mid = C.then(S)
         for b in MIDFOOT: out[b] = top(mid)
+        rays = {k: self.rays[k].matrix([float(q.get('rays', {}).get(k, 0.0))]) for k in self.rays}
+        out[METATARSALS[0]] = top(rays[1].then(mid)); out['Sesamoid_bones_of_foot'] = top(rays[1].then(mid))
+        out[METATARSALS[4]] = top(rays[5].then(mid))
         toes = q.get('toes', {})
+        tscale = q.get('toe_scale', {})
         for k, t in self.toes.items():
             ang = list(toes.get(k, [])) + [0.0] * 4
             M = Sim4()
@@ -255,11 +283,14 @@ class ZAFoot:
                 if i == 0: J = j.matrix([ang[0], ang[1]])
                 else: J = j.matrix([ang[1 + i]])
                 chain.append(J)
+            # the phalanges of each toe may be scaled together about the MTP centre (toe size relative to the foot
+            # varies between people); a uniform scale about c commutes with the MTP rotation about c
+            T = Sim4.about(np.eye(3) * float(tscale.get(k, 1.0)), t['joints'][0].c)
             # bone i of the toe is moved by joints 0..i (distal joints first)
             for i, b in enumerate(t['bones']):
                 M = Sim4()
                 for J in reversed(chain[:i + 1]): M = M.then(J)
-                out[b] = top(M.then(mid))
+                out[b] = top((M.then(T).then(rays[k]) if k in rays else M.then(T)).then(mid))
         return out
 
     def skin_points(self, maps, leg_map=None, pts=None, w=None):

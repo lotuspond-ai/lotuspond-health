@@ -131,11 +131,21 @@ def _face_samples(v, f, n, seed):
     return fi, bary
 
 
-def push_out(meshes, fixed=(), gap=0.00005, iters=40, smooth=4, extra=None, cap=0.0014, n=3000, step=0.6, log=None):
+def vertex_normals(v, f):
+    fn = np.cross(v[f[:, 1]] - v[f[:, 0]], v[f[:, 2]] - v[f[:, 0]])
+    vn = np.zeros_like(v)
+    for c in range(3): np.add.at(vn, f[:, c], fn)
+    return vn / np.maximum(np.linalg.norm(vn, axis=1, keepdims=True), 1e-30)
+
+
+def push_out(meshes, fixed=(), gap=0.00005, iters=60, smooth=4, extra=None, cap=0.0014, n=3000, step=0.6, own=0.5, log=None):
     """Separate overlapping bones by moving their surfaces apart (half each; a bone in `fixed` does not move). Overlap is
     tested on vertices and dense face samples; a sample that is too deep asks its face's vertices to move (shared by
-    barycentric weight, averaged per vertex); the displacements are spread to the neighbouring ring(s) by Laplacian smoothing (never below what a vertex asked for)
-    and no vertex moves more than `cap` in total. extra(name, V) -> per-vertex displacement for body-side constraints."""
+    barycentric weight, averaged per vertex) along the mean of the other surface's outward normal and its own inward
+    normal (stable at rims and sharp edges); the displacements are spread to the neighbouring ring(s) by Laplacian
+    smoothing (never below what a vertex asked for), no vertex moves more than `cap` in total (a number, or a dict
+    {bone: cap} with None for the default), and moves that would fold the surface are refused. extra(name, V) ->
+    per-vertex displacement for body-side constraints."""
     V = {b: m[0].copy() for b, m in meshes.items()}
     V0 = {b: m[0].copy() for b, m in meshes.items()}
     F = {b: m[1] for b, m in meshes.items()}
@@ -145,6 +155,7 @@ def push_out(meshes, fixed=(), gap=0.00005, iters=40, smooth=4, extra=None, cap=
     names = list(V)
     for it in range(iters):
         tms = {b: TriMesh(V[b], F[b]) for b in names}
+        VN = {b: vertex_normals(V[b], F[b]) for b in names}
         P = {}
         for b in names:
             fi, bary = smp[b]
@@ -152,7 +163,7 @@ def push_out(meshes, fixed=(), gap=0.00005, iters=40, smooth=4, extra=None, cap=
         lo = {b: V[b].min(0) for b in names}; hi = {b: V[b].max(0) for b in names}
         num = {b: np.zeros_like(V[b]) for b in names}
         den = {b: np.zeros(len(V[b])) for b in names}
-        worst = 0.0
+        worst, worst_pair = 0.0, None
         for i, a in enumerate(names):
             for b in names[i + 1:]:
                 if np.any(lo[a] > hi[b] + gap) or np.any(lo[b] > hi[a] + gap): continue
@@ -166,26 +177,33 @@ def push_out(meshes, fixed=(), gap=0.00005, iters=40, smooth=4, extra=None, cap=
                     sd = sgn * d
                     bad = sd < gap
                     if not bad.any(): continue
-                    worst = max(worst, float(gap - sd[bad].min()))
+                    if gap - sd[bad].min() > worst: worst, worst_pair = float(gap - sd[bad].min()), f'{x}|{y}'
                     idx = np.flatnonzero(m)[bad]
-                    need = ((gap - sd[bad]) * share)[:, None] * nn[bad]
                     nv = len(V[x])
                     isv = idx < nv
+                    fs = idx[~isv] - nv
+                    tri = F[x][smp[x][0][fs]]; bw = smp[x][1][fs]
+                    on = np.zeros((len(idx), 3))
+                    on[isv] = -VN[x][idx[isv]]
+                    on[~isv] = -np.einsum('ij,ijk->ik', bw, VN[x][tri])
+                    dirn = (1 - own) * nn[bad] + own * on
+                    dirn /= np.maximum(np.linalg.norm(dirn, axis=1, keepdims=True), 1e-12)
+                    need = ((gap - sd[bad]) * share)[:, None] * dirn
                     # vertex demands count fully for their vertex; face-sample demands are shared by the face's
                     # vertices in proportion to the barycentric weights (averaged per vertex below)
                     np.add.at(num[x], idx[isv], need[isv]); np.add.at(den[x], idx[isv], 1.0)
-                    fs = idx[~isv] - nv
-                    tri = F[x][smp[x][0][fs]]; bw = smp[x][1][fs]
                     for c in range(3):
                         np.add.at(num[x], tri[:, c], need[~isv] * bw[:, c:c + 1]); np.add.at(den[x], tri[:, c], bw[:, c])
         disp = {b: np.where(den[b][:, None] > 0, num[b] / np.maximum(den[b], 1e-12)[:, None], 0.0) for b in names}
+        wx = 0.0
         if extra is not None:
             for b in names:
                 if b in fixed: continue
                 e = extra(b, V[b])
                 if e is not None:
-                    disp[b] += e; worst = max(worst, float(np.linalg.norm(e, axis=1).max()))
-        if worst < 2e-5: break
+                    disp[b] += e; wx = max(wx, float(np.linalg.norm(e, axis=1).max()))
+        if log and (it % 10 == 0 or it == iters - 1): log(f'      push-out {it}: worst overlap {worst * 1000:.3f} mm ({worst_pair}), largest body-side demand {wx * 1000:.3f} mm')
+        if max(worst, wx) < 2e-5: break
         for b in names:
             D = disp[b]
             if not D.any(): continue
@@ -197,15 +215,15 @@ def push_out(meshes, fixed=(), gap=0.00005, iters=40, smooth=4, extra=None, cap=
             dh = np.where(need[:, None] > 0, D / np.maximum(need, 1e-12)[:, None], 0.0)
             along = np.einsum('ij,ij->i', S, dh)
             S = step * (S + np.maximum(need - along, 0)[:, None] * dh)
+            cb = cap.get(b, cap.get(None)) if isinstance(cap, dict) else cap
             tot = V[b] + S - V0[b]; L = np.linalg.norm(tot, axis=1)
-            over = L > cap
-            if over.any(): tot[over] *= (cap / L[over])[:, None]
+            over = L > cb
+            if over.any(): tot[over] *= (cb / L[over])[:, None]
             Vn = V0[b] + tot
             # refuse moves that would fold the surface (a face turning by more than ~70 degrees)
             n1 = face_normals(Vn, F[b])
-            bad = np.einsum('ij,ij->i', n1, N0[b]) < 0.35
-            if bad.any():
-                vb = np.unique(F[b][bad]); Vn[vb] = V[b][vb]
+            badf = np.einsum('ij,ij->i', n1, N0[b]) < 0.35
+            if badf.any():
+                vb = np.unique(F[b][badf]); Vn[vb] = V[b][vb]
             V[b] = Vn
-        if log and (it % 5 == 0): log(f'      push-out {it}: worst overlap {worst * 1000:.3f} mm')
     return {b: (V[b], F[b]) for b in names}

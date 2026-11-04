@@ -130,7 +130,7 @@ def seat(rg, v, verts, lung, skip=None):
     own = verts[f'T{n}']; up = verts.get(f'T{n - 1}') or (verts.get('C7') if n == 1 else None)
     two = 2 <= n <= 9
     terms = []                                   # (indices, target, gap, weight)
-    i, g = rg.facets['head_lo']; terms.append((i, own, g, 1.0))
+    i, g = rg.facets['head_lo']; terms.append((i, own, g, 1.0 if two else 2.0))     # a single facet carries the head alone
     if two:
         i, g = rg.facets['head_up']; terms.append((i, up, g, 1.0))
     if 'tub' in rg.facets:
@@ -178,15 +178,16 @@ def seat(rg, v, verts, lung, skip=None):
             d = tgt.sdf(apply(x, idx))
             r.append(w * (d - JOINT_GAP) / 0.0005 / np.sqrt(len(idx)) * 4)
         if not two and up is not None:
-            # level: the head centre sits on its own vertebra, at least 1.5 mm nearer it than the one above
+            # level: the head centre sits on its own vertebra, at least 1 mm nearer it than the one above (rib 10's
+            # facet lies at the upper border of T10, next to the T9/T10 disc)
             hc = apply(x, head_idx).mean(0)[None]
-            r.append(np.maximum(own.sdf(hc) - up.sdf(hc) + 0.0015, 0) / 0.0005 * 2)
+            r.append(np.maximum(own.exact(hc) - up.exact(hc) + 0.0010, 0) / 0.0005 * 2)     # exact, as measured
         P = apply(x, post_s)
         for tgt in near:
             r.append(np.maximum(0.0003 - tgt.sdf(P), 0) / 0.0002 / np.sqrt(len(P)) * 6)
         if len(neck):
             Pn = apply(x, neck)
-            r.append(np.maximum(LUNG_CLEAR - lung.sdf(Pn), 0) / 0.0005 / np.sqrt(len(Pn)) * 2)
+            r.append(np.maximum(LUNG_CLEAR - lung.sdf(Pn), 0) / 0.0005 / np.sqrt(len(Pn)) * 4)
         wn = x[:3] @ na
         r.append(np.array([wn / np.radians(12.0)]))              # neck torsion: a few degrees are anatomical
         r.append((x[:3] - wn * na) / np.radians(4.0))
@@ -201,6 +202,15 @@ def seat(rg, v, verts, lung, skip=None):
     wn = x[:3] @ na
     info = dict(rot_deg=float(np.degrees(np.linalg.norm(x[:3] - wn * na))), neck_torsion_deg=float(np.degrees(wn)), shift_mm=float(np.linalg.norm(x[3:]) * 1000), cost=float(sol.cost))
     return out, info
+
+
+def facet_gap(rg, v, verts):
+    """Largest median distance of the rib's head and tubercle facets to their vertebrae (m)."""
+    n = rg.n; out = 0.0
+    for fk, vk in (('head_lo', f'T{n}'), ('head_up', f'T{n - 1}'), ('tub', f'T{n}')):
+        if fk in rg.facets and vk in verts and not (fk == 'head_up' and not 2 <= n <= 9):
+            out = max(out, float(np.median(np.abs(verts[vk].sdf(v[rg.facets[fk][0]])))))
+    return out
 
 
 def bspline_basis(s, knots_s, degree=3):
@@ -361,11 +371,155 @@ def bend(v, Bf, obstacles, skin=None, skin_clear=SKIN_CLEAR, iters=5, sub=2, w_s
     return v + disp, info
 
 
-def conflict_zone(v, side, n, overlap, verts, reach=0.015):
-    """Rib vertices within `reach` of a vertebra (T(n-1), T(n), T(n+1)) that the HRA lung itself overlaps on this
-    side: there the lung data contradicts the spine, and a rib seated on its joints cannot be outside the lung."""
+def joint_segment_end(rg):
+    """Arc length where the rib's joint segment ends: 10 mm past the tubercle (ribs 1-10), 30 mm past the head
+    (11, 12). Up to there the rib is held by its costovertebral and costotransverse joints."""
+    return (rg.s_tub + 0.010) if rg.s_tub is not None else rg.s_head + 0.030
+
+
+PARAVERTEBRAL = 0.020    # rib surface this close to its own or the neighbouring vertebrae is the paravertebral segment
+
+
+def conflict_zone(v, side, n, overlap, verts, rg=None, reach=PARAVERTEBRAL):
+    """The paravertebral segment of a rib: its surface within 20 mm of T(n-1), T(n) or T(n+1) - the head, neck,
+    tubercle and the start of the shaft, which run along the spine held by the costovertebral and costotransverse
+    joints. The HRA lungs fill this space (they reach the transverse processes, on the right even overlap the
+    vertebral bodies by up to 6-8 mm), so a rib on its joints cannot be outside them there; pushing the segment out
+    takes 2-6 cm bends of the shaft. It is excused from the lung push-out and reported separately; the rest of every
+    rib must clear the lungs. `overlap` and `rg` are kept for the callers' signature."""
     z = np.zeros(len(v), bool)
     for k in (f'T{n - 1}', f'T{n}', f'T{n + 1}'):
-        if (k, side) in overlap and k in verts:
+        if k in verts:
             z |= verts[k].sdf(v) < reach
     return z
+
+
+# ------------------------------------------------------------------------------------------------ body-scale ribs
+def _kabsch(a, b, w=None):
+    """Rotation taking centred point set a onto centred point set b (rows)."""
+    w = np.ones(len(a)) if w is None else w
+    H = (a * w[:, None]).T @ b
+    U, _, Vt = np.linalg.svd(H)
+    d = np.sign(np.linalg.det(Vt.T @ U.T))
+    return Vt.T @ np.diag([1, 1, d]) @ U.T
+
+
+def _transport(C, n0):
+    """Rotation-minimising frames along a polyline C: rows t, n, b per sample (shape (N, 3, 3))."""
+    t = np.gradient(C, axis=0); t /= np.maximum(np.linalg.norm(t, axis=1, keepdims=True), 1e-12)
+    F = np.zeros((len(C), 3, 3)); n = n0 - (n0 @ t[0]) * t[0]; n /= np.linalg.norm(n)
+    for i in range(len(C)):
+        if i:
+            ax = np.cross(t[i - 1], t[i]); sa = np.linalg.norm(ax); ca = float(t[i - 1] @ t[i])
+            if sa > 1e-12:
+                k = ax / sa; ang = np.arctan2(sa, ca)
+                n = n * np.cos(ang) + np.cross(k, n) * np.sin(ang) + k * (k @ n) * (1 - np.cos(ang))
+            n = n - (n @ t[i]) * t[i]; n /= np.linalg.norm(n)
+        F[i] = [t[i], n, np.cross(t[i], n)]
+    return F
+
+
+def _slab_centres(v, s, cs, half=0.003, win=5):
+    C = np.full((len(cs), 3), np.nan)
+    for i, a in enumerate(cs):
+        m = np.abs(s - a) < half
+        if m.sum() >= 4: C[i] = v[m].mean(0)
+    ok = np.isfinite(C[:, 0])
+    for k in range(3): C[:, k] = np.interp(cs, cs[ok], C[ok, k])
+    return np.stack([_smooth(C[:, k], win) for k in range(3)], 1)
+
+
+def _smooth(x, w):
+    kern = np.ones(w) / w; p = w // 2
+    return np.convolve(np.pad(x, p, mode='edge'), kern, mode='valid')
+
+
+def sweep(rg, v_za, v_w, scale, win=11, twist="fit", max_stretch=0.10, stretch=None, prepared=False):
+    """The Z-Anatomy rib at body scale along the trunk-warped rib's course.
+
+    The trunk warp follows the HRA lungs, so it gives each rib a plausible course around the chest, but it stretches
+    or compresses ribs along their length (0.7-1.5x, differently on the two sides) and flattens their cross-sections.
+    Here every cross-section of the Z-Anatomy rib, scaled by the body scale, is placed at its own arc length
+    (s * scale) along the warped rib's centreline, turned like the warped cross-section there (rotation-minimising
+    frames plus a smoothed twist read off the warped slabs). The rib keeps Z-Anatomy's length, cross-sections and
+    head/neck/tubercle shape at body scale; where it is longer than the warped course, its remaining part continues
+    rigidly with its own curvature. The length itself may follow the warped course by up to max_stretch (10%): the
+    warp's courses are asymmetric (e.g. 0.72x on one side, 1.0x on the other at the same level), and a rib at exactly
+    body length would carry its anterior end 2-3 cm away from where the warp puts the costochondral junction.
+    With stretch given, the rib's length is body length * stretch instead (see ribcage.fit_ribs: the true ribs close
+    the spine-rib-cartilage-sternum chain). prepared=True returns (place(stretch) -> (vertices, info), default stretch) instead.
+    Returns (vertices, info)."""
+    s = rg.s; cs = rg.cl_s
+    Cz = _slab_centres(v_za, s, cs, win=win); Cw = _slab_centres(v_w, s, cs, win=win)
+    post = s < ((rg.s_tub + 0.01) if rg.s_tub is not None else rg.s_head + 0.03)
+    R0 = _kabsch(v_za[post] - v_za[post].mean(0), v_w[post] - v_w[post].mean(0))
+    tz = np.gradient(Cz, axis=0)[0]; n0 = np.cross(tz, [0.0, 1.0, 0.0]) if abs(tz[1]) < 0.9 else np.cross(tz, [1.0, 0, 0])
+    Fz = _transport(Cz, n0 / np.linalg.norm(n0))
+    Fw = _transport(Cw, R0 @ Fz[0][1])
+    # twist: the angle about the tangent that best turns each Z-Anatomy slab onto the warped slab
+    th = np.zeros(len(cs)); wt = np.zeros(len(cs))
+    for i, a in enumerate(cs):
+        m = np.abs(s - a) < 0.003
+        if m.sum() < 6: continue
+        oz = (v_za[m] - Cz[i]) @ Fz[i][1:].T; ow = (v_w[m] - Cw[i]) @ Fw[i][1:].T
+        sxy = np.sum(oz[:, 0] * ow[:, 1] - oz[:, 1] * ow[:, 0]); sxx = np.sum(oz[:, 0] * ow[:, 0] + oz[:, 1] * ow[:, 1])
+        th[i] = np.arctan2(sxy, sxx)
+        ev = np.linalg.eigvalsh(np.cov(oz.T)); wt[i] = 1 - ev[0] / max(ev[1], 1e-12)     # flat slabs give a reliable angle
+    if twist == 'none' or wt.sum() == 0:
+        th = np.zeros(len(cs))
+    else:
+        # a smooth twist: robust quadratic fit over arc length to the slab angles (wrapped near the fit)
+        x = cs / max(cs[-1], 1e-9); coef = np.zeros(3)
+        for _ in range(6):
+            pred = np.polyval(coef, x)
+            r = np.angle(np.exp(1j * (th - pred)))
+            w = wt * (np.abs(r) < np.radians(40))
+            if w.sum() < 3: break
+            coef = np.polyfit(x, pred + r, 2, w=np.sqrt(w))
+        th = np.polyval(coef, x)
+    for i in range(len(cs)):
+        c, sn = np.cos(th[i]), np.sin(th[i]); t, n, b = Fw[i]
+        Fw[i] = [t, c * n + sn * b, -sn * n + c * b]
+    uw = np.concatenate([[0], np.cumsum(np.linalg.norm(np.diff(Cw, axis=0), axis=1))])
+
+    def at(F, C, u, x):
+        """Position and frame at arc length x along a sampled curve (linear, extrapolated past the ends)."""
+        j = np.clip(np.searchsorted(u, x) - 1, 0, len(u) - 2)
+        f = ((x - u[j]) / np.maximum(u[j + 1] - u[j], 1e-9))[:, None]
+        P = C[j] + f * (C[j + 1] - C[j])
+        T = F[j, 0] + f * (F[j + 1, 0] - F[j, 0]); T /= np.linalg.norm(T, axis=1, keepdims=True)
+        N = F[j, 1] + f * (F[j + 1, 1] - F[j, 1]); N -= np.einsum('ij,ij->i', N, T)[:, None] * T; N /= np.linalg.norm(N, axis=1, keepdims=True)
+        return P, np.stack([T, N, np.cross(T, N)], 1)
+
+    Pz, Gz = at(Fz, Cz, cs, s)                          # Z-Anatomy slab centre and frame of every vertex
+    loc = np.einsum('ikj,ij->ik', Gz, v_za - Pz) * scale      # vertex offsets in its slab frame, at body scale
+    default = float(np.clip(uw[-1] / (rg.length * scale), 1 - max_stretch, 1 + max_stretch))
+    if prepared:
+        return (lambda st: _place(st, s, scale, rg, uw, Fw, Cw, Fz, Cz, cs, v_za, loc, at, th)), default
+    return _place(default if stretch is None else stretch, s, scale, rg, uw, Fw, Cw, Fz, Cz, cs, v_za, loc, at, th)
+
+
+def _place(stretch, s, scale, rg, uw, Fw, Cw, Fz, Cz, cs, v_za, loc, at, th):
+    u = s * scale * stretch
+    out = np.zeros_like(v_za)
+    inside = u <= uw[-1]
+    P, G = at(Fw, Cw, uw, u[inside])
+    out[inside] = P + np.einsum('ikj,ik->ij', G, loc[inside])
+    sig = uw[-1] / (scale * stretch)
+    if (~inside).any():
+        # beyond the warped course: the rest of the rib continues rigidly, turned like the last 8 cm of the rib that
+        # lies on the course (a curved stretch fixes the rotation far better than one frame at the tip), blended in
+        # over the last 3 cm so the rib stays smooth
+        seg = inside & (s > sig - 0.08)
+        a = scale * v_za[seg]; b = out[seg]
+        R_att = _kabsch(a - a.mean(0), b - b.mean(0)); t_att = b.mean(0) - a.mean(0) @ R_att.T
+        rigid_p = (scale * v_za) @ R_att.T + t_att
+        # the continuation keeps the stretch along the rib: shift each vertex along the rib's end direction
+        if stretch != 1.0:
+            d_end = R_att @ (Fz[-1][0]); extra = (s - sig) * scale * (stretch - 1)
+            rigid_p = rigid_p + np.maximum(extra, 0)[:, None] * d_end[None]
+        wgt = smoothstep((s - (sig - 0.03)) / 0.03)
+        out = np.where(inside[:, None], out * (1 - wgt[:, None]) + rigid_p * wgt[:, None], rigid_p)
+    info = dict(warped_course_mm=round(float(uw[-1]) * 1000, 1), body_length_mm=round(float(rg.length * scale) * 1000, 1), stretch=round(stretch, 3),
+                warp_length_ratio=round(float(uw[-1] / (rg.length * scale)), 3), twist_range_deg=round(float(np.degrees(np.ptp(th))), 1))
+    return out, info

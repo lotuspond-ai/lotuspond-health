@@ -65,14 +65,19 @@ def _samples(mesh, n=None, per_mm2=0.6, seed=11):
     return sample_surface(v, f, n, seed=seed)
 
 
-def measure_side(L, maps, meshes, skinT, height, finger_label=None, skin_v=None, girdle=None, log=print):
-    """All criteria for one arm. maps: bone -> BoneMap (ZA -> HRA); meshes: bone -> (v, f) placed."""
+def measure_side(L, maps, meshes, skinT, height, finger_label=None, skin_v=None, girdle=None, disp=None, log=print):
+    """All criteria for one arm. maps: bone -> BoneMap (ZA -> HRA); meshes: bone -> (v, f) placed; disp: per-vertex
+    push-out displacements already in `meshes` (carried over to the samples)."""
     J = L.J
     out = {}
-    # sample points: Z-Anatomy samples mapped (so landmark masks carry over)
+    # sample points: Z-Anatomy samples mapped (so landmark masks carry over), plus any push-out of their bone
     Pz = {b: L.P[b] for b in ALL_BONES}
     Ph = {b: maps[b](Pz[b]) for b in ALL_BONES}
-    sd = {b: skinT.signed(Ph[b]) for b in ALL_BONES}
+    if disp:
+        from fit.arms_final import carry
+        for b, D in disp.items(): Ph[b] = Ph[b] + carry(L, b, D)
+    EXACT = 0.008   # exact closest-point distances up to 8 mm from the surface (all thresholds are within that)
+    sd = {b: skinT.signed(Ph[b], exact_within=EXACT) for b in ALL_BONES}
     # area weights: each ZA sample set is area-uniform per bone; weight bones by area
     A = {b: area(*meshes[b]) for b in ALL_BONES}
     tot = sum(A.values())
@@ -102,7 +107,7 @@ def measure_side(L, maps, meshes, skinT, height, finger_label=None, skin_v=None,
     T = {b: TriMesh(*meshes[b], k=12) for b in ALL_BONES}
 
     def gap(a, b):
-        da = T[b].signed(Ph[a]); db = T[a].signed(Ph[b])
+        da = T[b].signed(Ph[a], exact_within=EXACT); db = T[a].signed(Ph[b], exact_within=EXACT)
         return float(min(da.min(), db.min()) * 1000)
 
     gaps = {}
@@ -129,7 +134,7 @@ def measure_side(L, maps, meshes, skinT, height, finger_label=None, skin_v=None,
     for i, a in enumerate(ALL_BONES):
         for b in ALL_BONES[i + 1:]:
             if np.any(lo[a] > hi[b]) or np.any(lo[b] > hi[a]): continue
-            da = T[b].signed(Ph[a]); db = T[a].signed(Ph[b])
+            da = T[b].signed(Ph[a], exact_within=EXACT); db = T[a].signed(Ph[b], exact_within=EXACT)
             depth = float(max(-da.min(), -db.min(), 0) * 1000)
             if depth > 0.05: pen[f'{a}-{b}'] = round(depth, 2)
             if depth > worst[0]: worst = (depth, f'{a}-{b}')
@@ -167,3 +172,55 @@ def measure_side(L, maps, meshes, skinT, height, finger_label=None, skin_v=None,
     out['humerus_over_height'] = dict(value=round(hl / height, 4), length_m=round(hl, 4), threshold='0.17-0.21', pass_=bool(0.17 <= hl / height <= 0.21))
     out['radius_over_height'] = dict(value=round(rl / height, 4), length_m=round(rl, 4), threshold='0.13-0.16', pass_=bool(0.13 <= rl / height <= 0.16))
     return out
+
+
+LANDMARK_LIST = ('acromion', 'clavicle', 'olecranon', 'medial epicondyle', 'lateral epicondyle', 'radial styloid', 'ulnar styloid')
+
+
+def criteria(meas):
+    """The acceptance criteria of one side as flat {name: {value, threshold, ok, ...}} entries (lengths in mm unless the
+    name says otherwise)."""
+    c = {}
+    ins = meas['inside_skin']
+    c['inside_skin_pct'] = dict(value=ins['value_pct'], threshold='>= 99.5 %', ok=bool(ins['pass_']), outside_pct_per_bone=ins['per_bone_outside_pct'])
+    cl = meas['clearance']['per_bone']
+    rest = {b: e['rest_min_mm'] for b, e in cl.items() if e['rest_min_mm'] is not None}
+    worst = min(rest, key=rest.get)
+    c['clearance_min_mm'] = dict(value=rest[worst], bone=worst, threshold=f'>= {CLEAR_MIN} mm (bone surface other than the subcutaneous landmarks)',
+                                 ok=bool(rest[worst] >= CLEAR_MIN), per_bone_min_mm={b: e['min_mm'] for b, e in cl.items()},
+                                 per_bone_min_non_landmark_mm=rest)
+    lms = {}
+    for b, e in cl.items():
+        for k, v in e.items():
+            if k not in ('rest_min_mm', 'min_mm', 'pass'): lms[k] = v
+    th = f'{LANDMARK[0]}-{LANDMARK[1]} mm'
+    for name in LANDMARK_LIST:
+        if name in lms:
+            v = lms[name]
+            c[f'landmark_{name.replace(" ", "_")}_mm'] = dict(value=v, threshold=th, ok=bool(LANDMARK[0] <= v <= LANDMARK[1]))
+    kn = {k.replace('knuckle ', ''): v for k, v in lms.items() if k.startswith('knuckle')}
+    if kn:
+        bad = {k: v for k, v in kn.items() if not LANDMARK[0] <= v <= LANDMARK[1]}
+        c['landmark_knuckles_mm'] = dict(value=min(kn.values()), max=max(kn.values()), threshold=th + ' (every knuckle)', ok=not bad,
+                                         per_knuckle=kn, out_of_range=bad)
+    g = meas['joint_gaps']
+    names = {'gh': 'gap_glenohumeral_mm', 'elbow_hu': 'gap_elbow_humeroulnar_mm', 'elbow_hr': 'gap_elbow_humeroradial_mm', 'wrist': 'gap_wrist_radiocarpal_mm'}
+    for k, e in g.items():
+        nm = names.get(k, f'gap_{k}_mm')
+        d = dict(value=e['value_mm'], threshold=e['threshold'], ok=bool(e['pass_']))
+        if k == 'wrist': d.update(radius_scaphoid=e['radius_scaphoid_mm'], radius_lunate=e['radius_lunate_mm'])
+        c[nm] = d
+    p = meas['penetration']
+    c['bone_penetration_max_mm'] = dict(value=p['max_mm'], pair=p['pair'], threshold=p['threshold'], ok=bool(p['pass_']), pairs_over_0p05_mm=p['pairs'])
+    for k, nm in (('clavicle_sternal_end', 'clavicle_sternal_end_to_notch_mm'), ('clavicle_acromial_end', 'clavicle_acromial_end_to_acromion_mm')):
+        if k in meas:
+            e = meas[k]; c[nm] = dict(value=e['value_mm'], threshold=e['threshold'], ok=bool(e['pass_']))
+    if 'phalanges_in_own_finger' in meas:
+        e = meas['phalanges_in_own_finger']
+        worst = min(e['per_bone'], key=lambda b: e['per_bone'][b]['in_own_finger_pct'])
+        strays = {b: d['other_fingers'] for b, d in e['per_bone'].items() if d['other_fingers']}
+        c['phalanges_in_own_finger_pct'] = dict(value=e['per_bone'][worst]['in_own_finger_pct'], worst=worst, threshold='>= 99.5 % of every phalanx inside its own skin finger (or the palm), none in another finger',
+                                                ok=bool(e['pass_']), in_other_fingers=strays)
+    for k in ('humerus_over_height', 'radius_over_height'):
+        e = meas[k]; c[k] = dict(value=e['value'], length_m=e['length_m'], threshold=e['threshold'], ok=bool(e['pass_']))
+    return c

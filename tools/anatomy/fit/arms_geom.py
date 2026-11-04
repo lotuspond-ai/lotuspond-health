@@ -144,15 +144,30 @@ def closest_on_triangles(p, a, b, c):
     return q, reg
 
 
+SUB_R = 0.0015   # m: radius of the sub-triangles whose centroids index a TriMesh for the closest-triangle search
+
+
+def _sub_barycentres(n):
+    """Barycentric centroids of the n x n sub-triangles of a triangle."""
+    out = []
+    for i in range(n):
+        for j in range(n - i):
+            out.append(((i + 1 / 3) / n, (j + 1 / 3) / n))
+            if i + j <= n - 2: out.append(((i + 2 / 3) / n, (j + 2 / 3) / n))
+    uv = np.array(out)
+    return np.c_[1 - uv.sum(1), uv]
+
+
 class TriMesh:
     """Closed triangle mesh with exact closest-point queries and signed distance (negative inside).
     The sign comes from angle-weighted pseudo-normals of the closest feature (Baerentzen & Aanaes), which is exact for
     closed, consistently oriented meshes."""
 
-    def __init__(self, v, f, k=16):
+    def __init__(self, v, f, k=16, sub_r=None, exact_within=0.0045):
         from lib.mesh import orient_outward
         self.v = np.asarray(v, float); self.f = orient_outward(self.v, np.asarray(f, np.int64))
-        self.k = k
+        self.k = k; self.exact_within = exact_within
+        sub_r = SUB_R if sub_r is None else sub_r
         v, f = self.v, self.f
         a, b, c = v[f[:, 0]], v[f[:, 1]], v[f[:, 2]]
         fn = np.cross(b - a, c - a); fa = np.linalg.norm(fn, axis=1)
@@ -172,18 +187,47 @@ class TriMesh:
         np.add.at(en, inv.ravel(), np.repeat(self.fn, 3, axis=0))
         self.en = en; self.fe = inv.reshape(-1, 3)  # face -> edge ids (ab, bc, ca)
         self.cent = (a + b + c) / 3
-        self.tree = cKDTree(self.cent)
+        # search structure: centroids of the triangles cut into n x n sub-triangles of radius <= SUB_R (the bone meshes
+        # have sliver triangles up to 5 cm long on the shafts, whose own centroids can be far from their closest point)
+        r = np.sqrt(np.max([((x - self.cent) ** 2).sum(1) for x in (a, b, c)], 0))
+        nsub = np.maximum(1, np.ceil(r / sub_r)).astype(int)
+        pts, fid = [], []
+        for n in np.unique(nsub):
+            idx = np.flatnonzero(nsub == n)
+            bc = _sub_barycentres(int(n))
+            pts.append(np.einsum('kq,mqj->mkj', bc, np.stack([a[idx], b[idx], c[idx]], 1)).reshape(-1, 3))
+            fid.append(np.repeat(idx, len(bc)))
+        self.spts = np.concatenate(pts); self.sfid = np.concatenate(fid)
+        self.rmax = float((r / nsub).max()) * 1.05
+        self.tree = cKDTree(self.spts)
         self.vtree = None
 
-    def closest(self, p, k=None, chunk=50000):
-        """(distance >= 0, closest point, face id, pseudo-normal at the closest feature) for points p."""
+    def closest(self, p, k=None, chunk=50000, exact_within=None, k_max=2048):
+        """(distance >= 0, closest point, face id, pseudo-normal at the closest feature) for points p.
+        Candidates are the triangles of the k nearest sub-triangle centroids; for points within `exact_within` of the
+        surface (default: the mesh's own, 4.5 mm for bones; the skin used inside the solvers is approximate) the
+        search is widened until it is provably exact (every triangle that could be closer, i.e. with its centroid
+        within the found distance plus the largest centroid-to-vertex radius, has been tested). Coarse meshes (the
+        carpals have 2-3 mm triangles) need this: a fixed k can miss the closest triangle and flip the sign."""
         p = np.atleast_2d(np.asarray(p, float))
-        k = min(k or self.k, len(self.f))
-        D = np.empty(len(p)); Q = np.empty_like(p); FI = np.empty(len(p), np.int64); N = np.empty_like(p)
+        exact_within = self.exact_within if exact_within is None else exact_within
+        nf = len(self.spts)
+        k = min(k or self.k, nf)
+        D, Q, FI, N, dk = self._closest_k(p, k, chunk)
+        todo = np.flatnonzero((D < exact_within) & (dk < D + self.rmax)) if k < nf else np.zeros(0, int)
+        while len(todo) and k < min(nf, k_max):
+            k = min(4 * k, nf, k_max)
+            d2, q2, f2, n2, dk2 = self._closest_k(p[todo], k, chunk)
+            D[todo], Q[todo], FI[todo], N[todo] = d2, q2, f2, n2
+            todo = todo[(dk2 < d2 + self.rmax)] if k < nf else todo[:0]
+        return D, Q, FI, N
+
+    def _closest_k(self, p, k, chunk):
+        D = np.empty(len(p)); Q = np.empty_like(p); FI = np.empty(len(p), np.int64); N = np.empty_like(p); DK = np.empty(len(p))
         for s in range(0, len(p), chunk):
             pp = p[s:s + chunk]; n = len(pp)
-            _, cand = self.tree.query(pp, k=k)
-            cand = cand.reshape(n, -1)
+            dc, cand = self.tree.query(pp, k=k)
+            cand = self.sfid[cand.reshape(n, -1)]; DK[s:s + n] = dc.reshape(n, -1)[:, -1] if k < len(self.spts) else np.inf
             P = np.repeat(pp, cand.shape[1], axis=0); C = cand.ravel()
             tri = self.f[C]
             q, reg = closest_on_triangles(P, self.v[tri[:, 0]], self.v[tri[:, 1]], self.v[tri[:, 2]])
@@ -200,17 +244,17 @@ class TriMesh:
                 m = rg == code
                 if m.any(): nn[m] = self.vn[self.f[fi[m], vi]]
             N[s:s + n] = nn
-        return D, Q, FI, N
+        return D, Q, FI, N, DK
 
-    def signed(self, p, k=None):
-        d, q, fi, n = self.closest(p, k)
+    def signed(self, p, k=None, exact_within=None):
+        d, q, fi, n = self.closest(p, k, exact_within=exact_within)
         s = np.sign(np.einsum('ij,ij->i', np.atleast_2d(p) - q, n))
         s[s == 0] = 1
         return d * s
 
-    def signed_full(self, p, k=None):
+    def signed_full(self, p, k=None, exact_within=None):
         """(signed distance, closest point, face id, outward unit normal of the closest face)"""
-        d, q, fi, n = self.closest(p, k)
+        d, q, fi, n = self.closest(p, k, exact_within=exact_within)
         s = np.sign(np.einsum('ij,ij->i', np.atleast_2d(p) - q, n)); s[s == 0] = 1
         return d * s, q, fi, self.fn[fi]
 

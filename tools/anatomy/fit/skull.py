@@ -1,20 +1,36 @@
 """Skull group: places every cranial and facial bone, the mandible, the auditory ossicles, the teeth, the hyoid (female
 only; the male HRA body has VH_M_hyoid) and the pituitary gland (Z-Anatomy, CC BY-SA 4.0) into each HRA head.
 
-    python3 fit/skull.py [male|female|all]
+    python3 fit/skull.py [male|female|all] [--rebuild] [--reuse] [--render-only]
 
 Method (per body):
  1. Head warp (Z-Anatomy -> HRA): one thin-plate spline fitted to paired surfaces
       - brain: Z-Anatomy brain outer hull (cerebrum / cerebellum / brainstem) <-> Allen brain outer hull, matched
-        label-wise by non-rigid ICP (no sliding of cerebellum onto occipital lobe),
+        label-wise by non-rigid ICP (no sliding of cerebellum onto occipital lobe), targets 1 mm outside the Allen hull,
       - eyes: Z-Anatomy eyeballs placed rigidly on the HRA eyeball centres and axes (orbit keeps its own size),
       - C1, C2, C3 and the thyroid cartilage (per-structure similarity ICP + projection, as fit.common does),
+      - optic chiasm and optic nerves (sella / chiasmatic sulcus / optic canals),
       - skin: Z-Anatomy face / scalp skin regions <-> HRA skin above the chin (non-rigid ICP inside the full warp).
- 2. Joint seating: occipital condyles onto the HRA C1 superior facets (smooth local correction).
- 3. Collision refinement with a smooth Gaussian displacement field shared by all skull bones (keeps their shape and
-    contacts): brain off the inner table, eyes off the orbital walls, bone inside the skin with a minimum soft tissue.
- 4. Mandible + lower teeth seated in the mandibular fossae / occlusion checked; pituitary checked in the sella.
- 5. Measurements (report.json), QA renders, write_group().
+ 2. Mandible + lower teeth seated rigidly in the mandibular fossae on the warped skull (smallest rotation about the
+    bicondylar axis + sagittal shift giving a >= 0.8 mm joint space without upper/lower tooth interpenetration).
+ 3. Collision refinement with a smooth coarse-to-fine Gaussian displacement field shared by all skull bones, teeth and
+    the pituitary (keeps their shapes and contacts): brain off the inner table, eyes off the orbital walls, orbital
+    contents clear of the orbital walls, bone inside the skin with a minimum soft tissue (the brain wins where the
+    Allen brain lies closer to the skin than bone + gap + scalp allow), occipital condyles onto the HRA C1 superior
+    facets, the gland body below the HRA optic chiasm (the sella region moves down with it).
+ 4. The jaw seating re-checked after the refinement (small correction), measurements (report.json), QA renders,
+    write_group().
+
+Head deformation export (for the vessels group and anything else that must follow the fitted skull):
+
+    from fit.skull import head_map
+    f = head_map(sex)                  # callable: Z-Anatomy points (n, 3) in metres -> HRA head coordinates
+    g = head_map(sex, mandible=True)   # the same plus the rigid jaw seating, for structures carried by the mandible
+
+head_map = head warp (work/head_warp.npz) followed by the refinement field (work/field.npz); the jaw seating is in
+work/mandible_seat.json (pre-refinement and post-refinement rigid transforms x' = R x + t). It is exact for the placed
+skull: head_map(sex)(Z-Anatomy vertex) reproduces each placed cranial vertex. Accuracy for soft structures follows
+the warp (about 1-3 mm near the brain, eyes, skin and upper cervical spine; worse far from them).
 """
 import os, sys, json, time, re
 import numpy as np
@@ -294,9 +310,10 @@ def load_za(sex):
 
 
 # ------------------------------------------------------------------------------------------------ refinement
-REF = dict(gap_brain=0.0016, soft_min=0.0034, soft_max_vault=0.0095, eye_clear=0.0010, condyle_gap=0.0015, ball=0.005,
-           sigma=0.012, sigma_fine=0.006, ridge=1e-3, iters=4, iters_fine=4, w_brain=3.0, w_brain_out=5.0, w_skin_out=8.0, w_skin=2.0, w_skin_far=2.0,
-           w_eye=3.0, w_condyle=3.0, w_keep=0.6, max_step=0.0015, skin_hard=0.0012, orbit_clear=0.0003, soft_min_nasal=0.0020)
+REF = dict(gap_brain=0.0016, soft_min=0.0038, soft_max_vault=0.0090, eye_clear=0.0010, condyle_gap=0.0015, ball=0.005,
+           sigma=0.012, sigma_fine=0.006, ridge=1e-3, iters=4, iters_fine=6, w_brain=3.0, w_brain_out=5.0, w_skin_out=8.0, w_skin=2.0, w_skin_far=3.0,
+           w_eye=3.0, w_condyle=3.0, w_keep=0.6, max_step=0.0015, skin_hard=0.0012, orbit_clear=0.0005, w_orbit=4.0, soft_min_nasal=0.0033,
+           pit_gap=0.0015, pit_r=0.009, w_pit=3.0)
 
 
 def voxel_subsample(p, h):
@@ -316,7 +333,7 @@ class MultiField:
         return out
 
 
-def refine(sex, Wz, Z, T, L, M, zsk, cfg=REF, log=log):
+def refine(sex, Wz, Z, T, L, M, zsk, cfg=REF, log=log, pre=None):
     """Smooth correction field D (in head-warp space) so that the brain clears the inner table, the eyes clear the
     orbital walls, bone and teeth stay inside the skin with a minimum soft-tissue cover (and the scalp over the vault
     does not exceed the upper bound), and the occipital condyles rest on the C1 facets. Gaussian fields (a coarse
@@ -325,7 +342,8 @@ def refine(sex, Wz, Z, T, L, M, zsk, cfg=REF, log=log):
     bones = [n for n in Z if Z[n][2] == 'skel_skull' and not re.match(r'(malleus|incus|stapes|hyoid)', n)]
     teeth = [n for n in Z if Z[n][2] == 'teeth']
     cranium = [n for n in bones if n != 'mandible']
-    V0 = {n: Wz(Z[n][0]) for n in Z}
+    pre = pre or (lambda n, y: y)  # e.g. the mandible seated in its fossae before the refinement
+    V0 = {n: pre(n, Wz(Z[n][0])) for n in Z}
     F = {n: Z[n][1] for n in Z}
     S0, own = [], []
     for n in bones + teeth:
@@ -337,6 +355,14 @@ def refine(sex, Wz, Z, T, L, M, zsk, cfg=REF, log=log):
     is_cran = np.r_[is_cran, np.ones(len(cond0), bool)]
     # the nasal dorsum has only 2-3 mm of soft tissue over the nasal bones (rhinion): a lower minimum there
     is_nasal = np.r_[np.isin(own, ['nasal_bone_l', 'nasal_bone_r']), np.zeros(len(cond0), bool)]
+    # the pituitary gland body rides with the sella: its samples are controlled too (kept below the optic chiasm)
+    pit0 = np.concatenate([V0['adenohypophysis'][L['pit_body_Adenohypophysis']], V0['neurohypophysis'][L['pit_body_Neurohypophysis']]])
+    pit0 = pit0[voxel_subsample(pit0, 0.0015)]
+    n_bone = len(S0)
+    S0 = np.concatenate([S0, pit0]); is_pit = np.r_[np.zeros(n_bone, bool), np.ones(len(pit0), bool)]
+    is_cond = np.r_[is_cond, np.zeros(len(pit0), bool)]; is_cran = np.r_[is_cran, np.zeros(len(pit0), bool)]
+    is_nasal = np.r_[is_nasal, np.zeros(len(pit0), bool)]
+    ch_low = T.chiasm[0]
     D = MultiField()
     plug0 = Wz(L['fm_plug'][0]); rim0 = Wz(L['fm_rim'])
     bp, bn = T.brain_p, T.brain_n
@@ -371,29 +397,38 @@ def refine(sex, Wz, Z, T, L, M, zsk, cfg=REF, log=log):
             vb = above & (need > 0)
             fdisp = field(S0)  # this stage's own displacement: targets are increments of it
             tgt = fdisp.copy(); wts = np.full(len(S0), cfg['w_keep']); best = np.zeros(len(S0))
+            ci = np.flatnonzero(is_cran); tr = cKDTree(S[ci])
+            column = np.zeros(len(S0), bool)
             if vb.any():
-                ci = np.flatnonzero(is_cran); tr = cKDTree(S[ci])
                 for kk, js in zip(np.flatnonzero(vb), tr.query_ball_point(bp[vb], 0.006)):
                     if not js: continue
                     js = ci[np.asarray(js)]; js = js[need[kk] > best[js]]
                     tgt[js] = fdisp[js] + need[kk] * bn[kk]; best[js] = need[kk]
                     wts[js] = np.maximum(wts[js], cfg['w_brain_out'] if not inside[kk] else cfg['w_brain'])
+                # the whole bone column over a brain point that needs room (inner and outer table, within 9 mm in a 60
+                # degree cone along the brain's outward normal): the scalp minimum must not push it back in
+                for kk, js in zip(np.flatnonzero(vb), tr.query_ball_point(bp[vb], 0.009)):
+                    if not js: continue
+                    js = ci[np.asarray(js)]; dv = S[js] - bp[kk]
+                    column[js[dv @ bn[kk] > 0.5 * np.linalg.norm(dv, axis=1)]] = True
             ss = T.skin_signed(S)
             _, js_ = T.skin_signed.tree.query(S); nsk = T.skin_signed.n[js_]
             # where the brain needs the bone to move out (the Allen brain lies within a few mm of the skin) the brain
-            # wins over the soft-tissue minimum; only bone closer than `skin_hard` to the skin is pulled back in
-            relaxed |= best > 0
+            # wins over the soft-tissue minimum; only bone closer than `skin_hard` to the skin is pulled back in. In the
+            # coarse stage this is decided afresh each iteration (early, widespread brain contacts must not switch the
+            # scalp minimum off for good); in the fine stage it is sticky, so brain and scalp do not take turns
+            relaxed = (relaxed if si > 0 else np.zeros(len(S0), bool)) | (best > 0) | column
             smin = np.where(relaxed, cfg['skin_hard'], np.where(is_nasal, cfg['soft_min_nasal'], cfg['soft_min']))
             vs = ss > -smin
             tgt[vs] = fdisp[vs] - np.minimum(ss[vs] + smin[vs], cfg['max_step'])[:, None] * nsk[vs]
             wts[vs] = np.where(ss[vs] > -cfg['skin_hard'], cfg['w_skin_out'], cfg['w_skin'])
             # orbital contents (extraocular muscles, optic nerves, ophthalmic vessels): orbital walls clear them
-            near_orb = np.flatnonzero(np.min([np.linalg.norm(S - E['c'], axis=1) for E in T.eyes.values()], axis=0) < 0.045)
+            near_orb = np.flatnonzero((np.min([np.linalg.norm(S - E['c'], axis=1) for E in T.eyes.values()], axis=0) < 0.045) & ~is_pit)
             so_ = T.orbit_signed(S[near_orb]); _, ko = T.orbit_signed.tree.query(S[near_orb]); no_ = T.orbit_signed.n[ko]
             # only near the contents' surfaces (the sign of a thin tube's signed distance is unreliable far from it)
             bado = (so_ < cfg['orbit_clear']) & (so_ > -0.002)
             jo = near_orb[bado]
-            tgt[jo] = fdisp[jo] + np.minimum(cfg['orbit_clear'] - so_[bado], cfg['max_step'])[:, None] * no_[bado]; wts[jo] = np.maximum(wts[jo], cfg['w_eye'])
+            tgt[jo] = fdisp[jo] + np.minimum(cfg['orbit_clear'] - so_[bado], cfg['max_step'])[:, None] * no_[bado]; wts[jo] = np.maximum(wts[jo], cfg['w_orbit'])
             # scalp over the vault thicker than the upper bound (not over muscle attachment areas): pull bone outward
             HF = G.HardField([cur[n] for n in bones + teeth], spacing=0.0005)
             t = HF.march(hv[vault_all] - vn[vault_all] * 1e-4, -vn[vault_all], tmax=0.03)
@@ -419,10 +454,18 @@ def refine(sex, Wz, Z, T, L, M, zsk, cfg=REF, log=log):
             face = np.abs(s1) <= np.quantile(np.abs(s1), 0.5)
             jc, s1, n1 = jc[face], s1[face], n1[face]
             tgt[jc] = fdisp[jc] + (cfg['condyle_gap'] - s1)[:, None] * n1; wts[jc] = cfg['w_condyle']
+            # pituitary in the sella below the optic chiasm (diaphragma sellae + chiasmatic cistern between them): where the
+            # gland body's top is less than `pit_gap` below the chiasm's lowest point (head axis), the sella region and the
+            # gland move down together
+            jp = np.flatnonzero(is_pit); top = float((S[jp] @ fmn).max()); pit_gap = float((ch_low @ fmn).min()) - top
+            if pit_gap < cfg['pit_gap']:
+                pc = S[jp].mean(0)
+                jsl = np.flatnonzero((np.linalg.norm(S - pc, axis=1) < cfg['pit_r']) & ~is_cond)
+                tgt[jsl] = fdisp[jsl] - min(cfg['pit_gap'] - pit_gap, cfg['max_step']) * fmn; wts[jsl] = np.maximum(wts[jsl], cfg['w_pit'])
             stat = dict(it=it, sigma_mm=sigma * 1000, brain_viol_1p6=round(float(vb[above].mean()), 4),
                         brain_within_1mm=round(float(((sgn < 0.001) & above).mean()), 4), brain_out=int((above & ~inside).sum()),
                         min_gap_mm=round(float(sgn[above].min() * 1000), 2), skin_viol=int(vs.sum()), bone_out=int((ss > 0).sum()),
-                        vault_thick=int(far.sum()), eye_viol=n_eye, orbit_viol=int(bado.sum()), condyle_gap_mm=round(float(np.mean(np.abs(s1)) * 1000), 2),
+                        vault_thick=int(far.sum()), eye_viol=n_eye, orbit_viol=int(bado.sum()), relaxed=int(relaxed.sum()), condyle_gap_mm=round(float(np.mean(np.abs(s1)) * 1000), 2), pit_below_chiasm_mm=round(pit_gap * 1000, 2),
                         max_disp_mm=round(float(np.linalg.norm(disp, axis=1).max() * 1000), 2))
             hist.append(stat); log(sex, 'refine', stat); it += 1
             if si == len(stages) - 1 and k == n_it: break
@@ -459,10 +502,12 @@ def render_qa(sex, P, T, outdir, prefix='qa', extra=()):
     cams = {'front': dict(dir=(0, 0.05, 1), target=c - [0, 0.03, 0], radius=R), 'side': dict(dir=(1, 0.05, 0), target=c - [0, 0.03, 0], radius=R),
             'back': dict(dir=(0, 0.05, -1), target=c - [0, 0.03, 0], radius=R), 'top': dict(dir=(0, 1, 0.001), up=(0, 0, -1), target=c, radius=0.13)}
     files = render_views(items_skin + core, cams, os.path.join(outdir, prefix))
-    # brain + eyes inside the ghosted skull (bone ghosted)
-    cams2 = {'brain-side': dict(dir=(1, 0.05, 0.2), target=c, radius=0.14), 'brain-front': dict(dir=(0, 0.05, 1), target=c, radius=0.14)}
+    # the same four views with the bone ghosted too: brain, eyes and pituitary inside the skull inside the skin
+    cams2 = {'brain-front': cams['front'], 'brain-side': cams['side'], 'brain-back': cams['back'], 'brain-top': cams['top']}
     files += render_views([dict(mesh=brain, color=COLORS['brain']), dict(mesh=eyes, color=COLORS['eyes']), dict(mesh=pit, color=COLORS['pituitary']),
-                           dict(mesh=bones, color=COLORS['bone'], opacity=0.35), dict(mesh=mand, color=COLORS['mandible'], opacity=0.35)],
+                           dict(mesh=c12, color=COLORS['c1']), dict(mesh=cord, color=COLORS['cord']),
+                           dict(mesh=bones, color=COLORS['bone'], opacity=0.35), dict(mesh=mand, color=COLORS['mandible'], opacity=0.35),
+                           dict(mesh=teeth, color=COLORS['teeth'], opacity=0.5), dict(mesh=hs, color=COLORS['skin'], opacity=0.15)],
                           cams2, os.path.join(outdir, prefix))
     # midline sagittal cut through the pituitary: brain in the cranium, pituitary in the sella
     pc = pit[0].mean(0)
@@ -523,7 +568,8 @@ def seat_mandible(P, L, fmn, js_target=0.0008, pen_tol=0.0002, log=log):
         return js, pen
 
     js0, pen0 = evaluate(0.0, 0.0, 0.0)
-    info = dict(before=dict(min_joint_space_mm=round(js0 * 1000, 2), teeth_penetration_mm=round(pen0 * 1000, 2)))
+    info = dict(before=dict(min_joint_space_mm=round(js0 * 1000, 2), teeth_penetration_mm=round(pen0 * 1000, 2)),
+                transform=dict(R=np.eye(3).tolist(), t=[0.0, 0.0, 0.0]))
     if js0 >= js_target and pen0 <= pen_tol:
         info['result'] = 'already seated'; return P, info
     best = None; best_js = (-1.0, None)
@@ -544,6 +590,9 @@ def seat_mandible(P, L, fmn, js_target=0.0008, pen_tol=0.0002, log=log):
         motion, th, dy, dz, js, pen = best
     for n in ['mandible'] + lower:
         v, f, part = P[n]; P[n] = (move(v, th, dy, dz), f, part)
+    # the same rigid move as x' = R x + t (head_map(sex, mandible=True) applies it)
+    Rm = rotation_axis(lat, th); tm = piv - Rm @ piv + dy * up + dz * fw
+    info['transform'] = dict(R=Rm.tolist(), t=tm.tolist())
     gap_inc = float(np.linalg.norm(move(inc[None], th, dy, dz)[0] - inc))
     info.update(result='seated', rotation_deg=round(float(np.degrees(th)), 2), down_mm=round(float(-dy * 1000), 2), forward_mm=round(float(dz * 1000), 2),
                 lower_incisor_moved_mm=round(gap_inc * 1000, 2),
@@ -594,6 +643,35 @@ def shape_metrics(Z, P, P_warp=None):
     return out
 
 
+def vault_feasibility(sex, P, T, aux):
+    """How much scalp the HRA data leave over the vault: along each measured vault ray, the distance from the skin to
+    the Allen brain, minus a 1 mm brain gap, minus the placed bone's thickness along the ray. Independent of where the
+    bone sits between brain and skin, so it bounds what any placement of this skull can reach."""
+    if 'soft_vault' not in aux: return None
+    p, th, dirs = aux['soft_vault']
+    bones = [n for n in P if P[n][2] in ('skel_skull', 'teeth') and not re.match(r'(malleus|incus|stapes|hyoid)', n)]
+    HB = G.HardField([m for m, _ in hra_brain_items(sex)], spacing=0.0006)
+    tb = HB.march(p, dirs, tmax=0.04)
+    HF = G.HardField([P[n][:2] for n in bones], spacing=0.0004)
+    t2 = HF.march(p + dirs * (th[:, None] / 1000 + 0.001), dirs, tmax=0.03)
+    ok = np.isfinite(tb) & np.isfinite(t2)
+    thick = (th[ok] / 1000 + 0.001 + t2[ok] + HF.thresh) * 1000
+    room = tb[ok] * 1000
+    bound = room - 1.0 - thick
+    bound4 = room - 1.0 - np.minimum(thick, 4.0)
+    dsk = -T.skin_signed(T.brain_p)
+    q = lambda x, a: round(float(np.quantile(x, a)), 1)
+    return dict(n_rays=int(ok.sum()),
+                skin_to_allen_brain_along_ray_mm=dict(p1=q(room, 0.01), p5=q(room, 0.05), p25=q(room, 0.25), median=q(room, 0.5)),
+                bone_thickness_along_ray_mm=dict(p5=q(thick, 0.05), median=q(thick, 0.5)),
+                max_scalp_with_1mm_brain_gap_mm=dict(p5=q(bound, 0.05), p10=q(bound, 0.10), median=q(bound, 0.5), fraction_below_3mm=round(float((bound < 3).mean()), 3)),
+                max_scalp_with_1mm_gap_and_bone_thinned_to_4mm=dict(p5=q(bound4, 0.05), fraction_below_3mm=round(float((bound4 < 3).mean()), 3)),
+                allen_brain_samples_closer_to_skin_than_mm={str(k): int((dsk < k / 1000).sum()) for k in (3, 4, 5, 6, 8)},
+                n_allen_brain_samples=int(len(dsk)),
+                note='the Allen brain parcels reach within a few mm of the HRA scalp (mostly posterolateral parietal / occipital): '
+                     'there a 3 mm scalp, the bone and a 1 mm brain gap cannot all fit; the fit gives the brain priority')
+
+
 def load_field(sex):
     """The cached collision-refinement field of a body (MultiField), or None."""
     fpath = os.path.join(work_dir(sex), 'field.npz')
@@ -605,15 +683,26 @@ def load_field(sex):
     return D
 
 
-def head_map(sex):
-    """Callable mapping Z-Anatomy points (metres) to this body's head as the skull was placed: the head warp followed by
-    the skull's collision-refinement field (falls back to the warp alone when no field is cached). For structures that
-    must follow the fitted skull (vessels through the skull base foramina, cranial nerves, facial muscles). The mandible
-    was additionally seated by a small rigid move (report.json: mandible_seating), not included here."""
+def head_map(sex, mandible=False):
+    """Callable mapping Z-Anatomy points (metres, (n, 3)) to this body's head exactly as the skull was placed: the head
+    warp followed by the skull's collision-refinement field (falls back to the warp alone when no field is cached).
+    For structures that must follow the fitted skull (vessels through the skull-base foramina and canals, cranial
+    nerves, facial muscles, meninges). mandible=True also applies the rigid seating of the mandible and lower teeth in
+    the mandibular fossae (work/mandible_seat.json): use it for structures carried by the mandible (inferior alveolar
+    and mental vessels, submandibular structures attached to the jaw)."""
     W, _ = build_head_warp(sex)
     D = load_field(sex)
-    if D is None: return W
-    return lambda x: (lambda y: y + D(y))(W(np.asarray(x, float)))
+    f = W if D is None else (lambda x: (lambda y: y + D(y))(W(np.asarray(x, float))))
+    if not mandible: return f
+    sp = os.path.join(work_dir(sex), 'mandible_seat.json')
+    if not os.path.exists(sp): return f
+    tr = json.load(open(sp))
+    R0, t0 = np.array(tr['pre']['R']), np.array(tr['pre']['t']); R1, t1 = np.array(tr['post']['R']), np.array(tr['post']['t'])
+    def g(x):
+        y = W(np.asarray(x, float)) @ R0.T + t0
+        if D is not None: y = y + D(y)
+        return y @ R1.T + t1
+    return g
 
 
 def place_all(Z, Wfull):
@@ -638,23 +727,41 @@ def run(sex, argv, L, zsk):
     log(sex, 'targets ready', round(time.time() - t0))
     hist = []
     fpath = os.path.join(work_dir(sex), 'field.npz')
+    # 1. the mandible (with the lower teeth) seated in the mandibular fossae on the warped skull, before the refinement,
+    #    so that the soft-tissue and occlusion terms see the jaw where it will stay
+    P0 = place_all(Z, W)
+    rim = W(L['fm_rim']); _, _, Vt = np.linalg.svd(rim - rim.mean(0)); fmn = Vt[2] if Vt[2][1] > 0 else -Vt[2]
+    P0, seat0 = seat_mandible(P0, L, fmn)
+    R0, t0_ = np.array(seat0['transform']['R']), np.array(seat0['transform']['t'])
+    jaw = set(['mandible'] + [n for n in Z if n.startswith('lower_')])
+    pre = lambda n, y: y @ R0.T + t0_ if n in jaw else y
     if '--warp-only' in argv:
-        Wfull = W
+        D = MultiField()
+    elif '--reuse' in argv and os.path.exists(fpath):
+        D = load_field(sex); hist = list(np.load(fpath, allow_pickle=True)['hist'])
     else:
-        if '--reuse' in argv and os.path.exists(fpath):
-            D = load_field(sex); hist = list(np.load(fpath, allow_pickle=True)['hist'])
-        else:
-            D, hist = refine(sex, W, Z, T, L, M, zsk)
-            np.savez(fpath, n=len(D.fields), hist=np.array(hist, dtype=object), **{f'c{k}': f_.c for k, f_ in enumerate(D.fields)},
-                     **{f's{k}': f_.sigma for k, f_ in enumerate(D.fields)}, **{f'w{k}': f_.w for k, f_ in enumerate(D.fields)})
-        Wfull = lambda x, W=W, D=D: (lambda y: y + D(y))(W(x))
-    P = place_all(Z, Wfull)
+        D, hist = refine(sex, W, Z, T, L, M, zsk, pre=pre)
+        np.savez(fpath, n=len(D.fields), hist=np.array(hist, dtype=object), **{f'c{k}': f_.c for k, f_ in enumerate(D.fields)},
+                 **{f's{k}': f_.sigma for k, f_ in enumerate(D.fields)}, **{f'w{k}': f_.w for k, f_ in enumerate(D.fields)})
+    Wfull = lambda x, W=W, D=D: (lambda y: y + D(y))(W(x))
+    P = {}
+    for n, (v, f, part, _) in Z.items():
+        y = pre(n, W(v)); P[n] = (y + D(y), f, part)
+    # 2. the refinement field moves the condyles and the fossae almost equally: re-check the seating (small correction)
     rim = Wfull(L['fm_rim']); _, _, Vt = np.linalg.svd(rim - rim.mean(0)); fmn = Vt[2] if Vt[2][1] > 0 else -Vt[2]
-    P, seat = seat_mandible(P, L, fmn)
+    P, seat1 = seat_mandible(P, L, fmn)
+    seat = dict(before_refinement=seat0, after_refinement=seat1)
+    json.dump(dict(pre=seat0['transform'], post=seat1['transform']), open(os.path.join(work_dir(sex), 'mandible_seat.json'), 'w'))
     log(sex, 'placed', round(time.time() - t0))
     crits, det, aux = M.measure(sex, P, T, L, Wfull, zsk, log=log)
     det['hyoid_method_check'] = hyoid_check(sex, Wfull, T)
-    det['bone_shape'] = shape_metrics(Z, P, place_all(Z, W))
+    det['soft_tissue_vault_feasibility'] = vault_feasibility(sex, P, T, aux)
+    det['inventory'] = dict(cranial_and_facial_bones=sum(1 for n in Z if Z[n][2] == 'skel_skull' and not re.match(r'(malleus|incus|stapes|hyoid|mandible)', n)),
+                            mandible=1, ossicles=sum(1 for n in Z if re.match(r'(malleus|incus|stapes)', n)), hyoid=int('hyoid_bone' in Z),
+                            teeth=sum(1 for n in Z if Z[n][2] == 'teeth'), pituitary_parts=sum(1 for n in Z if Z[n][2] == 'pituitary'),
+                            note='teeth: the full Z-Anatomy permanent dentition (incisors, canines, premolars, first and second molars; '
+                                 'the source has no third molars). Hyoid placed for the female only (the male HRA body has VH_M_hyoid).')
+    det['bone_shape'] = shape_metrics(Z, P, P0)
     base_path = os.path.join(work_dir(sex), 'za_baseline.json')
     if os.path.exists(base_path):
         base = json.load(open(base_path))

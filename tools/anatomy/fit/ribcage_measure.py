@@ -62,9 +62,12 @@ def ribs_in_lungs(ribs, lungs, zones=None, overlap=None):
         out['outside_conflict_zone'] = dict(inside_fraction=crit(round(f2 * 100, 3), 0.5, f2 < 0.005, unit='% of rib surface outside the zone'),
                                             deepest=crit(mm(d2), 1.0, d2 <= 0.001), zone_share_pct=round(float(allz.mean() * 100), 2))
         if overlap:
-            out['conflict'] = dict(note='The HRA lung meshes overlap the HRA vertebrae themselves (no real lung can enter bone). A rib seated on '
-                                        'its costovertebral and costotransverse joints there cannot be outside the lung, so rib surface within '
-                                        '15 mm of an overlapped vertebra, on the overlapped side, is reported separately.',
+            out['conflict'] = dict(note='The HRA lung meshes overlap the HRA vertebrae themselves (no real lung can enter bone) and fill the '
+                                        'paravertebral gutter up to the transverse processes, where the rib necks lie. A rib seated on its '
+                                        'costovertebral and costotransverse joints there cannot be outside the lung, so the joint segment (head, '
+                                        'neck and tubercle, up to 10 mm past the tubercle; ribs 11-12: 30 mm past the head) of ribs at '
+                                        'overlapped levels (T(n-1), T(n) or T(n+1) on that side) is reported separately; the rest of every rib '
+                                        'must meet the criterion.',
                                    lung_into_vertebra_mm={f'{k[0]}{"L" if k[1] == "l" else "R"}': mm(v, 1) for k, v in sorted(overlap.items())})
     out['per_rib'] = per
     return out
@@ -208,3 +211,19 @@ def discs(disc_meshes, levels, verts):
     return dict(ok=bool(ok_all), levels=len(levels), present=int(sum(1 for o in out.values() if o.get('present'))),
                 penetration=crit(mm(worst_pen), 0.5, worst_pen <= 0.0005), endplate_gap=crit(mm(worst_gap), 1.5, worst_gap <= 0.0015, measure='p95 over each end plate'),
                 per_level=out)
+
+
+def lung_at_joints(ribgeoms, ribs, verts, lungs):
+    """Evidence for the paravertebral conflict: signed distance (mm) from the HRA lung surface to the vertebral joint
+    surfaces each rib articulates with (the vertebra's closest points to the rib's head and tubercle facets).
+    Negative: the lung covers the joint surface itself; below ~6 mm (a rib neck's thickness) the lung fills the
+    space the head or neck must occupy."""
+    out = {}
+    for key, rg in ribgeoms.items():
+        n, s = key; v = ribs[key][0]; e = {}
+        for fk, vk in (('head_lo', f'T{n}'), ('head_up', f'T{n - 1}'), ('tub', f'T{n}')):
+            if fk not in rg.facets or vk not in verts: continue
+            q, _ = closest_on_mesh(*verts[vk].mesh, v[rg.facets[fk][0]], k=12)
+            e[{'head_lo': 'head', 'head_up': 'head_upper', 'tub': 'tubercle'}[fk]] = mm(signed(lungs, q).min(), 1)
+        out[f'{n}{s}'] = e
+    return out

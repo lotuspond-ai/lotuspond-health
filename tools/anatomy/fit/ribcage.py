@@ -32,13 +32,23 @@ from fit.ribcage_data import warped, targets, cache_dir, out_dir, log, ORD  # no
 from fit import ribcage_ribs as RB  # noqa: E402
 from fit import ribcage_discs as DS  # noqa: E402
 from fit import ribcage_measure as M  # noqa: E402
+from fit.ribcage_data import Part  # noqa: E402
+from lib.register import umeyama  # noqa: E402
 
 GROUP = 'ribcage'
 SIDE_SIGN = {'l': 1.0, 'r': -1.0}
 RIB_OBSTACLES = [('lungs', RB.LUNG_CLEAR), ('heart', RB.ORGAN_CLEAR), ('liver', RB.ORGAN_CLEAR), ('spleen', RB.ORGAN_CLEAR),
                  ('kidneys', RB.ORGAN_CLEAR), ('aorta', 0.001)]
 CART_OBSTACLES = [('lungs', RB.LUNG_CLEAR), ('heart', 0.002), ('liver', RB.ORGAN_CLEAR)]
-STERNUM_CLEAR = dict(heart=0.0035, lungs=0.0012, liver=0.0015, skin=0.004)
+STERNUM_CLEAR = dict(heart=0.0035, lungs=0.0005, liver=0.0015, skin=0.004)
+
+
+# ------------------------------------------------------------------------------------------------ body scale
+def warp_scale(sex):
+    """The trunk warp's global similarity scale (Z-Anatomy -> HRA body): the size every placed bone keeps (the arms
+    group scales the clavicles and scapulae by the same number)."""
+    from fit.common import FIT
+    return float(np.load(os.path.join(FIT, sex, 'warp-trunk.npz'))['s'])
 
 
 # ------------------------------------------------------------------------------------------------ stage 1: ribs
@@ -63,19 +73,79 @@ def rib_geoms(sex, ZA):
     return out
 
 
-def fit_ribs(sex, W, RG, T, verts, overlap):
+STRETCH_RANGE = (0.85, 1.20)      # true ribs: length within this factor of the body-scale Z-Anatomy rib
+
+
+SYM_WEIGHT = 1.0     # mm^2 of cartilage-chord error per (% of left/right rib length difference)^2
+
+
+def chain_stretch_pair(cands, w_sym=SYM_WEIGHT):
+    """Joint choice of the left and right stretch at one level: each side's chain cost plus a bilateral-symmetry
+    penalty on the length difference (ribs of one level are nearly equal in length)."""
+    (sl, cl), (sr, cr) = cands['l'], cands['r']
+    tot = cl[:, None] + cr[None, :] + w_sym * ((sl[:, None] - sr[None, :]) * 100) ** 2
+    i, j = np.unravel_index(np.argmin(tot), tot.shape)
+    return dict(l=float(sl[i]), r=float(sr[j]))
+
+
+def chain_stretch(place, rg, e, ZA, n, s, st_v, s0, default):
+    """Length factor of true rib n (1-7) that closes the spine-rib-cartilage-sternum chain: the rib's anterior end
+    (where its costal cartilage attaches) lands one natural cartilage length (Z-Anatomy's chord between the
+    cartilage's two joints, at body scale) from the cartilage's facet on the fitted sternum. A weak pull toward the
+    warp's own course length breaks ties."""
+    st_keys = ['manubrium', 'sternum_body', 'xiphoid']
+    q = np.concatenate([st_v[k][e['sternum_nn'][e['sternum_piece'] == pi]] for pi, k in enumerate(st_keys)]).mean(0)
+    cz = ZA[f'cart_{n}_{s}'][0]
+    chord = s0 * float(np.linalg.norm(cz[e['rib']].mean(0) - cz[e['sternum']].mean(0)))
+    tip_idx = np.unique(e['rib_nn'])
+    sts = np.arange(STRETCH_RANGE[0], STRETCH_RANGE[1] + 1e-9, 0.01); costs = []; ds = []
+    for st in sts:
+        v, _ = place(st)
+        d = float(np.linalg.norm(v[tip_idx].mean(0) - q)); ds.append(d)
+        costs.append(((d - chord) * 1000) ** 2 + 0.25 * ((st - default) * 100) ** 2)
+    return sts, np.array(costs), dict(cartilage_chord_target_mm=mm1(chord), tip_to_sternal_facet_mm={round(float(a), 2): mm1(b) for a, b in zip(sts, ds)})
+
+
+def fit_ribs(sex, W, ZA, RG, T, verts, overlap, C=None, st_v=None):
     out, info = {}, {}
     obstacles = [(T[k], c) for k, c in RIB_OBSTACLES if k in T]
     radial = RB.Radial(T['lungs'])
+    s0 = warp_scale(sex)
+    # the Z-Anatomy rib at body scale along the warped rib's course (the warp alone stretches ribs 0.7-1.5x); the true
+    # ribs' lengths close the chain to the sternum (both sides of a level together, nearly symmetric), the others
+    # follow the warp within 10%
+    places, stretch, chain = {}, {}, {}
     for key, rg in RG.items():
-        n, s = key
-        v = W[f'rib_{n}_{s}'][0]
-        zone = RB.conflict_zone(v, s, n, overlap, verts)
+        places[key], stretch[key] = RB.sweep(rg, ZA[f'rib_{key[0]}_{key[1]}'][0], W[f'rib_{key[0]}_{key[1]}'][0], s0, prepared=True)
+    if C is not None and st_v is not None:
+        for n in range(1, 8):
+            cands = {}
+            for s in 'lr':
+                sts, costs, ic = chain_stretch(places[(n, s)], RG[(n, s)], C[(n, s)], ZA, n, s, st_v, s0, stretch[(n, s)])
+                cands[s] = (sts, costs); chain[(n, s)] = ic
+            pick = chain_stretch_pair(cands)
+            for s in 'lr':
+                stretch[(n, s)] = pick[s]
+                ic = chain[(n, s)]; chain[(n, s)] = dict(cartilage_chord_target_mm=ic['cartilage_chord_target_mm'],
+                                                         tip_to_sternal_facet_mm=ic['tip_to_sternal_facet_mm'][round(pick[s], 2)])
+    for key, rg in RG.items():
+        n, s = key; place = places[key]; st = stretch[key]
+        v, i0 = place(st); i0.update(chain.get(key, {}))
+        # keep the rib inside the body: shorten it (down to 0.85) while its anterior quarter comes within SKIN_CLEAR + 1.5 mm of the skin
+        tip = rg.s > rg.length * 0.75
+        while -T['skin'].sdf(v[tip]).max() < RB.SKIN_CLEAR + 0.0015 and st > STRETCH_RANGE[0] + 1e-9:
+            st = max(STRETCH_RANGE[0], st - 0.01); v, i0b = place(st); i0 = dict(i0, **i0b, shortened_for_skin=True)
+        i0['stretch'] = round(st, 3)
+        zone = RB.conflict_zone(v, s, n, overlap, verts, rg=rg)
         v1, i1 = RB.seat(rg, v, verts, T['lungs'], skip=zone)
-        zone = RB.conflict_zone(v1, s, n, overlap, verts)
+        for _ in range(2):          # far-off facets (warp error at the joint): seat again from where the first pass ended
+            if RB.facet_gap(rg, v1, verts) <= 0.0022: break
+            v1, i1b = RB.seat(rg, v1, verts, T['lungs'], skip=zone)
+            i1 = dict(i1, second_pass=i1b)
+        zone = RB.conflict_zone(v1, s, n, overlap, verts, rg=rg)
         v2, i2 = RB.bend(v1, RB.rib_basis(rg.s, rg.length, rg.s_rigid + 0.004), obstacles, T['skin'], radial=radial, skip=zone)
         out[key] = v2
-        info[f'{n}{s}'] = dict(seat=i1, bend=i2)
+        info[f'{n}{s}'] = dict(sweep=i0, seat=i1, bend=i2)
         log(sex, f'rib {n}{s}: seat {i1["rot_deg"]:.1f} deg / {i1["shift_mm"]:.1f} mm, bend max {i2["max_mm"]:.1f} mm')
     return out, info
 
@@ -155,25 +225,67 @@ def fit_piece(v, T, obstacles, skin_clear, joint=None, centre=None, reg=(3.0, 0.
     return rigid(sol.x, c), sol.x
 
 
-def fit_sternum(sex, W, T, ST):
+MANUBRIUM_MAX_RMS = 0.012       # the arms group's rule (fit/arms_girdle.manubrium_placement), repeated here
+
+
+def rigid_inv(x, c):
+    R = Rotation.from_rotvec(x[:3]).as_matrix()
+    return lambda q: (np.asarray(q) - c - x[3:]) @ R + c
+
+
+def sternum_start(sex, W, ZA):
+    """Where the sternum starts, by the rule the arms group uses to seat the clavicles (fit/arms_girdle.py,
+    manubrium_placement): the trunk-warped manubrium when a shape-preserving placement at body scale comes within
+    12 mm (RMS) of it, otherwise Z-Anatomy's manubrium carried by the rigid motion (at body scale) of the upper
+    thoracic spine C7-T7, which the warp fits to ~1 mm. The body and xiphoid are Z-Anatomy's at body scale (the warp
+    has no anchor in front of the heart and distorts them: up to 1.5x in length and width): with the warped manubrium
+    they take the rigid placement nearest the warped body; otherwise they move with the upper spine like the
+    manubrium. Returns ({piece: vertices}, info)."""
+    s0 = warp_scale(sex)
+    mv = ZA['manubrium'][0]
+    S = umeyama(s0 * mv, W['manubrium'][0], scale=False)
+    rms = float(np.sqrt(((S(s0 * mv) - W['manubrium'][0]) ** 2).sum(1).mean()))
+    if rms <= MANUBRIUM_MAX_RMS:
+        Sb = umeyama(s0 * ZA['sternum_body'][0], W['sternum_body'][0], scale=False)
+        V = dict(manubrium=W['manubrium'][0].copy(), sternum_body=Sb(s0 * ZA['sternum_body'][0]), xiphoid=Sb(s0 * ZA['xiphoid'][0]))
+        how = 'trunk warp (manubrium); body and xiphoid at body scale, rigidly nearest the warped body'
+    else:
+        ks = ['za_C7'] + [f'za_T{i}' for i in range(1, 8)]
+        Gu = umeyama(s0 * np.concatenate([ZA[k][0] for k in ks]), np.concatenate([W[k][0] for k in ks]), scale=False)
+        V = {k: Gu(s0 * ZA[k][0]) for k in ('manubrium', 'sternum_body', 'xiphoid')}
+        how = 'upper thoracic spine C7-T7 at body scale (the warped manubrium is distorted)'
+    return V, dict(rule=how, body_scale=round(s0, 4), manubrium_warp_rigid_rms_mm=mm1(rms))
+
+
+def fit_sternum(sex, W, ZA, T, ST):
     """The sternum as an articulated chain: manubrium, body (hinged at the manubriosternal joint) and xiphoid
-    (hinged at the xiphisternal joint), each a rigid piece, fitted together so that all three clear the heart by 3.5 mm
-    and the lungs and liver by STERNUM_CLEAR, stay 4 mm inside the skin, and keep their joints closed. The manubrium is
-    anchored where the trunk warp puts it (the clavicles are seated there) and moves only as far as a clearance forces
-    it; the clavicular notches' displacement is reported."""
+    (hinged at the xiphisternal joint), each a rigid piece of Z-Anatomy's shape at body scale (sternum_start), fitted
+    together so that all three clear the heart by 3.5 mm and the lungs and liver by STERNUM_CLEAR, stay 4 mm inside
+    the skin, and keep their joints closed at Z-Anatomy's joint gaps. The manubrium stays where the arms group's rule
+    puts it (the clavicles are seated there) and moves only as far as a clearance forces it; the clavicular notches'
+    displacement is reported."""
     keys = ('manubrium', 'sternum_body', 'xiphoid')
-    V = {k: W[k][0] for k in keys}
+    s0 = warp_scale(sex)
+    V, start = sternum_start(sex, W, ZA)
+    F = {k: W[k][1] for k in keys}
     cen = {k: V[k].mean(0) for k in keys}
     sub = {k: np.arange(len(V[k]))[::2] for k in keys}
     obst = [(T['heart'], STERNUM_CLEAR['heart']), (T['lungs'], STERNUM_CLEAR['lungs']), (T['liver'], STERNUM_CLEAR['liver'])]
+    obst_bx = [(T['heart'], STERNUM_CLEAR['heart']), (T['lungs'], 0.0012), (T['liver'], STERNUM_CLEAR['liver'])]   # body, xiphoid
     soft = [(T['great_veins'], 0.001), (T['aorta'], 0.001)]          # not acceptance criteria: body and xiphoid only
-    # joint pairs from Z-Anatomy contacts, matched in the warped configuration
+    # joints: the Z-Anatomy contact patch of the lower piece, its gap there, and the partner's facing patch
     pairs = {}
     for a, b, jk in (('sternum_body', 'manubrium', 'body_to_manubrium'), ('xiphoid', 'sternum_body', 'xiphoid_to_body')):
-        idx = ST[jk][0]
-        nn = cKDTree(V[b]).query(V[a][idx])[1]
-        pairs[a] = (b, idx, nn)
-    reg = dict(manubrium=(0.5, 0.0003), sternum_body=(3.0, 0.003), xiphoid=(3.0, 0.003))
+        idx, gap = ST[jk]
+        d, _ = cKDTree(ZA[a][0][idx]).query(ZA[b][0]); pidx = np.flatnonzero(d < 0.0015)
+        off = s0 * (ZA[a][0][idx].mean(0) - ZA[b][0][pidx].mean(0))
+        pairs[a] = (b, idx, np.clip(gap * s0, 0, 0.0008), pidx, off, Part(V[b], F[b]))
+    # rotation limits (deg) about the body's transverse (x), vertical (y) and front-back (z) axes, and shift (m): the
+    # manubriosternal and xiphisternal joints flex and extend (a hinge about x); the sternum stays in the midline
+    # the manubrium is held near its start (the clavicles' notches) but may move the few mm a lung or skin clearance needs
+    held = start['rule'].startswith('trunk warp')        # the arms group's clavicles already sit on these notches
+    reg = dict(manubrium=((0.5, 0.5, 0.5), 0.0003) if held else ((3.0, 3.0, 3.0), 0.002),
+               sternum_body=((12.0, 2.0, 2.0), 0.002), xiphoid=((20.0, 4.0, 4.0), 0.003))
 
     def tfs(x):
         return {k: rigid(x[6 * i:6 * i + 6], cen[k]) for i, k in enumerate(keys)}
@@ -182,30 +294,59 @@ def fit_sternum(sex, W, T, ST):
         tf = tfs(x); r = []
         for i, k in enumerate(keys):
             P = tf[k](V[k][sub[k]])
-            for tgt, clear in obst + (soft if k != 'manubrium' else []):
-                w = 1.0 if (tgt, clear) in obst else 0.3
+            hard = obst if k == 'manubrium' else obst_bx
+            for tgt, clear in hard + (soft if k != 'manubrium' else []):
+                w = 1.0 if (tgt, clear) in hard else 0.3
                 r.append(w * np.maximum(clear - tgt.sdf(P), 0) / 0.0001)
             r.append(np.maximum(T['skin'].sdf(P) + STERNUM_CLEAR['skin'], 0) / 0.0001)
-            r.append(x[6 * i:6 * i + 3] / np.radians(reg[k][0])); r.append(x[6 * i + 3:6 * i + 6] / reg[k][1])
-        for a, (b, idx, nn) in pairs.items():
-            pa, pb = V[a][idx], V[b][nn]
-            r.append(((tf[a](pa) - tf[b](pb)) - (pa - pb)).ravel() / 0.0003 / np.sqrt(len(idx)) * 3)
+            r.append(x[6 * i:6 * i + 3] / np.radians(np.array(reg[k][0]))); r.append(x[6 * i + 3:6 * i + 6] / reg[k][1])
+        for a, (b, idx, gap, pidx, off, part) in pairs.items():
+            ib = keys.index(b)
+            q = rigid_inv(x[6 * ib:6 * ib + 6], cen[b])(tf[a](V[a][idx]))         # the lower piece's facet, in its partner's frame
+            r.append((part.unsigned(q) - gap) / 0.0003 / np.sqrt(len(idx)) * 4)
+            # facets centred on each other (no sliding off the joint)
+            ca = tf[a](V[a][idx]).mean(0); cb = tf[b](V[b][pidx]).mean(0)
+            r.append((ca - cb - off) / 0.002)
         return np.concatenate(r)
 
-    sol = optimize.least_squares(resid, np.zeros(18), x_scale=np.array(([0.02] * 3 + [0.002] * 3) * 3), max_nfev=600)
+    sol = optimize.least_squares(resid, np.zeros(18), x_scale=np.array(([0.02] * 3 + [0.002] * 3) * 3), max_nfev=800)
     tf = tfs(sol.x)
     out = {k: tf[k](V[k]) for k in keys}
     nl, nr = ST['notch_l'], ST['notch_r']
+    wm = W['manubrium'][0]
     P = V['manubrium'][::2]
-    warp_clear = {'heart': float(M.signed(T['heart'], P).min()), 'lungs': float(M.signed(T['lungs'], P).min()),
-                  'liver': float(M.signed(T['liver'], P).min()), 'skin': float(-M.signed(T['skin'], P).max())}
-    info = dict(manubrium=dict(warp_clearances_mm={k: mm1(v) for k, v in warp_clear.items()},
-                               notch_moved_mm=dict(left=mm1(np.linalg.norm(out['manubrium'][nl] - V['manubrium'][nl], axis=1).max()),
-                                                   right=mm1(np.linalg.norm(out['manubrium'][nr] - V['manubrium'][nr], axis=1).max())),
-                               rot_deg=round(float(np.degrees(np.linalg.norm(sol.x[:3]))), 2), shift_mm=mm1(np.linalg.norm(sol.x[3:6]))))
+    start_clear = {'heart': float(M.signed(T['heart'], P).min()), 'lungs': float(M.signed(T['lungs'], P).min()),
+                   'liver': float(M.signed(T['liver'], P).min()), 'skin': float(-M.signed(T['skin'], P).max())}
+    notch = lambda m, i: m[i].mean(0)
+    info = dict(start=start, manubrium=dict(
+        start_clearances_mm={k: mm1(v) for k, v in start_clear.items()},
+        notch_moved_by_fit_mm=dict(left=mm1(np.linalg.norm(out['manubrium'][nl] - V['manubrium'][nl], axis=1).max()),
+                                   right=mm1(np.linalg.norm(out['manubrium'][nr] - V['manubrium'][nr], axis=1).max())),
+        notch_vs_trunk_warp_mm=dict(left=mm1(np.linalg.norm(notch(out['manubrium'], nl) - notch(wm, nl))),
+                                    right=mm1(np.linalg.norm(notch(out['manubrium'], nr) - notch(wm, nr)))),
+        notch_centres_mm=dict(left=[mm1(c) for c in notch(out['manubrium'], nl)], right=[mm1(c) for c in notch(out['manubrium'], nr)]),
+        rot_deg=round(float(np.degrees(np.linalg.norm(sol.x[:3]))), 2), shift_mm=mm1(np.linalg.norm(sol.x[3:6]))))
     for i, k in enumerate(keys[1:], start=1):
         info[k] = dict(rot_deg=round(float(np.degrees(np.linalg.norm(sol.x[6 * i:6 * i + 3]))), 2), shift_mm=mm1(np.linalg.norm(sol.x[6 * i + 3:6 * i + 6])))
+    for a, (b, idx, gap, pidx, off, part) in pairs.items():
+        ib = keys.index(b)
+        q = rigid_inv(sol.x[6 * ib:6 * ib + 6], cen[b])(tf[a](V[a][idx]))
+        info[f'{a}_to_{b}_joint_gap_median_mm'] = mm1(np.median(part.unsigned(q)))
     return out, info
+
+
+def rib_lengths(RG, ribs_v, s0):
+    """Centreline length of each fitted rib against the body-scale Z-Anatomy rib, and left/right ratio per level."""
+    out, lens = {}, {}
+    for key, rg in RG.items():
+        C = RB._slab_centres(ribs_v[key], rg.s, rg.cl_s)
+        L = float(np.linalg.norm(np.diff(C, axis=0), axis=1).sum()); lens[key] = L
+        out[f'{key[0]}{key[1]}'] = dict(length_mm=mm1(L), ratio_to_body_scale=round(L / (s0 * rg.length), 3))
+    lr = {str(n): round(lens[(n, 'l')] / lens[(n, 'r')], 3) for n in range(1, 13)}
+    r = np.array([v['ratio_to_body_scale'] for v in out.values()])
+    return dict(note='length of the fitted rib along its centreline / Z-Anatomy rib at body scale (the trunk warp alone gives '
+                     '0.72-1.54); true ribs are sized within 0.85-1.20 to close the chain to the sternum, the others follow the '
+                     'warp within 0.9-1.1', range=[round(float(r.min()), 3), round(float(r.max()), 3)], left_over_right=lr, per_rib=out)
 
 
 def mm1(x):
@@ -233,34 +374,53 @@ def harmonic(f, n, fixed_idx, fixed_val):
     return u
 
 
-def fit_cartilages(sex, W, T, C, ribs_v, st_v):
+def fit_cartilages(sex, W, ZA, T, C, ribs_v, st_v):
+    """Costal cartilages: Z-Anatomy's shape at body scale, placed by its two joints and bent between them.
+    1. the rigid placement (body scale) that best puts both joint patches - the rib end and the sternum (1-7) or the
+       cartilage above (8-10) - on their partners as they are now fitted (each patch weighted equally)
+    2. a harmonic (smooth) displacement over the cartilage, prescribed at both patches, closes the two joints exactly
+       at Z-Anatomy's joint gaps (the cartilage lengthens or shortens smoothly between them)
+    3. the centreline bending of the ribs, windowed to vanish over both joint patches, clears lungs, heart and liver
+    The trunk warp alone distorts the cartilages 0.6-1.4x in length and to half their thickness, and on the female's
+    right side carries their sternal ends up to 11 cm from the midline."""
     out, info = {}, {}
+    s0 = warp_scale(sex)
     st_keys = ['manubrium', 'sternum_body', 'xiphoid']
     obstacles = [(T[k], c) for k, c in CART_OBSTACLES]
     for n in range(1, 11):
         for s in 'lr':
-            key = (n, s); v, f = W[f'cart_{n}_{s}']; e = C[key]
-            idx = [e['rib']]; val = [ribs_v[key][e['rib_nn']] - W[f'rib_{n}_{s}'][0][e['rib_nn']]]
+            key = (n, s); vz = ZA[f'cart_{n}_{s}'][0]; f = W[f'cart_{n}_{s}'][1]; e = C[key]
+            # joint patches: (cartilage vertex idx, partner's current vertices at the Z-Anatomy nearest vertex, Z-Anatomy offset)
+            pats = [(e['rib'], ribs_v[key][e['rib_nn']], vz[e['rib']] - ZA[f'rib_{n}_{s}'][0][e['rib_nn']])]
             if n <= 7:
                 for pi, k in enumerate(st_keys):
                     m = e['sternum_piece'] == pi
                     if m.any():
                         nn = e['sternum_nn'][m]
-                        idx.append(e['sternum'][m]); val.append(st_v[k][nn] - W[k][0][nn])
+                        pats.append((e['sternum'][m], st_v[k][nn], vz[e['sternum'][m]] - ZA[k][0][nn]))
             else:
                 nn = e['above_nn']
-                idx.append(e['above']); val.append(out[(n - 1, s)][nn] - W[f'cart_{n - 1}_{s}'][0][nn])
-            idx = np.concatenate(idx); val = np.concatenate(val)
-            idx, first = np.unique(idx, return_index=True); val = val[first]
-            u = harmonic(f, len(v), idx, val)
-            vh = v + u
+                pats.append((e['above'], out[(n - 1, s)][nn], vz[e['above']] - ZA[f'cart_{n - 1}_{s}'][0][nn]))
+            src = np.concatenate([s0 * vz[i] for i, _, _ in pats]); dst = np.concatenate([q for _, q, _ in pats])
+            w = np.concatenate([np.full(len(i), 1.0 / len(i)) for i, _, _ in pats])
+            S = umeyama(src, dst, scale=False, w=w)
+            v0 = S(s0 * vz)
+            R = S.R
+            idx = np.concatenate([i for i, _, _ in pats])
+            tgt = np.concatenate([q + s0 * o @ R.T for _, q, o in pats])
+            idx, first = np.unique(idx, return_index=True); tgt = tgt[first]
+            u = harmonic(f, len(vz), idx, tgt - v0[idx])
+            vh = v0 + u
             # bend between the two joints to clear lungs, heart and liver
             sarc, _, _ = RB.arc_length(vh, f, e['rib'])
             far = e['sternum'] if n <= 7 else e['above']
             Bf = RB.bar_basis(sarc, sarc.max(), spacing=0.012, end=0.006, s0=float(sarc[e['rib']].max()), s1=float(sarc[far].min()))
             vb, ib = RB.bend(vh, Bf, obstacles, T['skin'], sub=1)
             out[key] = vb
-            info[f'{n}{s}'] = dict(joint_motion_max_mm=mm1(np.linalg.norm(val, axis=1).max()), bend_max_mm=round(ib['max_mm'], 2))
+            # length change against Z-Anatomy at body scale (along the arc from the rib joint)
+            sz, _, _ = RB.arc_length(s0 * vz, f, e['rib'])
+            info[f'{n}{s}'] = dict(joint_closing_max_mm=mm1(np.linalg.norm(tgt - v0[idx], axis=1).max()), bend_max_mm=round(ib['max_mm'], 2),
+                                   length_ratio=round(float(sarc.max() / max(sz.max(), 1e-9)), 3))
     return out, info
 
 
@@ -290,7 +450,7 @@ def qa(sex, outputs, T, verts, out):
     items += [dict(mesh=lung_patches, color='#e8a0a0', opacity=0.22), dict(mesh=T['heart'].mesh, color='#c0392b', opacity=0.35),
               dict(mesh=T['liver'].mesh, color='#8e5b3a', opacity=0.25)]
     allv = np.concatenate([o['mesh'][0] for o in outputs if o['part'] != 'discs'])
-    c = 0.5 * (allv.min(0) + allv.max(0)); r = float(np.linalg.norm(allv.max(0) - allv.min(0)) / 2) * 0.62
+    c = 0.5 * (allv.min(0) + allv.max(0)); r = float(np.linalg.norm(allv.max(0) - allv.min(0)) / 2) * 0.78
     cams = dict(front=dict(dir=(0, 0.02, 1), target=c, radius=r), back=dict(dir=(0, 0.02, -1), target=c, radius=r),
                 left=dict(dir=(1, 0.02, 0), target=c, radius=r), oblique=dict(dir=(0.62, 0.3, 0.72), target=c, radius=r))
     files = render_views(items, cams, os.path.join(out, 'qa'))
@@ -317,18 +477,18 @@ def fit(sex, rebuild=False, render=True):
     from fit.ribcage_data import spine_lung_overlap, cord_points
     overlap = spine_lung_overlap(sex, T)
     log(sex, 'HRA lung overlaps HRA vertebrae:', {f'{k[0]}{k[1]}': round(v * 1000, 1) for k, v in sorted(overlap.items())})
-    # 1. ribs
+    # 1. sternum (placed by the arms group's rule and its own clearances; the true ribs are then sized to reach it)
+    st_v, st_info = fit_sternum(sex, W, ZA, T, ST)
+    log(sex, 'sternum', json.dumps(st_info))
+    # 2. ribs
     cp = os.path.join(cd, 'ribs-fit.npz')
     if os.path.exists(cp) and not rebuild:
         d = np.load(cp); ribs_v = {k: d[f'{k[0]}{k[1]}'] for k in RG}; rib_info = json.loads(str(d['info']))
     else:
-        ribs_v, rib_info = fit_ribs(sex, W, RG, T, verts, overlap)
+        ribs_v, rib_info = fit_ribs(sex, W, ZA, RG, T, verts, overlap, C=C, st_v=st_v)
         np.savez(cp, info=json.dumps(rib_info), **{f'{k[0]}{k[1]}': v for k, v in ribs_v.items()})
-    # 2. sternum
-    st_v, st_info = fit_sternum(sex, W, T, ST)
-    log(sex, 'sternum', json.dumps(st_info))
     # 3. cartilages
-    cart_v, cart_info = fit_cartilages(sex, W, T, C, ribs_v, st_v)
+    cart_v, cart_info = fit_cartilages(sex, W, ZA, T, C, ribs_v, st_v)
     # 4. discs
     disc_m, disc_info, lv = fit_discs(sex, verts)
     log(sex, f'discs: {len(disc_m)} of {len(lv)} levels')
@@ -347,9 +507,11 @@ def fit(sex, rebuild=False, render=True):
     carts = {k: (cart_v[k], W[f'cart_{k[0]}_{k[1]}'][1]) for k in cart_v}
     sternum = merge([(st_v[k], W[k][1]) for k in ('manubrium', 'sternum_body', 'xiphoid')])
     rep = dict(sex=sex, group=GROUP)
-    zones = {k: RB.conflict_zone(ribs_v[k], k[1], k[0], overlap, verts) for k in RG}
+    zones = {k: RB.conflict_zone(ribs_v[k], k[1], k[0], overlap, verts, rg=RG[k]) for k in RG}
     rep['ribs_in_lungs'] = M.ribs_in_lungs(ribs, T['lungs'], zones=zones, overlap=overlap)
     rep['lung_rib_gap_lateral'] = M.lateral_gap(ribs, T['lungs'], SIDE_SIGN)
+    rep['ribs_in_lungs']['lung_at_rib_joint_surfaces_mm'] = M.lung_at_joints(RG, ribs, verts, T['lungs'])
+    rep['rib_lengths'] = rib_lengths(RG, ribs_v, warp_scale(sex))
     rep['rib_joints'] = M.joints(RG, ribs, verts, cord=cord_points(sex))
     rep['costal_cartilage_joints'] = M.cartilage_joints(C, carts, ribs, sternum)
     sh = M.clearance([sternum], T['heart'], inside=False)
