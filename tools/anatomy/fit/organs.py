@@ -83,9 +83,10 @@ def lung_base(sex):
     kp = np.floor(P[:, [0, 2]] / 0.004).astype(np.int64)
     lowest = np.array([low.get(tuple(k), 9) for k in kp])
     P = P[P[:, 1] < lowest + 0.012]
-    # not the parts lying on the heart (cardiac impression) or on the mediastinum above it
+    # not the parts lying on the heart (cardiac impression) or on the mediastinum above it, nor downward-facing lung
+    # above the level of the domes (below the hilum): the domes rise at most ~3 cm above the heart's lowest point
     hd = field(sex, 'heart')(P)
-    P = P[hd > 0.015]
+    P = P[(hd > 0.015) & (P[:, 1] < hra(sex, 'heart')[0][:, 1].min() + 0.03)]
     np.savez(path, p=P)
     return P
 
@@ -165,8 +166,10 @@ def measure(sex, out, aux):
     q, d = closest_on_mesh(*di, P)
     sd = own['diaphragm'](P)
     dist = np.where(sd < 0, sd, d)
-    within = (dist >= 0) & (dist <= 0.006)
-    R['lung_base_to_diaphragm_mm'] = crit(round(float(within.mean() * 100), 1), 90.0, within.mean() >= 0.9, unit='% of lung-base samples within 0-6 mm',
+    within = (dist >= -0.001) & (dist <= 0.006)
+    R['lung_base_to_diaphragm_mm'] = crit(round(float(within.mean() * 100), 1), 90.0, within.mean() >= 0.9,
+                                          unit='% of lung-base samples within 0-6 mm of the diaphragm (overlaps up to 1 mm count as touching, '
+                                               'the contact-pair tolerance)', inside_pct=round(float((dist < 0).mean() * 100), 1),
                                           p5=round(float(np.percentile(dist, 5) * 1000), 2), median=round(float(np.median(dist) * 1000), 2),
                                           p95=round(float(np.percentile(dist, 95) * 1000), 2), samples=int(len(P)))
     # adrenals on the kidneys
@@ -230,13 +233,13 @@ def fit(sex, render=True):
     (dv, df), rep['diaphragm'], _ = fit_diaphragm(sex, W, extra=[('esophagus', eso_proxy), ('adrenal_l', afl['l']), ('adrenal_r', afl['r'])])
     out['diaphragm'] = (dv, df)
     dfl = mesh_field(dv, df, 0.0006)
-    # the glands are much finer meshes than the sheet: let them clear the fitted crura (kidney gap kept >= 1.2 mm)
-    from fit.organs_adrenal import CLEAR as ACLEAR
-    from fit.organs_geom import push_out
+    # the sheet's crura may now touch the glands: re-seat each gland rigidly (shape kept) in the remaining free space
+    from fit.organs_adrenal import search_pose, seat_on_kidney
     for s_ in 'lr':
         v_, f_ = ad[s_]
-        nbs = [(field(sex, f'kidney_{s_}'), 0.0012), (dfl, 0.0005)] + [(field(sex, k), ACLEAR) for k in ('ivc', 'liver', 'spleen', 'pancreas', 'aorta', 'duodenum', 'colon', 'spine')]
-        v2 = push_out(v_, f_, nbs, clearance=ACLEAR, iters=10)
+        kfl = field(sex, f'kidney_{s_}')
+        oth = [dfl] + [field(sex, k) for k in ('ivc', 'liver', 'spleen', 'pancreas', 'aorta', 'duodenum', 'colon', 'celiac', 'spine')]
+        v2 = search_pose(v_, kfl, oth, radius=0.004, step=0.0008, angles=(0.0, 0.07), log_=log)
         ad[s_] = (v2, orient_outward(v2, f_))
     out['adrenal_l'], out['adrenal_r'] = ad['l'], ad['r']
     afl = {s_: mesh_field(*ad[s_], 0.0005) for s_ in 'lr'}

@@ -141,10 +141,22 @@ def fit_stomach(sex, W, own=(), outer=24):
             if m.any(): worst[name] = round(float(-sd[m].min() * 1000), 2)
         if active:
             ai = np.fromiter(active.keys(), np.int64); aj = np.fromiter(active.values(), np.int64)
+            nrm = vertex_normals(v, f)
             for j in np.unique(aj):
                 ii = ai[aj == j]; fl = fields[j][1]
-                sd = fl(v[ii]); on, q = fl.outward(v[ii])
-                idx.append(ii); tgt.append(v[ii] + np.maximum(CLEAR - sd, 0)[:, None] * on); wts.append(np.full(len(ii), 8.0))
+                # the wall is indented: each vertex walks inwards along the stomach's own normal until it is clear of
+                # the neighbour (a deep intruder's nearest exit can lie on its far side, which would drag the wall
+                # through it); if no exit within 30 mm, the neighbour's normal is used
+                t = np.zeros(len(ii)); done = fl(v[ii]) >= CLEAR
+                for step in np.arange(0.0005, 0.0305, 0.0005):
+                    if done.all(): break
+                    ok = (~done) & (fl.coarse(v[ii] - step * nrm[ii]) >= CLEAR + 0.0002)
+                    t[ok] = step; done |= ok
+                tg = v[ii] - t[:, None] * nrm[ii]
+                if (~done).any():
+                    sd = fl(v[ii[~done]]); on, q = fl.outward(v[ii[~done]])
+                    tg[~done] = v[ii[~done]] + np.maximum(CLEAR - sd, 0)[:, None] * on
+                idx.append(ii); tgt.append(tg); wts.append(np.full(len(ii), 8.0))
         v = arap.solve(v, np.concatenate(idx), np.concatenate(tgt), np.concatenate(wts), iters=3)
         if it % 5 == 0 or it == outer - 1: log(f'    stomach iter {it}: active {len(active)}, worst {worst}')
     v[pyl] = tgt_p
@@ -156,7 +168,7 @@ def fit_stomach(sex, W, own=(), outer=24):
 ESO_NB = ('trachea', 'trach_cart', 'bronchi', 'la', 'heart', 'aorta', 'spine', 'cricoid', 'thyroid_cart', 'liver')
 
 
-def fit_esophagus(sex, W, stomach, car, own=(), iters=30):
+def fit_esophagus(sex, W, stomach, car, own=(), iters=45):
     """stomach: fitted (v, f); car: cardia loop ids. own: [(name, Field)] (thyroid, diaphragm, stomach)."""
     rep = {}
     v0, f = W['esophagus']
@@ -208,13 +220,17 @@ def fit_esophagus(sex, W, stomach, car, own=(), iters=30):
         if not worst: break
         # per-station push: the largest push among the station's vertices, perpendicular to the tangent
         st = np.clip(np.searchsorted(s, tube.vs), 0, len(s) - 1)
-        P = np.zeros((len(C), 3)); mag = np.zeros(len(C))
-        L = np.linalg.norm(push, axis=1)
-        for k in np.flatnonzero(L > 0):
-            if L[k] > mag[st[k]]: mag[st[k]] = L[k]; P[st[k]] = push[k]
+        L = np.linalg.norm(push, axis=1); hitv = L > 0
+        P = np.zeros((len(C), 3)); cnt = np.zeros(len(C))
+        np.add.at(P, st[hitv], push[hitv]); np.add.at(cnt, st[hitv], 1)
+        # mean push of the station's pushed vertices, scaled up towards the largest one
+        mx = np.zeros(len(C)); np.maximum.at(mx, st[hitv], L[hitv])
+        P = P / np.maximum(cnt, 1)[:, None]
+        Pl = np.linalg.norm(P, axis=1)
+        P = P * (np.where(Pl > 0, np.minimum(mx / np.maximum(Pl, 1e-9), 3.0), 0))[:, None]
         T = np.gradient(C, axis=0); T /= np.linalg.norm(T, axis=1, keepdims=True)
         P = P - np.einsum('ij,ij->i', P, T)[:, None] * T
-        P = ndimage.gaussian_filter1d(P, 2.0, axis=0, mode='nearest') * 1.6
+        P = ndimage.gaussian_filter1d(P, 2.0, axis=0, mode='nearest') * 0.8
         P[~free] = 0
         C = C + P
         if it % 5 == 0: log(f'    oesophagus iter {it}: worst {worst}')
