@@ -210,17 +210,49 @@ class TriSet:
         self.bins = {ax: self._bin(ax) for ax in (2, 0)}
 
     def _bin(self, ax):
-        """Triangles binned by their bounding box in the plane perpendicular to axis ax."""
+        """Triangles binned by their bounding box in the plane perpendicular to axis ax: (sorted cell keys, start
+        offsets, triangle ids)."""
         u, w = [a for a in range(3) if a != ax]
         T = np.stack([self.A, self.B, self.C], 1)
         lo = T[:, :, [u, w]].min(1); hi = T[:, :, [u, w]].max(1)
-        i0 = np.floor((lo - self.lo[[u, w]]) / self.cell).astype(int); i1 = np.floor((hi - self.lo[[u, w]]) / self.cell).astype(int)
-        d = {}
-        for t in range(len(T)):
-            for a in range(i0[t, 0], i1[t, 0] + 1):
-                for b in range(i0[t, 1], i1[t, 1] + 1):
-                    d.setdefault((a, b), []).append(t)
-        return {k: np.array(x) for k, x in d.items()}
+        i0 = np.floor((lo - self.lo[[u, w]]) / self.cell).astype(np.int64); i1 = np.floor((hi - self.lo[[u, w]]) / self.cell).astype(np.int64)
+        nu = i1[:, 0] - i0[:, 0] + 1; nw = i1[:, 1] - i0[:, 1] + 1; cnt = nu * nw
+        tid = np.repeat(np.arange(len(T)), cnt)
+        k = np.arange(cnt.sum()) - np.repeat(np.cumsum(cnt) - cnt, cnt)
+        a = np.repeat(i0[:, 0], cnt) + k // np.repeat(nw, cnt); b = np.repeat(i0[:, 1], cnt) + k % np.repeat(nw, cnt)
+        key = a * 1000003 + b
+        o = np.argsort(key, kind='stable'); key, tid = key[o], tid[o]
+        uk, st = np.unique(key, return_index=True)
+        return uk, np.append(st, len(key)), tid
+
+    def _parity(self, p, ax, sgn):
+        """Odd number of crossings of the ray from each point along sgn * axis ax."""
+        u, w = [a for a in range(3) if a != ax]
+        uk, st, tid = self.bins[ax]
+        out = np.zeros(len(p), bool)
+        cu = np.floor((p[:, u] - self.lo[u]) / self.cell).astype(np.int64); cw = np.floor((p[:, w] - self.lo[w]) / self.cell).astype(np.int64)
+        key = cu * 1000003 + cw
+        pos = np.searchsorted(uk, key); pos = np.minimum(pos, len(uk) - 1)
+        has = uk[pos] == key
+        if not has.any(): return out
+        order = np.argsort(key[has], kind='stable'); pts = np.flatnonzero(has)[order]
+        ks = key[pts]; brk = np.flatnonzero(np.diff(ks)) + 1
+        for grp in np.split(pts, brk):
+            c = pos[grp[0]]; t = tid[st[c]:st[c + 1]]
+            a, b, cc = self.A[t], self.B[t], self.C[t]
+            x = p[grp, u][:, None]; y = p[grp, w][:, None]
+            d = (b[:, w] - cc[:, w]) * (a[:, u] - cc[:, u]) + (cc[:, u] - b[:, u]) * (a[:, w] - cc[:, w])
+            ok = np.abs(d) > 1e-18; d = np.where(ok, d, 1)
+            l1 = ((b[:, w] - cc[:, w]) * (x - cc[:, u]) + (cc[:, u] - b[:, u]) * (y - cc[:, w])) / d
+            l2 = ((cc[:, w] - a[:, w]) * (x - cc[:, u]) + (a[:, u] - cc[:, u]) * (y - cc[:, w])) / d
+            l3 = 1 - l1 - l2
+            hit = ok & (l1 >= 0) & (l2 >= 0) & (l3 >= 0)
+            z = l1 * a[:, ax] + l2 * b[:, ax] + l3 * cc[:, ax]
+            ahead = hit & (sgn * (z - p[grp, ax][:, None]) > 0)
+            # crossings through a shared edge or vertex are counted once: unique z per point
+            for r in np.flatnonzero(ahead.any(1)):
+                zz = np.unique(np.round(z[r, ahead[r]], 9)); out[grp[r]] = len(zz) % 2 == 1
+        return out
 
     def closest(self, p, k=10):
         from lib.mesh import _closest_point_triangle
@@ -234,29 +266,6 @@ class TriSet:
             q = _closest_point_triangle(p, self.A[t], self.B[t], self.C[t])
             d = np.linalg.norm(q - p, axis=1); m = d < best; best[m] = d[m]; bq[m] = q[m]
         return bq, best
-
-    def _parity(self, p, ax, sgn):
-        u, w = [a for a in range(3) if a != ax]
-        B = self.bins[ax]
-        out = np.zeros(len(p), bool)
-        cu = np.floor((p[:, u] - self.lo[u]) / self.cell).astype(int); cw = np.floor((p[:, w] - self.lo[w]) / self.cell).astype(int)
-        for i in range(len(p)):
-            t = B.get((cu[i], cw[i]))
-            if t is None: continue
-            a, b, c = self.A[t], self.B[t], self.C[t]
-            x, y = p[i, u], p[i, w]
-            d = (b[:, w] - c[:, w]) * (a[:, u] - c[:, u]) + (c[:, u] - b[:, u]) * (a[:, w] - c[:, w])
-            ok = np.abs(d) > 1e-18
-            d = np.where(ok, d, 1)
-            l1 = ((b[:, w] - c[:, w]) * (x - c[:, u]) + (c[:, u] - b[:, u]) * (y - c[:, w])) / d
-            l2 = ((c[:, w] - a[:, w]) * (x - c[:, u]) + (a[:, u] - c[:, u]) * (y - c[:, w])) / d
-            l3 = 1 - l1 - l2
-            hit = ok & (l1 >= 0) & (l2 >= 0) & (l3 >= 0)
-            if not hit.any(): continue
-            z = l1[hit] * a[hit, ax] + l2[hit] * b[hit, ax] + l3[hit] * c[hit, ax]
-            z = np.unique(np.round(z, 9))
-            out[i] = (np.sum(sgn * (z - p[i, ax]) > 0) % 2) == 1
-        return out
 
     def inside(self, p):
         p = np.atleast_2d(np.asarray(p, float))
@@ -328,3 +337,214 @@ def kernel_field(x, src_idx, vec, sigma, tree=None, groups=None):
         K = np.exp(-0.5 * (d / sigma) ** 2)
         out[i] = K.max() * (K @ vec[js]) / K.sum()
     return out
+
+
+# ------------------------------------------------------------------------------------------------ open ends of HRA stubs
+def _cap_frame(v, G, tip, outward_hint=None):
+    """Frame of a capped tube end at vertex `tip`: the ring of vertices about one radius back from the tip."""
+    gd = geodesic(G, [tip], limit=0.03)
+    ring = (gd >= 0.004) & (gd <= 0.006)
+    if ring.sum() < 4: ring = np.isfinite(gd) & (gd >= np.nanmax(gd[np.isfinite(gd)]) * 0.5)
+    c, n, r = ring_frame(v[ring])
+    for _ in range(2):
+        lo = max(r * 0.9, 0.0015)
+        ring2 = (gd >= lo) & (gd <= lo + 0.002)
+        if ring2.sum() < 4: break
+        c, n, r = ring_frame(v[ring2])
+    if n @ (v[tip] - c) < 0: n = -n
+    return dict(c=c, n=n, r=r, kind='capped', tip=v[tip])
+
+
+def stub_ends(v, f, min_r=0.0012):
+    """Candidate ends of an HRA vessel mesh: every boundary loop of at least min_r radius (open ends, normal pointing out
+    of the vessel) and every capped end (geodesic extremes away from the loops)."""
+    G = graph(v, f)
+    out = []
+    loops = [l for l in boundary_loops(f) if len(l) >= 6]
+    for l in loops:
+        c, n, r = ring_frame(v[l])
+        if r < min_r: continue
+        # outward: away from the vessel's own nearby surface
+        near = np.linalg.norm(v - c, axis=1) < 3 * r + 0.004
+        if n @ (c - v[near].mean(0)) < 0: n = -n
+        out.append(dict(c=c, n=n, r=r, kind='open', loop=l))
+    if loops:
+        src = np.concatenate(loops)
+        gd = geodesic(G, src)
+    else:
+        gd0 = geodesic(G, [0]); a = int(np.argmax(np.where(np.isfinite(gd0), gd0, -1)))
+        out.append(_cap_frame(v, G, a))
+        gd = geodesic(G, [a])
+    fin = np.isfinite(gd)
+    if fin.any():
+        tip = int(np.argmax(np.where(fin, gd, -1)))
+        if gd[tip] > 0.008:
+            out.append(_cap_frame(v, G, tip))
+    return out
+
+
+def pick_end(ends, near):
+    """The end nearest to a point."""
+    d = [np.linalg.norm(e['c'] - near) for e in ends]
+    return ends[int(np.argmin(d))]
+
+
+class SkinField:
+    """Signed distance to the skin (negative inside): exact closest-point distance to the skin triangles, with the
+    sign from the cached coarse skin SDF (fit.common.skin_solid) away from the surface and from the closest triangle's
+    outward normal within 4 mm of it."""
+
+    def __init__(self, v, f, solid):
+        from lib.mesh import orient_outward, signed_volume
+        f = np.asarray(f, np.int64)
+        if signed_volume(v, f) < 0: f = f[:, ::-1]
+        self.v, self.f, self.solid = np.asarray(v, float), f, solid
+        self.A, self.B, self.C = self.v[f[:, 0]], self.v[f[:, 1]], self.v[f[:, 2]]
+        self.N = unit(np.cross(self.B - self.A, self.C - self.A))
+        self.tree = cKDTree((self.A + self.B + self.C) / 3)
+
+    def __call__(self, p, k=12):
+        from lib.mesh import _closest_point_triangle
+        p = np.atleast_2d(np.asarray(p, float))
+        _, cand = self.tree.query(p, k=k)
+        best = np.full(len(p), np.inf); bq = np.zeros_like(p); bt = np.zeros(len(p), int)
+        for j in range(cand.shape[1]):
+            t = cand[:, j]
+            q = _closest_point_triangle(p, self.A[t], self.B[t], self.C[t])
+            d = np.linalg.norm(q - p, axis=1); m = d < best; best[m] = d[m]; bq[m] = q[m]; bt[m] = t[m]
+        coarse = self.solid(p)
+        sgn_n = np.sign(np.einsum('ij,ij->i', p - bq, self.N[bt])); sgn_n[sgn_n == 0] = 1
+        sgn = np.where(np.abs(coarse) > 0.004, np.sign(coarse), sgn_n)
+        sd = sgn * best
+        g = unit(p - bq) * sgn[:, None]          # outward direction
+        return sd, g
+
+
+def tip_frame(v, hint, near=None, reach=0.04):
+    """Frame of the end of a vessel mesh facing `hint`: the extreme vertex along hint (within `reach` of `near` if
+    given), the local axis from the centroids of two slabs behind it, the outer radius (75th percentile of the slab's
+    distances to the axis: HRA vessels are often double-walled) and the centre on the axis one radius back from the tip."""
+    hint = unit(hint)
+    cand = np.arange(len(v)) if near is None else np.flatnonzero(np.linalg.norm(v - near, axis=1) < reach)
+    if not len(cand): cand = np.arange(len(v))
+    tip = v[cand[np.argmax(v[cand] @ hint)]]
+    loc = v[np.linalg.norm(v - tip, axis=1) < 0.02]
+    a = pca_axis(loc); a = a if a @ hint > 0 else -a
+    for _ in range(3):
+        h = (v - tip) @ a
+        rad = np.linalg.norm((v - tip) - np.outer(h, a), axis=1)
+        s1 = (h > -0.012) & (h < -0.003) & (rad < 0.015)
+        s2 = (h > -0.022) & (h < -0.012) & (rad < 0.015)
+        if s1.sum() < 6: break
+        c1 = v[s1].mean(0)
+        if s2.sum() >= 6:
+            a2 = unit(c1 - v[s2].mean(0))
+            if a2 @ a > 0.5: a = a2
+    h = (v - tip) @ a
+    s1 = (h > -0.012) & (h < -0.003)
+    c1 = v[s1].mean(0) if s1.sum() else tip
+    d = v[s1] - c1; r = float(np.quantile(np.linalg.norm(d - np.outer(d @ a, a), axis=1), 0.75)) if s1.sum() else 0.002
+    depth = (tip - c1) @ a
+    c = c1 + a * (depth - r)
+    return dict(c=c, n=a, r=r, kind='tip', tip=tip)
+
+
+def pca_axis(p):
+    c = p.mean(0); w, V = np.linalg.eigh(np.cov((p - c).T)); return V[:, -1]
+
+
+def merge_loops(ends, tol=0.002):
+    """Drop open ends that duplicate a larger one at the same place (inner and outer walls of a double-walled vessel)."""
+    ends = sorted(ends, key=lambda e: -e['r'])
+    out = []
+    for e in ends:
+        if any(np.linalg.norm(e['c'] - o['c']) < max(tol, 0.5 * o['r']) for o in out): continue
+        out.append(e)
+    return out
+
+
+# ------------------------------------------------------------------------------------------------ plane sections
+def slice_loops(v, f, p, n):
+    """Closed section polygons of a mesh with the plane (p, n): list of (k, 3) point arrays."""
+    n = unit(n)
+    s = (v - p) @ n
+    sg = s >= 0
+    cr = sg[f].sum(1); f = f[(cr == 1) | (cr == 2)]
+    if not len(f): return []
+    segs = []; ekey = []
+    for a, b in ((0, 1), (1, 2), (2, 0)):
+        ia, ib = f[:, a], f[:, b]
+        m = sg[ia] != sg[ib]
+        t = np.where(m, s[ia] / np.where(m, s[ia] - s[ib], 1), 0)
+        pt = v[ia] + t[:, None] * (v[ib] - v[ia])
+        segs.append((m, pt, np.minimum(ia, ib) * 10000019 + np.maximum(ia, ib)))
+    # each crossing triangle gives one segment between its two crossed edges (keyed by the edge)
+    A, B = [], []
+    for i in range(len(f)):
+        e = [(segs[k][2][i], segs[k][1][i]) for k in range(3) if segs[k][0][i]]
+        if len(e) == 2: A.append(e[0]); B.append(e[1])
+    adj = {}; pos = {}
+    for (ka, pa), (kb, pb) in zip(A, B):
+        adj.setdefault(ka, []).append(kb); adj.setdefault(kb, []).append(ka); pos[ka] = pa; pos[kb] = pb
+    seen = set(); loops = []
+    for k0 in adj:
+        if k0 in seen: continue
+        loop = [k0]; seen.add(k0); prev, cur = None, k0
+        while True:
+            nx = [x for x in adj[cur] if x != prev and x not in seen]
+            if not nx: break
+            prev, cur = cur, nx[0]; seen.add(cur); loop.append(cur)
+        if len(loop) >= 3: loops.append(np.array([pos[k] for k in loop]))
+    return loops
+
+
+def polygon_area_centroid(P, n):
+    """Area and centroid of a planar polygon (points in 3D, plane normal n)."""
+    n = unit(n); c0 = P.mean(0)
+    u = unit(np.cross(n, [1, 0, 0] if abs(n[0]) < 0.9 else [0, 1, 0])); w = np.cross(n, u)
+    x = (P - c0) @ u; y = (P - c0) @ w
+    x1, y1 = np.roll(x, -1), np.roll(y, -1)
+    cr = x * y1 - x1 * y
+    a = cr.sum() / 2
+    if abs(a) < 1e-12: return 0.0, c0
+    cx = ((x + x1) * cr).sum() / (6 * a); cy = ((y + y1) * cr).sum() / (6 * a)
+    return abs(a), c0 + cx * u + cy * w
+
+
+def section_frame(v, f, hint, near=None, reach=0.05, depths=np.arange(0.002, 0.0241, 0.002)):
+    """End frame of a vessel from plane sections: the extreme vertex along the current axis (started at `hint`; near
+    `near` if given), sections perpendicular to the axis every 2 mm down to 24 mm behind it, in each the largest polygon
+    (the outer wall of a double-walled vessel, the whole mouth of a collapsed vein). The reference area is the median of
+    the sections 10-24 mm deep; sections with less than half of it are the tapering tip of a capped end and are skipped.
+    The axis is refitted through the valid section centroids. Returns dict(c=centroid of the shallowest valid section,
+    n=outward axis, r=radius of a circle of the reference area, kind='section', tip, centres)."""
+    hint = unit(hint)
+    cand = np.arange(len(v)) if near is None else np.flatnonzero(np.linalg.norm(v - near, axis=1) < reach)
+    if not len(cand): cand = np.arange(len(v))
+    a = hint; C = None
+    for it in range(4):
+        tip = v[cand[np.argmax(v[cand] @ a)]]
+        D, Cn, An = [], [], []
+        for d in depths:
+            Ls = slice_loops(v, f, tip - d * a, a)
+            if not Ls: continue
+            AC = [polygon_area_centroid(L, a) for L in Ls]
+            AC = [x for x in AC if np.linalg.norm(x[1] - tip) < 0.04] or AC
+            k = int(np.argmax([x[0] for x in AC]))
+            if AC[k][0] <= 0: continue
+            D.append(d); Cn.append(AC[k][1]); An.append(AC[k][0])
+        if len(Cn) < 3: break
+        D, Cn, An = np.array(D), np.array(Cn), np.array(An)
+        deep = D >= 0.010
+        Aref = float(np.median(An[deep])) if deep.sum() >= 2 else float(np.median(An))
+        ok = An >= 0.5 * Aref
+        if ok.sum() < 3: ok = np.ones(len(An), bool)
+        C, A_, Dv = Cn[ok], An[ok], D[ok]
+        a2 = pca_axis(C); a2 = a2 if a2 @ a > 0 else -a2
+        if a2 @ hint < 0.3 or a2 @ a > 0.9995: break
+        a = a2
+    if C is None or not len(C):
+        tip = v[cand[np.argmax(v[cand] @ hint)]]
+        return dict(c=tip, n=hint, r=0.002, kind='section', tip=tip, centres=[])
+    k = int(np.argmin(Dv))
+    return dict(c=C[k], n=a, r=float(np.sqrt(Aref / np.pi)), kind='section', tip=tip, centres=C, area_mm2=round(Aref * 1e6, 1))

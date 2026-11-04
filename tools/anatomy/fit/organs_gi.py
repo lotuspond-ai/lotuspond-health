@@ -21,7 +21,7 @@ from scipy import ndimage
 
 from lib.mesh import orient_outward
 from lib.register import umeyama
-from fit.organs_data import hra, field, log, za_original
+from fit.organs_data import hra, field, log, za_original, has_hra
 from fit.organs_geom import ARAP, boundary_loops, vertex_normals, Tube, centreline, smoothstep, push_out, laplacian, resample_polyline, refine_long_edges
 
 CLEAR = 0.0006
@@ -82,23 +82,32 @@ def match_rings(P, Q, c, n):
     return Qd[order][j]
 
 
-def stomach_pose(v, pyl, car, cr, cc0, fls, radius=0.015, step=0.003, ang=0.17):
+def stomach_pose(v, f, pyl, car, cr, cc0, fls, inside=(), radius=0.015, step=0.003, ang=0.17):
+    """inside: point sets (our small organs, e.g. the left adrenal) that must not end up inside the stomach: tested with
+    the stomach's own solid carried along with the pose."""
     from fit.organs_adrenal import rotvec
+    from fit.organs_geom import mesh_field
     rng = np.random.default_rng(0)
     P = v[rng.choice(len(v), 1500, replace=False)]
-    def energy(Q, pc, ccar):
+    sfl = mesh_field(v, f, 0.0015, cap=True) if len(inside) else None
+    A = np.concatenate(inside) if len(inside) else None
+    ca0_ = v[car].mean(0)
+    def energy(Q, pc, ccar, R=None, t=None):
         e = sum(float(np.sum(np.maximum(CLEAR - fl.coarse(Q), 0) ** 2)) for fl in fls)
+        if A is not None:
+            loc = (A - ca0_ - t) @ R + ca0_
+            e += 4.0 * float(np.sum(np.maximum(0.003 - sfl.coarse(loc), 0) ** 2))
         return e + len(Q) * 0.05 * (float(np.sum((pc - cr) ** 2)) + float(np.sum((ccar - cc0) ** 2)))
     pc0 = v[pyl].mean(0); ca0 = v[car].mean(0)
     rots = [np.eye(3)] + [rotvec(sg * ang * ax) for ax in np.eye(3) for sg in (1, -1)]
     g = np.arange(-radius, radius + 1e-9, step)
     T = np.stack(np.meshgrid(g, g, g, indexing='ij'), -1).reshape(-1, 3); T = T[np.linalg.norm(T, axis=1) <= radius + 1e-9]
-    best = (energy(P, pc0, ca0), np.eye(3), np.zeros(3))
+    best = (energy(P, pc0, ca0, np.eye(3), np.zeros(3)), np.eye(3), np.zeros(3))
     e0 = best[0]
     for R in rots:
         Q = (P - ca0) @ R.T + ca0; pr = (pc0 - ca0) @ R.T + ca0
         for t in T:
-            e = energy(Q + t, pr + t, ca0 + t)
+            e = energy(Q + t, pr + t, ca0 + t, R, t)
             if e < best[0]: best = (e, R, t)
     e, R, t = best
     out = (v - ca0) @ R.T + ca0 + t
@@ -142,7 +151,7 @@ def indent(v, f, fls, fixed, rep, iters=5, max_depth=0.025):
     return v
 
 
-def fit_stomach(sex, W, own=(), outer=24):
+def fit_stomach(sex, W, own=(), outer=24, inside=()):
     """own: [(name, Field)] of our fitted neighbours (diaphragm, left adrenal). Returns (v, f), report, loops."""
     rep = {}
     v0, f = W['stomach']
@@ -167,7 +176,7 @@ def fit_stomach(sex, W, own=(), outer=24):
     tgt_p = match_rings(v0[pyl] - cp + cr, ring, cr, nr)          # the pyloric rim laid onto the duodenal rim
     rep['pylorus_shift_mm'] = round(float(np.linalg.norm(cr - cp) * 1000), 1)
     rep['pylorus_radius_mm'] = dict(stomach=round(rp * 1000, 1), duodenum=round(rr * 1000, 1))
-    fields = [(k, field(sex, k)) for k in STOMACH_NB] + list(own)
+    fields = [(k, field(sex, k)) for k in STOMACH_NB if has_hra(sex, k)] + list(own)
     near_pyl = np.linalg.norm(v0 - cp, axis=1) < 0.012
     # filling: the stomach is a hollow organ whose size follows its contents. The HRA neighbours (segmented around the
     # Visible Human's own stomach) leave a bed smaller than Z-Anatomy's distended stomach: the rest shape is scaled
@@ -187,7 +196,7 @@ def fit_stomach(sex, W, own=(), outer=24):
     # with its neighbours, its pylorus kept near the duodenal opening and its cardia near the hiatus
     cc0 = v0[car].mean(0)
     vs = cc0 + sc * (v0 - cc0)
-    vs, pose = stomach_pose(vs, pyl, car, cr, cc0, [fl for name, fl in fields if name != 'duodenum'])
+    vs, pose = stomach_pose(vs, f, pyl, car, cr, cc0, [fl for name, fl in fields if name != 'duodenum'], inside=inside)
     rep['bed_pose'] = pose
     v0 = vs
     sc = 1.0
@@ -257,7 +266,7 @@ def fit_esophagus(sex, W, stomach, car, own=(), iters=45):
     t_end = smoothstep((s - (Ls - 0.02)) / 0.02)[:, None]
     C = C * (1 - t_end) + t_end * (cc - (Ls - s)[:, None] * end_dir)
     rep['end_shift_mm'] = round(float(np.linalg.norm(cc - C0[-1]) * 1000), 1)
-    fields = [(k, field(sex, k)) for k in ESO_NB] + list(own)
+    fields = [(k, field(sex, k)) for k in ESO_NB if has_hra(sex, k)] + list(own)
     free = np.ones(len(C), bool)
     free[s < 0.006] = False                    # the top stays behind the cricoid
     free[s > Ls - 0.004] = False               # the end stays at the cardia
@@ -294,14 +303,15 @@ def fit_esophagus(sex, W, stomach, car, own=(), iters=45):
         P = ndimage.gaussian_filter1d(P, 2.0, axis=0, mode='nearest') * 0.8
         P[~free] = 0
         # squeezed between neighbours in front and behind (trachea / left atrium against aorta / vertebrae): the
-        # collapsed oesophagus flattens front-to-back (down to 55 % of its depth) instead of being shoved into one
+        # collapsed oesophagus flattens front-to-back (down to 60 % of its depth, changing gradually along it) instead of being shoved into one
         _, N2, _ = rmf(C, tube.N[0])
         a = np.einsum('ij,ij->i', push[hitv], N2[st[hitv]])
         fwd = np.zeros(len(C)); bwd = np.zeros(len(C))
         np.maximum.at(fwd, st[hitv], np.maximum(a, 0)); np.maximum.at(bwd, st[hitv], np.maximum(-a, 0))
         sq = np.minimum(fwd, bwd)
         red = ndimage.gaussian_filter1d(np.where(sq > 0, (fwd + bwd) / (2 * rN), 0), 1.5, mode='nearest')
-        scl[:, 0] = np.maximum(0.55, scl[:, 0] - 0.5 * red)
+        scl[:, 0] = np.maximum(0.6, scl[:, 0] - 0.5 * red)
+        scl[:, 0] = np.maximum(0.6, ndimage.gaussian_filter1d(scl[:, 0], 3.0, mode='nearest'))   # gradual, no kinks
         C = C + P
         if it % 5 == 0: log(f'    oesophagus iter {it}: worst {worst}')
     rep['route_worst_mm'] = worst

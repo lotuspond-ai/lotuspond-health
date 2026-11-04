@@ -23,7 +23,7 @@ from scipy.spatial import cKDTree
 from lib.mesh import orient_outward
 from fit.organs_data import hra, field, log, vessel_centreline, za_original
 from lib.register import umeyama
-from fit.organs_geom import laplacian, smooth_solve, vertex_normals, smoothstep, edges_of, ARAP, push_out
+from fit.organs_geom import laplacian, smooth_solve, vertex_normals, smoothstep, edges_of, ARAP, push_out, refine_long_edges
 
 GAP_LUNG = 0.0015
 GAP_HEART = 0.001
@@ -177,6 +177,11 @@ def fit_diaphragm(sex, W, extra=(), outer=10):
     zv = za_original('diaphragm')[0]
     S = umeyama(zv, v0, scale=True)
     rest = S(zv)
+    # split the sheet's longer edges (midpoints: shape unchanged) so neighbours cannot slip between vertices
+    VV, f = refine_long_edges(np.hstack([rest, v0]), f, 0.0045)
+    rest, v0 = VV[:, :3], VV[:, 3:]
+    n = len(v0)
+    rep['vertices'] = int(n)
     thor = sides(v0, f)
     E, _ = coupling(v0, thor)
     arap = ARAP(rest, f, extra=E, extra_w=1.0)

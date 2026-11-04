@@ -244,7 +244,7 @@ def fit(sex, render=True):
     out['adrenal_l'], out['adrenal_r'] = ad['l'], ad['r']
     afl = {s_: mesh_field(*ad[s_], 0.0005) for s_ in 'lr'}
     log(sex, 'stomach')
-    st, rep['stomach'], loops = fit_stomach(sex, W, own=[('diaphragm', dfl), ('adrenal_l', afl['l'])])
+    st, rep['stomach'], loops = fit_stomach(sex, W, own=[('diaphragm', dfl), ('adrenal_l', afl['l'])], inside=[ad['l'][0]])
     out['stomach'] = st; aux['stomach_loops'] = loops
     log(sex, 'oesophagus')
     sfl = mesh_field(*st, 0.0008, cap=True)

@@ -155,6 +155,15 @@ for k, n in VNAME.items(): HRA[k] = _rx(n)
 _HRA_CACHE = {}
 
 
+class MissingHRA(KeyError):
+    pass
+
+
+def has_hra(sex, key):
+    try: hra(sex, key); return True
+    except MissingHRA: return False
+
+
 def hra(sex, key):
     """Merged HRA mesh for a neighbour key, each connected component oriented outward."""
     ck = (sex, key)
@@ -168,7 +177,7 @@ def hra(sex, key):
     else:
         sel = HRA[key]
         v, f = hra_mesh(sex, sel)
-        if not len(f): raise SystemExit(f'{sex}: no HRA mesh for {key}')
+        if not len(f): raise MissingHRA(f'{sex}: no HRA mesh for {key}')
         m = (v, orient_outward(v, f))
     _HRA_CACHE[ck] = m
     return m
