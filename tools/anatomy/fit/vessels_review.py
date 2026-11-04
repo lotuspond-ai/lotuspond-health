@@ -61,20 +61,32 @@ class TubeObstacle:
     """Signed distance to a capped tube given by centreline points P (k, 3) and radii R (k,): distance to the closest
     point of the centreline minus the radius there (negative inside). Same query interface as vessels_geom.Obstacles."""
 
-    def __init__(self, name, P, R, step=0.0005):
+    def __init__(self, name, P, R, step=0.0005, bias=None, bias_mask=None):
         self.names = [name]
         self.P, s = polyline_resample(np.asarray(P, float), step)
         s0 = np.concatenate([[0], np.cumsum(np.linalg.norm(np.diff(P, axis=0), axis=1))])
         self.R = np.interp(s, s0, R)
         self.tree = cKDTree(self.P)
         self.lo = self.P.min(0) - self.R.max() - 0.01; self.hi = self.P.max(0) + self.R.max() + 0.01
+        # bias: (y (k,), centre (k, 3)) of the vertebral bodies; bias_mask (on the input points P): where the push out of
+        # the tube goes toward the vertebral body at the same level (the descending aorta: a vein crossing it is routed
+        # behind it, between the aorta and the vertebral bodies) instead of radially
+        self.bias = bias
+        self.bmask = np.interp(s, s0, np.asarray(bias_mask, float)) > 0.5 if bias_mask is not None else np.zeros(len(self.P), bool)
 
     def query(self, p, band=None):
         p = np.atleast_2d(np.asarray(p, float))
         d, i = self.tree.query(p)
         sd = d - self.R[i]
-        # the ends are capped: beyond the first / last point the distance is to the end disc's rim
+        # the ends are capped: beyond the end points the distance is to a sphere of the end radius
         dirn = G.unit(p - self.P[i])
+        if self.bias is not None:
+            m = self.bmask[i] & (sd < 0.002)
+            if m.any():
+                by, bc = self.bias
+                c = np.stack([np.interp(p[m, 1], by, bc[:, a]) for a in range(3)], 1)
+                u = c - self.P[i[m]]; u[:, 1] = 0.0
+                dirn[m] = G.unit(u)
         return sd, dirn, np.zeros(len(p), int)
 
 
@@ -83,7 +95,7 @@ def hra_aorta_tube(sex):
     centreline marched by plane sections (vessels_geom.march: the largest polygon near the running axis, i.e. the outer
     wall of the double-walled HRA vessel) from its open ring that continues the previous piece, radius sqrt(area / pi)."""
     S = source(f'hra-{sex}'); X = 'VH_M_' if sex == 'male' else 'VH_F_'
-    pts, rad, prev = [], [], None
+    pts, rad, prev, desc = [], [], None, []
     for n in ('ascending_aorta', 'aortic_arch', 'descending_aorta_a', 'descending_aorta_b'):
         if X + n not in S.by_name: continue
         v, f = S.get(X + n)
@@ -98,9 +110,17 @@ def hra_aorta_tube(sex):
         R = np.sqrt(A / np.pi)
         # sections that cut a branch origin or the piece's own end are much larger than their neighbours: median filter
         Rm = np.array([np.median(R[max(0, i - 3):i + 4]) for i in range(len(R))])
-        pts.append(P); rad.append(np.clip(R, 0.8 * Rm, 1.15 * Rm)); prev = P[-1]
+        pts.append(P); rad.append(np.clip(R, 0.8 * Rm, 1.15 * Rm)); prev = P[-1]; desc.append(np.full(len(P), n.startswith('descending')))
     P = np.concatenate(pts); R = np.concatenate(rad)
-    return TubeObstacle(f'hra_aorta_{sex}', P, R), dict(points=len(P), radius_mm=[r2(np.min(R) * 1000, 1), r2(np.median(R) * 1000, 1), r2(np.max(R) * 1000, 1)],
+    # vertebral body centres (anterior half of each thoracic and first lumbar vertebra)
+    by, bc = [], []
+    for k in list(range(1, 13)):
+        nm = f'{X}thoracic_vertebra_{k}'
+        if nm not in S.by_name: continue
+        vv = S.get(nm)[0]; body = vv[vv[:, 2] > np.median(vv[:, 2])]
+        by.append(body[:, 1].mean()); bc.append(body.mean(0))
+    o = np.argsort(by); bias = (np.array(by)[o], np.array(bc)[o]) if by else None
+    return TubeObstacle(f'hra_aorta_{sex}', P, R, bias=bias, bias_mask=np.concatenate(desc)), dict(points=len(P), radius_mm=[r2(np.min(R) * 1000, 1), r2(np.median(R) * 1000, 1), r2(np.max(R) * 1000, 1)],
                                                         y_range=[r2(P[:, 1].min(), 3), r2(P[:, 1].max(), 3)])
 
 
@@ -460,7 +480,7 @@ def reround(VES, names, J, log=print, smooth_iters=12):
 # ------------------------------------------------------------------------------------------------ superficial layer
 ZA_LIMB_SKIN = r'(arm|elbow|forearm|wrist|hand|Cubital|Deltoid|thigh|knee|leg|ankle|foot|Gluteal|Femoral_triangle|digits|Nail|Perionyx|sole|heel|calcane|Sural|popl)'
 SUP_GROUPS = (('Cephalic_vein', 'Basilic_vein', 'Median_cubital_vein'), ('Great_saphenous_vein', 'Small_saphenous_vein'))
-SUP_MIN, SUP_MAX, SUP_IF = 0.0015, 0.005, 0.006     # target wall depth clip(Z-Anatomy depth, 1.5, 5) mm where it is < 6 mm
+SUP_MIN, SUP_MAX, SUP_IF = 0.0020, 0.005, 0.006     # target wall depth clip(Z-Anatomy depth, 2, 5) mm where it is < 6 mm (2 mm: clear of the push-out's 1.5 mm skin rule)
 SUP_STEP, SUP_SIGMA, SUP_FADE = 0.004, 0.010, 0.025
 DEEP_VEINS = ('Axillary_vein', 'Brachial_veins', 'Subclavian', 'Femoral_vein', 'Popliteal_vein', 'Left_subclavian', 'Right_subclavian')
 _ZSK = {}
@@ -522,7 +542,7 @@ def _deep_end_fade(VES, n, members, x, cl, sk):
 def superficial_layer(sex, VES, skin, log=print):
     """Superficial veins back under the skin (they sit 1.5-3.5 cm deep after the deformation): for the cephalic, basilic
     and median cubital veins of each arm (moved together) and the great and small saphenous veins of each leg, the
-    target wall depth is clip(Z-Anatomy depth under its own skin, 1.5, 5) mm where that depth is under 6 mm. Each
+    target wall depth is clip(Z-Anatomy depth under its own skin, 2, 5) mm where that depth is under 6 mm. Each
     centreline bin's shift (current wall depth - target, along the skin's outward normal at its shallowest vertex) is
     smoothed along the vessel (Gaussian, sigma 1 cm), faded to zero over 2.5 cm toward an end that joins a deep vein, and
     the group's per-vertex shifts are averaged in space (sigma 6 mm), so cross-sections move as a whole and the veins of a
@@ -721,3 +741,211 @@ def settle_bridges(F, VES, keys, log=print):
     X2, hist = F.run(X, groups, np.concatenate(pin), log=log, faces=Fc, iters=20, probe_iters=10)
     for i, k in enumerate(keys): VES[k]['v'] = X2[off[i]:off[i + 1]]
     return hist[-1] if hist else None
+
+
+# ------------------------------------------------------------------------------------------------ internal thoracic vessels
+IT_OFFSET = 0.0125     # centre this far lateral to the sternum's lateral border (m)
+IT_BEHIND = 0.0015     # wall this far behind the costal cartilages' posterior surface (m)
+IT_NAMES = ('Internal_thoracic_artery', 'Internal_thoracic_veins')
+
+
+def internal_thoracic(sex, VES, log=print, step=0.004):
+    """The internal thoracic artery and veins run behind the costal cartilages about 1-1.5 cm lateral to the sternum
+    (they hugged its edges or lay behind it): at each level of the placed sternum (rib cage group: manubrium and body)
+    the section centre is moved to IT_OFFSET lateral to the sternum's border there and, where a costal cartilage or
+    rib lies in front of that point, to IT_BEHIND behind its posterior surface; the shifts are smoothed along the vessel
+    (sigma 1 cm) and faded in over 3 cm from the upper end (its origin / its end on the brachiocephalic vein)."""
+    rc = os.path.join(FIT, sex, 'ribcage')
+    try:
+        SV = np.concatenate([load(os.path.join(rc, n + '.npz'))[0] for n in ('manubrium', 'sternum_body')])
+        man = json.load(open(os.path.join(rc, 'manifest.json')))
+        CV = np.concatenate([load(os.path.join(rc, o['file']))[0] for o in man if o['part'] == 'costal_cartilage' or o['name'].lower().startswith('rib')])
+    except (OSError, ValueError):
+        return {}
+    ylo, yhi = SV[:, 1].min(), SV[:, 1].max()
+    ctree = cKDTree(CV[:, :2])
+    out = {}
+    for side in 'lr':
+        sgn = 1.0 if side == 'l' else -1.0
+        for base in IT_NAMES:
+            n = base + side; x = VES.get(n)
+            if x is None or x.get('dropped') or not x['placed']: continue
+            cl = trunk(x['v'], x['f'])
+            if cl is None: continue
+            s, q, _, _, _ = param(x, cl)
+            b = np.floor(s / step).astype(int); nb = b.max() + 1
+            want = np.zeros((nb, 3)); wx = np.zeros(nb); wz = np.zeros(nb); off0 = []
+            r_v = np.median(np.linalg.norm(x['v'] - q, axis=1))
+            for k in np.unique(b):
+                c = x['v'][b == k].mean(0)
+                if not (ylo + 0.004 < c[1] < yhi - 0.004): continue
+                band = np.abs(SV[:, 1] - c[1]) < 0.006
+                if not band.any(): continue
+                edge = SV[band, 0].max() if side == 'l' else SV[band, 0].min()
+                off0.append((c[0] - edge) * sgn)
+                want[k, 0] = edge + sgn * IT_OFFSET - c[0]; wx[k] = 1
+                nb_ = np.asarray(ctree.query_ball_point([edge + sgn * IT_OFFSET, c[1]], 0.004), int)
+                nb_ = nb_[(CV[nb_, 2] > c[2] - 0.015) & (CV[nb_, 2] < c[2] + 0.030)] if len(nb_) else nb_   # the anterior wall only
+                if len(nb_):
+                    zp = CV[nb_, 2].min()                      # posterior surface of the cartilage / rib in front
+                    want[k, 2] = (zp - IT_BEHIND - r_v) - c[2]; wz[k] = 1
+            if not wx.any(): continue
+            vx = gauss_along(want * np.array([1, 0, 0]), wx, step, 0.010)
+            vz = gauss_along(want * np.array([0, 0, 1]), wz, step, 0.010)
+            sk = (np.arange(nb) + 0.5) * step
+            vec = (vx + vz) * G.smoothstep(sk / 0.030)[:, None]
+            dv = np.stack([np.interp(s, sk, vec[:, a]) for a in range(3)], 1)
+            x['v'] = x['v'] + dv
+            out[n] = dict(levels=int(wx.sum()), lateral_offset_before_mm=[r2(np.min(off0) * 1000, 1), r2(np.median(off0) * 1000, 1)] if off0 else None,
+                          max_shift_mm=r2(np.linalg.norm(dv, axis=1).max() * 1000, 1))
+            log(f'  internal thoracic {n}: {out[n]}')
+    return out
+
+
+def internal_thoracic_offsets(sex, VES):
+    """Centre offset (mm) lateral to the placed sternum's border along the internal thoracic vessels: min / median."""
+    rc = os.path.join(FIT, sex, 'ribcage')
+    try: SV = np.concatenate([load(os.path.join(rc, n + '.npz'))[0] for n in ('manubrium', 'sternum_body')])
+    except OSError: return {}
+    out = {}
+    for side in 'lr':
+        sgn = 1.0 if side == 'l' else -1.0
+        for base in IT_NAMES:
+            x = VES.get(base + side)
+            if x is None or x.get('dropped'): continue
+            cl = trunk(x['v'], x['f'])
+            if cl is None: continue
+            Q, _ = polyline_resample(cl['p'], 0.004)
+            off = []
+            for c in Q:
+                if not (SV[:, 1].min() + 0.004 < c[1] < SV[:, 1].max() - 0.004): continue
+                band = np.abs(SV[:, 1] - c[1]) < 0.006
+                if band.any(): off.append((c[0] - (SV[band, 0].max() if side == 'l' else SV[band, 0].min())) * sgn)
+            if off: out[base + side] = dict(min_mm=r2(np.min(off) * 1000, 1), median_mm=r2(np.median(off) * 1000, 1), levels=len(off))
+    return out
+
+
+# ------------------------------------------------------------------------------------------------ carotid sheath
+IJV_GAP = 0.001        # wall-to-wall gap between the internal jugular vein and the carotid in the sheath (m)
+IJV_FAR = 0.004        # act only where the vein's centre is this much farther from its place than that
+
+
+def carotid_sheath(sex, VES, log=print, step=0.004):
+    """The internal jugular vein lies lateral to the common / internal carotid artery in the carotid sheath (the female
+    right one ran 13-22 mm in front of it): at each level of the carotid (common carotid below its bifurcation,
+    internal carotid above, up to the skull base), the vein's section centre is moved to the carotid's lateral side,
+    wall to wall IJV_GAP apart (lateral = away from the midline, perpendicular to the carotid in the horizontal plane),
+    where it lies more than IJV_FAR from that place; the shift is smoothed along the vein (sigma 1.5 cm) and faded out
+    over 3 cm toward both ends (the jugular foramen above, the venous angle below)."""
+    out = {}
+    for side in 'lr':
+        sgn = 1.0 if side == 'l' else -1.0
+        v = VES.get(f'Internal_jugular_vein{side}')
+        cca = VES.get('Left_common_carotid_artery' if side == 'l' else 'Right_common_carotid_artery')
+        ica = VES.get(f'Internal_carotid_artery{side}')
+        if v is None or v.get('dropped'): continue
+        car = [c for c in (cca, ica) if c is not None and not c.get('dropped') and c['placed']]
+        if not car: continue
+        # carotid axis points with radii
+        CP, CR = [], []
+        for c in car:
+            cl = trunk(c['v'], c['f'])
+            if cl is None: continue
+            s, q, _, _, _ = param(c, cl)
+            Q, sQ = polyline_resample(cl['p'], 0.002)
+            rr = np.linalg.norm(c['v'] - q, axis=1); b = np.floor(s / 0.002).astype(int)
+            R = np.array([np.median(rr[b == k]) if (b == k).any() else np.nan for k in range(len(Q))])
+            R = np.where(np.isfinite(R), R, np.nanmedian(R))
+            CP.append(Q); CR.append(R)
+        CP = np.concatenate(CP); CR = np.concatenate(CR)
+        ytop = CP[:, 1].max() - 0.01                                # below the skull base entry of the ICA
+        ct = cKDTree(CP[:, [1]])
+        cl = trunk(v['v'], v['f'])
+        s, q, _, _, _ = param(v, cl)
+        rv = np.linalg.norm(v['v'] - q, axis=1)
+        b = np.floor(s / step).astype(int); nb = b.max() + 1
+        want = np.zeros((nb, 3)); w = np.zeros(nb); dist0 = []
+        for k in np.unique(b):
+            m = b == k; c = v['v'][m].mean(0)
+            if c[1] > ytop or c[1] < CP[:, 1].min() + 0.01: continue
+            ii = ct.query_ball_point([c[1]], 0.003)
+            if not ii: continue
+            j = ii[int(np.argmin(np.linalg.norm(CP[ii] - c, axis=1)))]
+            lat = np.array([sgn, 0.0, 0.0])
+            tgt = CP[j] + lat * (CR[j] + np.median(rv[m]) + IJV_GAP)
+            dlt = tgt - c; dlt[1] = 0.0
+            dist0.append(float(np.linalg.norm(c - tgt)))
+            if np.linalg.norm(dlt) > IJV_FAR:
+                want[k] = dlt * (1 - IJV_FAR / np.linalg.norm(dlt)); w[k] = 1
+        if not w.any():
+            out[f'Internal_jugular_vein{side}'] = dict(moved=False, max_offset_from_place_mm=r2(max(dist0) * 1000, 1) if dist0 else None); continue
+        sk = (np.arange(nb) + 0.5) * step
+        vec = gauss_along(want, w, step, 0.015)
+        vec *= (G.smoothstep(sk / 0.03) * G.smoothstep((cl['s'][-1] - sk) / 0.03))[:, None]
+        dv = np.stack([np.interp(s, sk, vec[:, a]) for a in range(3)], 1)
+        v['v'] = v['v'] + dv
+        out[f'Internal_jugular_vein{side}'] = dict(moved=True, levels=int(w.sum()), max_offset_from_place_before_mm=r2(max(dist0) * 1000, 1),
+                                                   max_shift_mm=r2(np.linalg.norm(dv, axis=1).max() * 1000, 1))
+        log(f'  carotid sheath Internal_jugular_vein{side}: {out[f"Internal_jugular_vein{side}"]}')
+    return out
+
+
+def ijv_position(VES):
+    """Internal jugular vein centre relative to its carotid at the vein's levels: anterior (z) and lateral offsets (mm)."""
+    out = {}
+    for side in 'lr':
+        sgn = 1.0 if side == 'l' else -1.0
+        v = VES.get(f'Internal_jugular_vein{side}')
+        car = [VES.get(n) for n in (('Left_common_carotid_artery' if side == 'l' else 'Right_common_carotid_artery'), f'Internal_carotid_artery{side}')]
+        car = [c for c in car if c is not None and not c.get('dropped')]
+        if v is None or not car: continue
+        CP = np.concatenate([polyline_resample(trunk(c['v'], c['f'])['p'], 0.002)[0] for c in car])
+        Q, _ = polyline_resample(trunk(v['v'], v['f'])['p'], 0.004)
+        ant, lat = [], []
+        for c in Q:
+            ii = np.flatnonzero(np.abs(CP[:, 1] - c[1]) < 0.003)
+            if not len(ii) or c[1] > CP[:, 1].max() - 0.01: continue
+            j = ii[np.argmin(np.linalg.norm(CP[ii] - c, axis=1))]
+            ant.append((c[2] - CP[j, 2]) * 1000); lat.append((c[0] - CP[j, 0]) * sgn * 1000)
+        if ant: out[f'Internal_jugular_vein{side}'] = dict(anterior_mm=[r2(np.min(ant), 1), r2(np.median(ant), 1), r2(np.max(ant), 1)],
+                                                          lateral_mm=[r2(np.min(lat), 1), r2(np.median(lat), 1), r2(np.max(lat), 1)], levels=len(ant))
+    return out
+
+
+# ------------------------------------------------------------------------------------------------ clearance pre-pass
+def clear_obstacle(VES, names, obst, pins, clear=0.0010, step=0.004, sigma=0.008, iters=5, log=print, label='obstacle'):
+    """Move vessels out of an obstacle (the lung lobes; the HRA aorta for the veins) by whole cross-sections before the
+    general push-out: per centreline bin, the deepest vertex's missing clearance along the obstacle's outward direction
+    there; spread along the vessel like the push-out (Gaussian sigma 8 mm, weights x ask, scaled by the nearest ask's
+    kernel value, so an asking section gets its full push and its neighbours nearly the same), scaled by the junction
+    pin weights (0 at the junction rings); repeated while any vertex is still inside (a moved section can meet another
+    part of the obstacle). The push-out that follows then has few organ asks left (it was 10x slower with them)."""
+    out = {}
+    for n in names:
+        x = VES[n]
+        sd, dn, _ = obst.query(x['v'])
+        if not np.isfinite(sd).any() or (clear - sd).max() <= 1e-4: continue
+        d0 = float(max(0.0, -sd.min())); moved = 0.0
+        for it in range(iters):
+            need = clear - sd
+            if (need > 1e-4).sum() == 0: break
+            cl = trunk(x['v'], x['f'])
+            if cl is None: break
+            s, q, _, _, _ = param(x, cl)
+            b = np.floor(s / step).astype(int); nb = b.max() + 1
+            vec = np.zeros((nb, 3)); mag = np.zeros(nb)
+            ask = need > 1e-4
+            for k in np.unique(b[ask]):
+                m = np.flatnonzero(b == k); i = m[np.argmax(need[m])]
+                mag[k] = need[i]; vec[k] = dn[i] * need[i]
+            sk = np.arange(nb) * step
+            K = np.exp(-0.5 * ((sk[:, None] - sk[None]) / sigma) ** 2)
+            W = K * mag[None]; den = W.sum(1); kmax = (K * (mag[None] > 0)).max(1)
+            fld = np.where((den > 0)[:, None], kmax[:, None] * (W @ vec) / np.maximum(den, 1e-12)[:, None], 0.0)
+            dv = np.stack([np.interp(s, sk + 0.5 * step, fld[:, a]) for a in range(3)], 1) * pins.get(n, np.ones(len(x['v'])))[:, None]
+            x['v'] = x['v'] + dv; moved = max(moved, float(np.linalg.norm(dv, axis=1).max()))
+            sd, dn, _ = obst.query(x['v'])
+        out[n] = dict(depth_before_mm=r2(d0 * 1000, 1), depth_after_mm=r2(max(0.0, -float(np.nanmin(np.where(np.isfinite(sd), sd, 1.0)))) * 1000, 1),
+                      max_shift_mm=r2(moved * 1000, 1))
+    if out: log(f'  {label} clearance: ' + ', '.join(f'{k} {v["depth_before_mm"]}->{v["depth_after_mm"]} mm' for k, v in out.items()))
+    return out

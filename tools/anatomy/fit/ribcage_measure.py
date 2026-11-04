@@ -227,3 +227,29 @@ def lung_at_joints(ribgeoms, ribs, verts, lungs):
             e[{'head_lo': 'head', 'head_up': 'head_upper', 'tub': 'tubercle'}[fk]] = mm(signed(lungs, q).min(), 1)
         out[f'{n}{s}'] = e
     return out
+
+
+def geodesic_length(mesh, n=3000):
+    """Length of a bar-shaped mesh: the geodesic diameter over a k-nearest-neighbour graph of surface samples (mm)."""
+    from scipy.sparse.csgraph import shortest_path
+    from scipy import sparse as sp
+    P = sample_surface(mesh[0], mesh[1], n, seed=0)
+    d, i = cKDTree(P).query(P, k=8)
+    G = sp.coo_matrix((d[:, 1:].ravel(), (np.repeat(np.arange(len(P)), 7), i[:, 1:].ravel())), shape=(len(P), len(P))).tocsr()
+    g = shortest_path(G, indices=[0], directed=False)[0]; b = int(np.argmax(np.where(np.isfinite(g), g, -1)))
+    g = shortest_path(G, indices=[b], directed=False)[0]
+    return float(np.max(np.where(np.isfinite(g), g, -1))) * 1000
+
+
+def cartilage_symmetry(C, carts, sternum, limit=1.2):
+    """Left/right symmetry of the costal cartilages per level: geodesic length of each and the distance of its
+    costochondral junction (the centre of its rib joint patch) from the sternum's midline (mm). Criterion: each
+    cartilage within `limit` times its contralateral length."""
+    xm = float(np.median(sternum[0][:, 0]))
+    out, worst = {}, 1.0
+    for n in range(1, 11):
+        L = {s: geodesic_length(carts[(n, s)]) for s in 'lr'}
+        x = {s: abs(float(carts[(n, s)][0][C[(n, s)]['rib']].mean(0)[0]) - xm) * 1000 for s in 'lr'}
+        r = max(L.values()) / max(min(L.values()), 1e-9); worst = max(worst, r)
+        out[str(n)] = dict(length_mm_l_r=[round(L['l'], 1), round(L['r'], 1)], ratio=round(r, 3), ccj_from_midline_mm_l_r=[round(x['l'], 1), round(x['r'], 1)])
+    return dict(length_ratio=crit(round(worst, 3), limit, worst <= limit), per_level=out)

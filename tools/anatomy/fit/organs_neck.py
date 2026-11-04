@@ -139,46 +139,65 @@ def ring_profile(sex, c0, a):
 
 
 def fit_neck(sex, W, extra_fields=()):
+    """The gland: cartilage similarity, slide so the isthmus lies over tracheal rings 2-4, growth to adult size about
+    the isthmus (organs_thyroid: upper poles to the laminae's oblique lines, lower poles to ring 5, thickened about
+    its bed), push-out and seating on the airway; the parathyroids follow and are reshaped to adult glands."""
+    from fit.organs_thyroid import isthmus_depth, grow_gland, place_gland, pth_shape, seat_pth, frame, PTH_EXT
+    from lib.mesh import signed_volume
+    from fit.organs_geom import vertex_normals
     rep = {}
     T = neck_similarity(sex, W, rep)
     c0, a = airway_axis(sex)
     zv, tf = za_original('thyroid')
+    from fit.organs_geom import refine_long_edges
+    rep['za_vertices'] = len(zv)
+    zv, tf = refine_long_edges(zv, tf, 0.0011)              # finer mesh: the gland is stretched up to 2.3x along the airway
     tv = T(zv)
-    # Z-Anatomy seats the gland on the thyroid cartilage, its lower border at the cricoid: about 2 cm too high (the
-    # isthmus belongs in front of tracheal rings 2-4, the lower poles at rings 5-6). Slide it down the airway axis until
-    # the isthmus centre lies ISTHMUS_DEPTH below the cricoid's lower border, then back/forward until the isthmus rests
-    # on the rings.
+    rep['za_volume_cm3'] = round(abs(signed_volume(zv, tf)) * 1e6, 2); rep['similarity_volume_cm3'] = round(abs(signed_volume(tv, tf)) * 1e6, 2)
+    # Z-Anatomy seats the gland on the thyroid cartilage, its lower border at the cricoid: slide it down the airway axis
+    # until the isthmus centre lies over the middle of tracheal rings 2-4, then back until the isthmus rests on them
+    rings = ring_profile(sex, c0, a); below = [(a0, a1) for a0, a1 in rings if a0 >= -0.001]
+    depth = isthmus_depth(below, ISTHMUS_DEPTH)
     ic, _ = isthmus(tv, sex, (c0, a))
-    shift = float(ISTHMUS_DEPTH - (ic - c0) @ a)
+    shift = float(depth - (ic - c0) @ a)
     tv = tv + shift * a
     hull = airway_field(sex)
     ic, im = isthmus(tv, sex, (c0, a))
-    ap = np.cross(a, [1.0, 0, 0]); ap = ap if ap[2] > 0 else -ap          # forward, perpendicular to the airway
+    ap, lat = frame(a)
     gap = float(hull(tv[im]).min())
     tv = tv - (gap - 0.0005) * ap
+    rep['isthmus_depth_mm'] = round(depth * 1000, 1)
     rep['slide_down_airway_mm'] = round(-shift * 1000, 1); rep['isthmus_ap_shift_mm'] = round(-(gap - 0.0005) * 1000, 2)
-    moved = tv.copy()
-    fields = [(hull, None)] + [(field(sex, k), None) for k in ('thyroid_cart', 'cricoid', 'trachea', 'trach_cart')] + [(fl, None) for fl in extra_fields]
-    tv2 = push_out(tv, tf, fields, clearance=0.0005, iters=16, log=log)
-    rep['thyroid_pushed_max_mm'] = round(float(np.linalg.norm(tv2 - moved, axis=1).max() * 1000), 2)
+    s_i = float((isthmus(tv, sex, (c0, a))[0] - c0) @ a)
+    grown, pmap = grow_gland(sex, tv, tf, c0, a, s_i, below, hull, rep)
+    rep['grown_volume_cm3'] = round(abs(signed_volume(grown, tf)) * 1e6, 2)
+    airway = [field(sex, k) for k in ('thyroid_cart', 'cricoid', 'trachea', 'trach_cart')]
+    tv2, nb = place_gland(sex, grown, tf, c0, a, hull, airway, rep, extra_fields)
     tf = orient_outward(tv2, tf)
     thy = (tv2, tf)
-    # parathyroids: the same similarity and slide, then onto the posterior surface of the lobe
+    rep['volume_cm3'] = round(abs(signed_volume(tv2, tf)) * 1e6, 2)
+    # parathyroids: their centres follow the gland's growth and placement; each is reshaped to an adult gland and laid
+    # on the posterior surface of its lobe (0.3 mm off it)
     tfl = mesh_field(tv2, tf, 0.0003, pad=0.01)
-    pth = {}
+    vn = vertex_normals(tv2, tf)
+    rl = tv2 - c0; xl = rl @ lat
+    pth, prep = {}, {}
     for k in PTH:
         v, f = za_original(k)
         v = T(v) + shift * a - (gap - 0.0005) * ap
-        # follow the thyroid's push-out: displacement of the nearest thyroid vertices
-        _, j = cKDTree(moved).query(v.mean(0), k=8)
-        v = v + (tv2[j] - moved[j]).mean(0)
-        for _ in range(80):
-            sd = tfl(v)
-            i = int(np.argmin(sd))
-            nrm, q = tfl.outward(v[i:i + 1])
-            step = GAP_PTH - sd[i]
-            if abs(step) < 2e-5: break
-            v = v + 0.8 * step * nrm[0]
-        pth[k] = (v, orient_outward(v, f))
+        c = pmap(v.mean(0)[None])[0]
+        _, j = cKDTree(grown).query(c, k=8)
+        c = c + (tv2[j] - grown[j]).mean(0)
+        sg = 1 if k.endswith('_l') else -1
+        # the lobe's posterior surface (facing back) on the gland's own side: its point nearest the carried centre
+        cand = np.flatnonzero((vn @ ap < -0.35) & (sg * xl > 0.004))
+        i = cand[int(np.argmin(np.linalg.norm(tv2[cand] - c, axis=1)))]
+        nrm = vn[i] / np.linalg.norm(vn[i])
+        centre = tv2[i] + nrm * (0.5 * PTH_EXT[2] + GAP_PTH)
+        w = pth_shape(v, f, centre, nrm, a)
+        w = seat_pth(w, f, tfl, GAP_PTH)
+        pth[k] = (w, orient_outward(w, f))
+        prep[k] = dict(carried_to_seat_mm=round(float(np.linalg.norm(tv2[i] - c) * 1000), 2), seat=np.round(tv2[i], 4).tolist())
+    rep['parathyroids'] = prep
     rep['parathyroid_source'] = {k: ZA_NAMES.get(k) for k in PTH}
     return thy, pth, rep, tfl, (c0, a)

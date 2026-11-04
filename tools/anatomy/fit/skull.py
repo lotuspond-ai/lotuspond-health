@@ -18,8 +18,15 @@ Method (per body):
     contents clear of the orbital walls, bone inside the skin with a minimum soft tissue (the brain wins where the
     Allen brain lies closer to the skin than bone + gap + scalp allow), occipital condyles onto the HRA C1 superior
     facets, the gland body below the HRA optic chiasm (the sella region moves down with it).
- 4. The jaw seating re-checked after the refinement (small correction), measurements (report.json), QA renders,
-    write_group().
+ 4. Teeth (fit/skull_teeth.py): each arch is moved rigidly with its jaw (one similarity per arch from the Z-Anatomy
+    alveolar bone to the placed bone; every tooth keeps its Z-Anatomy shape, no warp or field on the teeth), the upper
+    lateral incisors are stepped up along their axes to 0.75 mm above the central incisal edges, incisors and canines
+    closer than 3.8 mm to the skin are tipped lingually (rigidly, about their apical third), and the mandible with
+    the lower arch is re-seated in centric occlusion: condyles in the fossae (joint space 0.8-3 mm), arches in contact
+    without interpenetration, best overjet / canine / midline relation.
+ 5. Attachments (fit/skull_attach.py): the pituitary stalk stretched to the tuberal hypothalamus (gland body fixed);
+    the female hyoid translated to the male HRA hyoid's position relative to the thyroid cartilage (scaled).
+ 6. Measurements (report.json), QA renders, write_group().
 
 Head deformation export (for the vessels group and anything else that must follow the fitted skull):
 
@@ -28,8 +35,10 @@ Head deformation export (for the vessels group and anything else that must follo
     g = head_map(sex, mandible=True)   # the same plus the rigid jaw seating, for structures carried by the mandible
 
 head_map = head warp (work/head_warp.npz) followed by the refinement field (work/field.npz); the jaw seating is in
-work/mandible_seat.json (pre-refinement and post-refinement rigid transforms x' = R x + t). It is exact for the placed
-skull: head_map(sex)(Z-Anatomy vertex) reproduces each placed cranial vertex. Accuracy for soft structures follows
+work/mandible_seat.json (pre-refinement and post-refinement (occlusion) rigid transforms x' = R x + t). It is exact for
+the placed skull: head_map(sex)(Z-Anatomy vertex) reproduces each placed cranial vertex, head_map(sex, mandible=True)
+each mandible vertex. The teeth are rigid (work/teeth_rigid.json: x' = sR x + t per tooth), the pituitary stalk and the
+female hyoid are adjusted after the map (see 5. above). Accuracy for soft structures follows
 the warp (about 1-3 mm near the brain, eyes, skin and upper cervical spine; worse far from them).
 """
 import os, sys, json, time, re
@@ -518,6 +527,19 @@ def render_qa(sex, P, T, outdir, prefix='qa', extra=()):
                            dict(mesh=hs, color=COLORS['skin'], opacity=0.25)],
                           {'orbits': dict(dir=(0, 1, 0.001), up=(0, 0, -1), target=ec - [0, 0, 0.02], radius=0.07, clip=[dict(normal=(0, -1, 0), constant=float(ec[1]))])},
                           os.path.join(outdir, prefix))
+    # dentition in occlusion (front and right side, close up; bone ghosted)
+    up_t = merge([P[n][:2] for n in P if n.startswith('upper_')]); lo_t = merge([P[n][:2] for n in P if n.startswith('lower_')])
+    ic = (P['upper_medial_incisor_r'][0].mean(0) + P['lower_medial_incisor_r'][0].mean(0)) / 2
+    files += render_views([dict(mesh=up_t, color='#f4f1ea'), dict(mesh=lo_t, color='#9cc7e8'), dict(mesh=bones, color=COLORS['bone'], opacity=0.3),
+                           dict(mesh=mand, color=COLORS['mandible'], opacity=0.3)],
+                          {'teeth-front': dict(dir=(0, 0, 1), target=ic, radius=0.03), 'teeth-right': dict(dir=(-1, 0, 0.05), target=ic - [0, 0, 0.015], radius=0.035)},
+                          os.path.join(outdir, prefix))
+    if 'hyoid_bone' in P:
+        hc = P['hyoid_bone'][0].mean(0)
+        files += render_views([dict(mesh=P['hyoid_bone'][:2], color=COLORS['hyoid']), dict(mesh=T.thyroid_cart, color='#9fc3d8'), dict(mesh=T.epiglottis, color='#c8a0d8'),
+                               dict(mesh=mand, color=COLORS['mandible']), dict(mesh=hs, color=COLORS['skin'], opacity=0.12)],
+                              {'hyoid-right': dict(dir=(-1, 0.1, 0.15), target=hc - [0, 0.012, 0], radius=0.05), 'hyoid-front': dict(dir=(0, 0.1, 1), target=hc - [0, 0.012, 0], radius=0.05)},
+                              os.path.join(outdir, prefix))
     # occipito-atlantal joint and foramen magnum from below / behind
     fm = P['occipital_bone'][0][:, :].mean(0)
     files += render_views([dict(mesh=bones, color=COLORS['bone']), dict(mesh=c12, color=COLORS['c1']), dict(mesh=cord, color=COLORS['cord']),
@@ -742,13 +764,42 @@ def run(sex, argv, L, zsk):
     P = {}
     for n, (v, f, part, _) in Z.items():
         y = pre(n, W(v)); P[n] = (y + D(y), f, part)
-    # 2. the refinement field moves the condyles and the fossae almost equally: re-check the seating (small correction)
+    # 2. teeth: each arch moves rigidly with its jaw (Z-Anatomy tooth shapes kept exactly), the upper lateral incisors
+    #    stepped up along their axes; then the mandible (with the lower arch) is seated in centric occlusion with the
+    #    condyles in the fossae (this replaces the post-refinement joint-space-only re-seating)
+    from fit import skull_teeth as K, skull_attach as A
     rim = Wfull(L['fm_rim']); _, _, Vt = np.linalg.svd(rim - rim.mean(0)); fmn = Vt[2] if Vt[2][1] > 0 else -Vt[2]
-    P, seat1 = seat_mandible(P, L, fmn)
-    seat = dict(before_refinement=seat0, after_refinement=seat1)
+    P, tooth_tr, teeth_info = K.place_arches(Z, P, log=log)
+    P, lip_tr, teeth_info['lip_cover'] = K.fit_lips(P, T.skin_signed, log=log)
+    for n, (Rl, tl) in lip_tr.items():
+        Tn = tooth_tr[n]; tooth_tr[n] = Sim(Tn.s, Rl @ Tn.R, Rl @ Tn.t + tl)
+    P, seat1 = K.seat_occlusion(P, L, fmn, log=log)
+    seat = dict(before_refinement=seat0, after_refinement=seat1, teeth=teeth_info)
     json.dump(dict(pre=seat0['transform'], post=seat1['transform']), open(os.path.join(work_dir(sex), 'mandible_seat.json'), 'w'))
+    R1, t1 = np.array(seat1['transform']['R']), np.array(seat1['transform']['t'])
+    tj = {}
+    for n, Tn in tooth_tr.items():   # x' = s R x + t from Z-Anatomy to the placed tooth (lower teeth: with the seating)
+        sR, tt = Tn.s * Tn.R, Tn.t
+        if n.startswith('lower_'): sR, tt = R1 @ sR, R1 @ tt + t1
+        tj[n] = dict(sR=sR.tolist(), t=tt.tolist())
+    json.dump(tj, open(os.path.join(work_dir(sex), 'teeth_rigid.json'), 'w'))
+    # 3. the pituitary stalk stretched up to the tuberal hypothalamus; the female hyoid placed relative to the larynx
+    P, stalk_info = A.stretch_stalk(sex, P, L, fmn, log=log)
+    P, hyoid_info = A.place_hyoid(sex, P, log=log)
     log(sex, 'placed', round(time.time() - t0))
     crits, det, aux = M.measure(sex, P, T, L, Wfull, zsk, log=log)
+    oc, od = K.occlusion_criteria(Z, P, skin_signed=T.skin_signed)
+    crits += oc; det['dentition'] = od
+    det['pituitary_stalk'] = stalk_info
+    st_gap = stalk_info['stalk_top_gap_after_mm']
+    crits.append(M.crit('pituitary stalk top ring to the tuberal hypothalamus (contact)', st_gap, '0-0.5 mm', 0.0 <= st_gap <= 0.5, unit='mm',
+                        before_mm=stalk_info['stalk_top_gap_to_tuberal_hypothalamus_before_mm']))
+    if hyoid_info is not None:
+        det['hyoid_placement'] = hyoid_info
+        hmin = min(hyoid_info['min_dist_to_superior_horn_tips_after_mm'])
+        crits.append(M.crit('hyoid clear of the superior horns of the thyroid cartilage (thyrohyoid space)', hmin, '>= 3 mm', hmin >= 3.0, unit='mm',
+                            min_dist_to_thyroid_cartilage_mm=hyoid_info['min_dist_to_thyroid_cartilage_after_mm'],
+                            male_hra_reference_mm='6.6-7.0 to the horn tips, 5.7 to the cartilage'))
     det['hyoid_method_check'] = hyoid_check(sex, Wfull, T)
     det['soft_tissue_vault_feasibility'] = vault_feasibility(sex, P, T, aux)
     det['inventory'] = dict(cranial_and_facial_bones=sum(1 for n in Z if Z[n][2] == 'skel_skull' and not re.match(r'(malleus|incus|stapes|hyoid|mandible)', n)),

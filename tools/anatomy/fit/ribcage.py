@@ -42,6 +42,7 @@ RIB_OBSTACLES = [('lungs', RB.LUNG_CLEAR), ('heart', RB.ORGAN_CLEAR), ('liver', 
 CART_OBSTACLES = [('lungs', RB.LUNG_CLEAR), ('heart', 0.002), ('liver', RB.ORGAN_CLEAR), ('great_veins', 0.0015)]
 CCJ_TOL = 0.003          # a rib's anterior end is bent toward its costochondral target only as far as it lies beyond this
 CCJ_WEIGHT = 300.0       # weight (per mm^2) of that pull in the bending QP: below the clearances, above the smoothness
+RIB_END_HALF = 0.005     # half the thickness of a rib's anterior end (m)
 CCJ_MAX = 0.05           # the bend moves a rib's end at most this far toward its target; its cartilage takes up the rest
 STERNUM_CLEAR = dict(heart=0.0035, lungs=0.0005, liver=0.0015, skin=0.004)
 
@@ -94,7 +95,7 @@ def chain_stretch_pair(cands, w_sym=SYM_WEIGHT):
 MIRROR = np.array([-1.0, 1.0, 1.0])
 
 
-def ccj_targets(sex, places, stretch, RG, C, ZA, st_v, s0):
+def ccj_targets(sex, places, stretch, RG, C, ZA, st_v, s0, obstacles=()):
     """Where the anterior end of ribs 1-10 belongs (its costochondral junction): one natural cartilage chord (Z-Anatomy's
     distance between the cartilage's two joint patches, at body scale) from the cartilage's other joint - its facet on
     the fitted sternum (ribs 1-7), or its facet on the cartilage above (8-10, the interchondral joints: Z-Anatomy's
@@ -130,6 +131,15 @@ def ccj_targets(sex, places, stretch, RG, C, ZA, st_v, s0):
         us = wt['l'] * u['l'] + wt['r'] * MIRROR * u['r']; us /= np.linalg.norm(us)
         for s, uu in (('l', us), ('r', MIRROR * us)):
             Tt = q[s] + chord[s] * uu
+            # a target must be a place a rib end can occupy: half a rib's thickness plus its clearance outside the
+            # liver, heart and lungs (the liver displaces the right costal margin; mirroring alone ignores that)
+            for _ in range(4):
+                moved = False
+                for tg, cl in obstacles:
+                    d = float(tg.sdf(Tt[None])[0]); need = RIB_END_HALF + cl
+                    if d < need:
+                        g = tg.field.grad(Tt[None])[0]; Tt = Tt + (need - d) * g / max(np.linalg.norm(g), 1e-9); moved = True
+                if not moved: break
             R = RB_rotation_between(Rloc[s] @ dza[s], Tt - q[s]) @ Rloc[s]      # the cartilage's own turn, for the level below
             out[(n, s)] = dict(T=Tt, q=q[s], R=R)
             info[f'{n}{s}'] = dict(anchor='sternum' if n <= 7 else f'cartilage {n - 1}', chord_mm=mm1(chord[s]),
@@ -193,7 +203,7 @@ def fit_ribs(sex, W, ZA, RG, T, verts, overlap, C=None, st_v=None):
         places[key], stretch[key] = RB.sweep(rg, ZA[f'rib_{key[0]}_{key[1]}'][0], W[f'rib_{key[0]}_{key[1]}'][0], s0, prepared=True)
     tgt, tinfo, neck = {}, {}, {}
     if C is not None and st_v is not None:
-        tgt, tinfo = ccj_targets(sex, places, stretch, RG, C, ZA, st_v, s0)
+        tgt, tinfo = ccj_targets(sex, places, stretch, RG, C, ZA, st_v, s0, obstacles=[(T[k], c) for k, c in RIB_OBSTACLES if k in ('liver', 'heart', 'lungs')])
         for n in range(1, 11):
             full = {s: target_stretch(places[(n, s)], RG[(n, s)], np.unique(C[(n, s)]['rib_nn']), tgt[(n, s)]['T'], stretch[(n, s)]) for s in 'lr'}
             pick = chain_stretch_pair({s: full[s][:2] for s in 'lr'})
@@ -205,7 +215,15 @@ def fit_ribs(sex, W, ZA, RG, T, verts, overlap, C=None, st_v=None):
         n, s = key; place = places[key]; st = stretch[key]
         v, i0 = place(st); i0.update(chain.get(key, {}))
         if neck.get(key):
-            c, ax = neck_axis(rg, v); v = turn(v, c, ax, neck[key])
+            # the turn is taken only as far as it drives the rib no deeper into an organ, a lung or the skin
+            c, ax = neck_axis(rg, v)
+            base = clearance_deficit(v, obstacles, T['skin'], RB.conflict_zone(v, s, n, overlap, verts, rg=rg))
+            for frac in (1.0, 0.5, 0.25):
+                vt = turn(v, c, ax, neck[key] * frac)
+                if clearance_deficit(vt, obstacles, T['skin'], RB.conflict_zone(vt, s, n, overlap, verts, rg=rg)) <= base + 0.001:
+                    v = vt; i0['neck_turn_deg'] = round(float(np.degrees(neck[key] * frac)), 1); break
+            else:
+                i0['neck_turn_deg'] = 0.0
         # ribs 11, 12 (no costochondral target): shorten (down to 0.85) while the anterior quarter comes within
         # SKIN_CLEAR + 1.5 mm of the skin; ribs 1-10 are kept inside by the bending below
         tip = rg.s > rg.length * 0.75
@@ -219,18 +237,38 @@ def fit_ribs(sex, W, ZA, RG, T, verts, overlap, C=None, st_v=None):
             v1, i1b = RB.seat(rg, v1, verts, T['lungs'], skip=zone)
             i1 = dict(i1, second_pass=i1b)
         zone = RB.conflict_zone(v1, s, n, overlap, verts, rg=rg)
+        basis = RB.rib_basis(rg.s, rg.length, rg.s_rigid + 0.004)
+        v2, i2 = RB.bend(v1, basis, obstacles, T['skin'], radial=radial, skip=zone)          # clearances alone
         target = None
         if key in tgt:
             ti = np.unique(C[key]['rib_nn']); tp = v1[ti].mean(0); Tt = tgt[key]['T']
             dT = float(np.linalg.norm(Tt - tp))
             if dT > CCJ_MAX: Tt = tp + (Tt - tp) * (CCJ_MAX / dT)            # the cartilage takes up the rest
-            target = (ti, Tt, CCJ_TOL, CCJ_WEIGHT)
-        v2, i2 = RB.bend(v1, RB.rib_basis(rg.s, rg.length, rg.s_rigid + 0.004), obstacles, T['skin'], radial=radial, skip=zone, target=target)
+            # the end is pulled toward its target only as far as that costs no clearance: a pull that would drive the
+            # rib into an organ, a lung (outside the paravertebral segment) or the skin, or bend the shaft far more
+            # than the end moves, is halved, then dropped (the cartilage then bridges the difference)
+            base = clearance_deficit(v2, obstacles, T['skin'], zone)
+            i2 = dict(i2, ccj_pull='none: it would cost clearance')
+            for frac in (1.0, 0.5):
+                Tf = tp + (Tt - tp) * frac
+                vb, ib = RB.bend(v1, basis, obstacles, T['skin'], radial=radial, skip=zone, target=(ti, Tf, CCJ_TOL, CCJ_WEIGHT))
+                if clearance_deficit(vb, obstacles, T['skin'], zone) <= base + 0.0005 and ib['max_mm'] <= min(dT, CCJ_MAX) * frac * 1000 + 20:
+                    v2, i2 = vb, dict(ib, ccj_pull=frac); target = (ti, Tf); break
         out[key] = v2
         info[f'{n}{s}'] = dict(sweep=i0, seat=i1, bend=i2)
         log(sex, f'rib {n}{s}: stretch {st:.2f}, seat {i1["rot_deg"]:.1f} deg / {i1["shift_mm"]:.1f} mm, bend max {i2["max_mm"]:.1f} mm'
-                 + (f', end to target {i2["target_before_mm"]:.1f} -> {i2["target_after_mm"]:.1f} mm' if target is not None else ''))
+                 + (f', end to target {i2["target_before_mm"]:.1f} -> {i2["target_after_mm"]:.1f} mm (pull {i2["ccj_pull"]})' if target is not None else
+                    (f', {i2["ccj_pull"]}' if 'ccj_pull' in i2 else '')))
     return out, info
+
+
+def clearance_deficit(v, obstacles, skin, zone):
+    """Largest shortfall (m) of a rib's clearance from any obstacle (lungs outside the paravertebral zone) or the skin."""
+    P = v[::3]; z = zone[::3]; w = 0.0
+    for tg, cl in obstacles:
+        Q = P[~z] if tg.name == 'lungs' else P
+        if len(Q): w = max(w, float(cl - tg.sdf(Q).min()))
+    return max(w, float(RB.SKIN_CLEAR + skin.sdf(P).max()))
 
 
 # ------------------------------------------------------------------------------------------------ Z-Anatomy joint patches
@@ -615,12 +653,13 @@ def fit(sex, rebuild=False, render=True):
     for k in ('lungs', 'heart', 'liver'):
         c = M.clearance(list(carts.values()), T[k], inside=False); extra[f'cartilages_vs_{k}_min_gap_mm'] = M.mm(c[0])
     rep['other_clearances_info'] = extra
+    rep['costal_cartilage_symmetry'] = M.cartilage_symmetry(C, carts, sternum)
     rep['discs'] = M.discs(disc_m, lv, verts)
     for name, inf in disc_info.items(): rep['discs']['per_level'][name].update(inf)
     rep['fit_info'] = dict(ribs=rib_info, cartilages=cart_info)
     crits = [rep['ribs_in_lungs']['inside_fraction'], rep['ribs_in_lungs']['deepest'], rep['rib_joints']['head'], rep['rib_joints']['tubercle'],
              rep['costal_cartilage_joints'], rep['sternum']['heart_gap'], rep['sternum']['heart_intersection'], rep['sternum']['lungs_intersection'],
-             rep['sternum']['liver_intersection'], rep['skin_clearance']['bones'], rep['discs']]
+             rep['sternum']['liver_intersection'], rep['skin_clearance']['bones'], rep['discs'], rep['costal_cartilage_symmetry']['length_ratio']]
     rep['ok'] = bool(all(c['ok'] for c in crits))
     d = write_group(sex, GROUP, outputs, rep)
     if render:
@@ -648,6 +687,8 @@ def summary(rep):
     print(f"[{s}] other {json.dumps(rep['other_clearances_info'])}")
     dd = rep['discs']; bad = {r: (e.get('penetration_mm'), e.get('endplate_gap_p95_mm')) for r, e in dd['per_level'].items() if not e['ok']}
     print(f"[{s}] discs {dd['present']}/{dd['levels']} pen {dd['penetration']['value']} gap {dd['endplate_gap']['value']} {('failing ' + json.dumps(bad)) if bad else ''}")
+    cs = rep['costal_cartilage_symmetry']
+    print(f"[{s}] cartilage L/R length ratio worst {cs['length_ratio']['value']} (<= {cs['length_ratio']['threshold']}) " + json.dumps(cs['per_level']))
     print(f"[{s}] ALL OK: {rep['ok']}")
 
 

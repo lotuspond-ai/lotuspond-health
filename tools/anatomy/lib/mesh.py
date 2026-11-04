@@ -623,30 +623,60 @@ def _face_votes(v, f, faces, group, rays, eps):
     return np.where(~out_in & back_in, 1, np.where(out_in & ~back_in, -1, 0))
 
 
-def facing(v, f, n=160, eps=2e-4, seed=0):
-    """Exact orientation measure: area fractions (outward, inward, undecided) of a mesh's faces whose normal points out
-    of / into the solid its connected component encloses. Area-weighted samples per component; each sampled face's
-    centroid is offset by eps along +/- its normal and both points are tested by ray parity against that component's
-    own faces (overlapping components do not count as inside each other). Open sheets come out 'undecided'."""
+def wound_patches(f):
+    """Labels of the regions whose winding is consistent as given (faces joined across manifold edges they run in
+    opposite directions; seams of inconsistent winding and non-manifold edges separate regions)."""
+    F = len(f)
+    a, b, same = _manifold_pairs(f)
+    a, b = a[~same], b[~same]
+    G = sparse.coo_matrix((np.ones(len(a)), (a, b)), shape=(F, F))
+    return connected_components(G, directed=False)[1]
+
+
+def open_ratio(v, f):
+    """Border length over the square root of the area: 0 for closed meshes, ~0.4 for a long open-ended tube, 2.5 for a
+    hemispherical cap, 3.5 for a disc."""
+    e = np.sort(np.concatenate([f[:, [0, 1]], f[:, [1, 2]], f[:, [2, 0]]]), axis=1)
+    u, c = np.unique(e, axis=0, return_counts=True); b = u[c == 1]
+    A = 0.5 * np.linalg.norm(np.cross(v[f[:, 1]] - v[f[:, 0]], v[f[:, 2]] - v[f[:, 0]]), axis=1).sum()
+    return float(np.linalg.norm(v[b[:, 0]] - v[b[:, 1]], axis=1).sum() / max(np.sqrt(A), 1e-12))
+
+
+def facing(v, f, n=96, eps=2e-4, seed=0, max_open=2.0):
+    """Exact orientation measure, as area fractions (outward, inward, undecided). Each region of consistent winding
+    (wound_patches) of a closed or nearly closed connected component is classified by the majority of exact ray-parity
+    votes on area-weighted sample faces: a face votes outward when its centroid offset by eps along its normal is outside
+    the component's solid and offset against the normal is inside (tested against the component's own faces, so
+    overlapping components do not count as inside each other), inward for the reverse. An inside-out region therefore
+    counts as inward as a whole, while a few faces where a closed surface overlaps itself do not. Components more open
+    than `max_open` (open_ratio: surface patches, membranes) cannot face in or out by themselves: undecided."""
     v = np.asarray(v, float); f = np.asarray(f, np.int64)
     if not len(f): return 0.0, 0.0, 0.0
-    comps = components(v, f)
-    lab = np.zeros(len(f), np.int64)
-    for i, cf in enumerate(comps): lab[cf] = i
     ar = 0.5 * np.linalg.norm(np.cross(v[f[:, 1]] - v[f[:, 0]], v[f[:, 2]] - v[f[:, 0]]), axis=1)
     tot = ar.sum()
     if tot <= 0: return 0.0, 0.0, 0.0
+    comps = components(v, f)
+    lab = np.zeros(len(f), np.int64); closedish = np.zeros(len(comps), bool)
+    for i, cf in enumerate(comps):
+        lab[cf] = i; closedish[i] = open_ratio(v, f[cf]) <= max_open
+    patch = wound_patches(f)
+    order = np.argsort(patch, kind='stable'); groups = np.split(order, np.flatnonzero(np.diff(patch[order])) + 1)
     rng = np.random.default_rng(seed)
-    pick, wt = [], []
-    for cf in comps:
-        a = ar[cf]; A = a.sum()
-        if A <= 0: continue
-        k = min(n, len(cf))
-        s = rng.choice(cf, size=k, replace=len(cf) < n, p=a / A) if k < len(cf) else cf
-        pick.append(s); wt.append(np.full(len(s), A / len(s)) if k < len(cf) else a)
-    pick = np.concatenate(pick); wt = np.concatenate(wt)
-    vote = _face_votes(v, f, pick, lab, RayParity(v, f, lab), eps)
-    return float(wt[vote > 0].sum() / tot), float(wt[vote < 0].sum() / tot), float(wt[vote == 0].sum() / tot)
+    pick, pof, keep = [], [], []
+    for j, g in enumerate(groups):
+        if not closedish[lab[g[0]]] or ar[g].sum() <= 0: continue
+        s = g if len(g) <= n else rng.choice(g, size=n, replace=False, p=ar[g] / ar[g].sum())
+        pick.append(s); pof.append(np.full(len(s), j)); keep.append(j)
+    out = inw = 0.0
+    if pick:
+        pick = np.concatenate(pick); pof = np.concatenate(pof)
+        vote = _face_votes(v, f, pick, lab, RayParity(v, f, lab), eps)
+        score = np.bincount(pof, weights=vote, minlength=len(groups)); dec = np.bincount(pof, weights=np.abs(vote), minlength=len(groups))
+        for j in keep:
+            if dec[j] == 0: continue
+            if score[j] > 0: out += ar[groups[j]].sum()
+            elif score[j] < 0: inw += ar[groups[j]].sum()
+    return float(out / tot), float(inw / tot), float(1 - (out + inw) / tot)
 
 
 def orient_exact(v, f, n=48, eps=2e-4, seed=0):

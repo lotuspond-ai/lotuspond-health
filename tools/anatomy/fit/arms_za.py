@@ -89,10 +89,11 @@ def refine_sphere(P, c, r, band=0.003, iters=4, keep=None):
 # Radiocarpal seating. Z-Anatomy's carpus sits one fossa too far ulnar on the radius: its lunate is only ~20 % over the
 # radius (centre 6 mm ulnar of the radius's ulnar edge, 4.7 mm from the radius, 1.4 mm from the ulnar head, i.e. on the
 # ulna with no room for the articular disc) and its scaphoid spans both fossae. The hand (carpus, metacarpals, digits,
-# their joints kept) is translated, in Z-Anatomy space, so the lunate's proximal surface lies over the lunate fossa (the
-# ulnar LUNATE_FOSSA share of the radius's distal articular surface, its centre at LUNATE_FOSSA / 2) and the proximal
-# row is RC_SPACE from the radius (the scaphoid then lies in the scaphoid fossa against the styloid).
-LUNATE_FOSSA = 0.42
+# their joints kept) is translated radially, in Z-Anatomy space, until LUNATE_COVER of the lunate's width lies over the
+# radius (lunate fossa; the rest over the triangular fibrocartilage), and along the forearm so the proximal row is
+# RC_SPACE from the radius (the scaphoid then rests in the scaphoid fossa). Z-Anatomy's lunate fossa is deeper than its
+# lunate's convexity: with the scaphoid seated the lunate stays ~5 mm from the radius (no rigid seating closes both).
+LUNATE_COVER = 0.5
 RC_SPACE = 0.0018
 
 
@@ -113,29 +114,37 @@ def _wrist_frame(M, sg):
     return fa, ru, art, T
 
 
-def seat_carpus(M, sg, log=None):
-    """Z-Anatomy-space translation of the hand bones that seats the proximal carpal row on the radius (see above)."""
+def _coverage(M, fa, ru, d):
+    """Share of the lunate's width (along ru) radial of the radius's ulnar edge at the lunate's level, for the hand
+    translated by d (the review's measure)."""
+    rv = M['rad'][0]; lv = M['lun'][0] + d
+    tl = (lv - rv.mean(0)) @ fa; tr = (rv - rv.mean(0)) @ fa
+    e = (rv[tr > tl.min() - 0.012] @ ru).min()
+    lr = lv @ ru
+    return float(np.clip((lr.max() - max(lr.min(), e)) / (lr.max() - lr.min()), 0, 1))
+
+
+def seat_carpus(M, sg, cover=LUNATE_COVER, log=None):
+    """Z-Anatomy-space translation of the hand bones that seats the proximal carpal row on the radius: the smallest
+    radial shift that puts `cover` of the lunate's width over the radius (lunate fossa), with the proximal row moved
+    along the forearm so its closest approach to the radius is RC_SPACE (the scaphoid then rests in its fossa)."""
     fa, ru, art, Trad = _wrist_frame(M, sg)
-    hand = {k: M[k] for k in ('sca', 'lun')}
-    prox = {}
-    for k, (v, f) in hand.items():
-        P = sample_surface(v, f, 4000, seed=6)
-        _, _, _, nrm = TriMesh(v, f).signed_full(P)
-        t = (P - P.mean(0)) @ fa
-        prox[k] = P[(nrm @ fa < -0.5) & (t < np.percentile(t, 35))]   # the proximal (radius-facing) surface
-    a = art @ ru
-    ul, rd = float(a.min()), float(a.max())
-    target = ul + 0.5 * LUNATE_FOSSA * (rd - ul)
-    d_ru = target - float(np.median(prox['lun'] @ ru))
-    delta = d_ru * ru
-    # joint space along the forearm axis: closest approach of scaphoid and lunate to the radius
-    for _ in range(3):
-        g = min(float(Trad.signed(sample_surface(*M[k], 3000, seed=7) + delta).min()) for k in ('sca', 'lun'))
-        delta = delta + (RC_SPACE - g) * fa
-    info = dict(delta_mm=(delta * 1e3).round(2).tolist(), radial_mm=float(d_ru * 1e3), articular_width_mm=float((rd - ul) * 1e3),
-                lunate_proximal_before_mm=float((np.median(prox['lun'] @ ru) - ul) * 1e3),
-                scaphoid_proximal_before_mm=float((np.median(prox['sca'] @ ru) - ul) * 1e3))
-    return delta, info
+    Ps = {k: sample_surface(*M[k], 3000, seed=7) for k in ('sca', 'lun')}
+
+    def place(r):
+        d = r * ru
+        for _ in range(3):
+            g = min(float(Trad.signed(Ps[k] + d).min()) for k in ('sca', 'lun'))
+            d = d + (RC_SPACE - g) * fa
+        return d
+    c0 = _coverage(M, fa, ru, np.zeros(3))
+    r = 0.0
+    while r < 0.008 and _coverage(M, fa, ru, place(r)) < cover: r += 0.0005
+    d = place(r)
+    info = dict(delta_mm=(d * 1e3).round(2).tolist(), radial_mm=round(r * 1e3, 2), along_forearm_mm=round(float(d @ fa) * 1e3, 2),
+                lunate_cover_before_pct=round(100 * c0, 1), lunate_cover_after_pct=round(100 * _coverage(M, fa, ru, d), 1),
+                radius_scaphoid_mm=round(float(Trad.signed(Ps['sca'] + d).min()) * 1e3, 2), radius_lunate_mm=round(float(Trad.signed(Ps['lun'] + d).min()) * 1e3, 2))
+    return d, info
 
 
 class Limb:

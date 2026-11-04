@@ -36,13 +36,24 @@ Method (per body):
     Femoral sheath (sheath_companion, male): the femoral arteries take their femoral vein's snap displacement (Gaussian
     average over the vein and the fixed HRA external iliac vein), so the vein stays about 1 cm medial to its artery as
     in Z-Anatomy instead of swinging behind it 3-5 cm below the inguinal ligament.
- 4. Push-out (fit/vessels_fix.py): out of every bone (HRA and placed) by 0.8 mm, out of the solid organs by 0.3 mm and
+ 4. Review corrections (fit/vessels_review.py), on whole cross-sections about each vessel's main-trunk centreline
+    (vertices and faces kept): neck calibres (common / external carotids down, basilar up to adult references), the
+    radius at artery chain / fork junctions blended to the HRA stub's over 4 cm, iliac calibres (common iliac 0.7 x the
+    HRA aorta's end diameter, external and internal iliac to adult sizes, no child wider than its parent), crushed
+    subclavian / brachiocephalic veins re-rounded with Z-Anatomy radii (again after the push-out), superficial veins
+    (cephalic, basilic, median cubital, great and small saphenous) and the radial artery at the pulse brought to
+    Z-Anatomy's depth under the skin, the internal thoracic vessels 1.25 cm lateral to the placed sternum behind the
+    costal cartilages, the internal jugular veins lateral to their carotids; then the lung lobes (all vessels) and the
+    HRA thoracic aorta (veins; pushed toward the vertebral bodies along the descending aorta) cleared by whole sections.
+ 5. Push-out (fit/vessels_fix.py): out of every bone (HRA and placed) by 0.8 mm, out of the solid organs (with the
+    assembled lung lobes and the female ureters and ovaries) by 0.3 mm, the veins out of the HRA aorta by 0.5 mm, and
     1.5 mm inside the skin, with a Gaussian-spread displacement that moves a tube as a whole, shared across Z-Anatomy
     junctions (connected vessels form one group), faded in over 1.5 cm from the junction rings (2.5 cm from a chain
     junction's ring: past the stretch its end axis is measured on); vertices first, then probes inside the faces near a
     bone. Inside tests are ray parity with a majority of three rays, five when the first three disagree
-    (fit/vessels_geom.TriSet).
- 5. Measurements (fit/vessels_measure.py) -> report.json, QA renders, write_group().
+    (fit/vessels_geom.TriSet). Female: swept-tube bridges join the HRA uterine arteries to the internal iliac arteries
+    and the HRA uterine veins to the internal iliac veins, then are pushed out of bone with their ends pinned.
+ 6. Measurements (fit/vessels_measure.py, fit/vessels_review.measure) -> report.json, QA renders, write_group().
 """
 import os, sys, json, time, re
 import numpy as np
@@ -83,12 +94,13 @@ JUNCTIONS = [
          vessel='Right_common_carotid_artery'),
     dict(key='right_subclavian_origin', part=A, sexes=('female',), hra='brachiocephalic_artery_b', kind='branch', end='axis', hint=(-0.3, 1, 0.2),
          parent='Brachiocephalic_trunk', children=['Right_subclavian_artery']),
-    # female: the HRA left common carotid is a 5 cm stub. male: its first 1.6 cm (_a) leaves the arch at a normal calibre,
-    # but its continuation to the bifurcation (_b) is a 2.5-4.6 mm thread beside a 9-12 mm right common carotid, stepping
-    # up 3-4x into the internal and external carotids: the Z-Anatomy left common carotid continues _a instead, and _b
-    # is left out of the assembly (assemble.py: HRA name VH_M_left_common_carotid_artery_b)
-    dict(key='left_common_carotid', part=A, sexes=('male',), hra='left_common_carotid_artery_a', kind='chain', end='tip', hint=(0, 1, 0),
-         vessel='Left_common_carotid_artery'),
+    # female: the HRA left common carotid is a 5 cm stub. male: it is a 2.5-4.6 mm thread (its first 1.6 cm, _a, already
+    # narrows to 4.2 mm) beside a 9-12 mm right common carotid, stepping up 3-4x into the internal and external carotids:
+    # the Z-Anatomy left common carotid continues the arch's own opening for it (7 mm, the open ring of the HRA arch under
+    # _a's base) instead, and both HRA pieces are left out of the assembly (assemble.py: VH_M_left_common_carotid_artery_a,
+    # VH_M_left_common_carotid_artery_b)
+    dict(key='left_common_carotid', part=A, sexes=('male',), hra='aortic_arch', kind='chain', end='loop', near_hra='left_common_carotid_artery_a',
+         hint=(0, 1, 0), vessel='Left_common_carotid_artery'),
     dict(key='left_common_carotid', part=A, sexes=('female',), hra='left_common_carotid_artery_b', kind='chain', end='tip', hint=(0, 1, 0.2),
          vessel='Left_common_carotid_artery'),
     dict(key='left_subclavian', part=A, hra='left_subclavian_artery_b', kind='chain', end='tip', hint=(0.3, 1, 0), vessel='Left_subclavian_artery'),
@@ -313,7 +325,10 @@ def setup_junctions(sex, VES, log=log):
             continue
         if J['kind'] == 'chain':
             ves = VES[J['vessel']]
-            e = hra_end(hv, hf, J, ves['v'])
+            # the open ring is picked near the Z-Anatomy vessel, or near another HRA mesh (`near_hra`: the arch's
+            # opening under the HRA left common carotid's base, which the Z-Anatomy one replaces)
+            near = ves['v'] if not J.get('near_hra') else hra_stub(sex, J['near_hra'])[1][0]
+            e = hra_end(hv, hf, J, near)
             ring, p0, t0, how, rr = cut_chain(ves, e, hv)
             info.update(hra_end=end_info(e), za_cut=how)
             if ring is None:
@@ -445,8 +460,8 @@ VC_PROPAGATE = ('External_iliac_artery', 'Internal_iliac_artery')
 
 def pelvic_correction(sex, VES, log=log):
     """Move every vessel by the companion field (see above); the common iliac arteries' branches carry their start
-    ring's displacement with a geodesic raised-cosine falloff over their own length (their far ends keep the field's
-    displacement, so the external iliac still meets the femoral artery). Returns the info for the report."""
+    ring's displacement with a linear geodesic falloff over their own length (at least 1.5 x the shift), so the external
+    iliac's far end keeps the field's displacement and still meets the femoral artery. Returns the info for the report."""
     pairs, info = pelvic_pairs(sex, VES, log)
     if pairs is None: return info
     X, D = pairs
@@ -468,7 +483,11 @@ def pelvic_correction(sex, VES, log=log):
         g = G.geodesic(G.graph(x['v'], x['f']), ring['idx'])
         g = np.where(np.isfinite(g), g, np.nanmax(np.where(np.isfinite(g), g, np.nan)))
         d_ring = disp[n][ring['idx']].mean(0)
-        w = 0.5 * (1 + np.cos(np.pi * np.clip(g / g.max(), 0, 1)))
+        # linear falloff over the branch's length, or over 1.5 x the ring's shift if that is longer (the female's 9 cm):
+        # a uniform stretch that never folds the branch back on itself (a raised cosine folds once the shift exceeds
+        # 2 / pi of the length); the far end of a branch shorter than that keeps part of the ring's shift
+        Lf = max(float(g.max()), 1.5 * float(np.linalg.norm(d_ring)))
+        w = np.clip(1.0 - g / Lf, 0.0, 1.0)
         before = float(np.linalg.norm(disp[n] - d_ring, axis=1).max())
         disp[n] = disp[n] + w[:, None] * (d_ring - disp[n])
         prop[n] = dict(ring_shift_mm=round(float(np.linalg.norm(d_ring)) * 1000, 1), length_cm=round(float(g.max()) * 100, 1),
@@ -773,19 +792,33 @@ def run(sex, stage='all', render=True):
     aorta, aorta_info = RV.hra_aorta_tube(sex)
     sv_, sf_ = _skin(sex); SK = G.SkinField(sv_, sf_, skin_solid(sex))
     review = dict(aorta_tube=aorta_info)
-    review['neck_calibres'] = RV.neck_calibres(sex, VES, log=log)
-    review['radius_blend'] = RV.junction_radius_blend(VES, J, log=log)
-    review['pelvic_calibres'] = RV.pelvic_calibres(sex, VES, J, aorta, log=log)
-    review['reround'] = RV.reround(VES, REROUND.get(sex, ()), J, log=log)
-    review['superficial'] = RV.superficial_layer(sex, VES, SK, log=log)
-    review['radial_pulse'] = RV.radial_pulse(sex, VES, SK, log=log)
+
+    def step(key, fn, *a, **k):
+        # a review stage that fails is reported (and skipped) instead of losing the run's outputs
+        try: review[key] = fn(*a, **k)
+        except Exception as ex:  # noqa: BLE001
+            import traceback; log('  review stage', key, 'FAILED:', repr(ex)); traceback.print_exc(); review[key] = dict(error=repr(ex))
+    step('neck_calibres', RV.neck_calibres, sex, VES, log=log)
+    step('radius_blend', RV.junction_radius_blend, VES, J, log=log)
+    step('pelvic_calibres', RV.pelvic_calibres, sex, VES, J, aorta, log=log)
+    step('reround', RV.reround, VES, REROUND.get(sex, ()), J, log=log)
+    step('superficial', RV.superficial_layer, sex, VES, SK, log=log)
+    step('radial_pulse', RV.radial_pulse, sex, VES, SK, log=log)
+    step('internal_thoracic', RV.internal_thoracic, sex, VES, log=log)
+    step('carotid_sheath', RV.carotid_sheath, sex, VES, log=log)
+    # out of the lung lobes (all vessels) and the HRA thoracic aorta (veins) by whole cross-sections first
+    pins = pin_weights(VES, trees, J)
+    lungs = G.Obstacles(RV.lung_meshes(sex))
+    now = [n for n, x in VES.items() if x['placed'] and not x.get('dropped')]
+    step('lung_clearance', RV.clear_obstacle, VES, now, lungs, pins, log=log, label='lung')
+    step('aorta_clearance', RV.clear_obstacle, VES, [n for n in now if VES[n]['part'] == V], aorta, pins, clear=AORTA_CLEAR, log=log, label='aorta')
     F, hist = push_out(sex, VES, trees, contacts, J, aorta_obstacles=[(aorta, AORTA_CLEAR)])
     log(sex, 'pushed out', f'{time.time() - t0:.0f}s')
     # the push-out squeezes a vein that has no room between the clavicle, the first rib and the lung apex into a flat
     # sheet: those veins are re-rounded about the pushed centreline (their residual contacts are reported)
-    review['reround_after_push'] = RV.reround(VES, REROUND.get(sex, ()), J, log=log)
-    review['bridges'] = RV.bridges(sex, VES, log=log)
-    review['bridges_push_out'] = RV.settle_bridges(F, VES, list(review['bridges']), log=log)
+    step('reround_after_push', RV.reround, VES, REROUND.get(sex, ()), J, log=log)
+    step('bridges', RV.bridges, sex, VES, log=log)
+    if 'error' not in review['bridges']: step('bridges_push_out', RV.settle_bridges, F, VES, list(review['bridges']), log=log)
     # ---- measurements
     names = [n for n, x in VES.items() if x['placed'] and not x.get('dropped')]
     jr = VM.junctions(J, VES)
@@ -829,9 +862,10 @@ def run(sex, stage='all', render=True):
         if bm and 'min_offset_mm' in bm: crit.append(dict(criterion=f'brachial artery medial to humerus shaft ({s_})', value_mm=bm['min_offset_mm'], pass_=bm['pass_']))
         if vf: crit.append(dict(criterion=f'vertebral artery through C6-C1 foramina ({s_})', pass_=vf['pass_']))
     # ---- review measurements (fit/vessels_review.measure)
-    lungs = G.Obstacles(RV.lung_meshes(sex))
-    rm = RV.measure(sex, VES, names, lungs, aorta, SK)
-    review['measured'] = rm
+    step('measured', RV.measure, sex, VES, names, lungs, aorta, SK)
+    rm = review['measured'] if 'error' not in review['measured'] else dict(lungs=dict(worst_mm=-1), aorta_veins=dict(worst_mm=-1), vein_sections={}, superficial_depth={})
+    step('internal_thoracic_lateral_to_sternum', RV.internal_thoracic_offsets, sex, VES)
+    step('ijv_relative_to_carotid', RV.ijv_position, VES)
     rep['review'] = review
     crit.append(dict(criterion='vessels inside the lung lobes (deepest)', value_mm=rm['lungs']['worst_mm'], threshold_mm=REVIEW_MAX_MM,
                      pass_=rm['lungs']['worst_mm'] <= REVIEW_MAX_MM))

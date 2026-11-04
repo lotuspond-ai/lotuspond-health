@@ -16,7 +16,7 @@ humerus by a few degrees about the shoulder, the forearm and hand by millimetres
 import numpy as np
 
 from fit.arms_geom import TriMesh, Aff
-from fit.arms_solve import Bodies, solve, term_surface_band, term_body_gap_local, term_points_pair, term_regular
+from fit.arms_solve import Bodies, solve, term_surface_band, term_body_gap_local, term_points_pair, term_regular, term_point_target
 from fit.arms_za import HAND_BONES, CARPALS
 
 SEGMENTS = {'hum': ['hum'], 'fore': ['uln', 'rad'], 'hand': list(HAND_BONES)}
@@ -36,7 +36,7 @@ def segment_of(b):
     return None
 
 
-def limb_pass(L, maps, skinT, log=print, iters=30, seed=5):
+def limb_pass(L, maps, skinT, log=print, iters=30, seed=5, tips=None):
     """Returns ({bone: Aff correction (HRA -> HRA)} for the free-limb bones, summary)."""
     from fit.arms_measure import landmark_zones
     J = L.J
@@ -77,6 +77,10 @@ def limb_pass(L, maps, skinT, log=print, iters=30, seed=5):
                 terms.append(term_body_gap_local(segment_of(x), Px, segment_of(y), T0[y], hi=hi * 1e-3, w=1.0, mode='min')); names.append(f'gap {x}-{y} hi')
     terms.append(term_points_pair('hum', maps['hum'](J['elbow'][None])[0], 'fore', maps['uln'](J['elbow'][None])[0], w=1.0, tol=0.0035)); names.append('elbow centre')
     terms.append(term_points_pair('fore', maps['rad'](J['wrist'][None])[0], 'hand', maps['cap'](J['wrist'][None])[0], w=1.0, tol=0.0035)); names.append('wrist centre')
+    # fingertips: each distal phalanx's tip kept at its target under the skin fingertip (the pulp), so the hand does not
+    # slide along the arm away from the fingers
+    for dg, tgt in (tips or {}).items():
+        terms.append(term_point_target('hand', maps[f'dp{dg}'](J[f'dp{dg}_tip'][None])[0], tgt, w=1.0, tol=0.0008)); names.append(f'fingertip {dg}')
     # the humerus turns about the shoulder (its head stays in the glenoid); forearm and hand move freely but gently
     terms.append(term_regular('hum', np.radians(6), 0.0003)); names.append('reg hum')
     terms.append(term_regular('fore', np.radians(6), 0.010)); names.append('reg fore')

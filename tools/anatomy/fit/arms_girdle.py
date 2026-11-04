@@ -165,7 +165,7 @@ def _rotvec(R):
     return np.array([R[2, 1] - R[1, 2], R[0, 2] - R[2, 0], R[1, 0] - R[0, 1]]) / (2 * np.sin(ang)) * ang
 
 
-def costal_samples(L, za_ribs, n=500, seed=3, dmax=0.03):
+def costal_samples(L, za_ribs, n=300, seed=3, dmax=0.03):
     """Z-Anatomy samples of the scapula's costal surface (outward normal facing the nearest rib, within dmax of it)
     and their distance to the ribs (m)."""
     sv, sf = L.M['scap']
@@ -208,9 +208,9 @@ def fit_girdle(L, W, skinT, lungsT, sex, log=print):
     acr = acromion_points(L, Ps)
     rng = np.random.default_rng(3)
     def sub(P, n): return P if len(P) <= n else P[rng.choice(len(P), n, replace=False)]
-    Pc_z = sub(Pc, 700); Ps_z = sub(Ps, 900); acr_z = sub(acr, 150)
+    Pc_z = sub(Pc, 400); Ps_z = sub(Ps, 400); acr_z = sub(acr, 100)
     hp = L.P['hum']; head = hp[np.linalg.norm(hp - J['gh'], axis=1) < J['gh_r'] + 0.003]
-    head_z = sub(head[(head - J['gh']) @ J['glenoid_n'] > 0.3 * J['gh_r']], 150)  # the part of the head under the deltoid
+    head_z = sub(head[(head - J['gh']) @ J['glenoid_n'] > 0.3 * J['gh_r']], 100)  # the part of the head under the deltoid
     ap_za = za_shoulder_ap(L)
     xs = Pc_z[:, 0] * sg
     edges = np.linspace(xs.min(), xs.max(), 8)
@@ -221,11 +221,11 @@ def fit_girdle(L, W, skinT, lungsT, sex, log=print):
     lo_w = np.maximum(WALL_MIN + 1.0, s0 * dw_za * 1e3 - WALL_TOL); hi_w = s0 * dw_za * 1e3 + WALL_TOL
     ia = sv_[np.argmin(sv_[:, 1])]
     ia_za = float(TriMesh(*merge(za_ribs)).closest(ia[None])[0][0] * 1e3)
-    Pmin = sub(Ps, 500)
+    Pmin = sub(Ps, 250)
     # joints: sternal end, acromial end and acromial facet samples
     Pc_sc = Pc[np.linalg.norm(Pc - c_se, axis=1) < 0.015]
     Pc_ac = Pc[np.linalg.norm(Pc - J['ac'], axis=1) < 0.012]; Ps_ac = Ps[np.linalg.norm(Ps - J['ac'], axis=1) < 0.012]
-    Pc_sc = sub(Pc_sc, 300); Pc_ac = sub(Pc_ac, 200); Ps_ac = sub(Ps_ac, 200)
+    Pc_sc = sub(Pc_sc, 150); Pc_ac = sub(Pc_ac, 120); Ps_ac = sub(Ps_ac, 120)
     medial = np.linalg.norm(Pc_z - c_se, axis=1) < COSTOCLAV_MEDIAL
     need_cc = np.where(medial, COSTOCLAV[0], COSTOCLAV[1])
 
@@ -305,7 +305,7 @@ def fit_girdle(L, W, skinT, lungsT, sex, log=print):
 
     x0 = np.zeros(12)
     step = np.r_[np.full(3, 1e-3), np.full(3, 0.05), np.full(3, 1e-3), np.full(3, 0.05)]
-    res = least_squares(resid, x0, method='trf', diff_step=step, max_nfev=200, x_scale=np.r_[np.full(3, 0.05), np.ones(3), np.full(3, 0.05), np.ones(3)])
+    res = least_squares(resid, x0, method='trf', diff_step=step, max_nfev=50, x_scale=np.r_[np.full(3, 0.05), np.ones(3), np.full(3, 0.05), np.ones(3)])
     C, S = maps(res.x)
     terms = {k: round(v, 2) for k, v in resid(res.x, detail=True).items()}
     t0 = {k: round(v, 2) for k, v in resid(x0, detail=True).items()}

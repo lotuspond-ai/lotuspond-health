@@ -16,7 +16,7 @@ Small motions are preferred (rotation 2 deg, translation 2 mm scales; girdle 1 d
 import numpy as np
 
 from fit.arms_geom import TriMesh, Aff, unit
-from fit.arms_solve import Bodies, solve, term_surface_band, term_body_gap_local, term_regular
+from fit.arms_solve import Bodies, solve, term_surface_band, term_body_gap_local, term_regular, term_point_target
 from fit.arms_za import ALL_BONES, ARM_BONES, CHAINS, CARPALS, contact
 from fit.arms_measure import landmark_zones
 
@@ -45,7 +45,7 @@ def neighbour_pairs(L, d=0.004):
     return out
 
 
-def finalize(L, maps, skinT, log=print, iters=40):
+def finalize(L, maps, skinT, log=print, iters=40, tips=None):
     """Returns {bone: Aff correction (HRA -> HRA)} and a summary."""
     J = L.J
     rng = np.random.default_rng(7)
@@ -102,6 +102,8 @@ def finalize(L, maps, skinT, log=print, iters=40):
         near = (~lm) & (cl < 0.008)
         if near.any():
             terms.append(term_surface_band(b, sub(P[b][near], 1500), skinT, lo=CLEAR * 1e-3, w=3.0)); names.append(f'skin {b}')
+    for dg, tgt in (tips or {}).items():   # distal phalanx tips at their pulp distance under the skin fingertips
+        terms.append(term_point_target(f'dp{dg}', maps[f'dp{dg}'](J[f'dp{dg}_tip'][None])[0], tgt, w=1.0, tol=0.0008)); names.append(f'fingertip {dg}')
     for b in ALL_BONES:
         sr, st = (np.radians(1), 0.001) if b in ('clav', 'scap') else (np.radians(2), 0.002)
         terms.append(term_regular(b, sr, st)); names.append(f'reg {b}')

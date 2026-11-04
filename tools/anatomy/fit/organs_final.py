@@ -24,11 +24,49 @@ from lib.mesh import sample_surface, orient_outward
 from lib.register import umeyama
 from fit.organs_data import hra, field, log, has_hra
 
+HEART_CARVE = 0.004       # assemble.py carves the HRA heart plus 4 mm out of the liver (the diaphragm's room under the heart)
 GAP_TARGET = 0.002
 MIN_THICK = 0.0006
 ADR_NB = ('ivc', 'liver', 'spleen', 'pancreas', 'aorta', 'duodenum', 'colon', 'celiac', 'spine')
 LIFT_TARGET = 0.0015
 DIA_NB = ('aorta',)
+
+
+class CarvedField:
+    """A neighbour with another solid plus `margin` carved out of it: signed distance max(base, margin - cut). Used for
+    the liver as assembled (assemble.py carves the heart plus HEART_CARVE out of the HRA liver, whose dome the HRA
+    heart's diaphragmatic surface sinks into): the central tendon then has the carved gap to lie in. Field-like:
+    coarse, __call__, outward."""
+
+    def __init__(self, base, cut, margin):
+        self.base, self.cut, self.margin = base, cut, margin
+
+    def coarse(self, p):
+        return np.maximum(self.base.coarse(p), self.margin - self.cut.coarse(p))
+
+    def __call__(self, p, band=None):
+        return np.maximum(self.base(p), self.margin - self.cut(p))
+
+    def outward(self, p):
+        p = np.asarray(p, float)
+        b = self.base(p); sdc = self.cut(p)
+        nb, qb = self.base.outward(p)
+        use = (self.margin - sdc) > b
+        if use.any():
+            nc, _ = self.cut.outward(p[use])
+            nb = nb.copy(); qb = qb.copy()
+            nb[use] = -nc                                   # the carved face looks towards the heart
+            qb[use] = p[use] - (sdc[use] - self.margin)[:, None] * nc
+        return nb, qb
+
+
+_CARVED = {}
+
+
+def liver_carved(sex):
+    """The liver as assembled: HRA liver minus (heart + HEART_CARVE)."""
+    if sex not in _CARVED: _CARVED[sex] = CarvedField(field(sex, 'liver'), field(sex, 'heart'), HEART_CARVE)
+    return _CARVED[sex]
 
 
 def reseat_gland(sex, s, mesh, own=(), log_=log):
@@ -74,6 +112,11 @@ def settle_diaphragm(sex, mesh, own, iters=14, log_=log):
     P, Q = T[m], A[j[m]]
     ax = v[P] - v[Q]; th = np.linalg.norm(ax, axis=1); ax /= np.maximum(th, 1e-12)[:, None]
     fields = [(k, field(sex, k), None) for k in DIA_NB if has_hra(sex, k)] + [(k, fl, None) for k, fl in own]
+    # under the heart: the heart and the liver as assembled (heart + 4 mm carved out), so that the central tendon settles
+    # into the carved gap; only the sheet within 30 mm of the heart may be moved by them (the domes elsewhere stay as the
+    # diaphragm stage balanced them between the lungs and the abdominal organs)
+    near_heart = field(sex, 'heart').coarse(v) < 0.03
+    fields += [('heart', field(sex, 'heart'), None, near_heart), ('liver (heart carved)', liver_carved(sex), None, near_heart)]
     v2, rep = settle(v, f, fields, clear=0.0004, iters=iters, pairs=(P, Q, ax), min_thick=np.minimum(th, MIN_THICK), pair_split=0.5,
                      w=30.0, inward=False, log=log_, label='diaphragm settle')
     th2 = np.einsum('ij,ij->i', v2[P] - v2[Q], ax)

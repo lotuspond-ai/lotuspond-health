@@ -51,14 +51,14 @@ HRA_PARTS = {
                   exclude=PORTAL + r'|superior_rectal_vein'),
     'hepatic_artery': dict(sel=[r'blood_vasculature/.*' + HEPATIC_ARTERIES]),
     # the HRA heart's diaphragmatic surface sinks into the liver dome: carve the heart plus 4 mm (the diaphragm's room)
-    'liver': dict(sel=[r'_liver/'], exclude=r'(ligament|artery|vein|duct|_portal)', mode='solid', opening=1, carve=[(r'cardiac_chamber/', 0.004)]),
+    'liver': dict(sel=[r'_liver/'], exclude=r'(ligament|artery|vein|duct|_portal|blood_vasculature)', mode='solid', opening=1, carve=[(r'cardiac_chamber/', 0.004)]),
     'liver_ligaments': dict(sel=[r'_liver/.*ligament'], double=True),
     'gallbladder': dict(sel=[r'_gallbladder_/']),
     'bile_ducts': dict(sel=[r'_biliary_tree/']),
     'hepatic_veins': dict(sel=[r'blood_vasculature/.*(right|middle|left)_hepatic_vein']),
     'portal_vein': dict(sel=[r'blood_vasculature/.*' + PORTAL]),
     'spleen': dict(sel=[r'_spleen/'], exclude=r'(artery|vein)', mode='solid', opening=1),
-    'pancreas': dict(sel=[r'_pancreas/'], mode='solid', opening=1),
+    'pancreas': dict(sel=[r'_pancreas/'], exclude=r'ducts_of_pancreas/', mode='solid', opening=1),  # the ducts are drawn in bile_ducts
     'kidneys': dict(sel=[r'kidney_capsule_[LR]$', r'hilum_of_kidney_[LR]$'], mode='solid', split=r'_([LR])$'),
     'kidney_medulla': dict(sel=[r'renal_(pyramid|papilla)_[LR]']),
     'kidney_pelvis': dict(sel=[r'(minor|major)_calyx', r'renal_pelvis_[LR]$']),
@@ -84,7 +84,7 @@ HRA_PARTS = {
 }
 SPEC = {p[0]: dict(organ=p[1], tissue=p[2], flags=list(p[3]), budget=p[4]) for p in PARTS}
 LOBE_CARVE = [(r'cardiac_chamber/', 0.001), (r'blood_vasculature/.*/VH_[MF]_[^/]*aort[^/]*$', 0.001), (r'superior_vena_cava$', 0.001), (r'_thymus/', 0.001)]
-INWARD_MAX = 0.01  # a part fails the build when more of its area than this faces inward (exact parity test)
+INWARD_MAX = 0.01  # a part fails the build when more of its area than this is inside-out (lib.mesh.facing: exact parity test per patch)
 
 
 def frame_offset(sex):
@@ -388,17 +388,17 @@ def assemble(sex):
         v.astype(np.float32).tofile(os.path.join(od, pid + '.pos')); f.astype(np.uint32).tofile(os.path.join(od, pid + '.idx')); seg.tofile(os.path.join(od, pid + '.seg'))
         lo, hi = v.min(0), v.max(0)
         # exact orientation check, structure by structure (area-weighted)
-        ar_in = ar_all = 0.0; worst = []
+        ar_in = ar_un = ar_all = 0.0; worst = []
         for _, n, m, _, _ in items:
             a = 0.5 * np.linalg.norm(np.cross(m[0][m[1][:, 1]] - m[0][m[1][:, 0]], m[0][m[1][:, 2]] - m[0][m[1][:, 0]]), axis=1).sum()
-            fi = facing(*m)[1]; ar_in += fi * a; ar_all += a
+            _, fi, fu = facing(*m); ar_in += fi * a; ar_un += fu * a; ar_all += a
             if fi > 0.005: worst.append((n, round(fi, 4)))
-        inward[pid] = round(ar_in / max(ar_all, 1e-12), 5)
+        inward[pid] = round(ar_in / max(ar_all, 1e-12), 5); undecided = round(ar_un / max(ar_all, 1e-12), 4)
         parts[pid] = dict(SPEC[pid], double=any(d for _, _, _, d, _ in items), bounds=[lo.round(4).tolist(), hi.round(4).tolist()], tris=int(len(f)),
-                          sources=sorted({src for src, *_ in items}), inward=inward[pid])
+                          sources=sorted({src for src, *_ in items}), inward=inward[pid], open_area=undecided)
         structures[pid] = [dict(name=n, source=src, tris=int(len(m[1])), paths=paths) for src, n, m, _, paths in items]
         parts_v[pid] = v
-        print(f'  {pid:<18} {len(f):8d} tris  {len(items):4d} structures  inward {inward[pid] * 100:5.2f} %  from {", ".join(parts[pid]["sources"])}'
+        print(f'  {pid:<18} {len(f):8d} tris  {len(items):4d} structures  inward {inward[pid] * 100:5.2f} % (open {undecided * 100:4.1f} %)  from {", ".join(parts[pid]["sources"])}'
               + (f'   worst {sorted(worst, key=lambda w: -w[1])[:4]}' if worst else ''), flush=True)
     json.dump(structures, open(os.path.join(od, 'structures.json'), 'w'), indent=0)
     missing = [p for p in SPEC if p not in parts]

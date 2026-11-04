@@ -1,5 +1,8 @@
 """Organs group: stomach, oesophagus, diaphragm, suprarenal glands, thyroid gland and parathyroid glands.
 Usage: python3 fit/organs.py [male|female|all] [--no-render] [--from=<stage>]  (earlier stages from the stage cache)
+                              [--redo=<stage>,<stage>...]  (only these stages recomputed, the others from the cache;
+                              e.g. --redo=neck,esophagus,final after a change to the thyroid, which only the oesophagus
+                              and the final clearances depend on)
 
 Every structure starts from the cached trunk warp (fit.common.get_warp(sex, 'trunk')) and is then refined against the
 HRA neighbours it touches (see organs_neck, organs_adrenal, organs_diaphragm, organs_bed, organs_tube, organs_final,
@@ -174,7 +177,13 @@ def measure(sex, out, aux):
     pairs['esophagus']['thyroid'] = pair(es, own['thyroid'], listed=False, closed=cl['thyroid'])
     pairs['esophagus']['stomach (beyond the junction)'] = pair(es, own['stomach'], exclude=near_junction, listed=False)
     # diaphragm
-    pairs['diaphragm'] = {k: pair(di, F(k), n=40000) for k in ('lungs', 'heart', 'liver', 'spleen', 'ivc', 'aorta')}
+    from fit.organs_final import liver_carved, HEART_CARVE
+    pairs['diaphragm'] = {k: pair(di, F(k), n=40000) for k in ('lungs', 'heart', 'spleen', 'ivc', 'aorta')}
+    # the liver as assembled (assemble.py carves the heart plus 4 mm out of the HRA liver dome the heart sinks into);
+    # the uncarved HRA liver is reported alongside
+    pairs['diaphragm']['liver'] = pair(di, liver_carved(sex), n=40000)
+    pairs['diaphragm']['liver'].update(carved=f'HRA liver minus (heart + {HEART_CARVE * 1000:.0f} mm), as assemble.py builds it')
+    pairs['diaphragm']['liver (HRA, uncarved)'] = pair(di, F('liver'), n=40000, listed=False)
     pairs['diaphragm']['stomach'] = pair(di, own['stomach'], n=40000)
     pairs['diaphragm']['esophagus'] = pair(di, own['esophagus'], n=40000)
     for k in ('kidney_l', 'kidney_r', 'colon', 'pancreas', 'spine', 'ribs'):
@@ -268,6 +277,9 @@ def measure(sex, out, aux):
         p = sample_surface(*out[k], 800, seed=1); d = tfl(p)
         R[f'{k}_to_thyroid'] = crit(round(float(d.min() * 1000), 2), '0-1 mm, none inside', (d.min() <= 0.001) and (d >= 0).all(),
                                     inside_pct=round(float((d < 0).mean() * 100), 2), centre=np.round(out[k][0].mean(0), 4).tolist())
+    # the gland's size, extent, bed and neck contacts; the parathyroids' size and levels (organs_thyroid)
+    from fit.organs_thyroid import thyroid_measures
+    R.update(thyroid_measures(sex, out['thyroid'], {k: out[k] for k in PTH}, c0, av, aux.get('neck_neighbours')))
     # level of the oesophagus's upper end
     top = es[0][es[0][:, 1] > es[0][:, 1].max() - 0.003].mean(0)
     R['esophagus_top'] = dict(level=level_name(level(sex, top[1])), above_cricoid_lower_border_mm=round(float((cv[:, 1].min() - top[1]) * -1000), 1),
@@ -291,13 +303,15 @@ def measure(sex, out, aux):
 
 
 STAGES = ('neck', 'adrenals', 'diaphragm', 'stomach', 'esophagus', 'final', 'measure')   # --from=measure: re-measure only
+REDO = None                                                                                 # --redo: set of stages to recompute
 
 
 def _stage(sex, name, frm, compute):
     """Run one fitting stage, or (with --from=<later stage>) load its result from the stage cache."""
     import pickle
     path = os.path.join(cache_dir(sex), f'stage-{name}.pkl')
-    if frm is not None and STAGES.index(name) < STAGES.index(frm) and os.path.exists(path):
+    cached = (REDO is not None and name not in REDO) or (frm is not None and STAGES.index(name) < STAGES.index(frm))
+    if cached and os.path.exists(path):
         log(sex, name, '(stage cache)')
         with open(path, 'rb') as fh: return pickle.load(fh)
     res = compute()
@@ -408,6 +422,7 @@ def fit(sex, render=True, frm=None):
     rep['ok'] = all(rep['criteria'][k]['ok'] for k in crit_keys)
     rep['runtime_s'] = round(time.time() - t0, 1)
     if frm is not None: rep['stages_from_cache'] = list(STAGES[:STAGES.index(frm)])
+    if REDO is not None: rep['stages_from_cache'] = [k for k in STAGES[:-1] if k not in REDO]
     outputs = []
     src = lambda k: ZA_NAMES.get(k) or za_original(k) and ZA_NAMES.get(k)
     names = [('stomach', 'stomach', 'stomach'), ('esophagus', 'esophagus', 'esophagus'), ('diaphragm', 'diaphragm', 'diaphragm'),
@@ -491,9 +506,24 @@ def qa(sex, out, aux):
                 dict(mesh=hra(sex, 'cricoid'), color='#d6eaf8', opacity=0.8), dict(mesh=hra(sex, 'trachea'), color='#abebc6', opacity=0.5),
                 dict(mesh=hra(sex, 'trach_cart'), color='#d5f5e3', opacity=0.7), dict(mesh=out['esophagus'], color=COL['esophagus'], opacity=0.8)]
     th_items += [dict(mesh=out[k], color=COL['pth']) for k in PTH]
+    # the carotid sheaths' vessels (vessels group), which the lobes lie in front of and medial to
+    vd = os.path.join(os.path.dirname(od), 'vessels')
+    if os.path.exists(os.path.join(vd, 'manifest.json')):
+        from lib.mesh import load
+        for o in json.load(open(os.path.join(vd, 'manifest.json'))):
+            if 'common_carotid' in o['name'] or 'internal_jugular' in o['name']:
+                th_items.append(dict(mesh=load(os.path.join(vd, o['file'])), color='#e74c3c' if 'carotid' in o['name'] else '#2e4c9a', opacity=0.55))
     ct = out['thyroid'][0].mean(0)
-    render_views(th_items, {'thyroid-front': dict(dir=(0, 0, 1), target=ct, radius=0.04), 'thyroid-left': dict(dir=(1, 0, 0), target=ct, radius=0.04),
-                            'thyroid-back': dict(dir=(0, 0, -1), target=ct, radius=0.04)}, os.path.join(od, 'qa'))
+    render_views(th_items, {'thyroid-front': dict(dir=(0, 0, 1), target=ct, radius=0.045), 'thyroid-left': dict(dir=(1, 0, 0.15), target=ct, radius=0.045),
+                            'thyroid-right': dict(dir=(-1, 0, 0.15), target=ct, radius=0.045),
+                            'thyroid-back': dict(dir=(0, 0.1, -1), target=ct, radius=0.045)}, os.path.join(od, 'qa'))
+    # under the heart: the central tendon between the heart and the liver (as assembled: heart + 4 mm carved out)
+    hv = hra(sex, 'heart')
+    ch = hv[0][hv[0][:, 1] < hv[0][:, 1].min() + 0.02].mean(0)
+    ht_items = [dict(mesh=out['diaphragm'], color=COL['diaphragm'], opacity=0.85), dict(mesh=hv, color='#922b21', opacity=0.35),
+                dict(mesh=hra(sex, 'liver'), color='#7b4a36', opacity=0.3)]
+    render_views(ht_items, {'heart-tendon-front': dict(dir=(0, 0.15, 1), target=ch, radius=0.08), 'heart-tendon-right': dict(dir=(-1, 0.15, 0.2), target=ch, radius=0.08)},
+                 os.path.join(od, 'qa'))
 
 
 if __name__ == '__main__':
@@ -501,5 +531,9 @@ if __name__ == '__main__':
     which = args[0] if args else 'all'
     frm = next((a.split('=', 1)[1] for a in sys.argv[1:] if a.startswith('--from=')), None)
     assert frm is None or frm in STAGES, f'--from=<one of {STAGES}>'
+    redo = next((a.split('=', 1)[1] for a in sys.argv[1:] if a.startswith('--redo=')), None)
+    if redo is not None:
+        REDO = set(redo.split(','))
+        assert REDO <= set(STAGES), f'--redo=<stages from {STAGES}>'
     for sex in (['male', 'female'] if which == 'all' else [which]):
         fit(sex, render='--no-render' not in sys.argv, frm=frm)

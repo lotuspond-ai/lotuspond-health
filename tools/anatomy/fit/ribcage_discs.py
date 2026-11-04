@@ -25,7 +25,9 @@ BULGE = 0.0005           # outward bulge of the anulus at mid-height (m)
 NTH = 96                 # angular samples
 DR = 0.0004              # radial step when tracing the outline (m)
 MIN_T = 0.0002           # thinnest disc where the end plates (nearly) touch (m)
-STEEP = 0.75             # the outline ends where an end plate rises faster than this (tan of ~37 degrees)
+STEEP = 4.0 / 3.0        # the outline ends where an end plate rises faster than this: tan 53 deg, the same facing limit
+                         # (normal within 53 deg of the disc axis) the disc-space map uses; 0.75 (37 deg) left a 2 mm
+                         # empty rim on the saddle-shaped cervical end plates (64-70 % of the disc space covered)
 
 
 def vertex_normals(v, f):

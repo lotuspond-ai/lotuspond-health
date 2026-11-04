@@ -7,15 +7,19 @@ dented, carried needle spikes, the incisors were tipped by up to 17 degrees and 
 jaws themselves by 1.08-1.13). Here every tooth keeps its Z-Anatomy shape exactly:
   - arch block: one similarity per arch, fitted (Umeyama) from the Z-Anatomy alveolar bone (maxillae for the upper
     teeth, mandible for the lower; bone within ARCH_R of the teeth) to the same bone as placed. The teeth keep the
-    Z-Anatomy arch form, inclinations and contacts and follow their sockets on average,
+    Z-Anatomy arch form, inclinations and contacts and follow their sockets on average (tooth scale = that jaw's
+    alveolar scale, 1.11-1.16, instead of the 1.15-1.30 the warp gave each tooth),
+  - occlusal level: each arch block is then moved along the occlusal normal so that its crowns sit at the level the
+    warp gave the teeth (the crowns keep their place under the lips and against the alveolar crest; the roots, shorter
+    than the warp's stretched ones, end inside the bone),
   - the upper lateral incisors are moved along their own long axis so that their incisal edges lie LATERAL_STEP above
     the central incisors' (Z-Anatomy has them 1.4 mm below, which looks like hanging laterals),
   - the mandible (with the lower arch) is seated by the smallest rigid move that (i) keeps a joint space of at least
     JS_MIN between each condylar head and its temporal bone, (ii) has the arches in contact without interpenetration
-    (centric occlusion), and (iii) gives the best incisor / canine relation (labial overjet OVERJET, upper canine tip on
+    (centric occlusion), and (iii) gives the best incisor / canine relation (incisal-edge overjet OVERJET, upper canine tip on
     the lower canine / first premolar embrasure, lower and upper dental midlines aligned).
 """
-import os, sys
+import os, sys, re
 import numpy as np
 from scipy.spatial import cKDTree
 
@@ -30,7 +34,7 @@ LATERAL_STEP = 0.00075  # upper lateral incisal edge this far above the central 
 JS_MIN = 0.0008         # joint space (articular disc) kept between each condylar head and the temporal bone
 JS_MAX = 0.0030         # a condyle further than this from its fossa no longer counts as seated
 PEN_TOL = 0.00015       # tooth contact: upper-arch signed distance at the lower-arch samples may reach -PEN_TOL
-OVERJET = 0.0025        # labial overjet target (upper incisal edge to the lower incisor labial face), normal 2-3 mm
+OVERJET = 0.0025        # overjet target: upper to lower incisal edge, horizontal in the occlusal plane (normal 2-3 mm)
 UPPER_BONES, LOWER_BONES = ('maxilla_l', 'maxilla_r'), ('mandible',)
 
 
@@ -46,7 +50,7 @@ def arch_transform(Z, P, jaw):
     m = cKDTree(zt).query(zb)[0] < ARCH_R
     T = umeyama(zb[m], pb[m], scale=True)
     r = np.linalg.norm(T(zb[m]) - pb[m], axis=1)
-    return T, dict(n_bone_vertices=int(m.sum()), scale=round(float(T.s), 4), bone_rms_mm=round(float(np.sqrt((r ** 2).mean()) * 1000), 2))
+    return T, (zb[m].mean(0), pb[m].mean(0)), dict(n_bone_vertices=int(m.sum()), own_scale=round(float(T.s), 4), bone_rms_mm=round(float(np.sqrt((r ** 2).mean()) * 1000), 2))
 
 
 def occlusal_frame(P):
@@ -72,11 +76,28 @@ def long_axis(v, n):
 def place_arches(Z, P, log=print):
     """Teeth placed rigidly: one similarity per arch (alveolar bone), then the upper lateral incisors stepped up along
     their axes. Returns (P updated, per-tooth transforms {name: (s, R, t)}, info)."""
-    info, tr = {}, {}
+    info, tr, fits = {}, {}, {}
+    warped = {n: P[n][0] for n in P if P[n][2] == 'teeth'}
+    cw, nw, _ = occlusal_frame(P)
     for jaw in ('upper', 'lower'):
-        T, inf = arch_transform(Z, P, jaw); info[jaw + '_arch'] = inf
+        T, mus, inf = arch_transform(Z, P, jaw); info[jaw + '_arch'] = inf; fits[jaw] = (T, mus)
+    # each arch takes its own jaw's alveolar scale (the teeth follow their sockets; a common scale for both arches was
+    # tried: it keeps the Z-Anatomy tooth-size match but leaves the female incisors edge to edge, overjet < 1 mm)
+    for jaw in ('upper', 'lower'):
+        T = fits[jaw][0]
         for n in teeth_of(P, jaw):
             P[n] = (T(Z[n][0]), P[n][1], P[n][2]); tr[n] = Sim(T.s, T.R, T.t)
+    # occlusal level: the arch's crowns stay at the level the warp gave them (the face height there is set by the skin,
+    # the condyles and the maxilla), so each arch block is moved along the occlusal normal until its mean cusp-tip /
+    # incisal-edge height equals the warped teeth's. The jaw scale is smaller than the warp's local tooth stretch, so
+    # without this the arches would end up apart (male: about 10 mm) and closing the jaw that far would move the chin.
+    for jaw, ext in (('upper', np.min), ('lower', np.max)):
+        tn = teeth_of(P, jaw)
+        hw = np.mean([ext((warped[n] - cw) @ nw) for n in tn]); hb = np.mean([ext((P[n][0] - cw) @ nw) for n in tn])
+        d = (hw - hb) * nw
+        for n in tn:
+            P[n] = (P[n][0] + d, P[n][1], P[n][2]); tr[n] = Sim(tr[n].s, tr[n].R, tr[n].t + d)
+        info[jaw + '_arch']['moved_to_warped_occlusal_level_mm'] = round(float((hw - hb) * 1000), 2)
     c, nrm, fw = occlusal_frame(P)
     steps = {}
     for s in 'lr':
@@ -168,7 +189,7 @@ def seat_occlusion(P, L, fmn, log=print):
     lm = {}
     for s in 'lr':
         Uc = D[f'upper_medial_incisor_{s}']; ue = Uc[H(Uc) < H(Uc).min() + 0.0005].mean(0)
-        Lc = D[f'lower_medial_incisor_{s}']; lt = Lc[H(Lc) > H(Lc).max() - 0.002]
+        Lc = D[f'lower_medial_incisor_{s}']; lt = Lc[H(Lc) > H(Lc).max() - 0.0005]
         uc = D[f'upper_canine_{s}']; tip = uc[H(uc) < H(uc).min() + 0.0003].mean(0)
         lc = D[f'lower_canine_{s}']; lp = D[f'lower_first_premolar_{s}']
         d, i = cKDTree(lp).query(lc); j = d.argmin(); emb = (lc[j] + lp[i[j]]) / 2
@@ -192,7 +213,7 @@ def seat_occlusion(P, L, fmn, log=print):
         e_oj, e_can = [], []
         for s in 'lr':
             q = lm[s]
-            oj = F(q['ue']) - F(mv_(q['lt'], R, t)).max()
+            oj = F(q['ue']) - F(mv_(q['lt'], R, t)).mean()
             e_oj.append(oj - OVERJET)
             e_can.append((q['tip'] - mv_(q['emb'][None], R, t)[0]) @ q['t'])
         mid = (mv_(ml[None], R, t)[0] - mu) @ olat
@@ -259,3 +280,95 @@ def seat_occlusion(P, L, fmn, log=print):
                 transform=dict(R=R.tolist(), t=t.tolist()))
     log('mandible seating (occlusion)', {k: v for k, v in info.items() if k != 'transform'})
     return P, info
+
+
+NORMAL_LENGTH_MM = {'upper_medial_incisor': 23.5, 'upper_lateral_incisor': 22.0, 'upper_canine': 27.0, 'upper_first_premolar': 22.5,
+                    'upper_second_premolar': 22.5, 'upper_first_molar': 20.5, 'upper_second_molar': 20.0, 'lower_medial_incisor': 21.5,
+                    'lower_lateral_incisor': 23.5, 'lower_canine': 27.0, 'lower_first_premolar': 22.5, 'lower_second_premolar': 22.5,
+                    'lower_first_molar': 21.0, 'lower_second_molar': 19.5}   # overall tooth lengths (Wheeler)
+
+
+def occlusion_criteria(Z, P, za_reference=None, skin_signed=None):
+    """Acceptance criteria for the dentition: (criteria list, details)."""
+    from fit.skull_measure import crit
+    o = occlusion(P)
+    sides = [o['r'], o['l']]
+    g = lambda k: [s[k] for s in sides]
+    post = [v for k, v in o['min_gap_to_upper_arch_mm'].items() if re.search('molar|premolar', k)]
+    by_side = {s: min(v for k, v in o['min_gap_to_upper_arch_mm'].items() if re.search('molar|premolar', k) and k.endswith('_' + s)) for s in 'lr'}
+    rig = []
+    for n in P:
+        if P[n][2] != 'teeth': continue
+        T = umeyama(Z[n][0], P[n][0], scale=True); rig.append(float(np.linalg.norm(T(Z[n][0]) - P[n][0], axis=1).max()))
+    lens = {}
+    for n in P:
+        if P[n][2] != 'teeth': continue
+        X = P[n][0]; c, ax, _ = pca(X); L = float(np.ptp((X - c) @ ax[:, 0])) * 1000
+        lens[n] = dict(length_mm=round(L, 1), ratio_to_normal=round(L / NORMAL_LENGTH_MM[n[:-2]], 2))
+    out = [
+        crit('incisor overjet (upper to lower central incisal edge, horizontal in the occlusal plane; right, left)', g('overjet_edge_mm'), '2-3 mm',
+             all(2.0 <= x <= 3.0 for x in g('overjet_edge_mm')), unit='mm', labial_overjet_mm=g('overjet_labial_mm'),
+             note='labial overjet: upper incisal edge to the most labial point of the lower incisor crown (its top 2 mm)'),
+        crit('incisor overbite (vertical overlap of the central incisal edges; right, left)', g('overbite_mm'), '2-3 mm', all(2.0 <= x <= 3.0 for x in g('overbite_mm')),
+             unit='mm', note='with the arches in contact (centric occlusion); limited by the Z-Anatomy incisor form, see details'),
+        crit('canine relation (upper canine tip to the lower canine / first premolar embrasure, + = distal; right, left)', g('canine_tip_distal_of_embrasure_mm'),
+             '|x| <= 1.5 mm (Class I)', all(abs(x) <= 1.5 for x in g('canine_tip_distal_of_embrasure_mm')), unit='mm'),
+        crit('posterior teeth in contact or within a 1-3 mm freeway space (smallest premolar / molar gap to the upper arch, per side)', [by_side['r'], by_side['l']],
+             '<= 3 mm each side', all(x <= 3.0 for x in by_side.values()), unit='mm'),
+        crit('upper lateral incisor edges above the central incisor edges (right, left)', g('upper_lateral_edge_above_central_edge_mm'), '0.5-1.0 mm',
+             all(0.5 <= x <= 1.0 for x in g('upper_lateral_edge_above_central_edge_mm')), unit='mm'),
+        crit('teeth keep their Z-Anatomy shape (largest vertex deviation from a similarity copy of the source tooth)', round(max(rig) * 1000, 3), '<= 0.01 mm',
+             max(rig) <= 1e-5, unit='mm'),
+        crit('interincisal angle (right, left)', g('interincisal_angle_deg'), 'report (normal 125-135 deg; Z-Anatomy source 119 deg)', True, unit='deg',
+             upper_incisor_axis_deg=g('upper_incisor_axis_deg'), lower_incisor_axis_deg=g('lower_incisor_axis_deg')),
+    ]
+    if skin_signed is not None:
+        q = np.concatenate([sample_surface(*P[k][:2], 1500, seed=4) for k in P if P[k][2] == 'teeth'])
+        sd = skin_signed(q)
+        out.append(crit('teeth inside the lips and cheeks (smallest soft-tissue cover over the teeth)', round(float(-sd.max()) * 1000, 2), '>= 3 mm',
+                        float(-sd.max()) >= 0.003, unit='mm', samples_outside_skin=int((sd > 0).sum()), n_samples=int(len(q))))
+    det = dict(occlusion=o, tooth_lengths=lens, posterior_min_gaps_mm=post,
+               length_note='lengths follow the Z-Anatomy teeth (their roots are 1.0-1.4x the textbook lengths) times the jaws\' common alveolar scale')
+    if za_reference is not None: det['za_source_occlusion'] = za_reference
+    return out, det
+
+
+LIP_MIN = 0.0038   # soft tissue kept over the teeth (the refinement's minimum soft-tissue cover for bone and teeth)
+TIP_MAX = 25.0     # largest lingual tipping of one tooth (deg)
+
+
+def fit_lips(P, skin_signed, log=print):
+    """Anterior teeth (incisors and canines) whose crowns would come closer than LIP_MIN to the skin (the Z-Anatomy
+    incisors are proclined; the HRA lips are closer) are tipped lingually, each rigidly about a point in its apical
+    third (the tipping centre of an incisor), by the smallest angle that gives the cover, as the lips and the tongue
+    balance the incisors in life. skin_signed: signed distance to the head skin (negative inside)."""
+    from lib.register import Sim as _Sim
+    c, n, fw = occlusal_frame(P)
+    info, tr = {}, {}
+    for jaw in ('upper', 'lower'):
+        tn = teeth_of(P, jaw)
+        ac = np.mean([P[k][0].mean(0) for k in tn], 0)
+        for k in tn:
+            if not re.search('incisor|canine', k): continue
+            V = P[k][0]
+            sub = V[::max(1, len(V) // 1500)]
+            d0 = float(skin_signed(sub).max())
+            if d0 <= -LIP_MIN: continue
+            a = long_axis(V, n); r = a if jaw == 'upper' else -a         # r: towards the root apex
+            cc = V.mean(0); t = (V - cc) @ r; L = float(np.ptp(t))
+            piv = cc + r * (t.max() - L / 3)
+            dl = cc - ac; dl -= (dl @ n) * n; dl /= np.linalg.norm(dl)     # labial direction (in the occlusal plane)
+            kx = np.cross(r, dl); kx /= np.linalg.norm(kx)
+            best = None
+            for phi in np.arange(0.5, TIP_MAX + 0.01, 0.5):
+                R = rotation_axis(kx, np.radians(phi))
+                if float(skin_signed((sub - piv) @ R.T + piv).max()) <= -LIP_MIN: best = phi; break
+            phi = best if best is not None else TIP_MAX
+            R = rotation_axis(kx, np.radians(phi))
+            P[k] = ((V - piv) @ R.T + piv, P[k][1], P[k][2])
+            tr[k] = (R, piv - R @ piv)
+            info[k] = dict(skin_signed_before_mm=round(d0 * 1000, 2), lingual_tip_deg=float(phi),
+                           skin_signed_after_mm=round(float(skin_signed(P[k][0][::max(1, len(V) // 1500)]).max()) * 1000, 2),
+                           reached=best is not None)
+    log('teeth: lip cover', info)
+    return P, tr, info

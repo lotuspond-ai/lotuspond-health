@@ -135,7 +135,7 @@ class Fixer:
     Only candidate vertices are queried exactly: those within CAND of a bone's dense surface samples or of the skin
     (coarse skin solid), refreshed every REFRESH iterations."""
     CAND, REFRESH = 0.016, 8
-    OCAND = 0.025         # organ candidates: vessels up to 2 cm deep in a lung lobe must be seen
+    OCAND = 0.012         # organ candidates (deeper penetrations of the lungs / aorta are cleared before: vessels_review.clear_obstacle)
 
     def __init__(self, sex, pts, log=print):
         from lib.mesh import dense_points

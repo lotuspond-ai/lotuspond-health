@@ -25,6 +25,7 @@ GAP_RANGES = {'gh': (1.0, 6.0), 'elbow_hu': (1.0, 4.0), 'elbow_hr': (1.0, 4.0)}
 FINGER_GAP = (0.5, 4.0)
 LANDMARK = (0.5, 5.0)
 CLEAR_MIN = 1.0
+TIP_PULP = (4.0, 6.0)   # mm, distal phalanx tip to the skin fingertip along the digit
 
 
 def landmark_zones(L):
@@ -165,6 +166,19 @@ def measure_side(L, maps, meshes, skinT, height, finger_label=None, skin_v=None,
                 own[b] = dict(in_own_finger_pct=round(100 * frac, 2), other_fingers=[int(x) for x in other], beyond_web_pct=round(100 * float((lab == dg).mean()), 1))
                 okall &= frac >= 0.995 and len(other) == 0
         out['phalanges_in_own_finger'] = dict(threshold='100 % of each phalanx inside the skin and in its own finger (or the palm)', per_bone=own, pass_=bool(okall))
+    # fingertips: from the distal phalanx's tip (its most distal vertex along DIP -> tip) along that axis to the skin
+    pulp = {}
+    for dg, ch in CHAINS.items():
+        dp = ch[-1]
+        a0 = maps[dp](J[f'{ch[-2]}>{dp}'][None])[0]; a1 = maps[dp](J[f'{dp}_tip'][None])[0]
+        ax = unit(a1 - a0)
+        v = meshes[dp][0]; tip = v[np.argmax(v @ ax)]
+        t = np.linspace(0, 0.03, 601)
+        sdv = skinT.signed(tip[None] + t[:, None] * ax[None], exact_within=0.03)
+        pulp[dg] = round(float(t[np.argmax(sdv > 0)] * 1e3), 2) if (sdv > 0).any() else None
+    vals = [v for v in pulp.values() if v is not None]
+    out['fingertip_pulp'] = dict(per_digit_mm=pulp, min_mm=min(vals), max_mm=max(vals), threshold=f'{TIP_PULP[0]}-{TIP_PULP[1]} mm',
+                                 pass_=bool(len(vals) == 5 and TIP_PULP[0] <= min(vals) and max(vals) <= TIP_PULP[1]))
     # lengths
     def blen(b, p0, p1):
         a = unit(maps[b](p1[None])[0] - maps[b](p0[None])[0])
@@ -223,6 +237,9 @@ def criteria(meas):
         strays = {b: d['other_fingers'] for b, d in e['per_bone'].items() if d['other_fingers']}
         c['phalanges_in_own_finger_pct'] = dict(value=e['per_bone'][worst]['in_own_finger_pct'], worst=worst, threshold='>= 99.5 % of every phalanx inside its own skin finger (or the palm), none in another finger',
                                                 ok=bool(e['pass_']), in_other_fingers=strays)
+    if 'fingertip_pulp' in meas:
+        e = meas['fingertip_pulp']
+        c['fingertip_pulp_mm'] = dict(value=e['min_mm'], max=e['max_mm'], per_digit=e['per_digit_mm'], threshold=e['threshold'] + ' (every digit)', ok=bool(e['pass_']))
     for k in ('humerus_over_height', 'radius_over_height'):
         e = meas[k]; c[k] = dict(value=e['value'], length_m=e['length_m'], threshold=e['threshold'], ok=bool(e['pass_']))
     return c

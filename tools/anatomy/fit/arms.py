@@ -232,6 +232,7 @@ def icp_about(P, target_pts, c, iters=30, trim=0.8):
 
 # ------------------------------------------------------------------------------------------------ one arm
 GAP_TARGET = dict(gh=2.5, hu=1.5, hr=2.0, rs=1.6, finger=1.2, cmc1=1.0)   # joint spaces set in the chain (mm)
+TIP_PULP = 0.005           # m: distal phalanx tip to the skin fingertip along the digit (pulp and hyponychium)
 OLECRANON_DEPTH = 4.0      # mm: the olecranon is subcutaneous; the elbow may move back up to OLECRANON_MAX_SHIFT
 OLECRANON_MAX_SHIFT = 0.012
 
@@ -383,7 +384,9 @@ class _PreRot(BoneMap):
         super().__init__(aff, stretch); self.pre = pre
 
     def __call__(self, x):
-        return self.aff(self.stretch(self.pre(np.asarray(x, float))))
+        y = self.pre(np.asarray(x, float))
+        if self.stretch is not None: y = self.stretch(y)
+        return self.aff(y)
 
     def then(self, aff2):
         return _PreRot(self.pre, self.stretch, self.aff.then(aff2))
@@ -450,7 +453,7 @@ def fit_fingers(L, maps, Ahand, H, ctx, info, log=log):
         ext = np.array([cl[0] - d0 * k * 0.004 for k in range(14, 0, -1)])
         path = np.concatenate([ext, cl])
         tipv = f['tip']; dtip = unit(cl[-1] - cl[-3])
-        tip_t = tipv - dtip * 0.0045 * s0
+        tip_t = tipv - dtip * TIP_PULP
         movers = chain[1:] if dg > 1 else chain   # thumb: the metacarpal moves too (carpometacarpal joint)
         if dg == 1:
             za_pts = [J['cmc1'], J['mc1>pp1'], J['pp1>dp1'], J['dp1_tip']]
@@ -483,7 +486,7 @@ def fit_fingers(L, maps, Ahand, H, ctx, info, log=log):
         k = 0.5 * (lo + hi); starts, ends = place(k)
         s_iso = float(np.clip(k, 0.88, 1.12))
         info['fingers'][dg] = dict(length_scale=float(k), iso_scale=s_iso, tip_err_mm=float(np.linalg.norm(ends[-1] - tip_t) * 1e3),
-                                   joint_opening_mm=[round(g * 1e3, 2) for g in gaps])
+                                   joint_opening_mm=[round(g * 1e3, 2) for g in gaps], tip_target=tip_t.tolist())
         prev = maps[chain[0]] if dg > 1 else BoneMap(Ahand)
         for i, b in enumerate(movers):
             p_za, q_za = za_pts[i], za_pts[i + 1]
@@ -541,8 +544,15 @@ def render_qa(ctx, side, r, odir):
 
 
 def save_maps(sex, side, r):
+    """The per-bone maps, each taking raw Z-Anatomy coordinates: the hand bones' maps were fitted on the hand seated on
+    the radius (Limb.seat, a Z-Anatomy-space translation), which is folded in here as a pre-translation."""
     d = cache_dir(sex)
-    data = dict(side=side, maps={b: m.to_dict() for b, m in r['maps'].items()})
+    seat = Aff(np.eye(3), np.asarray(r['L'].seat, float))
+    out = {}
+    for b, m in r['maps'].items():
+        if b in HAND_BONES: m = _PreRot(seat, m.stretch, m.aff)
+        out[b] = m.to_dict()
+    data = dict(side=side, seat_mm=(np.asarray(r['L'].seat) * 1e3).tolist(), maps=out)
     json.dump(data, open(os.path.join(d, f'maps-{side}.json'), 'w'))
 
 
@@ -573,10 +583,11 @@ def run(sex):
     res = {}; rep_sides = {}
     for side in SIDES:
         r = fit_side(ctx, side)
-        corr_l, lim = limb_pass(r['L'], r['maps'], ctx.skinT, log=log)
+        tips = {dg: np.array(f['tip_target']) for dg, f in r['info']['fingers'].items()}
+        corr_l, lim = limb_pass(r['L'], r['maps'], ctx.skinT, log=log, tips=tips)
         for b, A in corr_l.items(): r['maps'][b] = r['maps'][b].then(A)
         r['info']['limb_pass'] = lim
-        corr, fin = finalize(r['L'], r['maps'], ctx.skinT, log=log)
+        corr, fin = finalize(r['L'], r['maps'], ctx.skinT, log=log, tips=tips)
         for b in ALL_BONES: r['maps'][b] = r['maps'][b].then(corr[b])
         r['info']['final_pass'] = fin
         r['meshes'] = bone_meshes(r['L'], r['maps'])
