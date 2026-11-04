@@ -56,7 +56,10 @@ def za_shoulder_ap(L):
     return float((fr - bk) * 0.5e3)
 
 
-MANUBRIUM_MAX_RMS = 0.012
+# A rigid bone that the warp bends by more than this is not trusted. The male's warped manubrium is 8.6 mm RMS from
+# its own shape at body scale, 93 mm along its long axis, with its clavicular notches 18 mm apart in height and 19 mm
+# in depth (Z-Anatomy's are level); the upper thoracic spine rule puts them level, 38 mm apart.
+MANUBRIUM_MAX_RMS = 0.002
 
 
 def manubrium_placement(W, mv, mf):

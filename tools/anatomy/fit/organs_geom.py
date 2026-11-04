@@ -514,14 +514,14 @@ class ARAP:
         return v
 
 
-def fill_hole(v, f, loop, spacing=None):
+def fill_hole(v, f, loop, spacing=None, K=None):
     """Close a boundary loop with a patch of concentric rings, faired (bi-Laplacian, the existing surface held) so it
     continues the surrounding curvature. Returns (v, f, new vertex ids)."""
     loop = np.asarray(loop)
     P = v[loop]; c = P.mean(0); n0 = len(v)
     if spacing is None: spacing = float(np.median(np.linalg.norm(np.diff(np.vstack([P, P[:1]]), axis=0), axis=1)))
     rad = float(np.linalg.norm(P - c, axis=1).mean())
-    K = max(1, int(round(rad / max(spacing, 1e-4))) - 1)
+    if K is None: K = max(1, int(round(rad / max(spacing, 1e-4))) - 1)
     V = [v]; F = [f]; prev = loop; nxt_id = n0
     for k in range(1, K + 1):
         t = k / (K + 1)

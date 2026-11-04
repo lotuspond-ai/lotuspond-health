@@ -225,7 +225,7 @@ def fit_piece(v, T, obstacles, skin_clear, joint=None, centre=None, reg=(3.0, 0.
     return rigid(sol.x, c), sol.x
 
 
-MANUBRIUM_MAX_RMS = 0.012       # the arms group's rule (fit/arms_girdle.manubrium_placement), repeated here
+MANUBRIUM_MAX_RMS = 0.002       # the arms group's rule (fit/arms_girdle.manubrium_placement), repeated here
 
 
 def rigid_inv(x, c):
@@ -236,7 +236,7 @@ def rigid_inv(x, c):
 def sternum_start(sex, W, ZA):
     """Where the sternum starts, by the rule the arms group uses to seat the clavicles (fit/arms_girdle.py,
     manubrium_placement): the trunk-warped manubrium when a shape-preserving placement at body scale comes within
-    12 mm (RMS) of it, otherwise Z-Anatomy's manubrium carried by the rigid motion (at body scale) of the upper
+    2 mm (RMS) of it, otherwise Z-Anatomy's manubrium carried by the rigid motion (at body scale) of the upper
     thoracic spine C7-T7, which the warp fits to ~1 mm. The body and xiphoid are Z-Anatomy's at body scale (the warp
     has no anchor in front of the heart and distorts them: up to 1.5x in length and width): with the warped manubrium
     they take the rigid placement nearest the warped body; otherwise they move with the upper spine like the

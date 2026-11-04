@@ -53,8 +53,9 @@ def fill_holes(v, rest, f, holes):
     from fit.organs_geom import fill_hole
     for h in holes:
         n0 = len(v)
-        v2, f2, new = fill_hole(v, f, h)
-        r2, f3, _ = fill_hole(rest, f, h)
+        r2, f3, new = fill_hole(rest, f, h)
+        K = (len(new) - 1) // len(h)                 # same ring count in both copies
+        v2, f2, _ = fill_hole(v, f, h, K=K)
         v, rest, f = v2, r2, f2
     return v, rest, f
 
@@ -105,6 +106,42 @@ def stomach_pose(v, pyl, car, cr, cc0, fls, radius=0.015, step=0.003, ang=0.17):
                      rotation_deg=round(float(np.degrees(np.arccos(np.clip((np.trace(R) - 1) / 2, -1, 1)))), 1))
 
 
+def indent(v, f, fls, fixed, rep, iters=5, max_depth=0.025):
+    from lib.register import Warp
+    rng = np.random.default_rng(1)
+    total = np.zeros(len(v))
+    for it in range(iters):
+        nrm = vertex_normals(v, f)
+        bad = np.zeros(len(v), bool)
+        for fl in fls: bad |= fl.coarse(v) < CLEAR
+        bad[fixed] = False
+        if not bad.any(): break
+        ii = np.flatnonzero(bad)
+        t = np.zeros(len(ii)); done = np.zeros(len(ii), bool)
+        for step in np.arange(0.0005, max_depth + 1e-9, 0.0005):
+            p = v[ii] - step * nrm[ii]
+            ok = ~done & np.all([fl.coarse(p) >= CLEAR + 0.0003 for fl in fls], axis=0)
+            t[ok] = step; done |= ok
+            if done.all(): break
+        t[~done] = max_depth
+        src = [v[ii]]; dst = [v[ii] - t[:, None] * nrm[ii]]
+        dfar, _ = cKDTree(v[ii]).query(v)
+        far = np.flatnonzero((dfar > 0.02) & ~bad)
+        far = rng.choice(far, min(1200, len(far)), replace=False) if len(far) else far
+        anchor = np.unique(np.concatenate([fixed, far]))
+        src.append(v[anchor]); dst.append(v[anchor])
+        S, D = np.concatenate(src), np.concatenate(dst)
+        if len(S) > 4000:
+            k = rng.choice(len(S), 4000, replace=False); S, D = S[k], D[k]
+        Wp = Warp(S, D, smoothing=1e-6)
+        v_new = Wp(v); v_new[fixed] = v[fixed]
+        total += np.linalg.norm(v_new - v, axis=1)
+        v = v_new
+        log(f'    indent {it}: {len(ii)} vertices, deepest walk {t.max() * 1000:.1f} mm')
+    rep['indent_max_mm'] = round(float(total.max() * 1000), 1)
+    return v
+
+
 def fit_stomach(sex, W, own=(), outer=24):
     """own: [(name, Field)] of our fitted neighbours (diaphragm, left adrenal). Returns (v, f), report, loops."""
     rep = {}
@@ -116,6 +153,7 @@ def fit_stomach(sex, W, own=(), outer=24):
     pyl, car, holes = orifices(v0, f, sex, ev[ev[:, 1] < ev[:, 1].min() + 0.004].mean(0))
     rep['holes_filled'] = [dict(rim_vertices=int(len(h)), radius_mm=round(loop_axis(v0[h])[2] * 1000, 1)) for h in holes]
     v0, rest, f = fill_holes(v0, rest, f, holes)
+    f = orient_outward(v0, f)                       # outward normals (the inward pushes below rely on them)
     # Z-Anatomy's stomach has coarse patches (edges up to 28 mm) that neighbours poke through between vertices:
     # split edges longer than 4 mm (midpoints, so the shape is unchanged; the orifice rims are not touched because
     # boundary edges are short)

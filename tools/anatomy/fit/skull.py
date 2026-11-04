@@ -311,8 +311,8 @@ def load_za(sex):
 
 # ------------------------------------------------------------------------------------------------ refinement
 REF = dict(gap_brain=0.0016, soft_min=0.0038, soft_max_vault=0.0090, eye_clear=0.0010, condyle_gap=0.0015, ball=0.005,
-           sigma=0.012, sigma_fine=0.006, ridge=1e-3, iters=4, iters_fine=6, w_brain=3.0, w_brain_out=5.0, w_skin_out=8.0, w_skin=2.0, w_skin_far=2.0,
-           w_eye=3.0, w_condyle=3.0, w_keep=0.6, max_step=0.0015, skin_hard=0.0012, orbit_clear=0.0005, w_orbit=4.0, soft_min_nasal=0.0033,
+           sigma=0.012, sigma_fine=0.006, ridge=1e-3, iters=4, iters_fine=6, w_brain=3.0, w_brain_out=5.0, w_skin_out=8.0, w_skin=2.0, w_skin_far=3.0,
+           w_eye=3.0, w_condyle=3.0, w_keep=0.6, max_step=0.0015, skin_hard=0.0010, orbit_clear=0.0003, w_orbit=3.0, soft_min_nasal=0.0033,
            pit_gap=0.0015, pit_r=0.009, w_pit=3.0)
 
 
@@ -407,9 +407,11 @@ def refine(sex, Wz, Z, T, L, M, zsk, cfg=REF, log=log, pre=None):
             ss = T.skin_signed(S)
             _, js_ = T.skin_signed.tree.query(S); nsk = T.skin_signed.n[js_]
             # where the brain needs the bone to move out (the Allen brain lies within a few mm of the skin) the brain
-            # wins over the soft-tissue minimum; only bone closer than `skin_hard` to the skin is pulled back in. Sticky
-            # (once relaxed, always relaxed), so that brain and scalp do not take turns from one iteration to the next
-            relaxed |= best > 0
+            # wins over the soft-tissue minimum; only bone closer than `skin_hard` to the skin is pulled back in. In the
+            # coarse stage this is decided afresh each iteration (early, widespread brain contacts, e.g. under the
+            # forehead, must not switch the scalp minimum off for good); in the fine stage it is sticky, so that brain
+            # and scalp do not take turns from one iteration to the next
+            relaxed = (relaxed if si > 0 else np.zeros(len(S0), bool)) | (best > 0)
             smin = np.where(relaxed, cfg['skin_hard'], np.where(is_nasal, cfg['soft_min_nasal'], cfg['soft_min']))
             vs = ss > -smin
             tgt[vs] = fdisp[vs] - np.minimum(ss[vs] + smin[vs], cfg['max_step'])[:, None] * nsk[vs]
