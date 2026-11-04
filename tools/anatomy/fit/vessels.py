@@ -771,6 +771,15 @@ def qa(sex, VES, J, out_dir, log=log):
     return files
 
 
+def _dump(sex, tag, **state):
+    # development aid (off unless VESSELS_DUMP names a folder): the pipeline state at a stage, for iterating on later stages
+    d = os.environ.get('VESSELS_DUMP')
+    if not d: return
+    import pickle
+    os.makedirs(d, exist_ok=True)
+    with open(os.path.join(d, f'{tag}-{sex}.pkl'), 'wb') as fh: pickle.dump(state, fh, protocol=4)
+
+
 def run(sex, stage='all', render=True):
     from fit import vessels_measure as VM
     t0 = time.time()
@@ -814,6 +823,7 @@ def run(sex, stage='all', render=True):
     now = [n for n, x in VES.items() if x['placed'] and not x.get('dropped')]
     step('lung_clearance', RV.clear_obstacle, VES, now, lungs, pins, log=log, label='lung')
     step('aorta_clearance', RV.clear_obstacle, VES, [n for n in now if VES[n]['part'] == V], aorta, pins, clear=AORTA_CLEAR, log=log, label='aorta')
+    _dump(sex, 'pre_push', VES=VES, J=J, trees=trees, contacts=contacts, review=review, pel=pel, realigned=realigned, sheath=sheath)
     F, hist = push_out(sex, VES, trees, contacts, J, aorta_obstacles=[(aorta, AORTA_CLEAR)])
     log(sex, 'pushed out', f'{time.time() - t0:.0f}s')
     # the push-out squeezes a vein that has no room between the clavicle, the first rib and the lung apex into a flat
@@ -821,6 +831,7 @@ def run(sex, stage='all', render=True):
     step('reround_after_push', RV.reround, VES, REROUND.get(sex, ()), J, log=log)
     step('bridges', RV.bridges, sex, VES, log=log)
     if 'error' not in review['bridges']: step('bridges_push_out', RV.settle_bridges, F, VES, list(review['bridges']), log=log)
+    _dump(sex, 'post_push', VES=VES, J=J, trees=trees, contacts=contacts, review=review, pel=pel, realigned=realigned, sheath=sheath, hist=hist)
     # ---- measurements
     names = [n for n, x in VES.items() if x['placed'] and not x.get('dropped')]
     jr = VM.junctions(J, VES)

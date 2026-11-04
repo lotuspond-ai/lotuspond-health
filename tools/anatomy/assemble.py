@@ -62,7 +62,9 @@ HRA_PARTS = {
     'portal_vein': dict(sel=[r'blood_vasculature/.*' + PORTAL]),
     'spleen': dict(sel=[r'_spleen/'], exclude=r'(artery|vein)', mode='solid', opening=1),
     'pancreas': dict(sel=[r'_pancreas/'], exclude=r'ducts_of_pancreas/', mode='solid', opening=1),  # the ducts are drawn in bile_ducts
-    'kidneys': dict(sel=[r'kidney_capsule_[LR]$', r'hilum_of_kidney_[LR]$'], mode='solid', split=r'_([LR])$'),
+    # the HRA renal capsule is a membrane (outer and inner walls 0.3 mm apart, meeting round the hilum): its interior is
+    # filled before the surface is rebuilt (lib.mesh._membrane_fill), else the kidney is a shell under 0.5 mm thick
+    'kidneys': dict(sel=[r'kidney_capsule_[LR]$', r'hilum_of_kidney_[LR]$'], mode='solid', split=r'_([LR])$', membrane=True),
     'kidney_medulla': dict(sel=[r'renal_(pyramid|papilla)_[LR]']),
     'kidney_pelvis': dict(sel=[r'(minor|major)_calyx', r'renal_pelvis_[LR]$']),
     'ureters': dict(sel=[r'/VH_[MF]_(ureter_[LR]|left_ureter|right_ureter)$']),
@@ -90,6 +92,28 @@ SPEC = {p[0]: dict(organ=p[1], tissue=p[2], flags=list(p[3]), budget=p[4]) for p
 LOBE_CARVE = [(r'cardiac_chamber/', 0.001), (r'blood_vasculature/.*/VH_[MF]_[^/]*aort[^/]*$', 0.001), (r'superior_vena_cava$', 0.001), (r'_thymus/', 0.001),
               (r'_liver/', 0.003)]
 INWARD_MAX = 0.01  # a part fails the build when more of its area than this is inside-out (lib.mesh.facing: exact parity test per patch)
+THIN_SOLID = 0.002  # a rebuilt solid whose mean thickness (2 V / A) is below this is a shell, not an organ: reported in rig.json
+
+# Thread-thin HRA vessels and ducts inflated radially about their centrelines (inflate_tube) when they are loaded, so the
+# lung lobes are carved round the inflated aorta too. name: (('r', median radius) | ('k', scale factor), fade, fade length).
+# fade: 'keep_top' / 'keep_bottom' leave the upper / lower end as it is (a junction with a vessel that keeps its size),
+# 'only_top' inflates the upper end (an artery's origin) and fades out along the vessel. The male descending aorta is
+# 12.5-13.9 mm across (adult 20-25 mm in the thorax, 18-20 mm in the abdomen): both its pieces are scaled by the same factor
+# so their junction stays closed, the arch junction and the iliac bifurcation are kept as they are.
+INFLATE = {
+    'male': {'VH_M_descending_aorta_a': (('k', 1.5), 'keep_top', 0.025), 'VH_M_descending_aorta_b': (('k', 1.5), 'keep_bottom', 0.03),
+             'VH_M_left_renal_artery': (('r', 0.0025), None, 0), 'VH_M_right_renal_artery': (('r', 0.0025), None, 0)},
+    'female': {'VH_F_common_bile_duct': (('r', 0.0025), None, 0), 'VH_F_common_hepatic_duct': (('r', 0.0025), None, 0),
+               'VH_F_superior_mesenteric_artery': (('r', 0.0035), 'only_top', 0.045)},
+}
+# Faces of a structure that coincide with a neighbour's surface (the HRA colon flexures repeat 85-89 % of the adjoining
+# segments' walls, the female interventricular septum repeats the ventricles' walls): (part, structure, neighbours,
+# distance) - faces whose vertices and centroid all lie within the distance of a neighbour are dropped.
+TRIM = [('colon', r'_hepatic_flexure_of_colon$', r'_(ascending|transverse)_colon$', 0.0003),
+        ('colon', r'_splenic_flexure_of_colon$', r'_(transverse|descending)_colon$', 0.0003),
+        ('heart', r'^VH_F_interventricular_septum$', r'^VH_F_(left|right)_ventricle$', 0.00005)]
+# renal veins whose HRA mesh stops short of the hilum (open stumps 21-31 mm medial to the female left kidney)
+RENAL_VEIN_EXTEND = {'female': [('VH_F_left_renal_vein', 'kidneys_L')]}
 
 
 def frame_offset(sex):
@@ -99,11 +123,26 @@ def frame_offset(sex):
     return np.array([-(lo[0] + hi[0]) / 2, -lo[1], -(lo[2] + hi[2]) / 2]), float(hi[1] - lo[1])
 
 
+_EXCL = {}
+def fit_excludes(sex):
+    """HRA structures a fit group replaces (its report.json 'assembly_exclude_hra': fit/vessels.py rebuilds the male left
+    common carotid artery), left out of the assembly."""
+    if sex not in _EXCL:
+        out, d = set(), os.path.join(FIT, sex)
+        for g in (sorted(os.listdir(d)) if os.path.isdir(d) else ()):
+            p = os.path.join(d, g, 'report.json')
+            if not os.path.exists(p): continue
+            try: out |= set(json.load(open(p)).get('assembly_exclude_hra') or [])
+            except (ValueError, AttributeError, TypeError): print(f'  ! {p}: unreadable report')
+        _EXCL[sex] = out
+    return _EXCL[sex]
+
+
 def hra_entries(sex, spec):
     s = source(f'hra-{sex}')
     out = []
     for o in s.index:
-        if re.search(HRA_EXCLUDE, o['path']): continue
+        if re.search(HRA_EXCLUDE, o['path']) or o['name'] in fit_excludes(sex): continue
         if not any(re.search(rx, o['path']) for rx in spec['sel']): continue
         if spec.get('exclude') and re.search(spec['exclude'], o['path']): continue
         out.append(o)
@@ -114,9 +153,60 @@ def carve_meshes(sex, carve):
     s = source(f'hra-{sex}')
     out = []
     for rx, margin in carve or ():
-        es = [o for o in s.index if re.search(rx, o['path']) and not re.search(HRA_EXCLUDE, o['path'])]
-        if es: out.append(([s.load_entry(o) for o in es], margin))
+        es = [o for o in s.index if re.search(rx, o['path']) and not re.search(HRA_EXCLUDE, o['path']) and o['name'] not in fit_excludes(sex)]
+        if es: out.append(([load_hra(sex, s, o) for o in es], margin))
     return out
+
+
+def _smooth01(x):
+    x = np.clip(x, 0.0, 1.0); return x * x * (3 - 2 * x)
+
+
+def inflate_tube(v, f, size, fade=None, length=0.0, step=0.002):
+    """Inflate a vessel radially about its centreline: the centreline is the smoothed centroid of 2 mm slices across the
+    vessel's principal axis, each vertex moves along its radial direction (perpendicular to the local tangent) by the
+    factor (('k', k)) or to the median radius (('r', r)), never shrinking; `fade` keeps one end as it is or inflates one
+    end only (see INFLATE), with a smoothstep over `length`. Returns (v, median radius before, after)."""
+    c0 = v.mean(0); _, V = np.linalg.eigh(np.cov((v - c0).T)); ax = V[:, -1]
+    if ax[1] < 0: ax = -ax  # t grows upwards
+    t = (v - c0) @ ax
+    nb = max(int(np.ceil((t.max() - t.min()) / step)), 1)
+    b = np.minimum(((t - t.min()) / step).astype(int), nb - 1)
+    cnt = np.bincount(b, minlength=nb); ok = np.flatnonzero(cnt >= 6)
+    if len(ok) < 3: return v, None, None
+    C = np.stack([np.bincount(b, weights=v[:, k], minlength=nb) for k in range(3)], 1)[ok] / cnt[ok, None]
+    tb = np.bincount(b, weights=t, minlength=nb)[ok] / cnt[ok]
+    C = np.stack([np.convolve(np.pad(C[:, k], 2, mode='edge'), np.ones(5) / 5, 'valid') for k in range(3)], 1)
+    T = np.gradient(C, tb, axis=0); T /= np.maximum(np.linalg.norm(T, axis=1, keepdims=True), 1e-12)
+    cv = np.stack([np.interp(t, tb, C[:, k]) for k in range(3)], 1)
+    tv = np.stack([np.interp(t, tb, T[:, k]) for k in range(3)], 1); tv /= np.maximum(np.linalg.norm(tv, axis=1, keepdims=True), 1e-12)
+    d = v - cv; d -= np.einsum('ij,ij->i', d, tv)[:, None] * tv
+    rad = np.linalg.norm(d, axis=1)
+    r0 = float(np.median([np.median(rad[b == i]) for i in ok]))
+    k = size[1] if size[0] == 'k' else size[1] / max(r0, 1e-6)
+    k = max(k, 1.0)
+    w = np.ones(len(v))
+    if fade == 'keep_top': w = _smooth01((t.max() - t) / length)
+    elif fade == 'keep_bottom': w = _smooth01((t - t.min()) / length)
+    elif fade == 'only_top': w = 1 - _smooth01((t.max() - t) / length)
+    v2 = v + ((k - 1) * w)[:, None] * d
+    return v2, r0, r0 * k
+
+
+_INFL = {}
+def load_hra(sex, s, o):
+    """An HRA mesh as stored, or inflated (INFLATE)."""
+    m = s.load_entry(o)
+    spec = INFLATE.get(sex, {}).get(o['name'])
+    if spec is None: return m
+    key = (sex, o['name'])
+    if key not in _INFL:
+        v2, r0, r1 = inflate_tube(m[0], m[1], *spec)
+        _INFL[key] = ((v2, m[1]), r0, r1)
+    return _INFL[key][0]
+
+
+SOLIDS = {}  # (sex, structure) -> mean thickness 2 V / A (m) and the membrane closing of each rebuilt solid
 
 
 _LOBES = {}
@@ -127,7 +217,7 @@ def lobes(sex):
         ents = {k: hra_entries(sex, HRA_PARTS[k]) for k in LOBE_PATH}
         ents = {k: e for k, e in ents.items() if e}
         spec = HRA_PARTS[next(iter(LOBE_PATH))]
-        built = remesh_solids({k: [s.load_entry(o) for o in e] for k, e in ents.items()}, project=spec.get('project', True),
+        built = remesh_solids({k: [load_hra(sex, s, o) for o in e] for k, e in ents.items()}, project=spec.get('project', True),
                               smooth=spec.get('smooth', 4), carve=carve_meshes(sex, LOBE_CARVE))
         _LOBES[sex] = {k: (m, [o['path'] for o in ents[k]]) for k, m in built.items()}
     return _LOBES[sex]
@@ -149,13 +239,17 @@ def build_part(sex, pid, spec):
         out = []
         carve = carve_meshes(sex, spec.get('carve'))
         for k, g in groups.items():
-            m = remesh_solid([s.load_entry(o) for o in g], project=spec.get('project', True), smooth=spec.get('smooth', 4), opening=spec.get('opening', 0),
-                             carve=carve)
-            out.append((pid if k == '_' else f'{pid}_{k}', m, [o['path'] for o in g]))
+            info = {}
+            m = remesh_solid([load_hra(sex, s, o) for o in g], project=spec.get('project', True), smooth=spec.get('smooth', 4), opening=spec.get('opening', 0),
+                             carve=carve, membrane=spec.get('membrane', False), info=info)
+            name = pid if k == '_' else f'{pid}_{k}'
+            A = 0.5 * np.linalg.norm(np.cross(m[0][m[1][:, 1]] - m[0][m[1][:, 0]], m[0][m[1][:, 2]] - m[0][m[1][:, 0]]), axis=1).sum()
+            SOLIDS[(sex, name)] = dict(thickness_mm=round(2 * abs(signed_volume(*m)) / max(A, 1e-12) * 1000, 2), **info)
+            out.append((name, m, [o['path'] for o in g]))
         return out
     out = []
     for o in es:
-        v, f = compact(*s.load_entry(o))
+        v, f = compact(*load_hra(sex, s, o))
         out.append((o['name'], (v, orient_exact(v, f)), [o['path']]))
     return out
 
@@ -187,11 +281,19 @@ def fitted(sex):
 # male thymus lobes and vas deferens are swapped. A pair is renamed only when its _L member lies to the right (-x) of its
 # _R partner (names that say which side of an organ a structure belongs to, such as the heart's chambers or the liver's
 # ducts and vessels, are not about the body's sides and are never renamed).
-SIDE_SWAP = {'male': r'^(Allen_.*|VH_M_thymus_lobe|VH_M_vas_deferens)_[LR]$', 'female': r'^(Allen_.*)_[LR]$'}
+# The male renal arteries are swapped too (VH_M_left_renal_artery runs to the right kidney).
+SIDE_SWAP = {'male': r'^(Allen_.*|VH_M_thymus_lobe|VH_M_vas_deferens)_[LR]$|^VH_M_(left|right)_renal_artery$', 'female': r'^(Allen_.*)_[LR]$'}
+
+
+def _partner(n):
+    """The other side's name of a left structure (_L suffix or left_ in the name), or None."""
+    if n.endswith('_L'): return n[:-2] + '_R'
+    if re.search(r'(^|_)left_', n): return re.sub(r'(^|_)left_', r'\1right_', n, count=1)
+    return None
 
 
 def swap_sides(sex, acc, off):
-    """Rename the swapped pairs of SIDE_SWAP in place; returns the list of renamed _L names and the pairs left alone."""
+    """Rename the swapped pairs of SIDE_SWAP in place; returns the list of renamed left names and the pairs left alone."""
     rx = re.compile(SIDE_SWAP.get(sex, r'^$'))
     where = {}
     for pid, items in acc.items():
@@ -199,8 +301,8 @@ def swap_sides(sex, acc, off):
             if src == 'HRA' and rx.search(n): where[n] = (pid, i, float(m[0][:, 0].mean()))
     done, kept = [], []
     for n, (pid, i, x) in list(where.items()):
-        if not n.endswith('_L'): continue
-        r = n[:-2] + '_R'
+        r = _partner(n)
+        if r is None: continue
         if r not in where: kept.append(n); continue
         if x < where[r][2]:
             for a, b in ((n, r), (r, n)):
@@ -306,8 +408,122 @@ def vertex_normals(v, f):
     return n / np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-20)
 
 
+def border_loops(f):
+    """Closed border loops of a mesh, as vertex index lists."""
+    e = np.concatenate([f[:, [0, 1]], f[:, [1, 2]], f[:, [2, 0]]])
+    _, inv, cnt = np.unique(np.sort(e, axis=1), axis=0, return_inverse=True, return_counts=True)
+    nxt = {}
+    for a, b in e[cnt[inv.ravel()] == 1]: nxt.setdefault(int(a), []).append(int(b))
+    out = []
+    for st in list(nxt):
+        while nxt.get(st):
+            loop, cur = [st], nxt[st].pop()
+            while cur != st and nxt.get(cur): loop.append(cur); cur = nxt[cur].pop()
+            if cur == st and len(loop) >= 3: out.append(loop)
+    return out
+
+
+def sweep_tube(c0, a0, r0, c1, a1, r1, K=32, J=16):
+    """A closed tube along the cubic Hermite curve from c0 (tangent a0) to c1 (tangent a1), its radius blending from r0 to
+    r1 by a smoothstep, both ends capped. Returns (v, f) wound outwards."""
+    L = np.linalg.norm(c1 - c0)
+    ref = np.eye(3)[np.argmin(np.abs(a0))]
+    th = np.linspace(0, 2 * np.pi, K, endpoint=False)
+    V = []
+    e1p = None
+    for j in range(J + 1):
+        t = j / J; h00, h10, h01, h11 = 2 * t**3 - 3 * t**2 + 1, t**3 - 2 * t**2 + t, -2 * t**3 + 3 * t**2, t**3 - t**2
+        c = h00 * c0 + h10 * L * a0 + h01 * c1 + h11 * L * a1
+        tan = (6 * t**2 - 6 * t) * c0 + (3 * t**2 - 4 * t + 1) * L * a0 + (-6 * t**2 + 6 * t) * c1 + (3 * t**2 - 2 * t) * L * a1
+        tan /= np.linalg.norm(tan)
+        e1 = (ref if e1p is None else e1p) - tan * ((ref if e1p is None else e1p) @ tan); e1 /= np.linalg.norm(e1); e1p = e1  # parallel transport
+        e2 = np.cross(tan, e1)
+        r = r0 + (r1 - r0) * (3 * t**2 - 2 * t**3)
+        V += [c + r * (np.cos(a) * e1 + np.sin(a) * e2) for a in th]
+    V = np.array(V + [c0, c1]); F = []
+    for j in range(J):
+        for k in range(K):
+            p, q = j * K + k, j * K + (k + 1) % K
+            F += [[p, q, p + K], [q, q + K, p + K]]
+    nb, nt = len(V) - 2, len(V) - 1
+    F += [[nb, (k + 1) % K, k] for k in range(K)] + [[nt, J * K + k, J * K + (k + 1) % K] for k in range(K)]
+    F = np.array(F)
+    return V, orient_exact(V, F)
+
+
+def renal_vein_extension(vein, kidney):
+    """Swept tubes continuing a renal vein's open lateral stumps into the kidney's hilum. A stump is a border loop (or the
+    inner and outer wall loops of a double-walled one) whose centre lies 5-40 mm from the kidney; each tube starts 3 mm
+    back inside the vein along its axis, just inside the stump's outer wall, follows the vein's axis and turns into the
+    kidney at the nearest point of the hilum's surface, tapering to 9.5 mm across, and ends 4 mm inside the kidney.
+    Returns [(v, f)] and per stump the gap closed (mm)."""
+    v, f = vein; kv, kf = kidney
+    loops = [(v[L].mean(0), float(np.linalg.norm(v[L] - v[L].mean(0), axis=1).mean()), L) for L in border_loops(f)]
+    _, dk = closest_on_mesh(kv, kf, np.array([c for c, _, _ in loops]), k=16) if loops else (None, [])
+    stumps = []
+    for (c, r, L), d in zip(loops, dk):
+        if not (0.005 < d < 0.04) or r < 0.002: continue
+        for st in stumps:
+            if np.linalg.norm(st['c'] - c) < 0.003:
+                if r > st['r']: st.update(c=c, r=r)
+                break
+        else: stumps.append(dict(c=c, r=r))
+    out, gaps = [], []
+    for st in stumps:
+        c, r = st['c'], st['r']
+        dv = np.linalg.norm(v - c, axis=1); back = v[(dv > 0.004) & (dv < 0.012)]
+        if len(back) < 6: continue
+        a0 = c - back.mean(0); a0 /= np.linalg.norm(a0)
+        q, dq = closest_on_mesh(kv, kf, c[None], k=16); q = q[0]
+        a1 = (q - c) / np.linalg.norm(q - c)
+        a1 = a1 + 0.5 * a0; a1 /= np.linalg.norm(a1)
+        c0 = c - 0.003 * a0; c1 = q + 0.004 * a1
+        out.append(sweep_tube(c0, a0, r - 0.00025, c1, a1, 0.00475))
+        gaps.append(round(float(dq[0]) * 1000, 1))
+    return out, gaps
+
+
+def trim_coincident(m, others, dist):
+    """Faces of m = (v, f) kept: those not lying on the meshes `others` (centroid within `dist`, every vertex within twice
+    it). Returns the kept mesh and the dropped share of the area."""
+    v, f = m
+    ov, of = merge(others)
+    _, dv = closest_on_mesh(ov, of, v, k=16)
+    _, dc = closest_on_mesh(ov, of, v[f].mean(1), k=16)
+    near = (dv[f].max(1) <= 2 * dist) & (dc <= dist)
+    ar = 0.5 * np.linalg.norm(np.cross(v[f[:, 1]] - v[f[:, 0]], v[f[:, 2]] - v[f[:, 0]]), axis=1)
+    return compact(v, f[~near]), float(ar[near].sum() / max(ar.sum(), 1e-12))
+
+
+LANDMARK_V = {}  # (sex, structure) -> vertices of a trimmed structure before trimming (its landmarks stay where they were)
+
+
 def repairs(sex, acc, off, log):
     """Fixes between structures of different parts, in the HRA frame (before the floor shift)."""
+    # vessels and ducts inflated when loaded (load_hra)
+    for (sx, n), (_, r0, r1) in _INFL.items():
+        if sx == sex and r0 is not None: log.setdefault('inflated_radius_mm', {})[n] = dict(before=round(r0 * 1000, 2), after=round(r1 * 1000, 2))
+    # faces that repeat a neighbour's wall
+    for part, rx, nrx, dist in TRIM:
+        items = acc.get(part, [])
+        for i, (src, n, m, dbl, paths) in enumerate(items):
+            if not re.search(rx, n): continue
+            others = [mm for _, nn, mm, _, _ in items if re.search(nrx, nn)]
+            if not others: continue
+            m2, frac = trim_coincident(m, others, dist)
+            LANDMARK_V[(sex, n)] = m[0]
+            items[i] = (src, n, m2, dbl, paths)  # a structure trimmed away entirely is dropped below (its landmark stays)
+            log.setdefault('trimmed_coincident', {})[n] = dict(area_dropped=round(frac, 3), within_mm=dist * 1000, faces_left=int(len(m2[1])), faces_before=int(len(m[1])))
+        acc[part] = [it for it in items if len(it[2][1]) >= 10] if part in acc else items
+    # renal veins that stop short of the hilum
+    for vname, kname in RENAL_VEIN_EXTEND.get(sex, []):
+        vi = [(i, m) for i, (_, n, m, _, _) in enumerate(acc.get('veins', [])) if n == vname]
+        km = [m for _, n, m, _, _ in acc.get('kidneys', []) if n == kname]
+        if not vi or not km: continue
+        tubes, gaps = renal_vein_extension(vi[0][1], km[0])
+        for j, t in enumerate(tubes):
+            acc['veins'].append(('HRA', f'{vname}_hilar_{"ab"[j] if j < 2 else j}', t, False, [f'derived:{vname} stump {j} swept to the hilum']))
+        log.setdefault('renal_vein_extended', {})[vname] = dict(stumps=len(tubes), gap_closed_mm=gaps)
     # spinal cord to medulla
     cord = {n: m for _, n, m, _, _ in acc.get('spinal_cord', [])}
     med = [m for _, n, m, _, _ in acc.get('brain', []) if re.search(r'^Allen_(tegmentum|pyramidal_part)_of_medulla_oblongata_[LR]$', n)]
@@ -331,6 +547,18 @@ def repairs(sex, acc, off, log):
             v2, (b, a) = inset(m, sv, sf[near], rays)
             acc['breasts'][i] = (src, n, (v2, m[1]), dbl, paths)
             log.setdefault('breast_skin_reach_mm', {})[n] = dict(before=round(b * 1000, 2), after=round(a * 1000, 2))
+    # the male HRA urethra reaches 1.4 mm out of the glans: pulled inside the skin like the breast ducts
+    if sex == 'male' and skin:
+        sv, sf = skin[0]; rays = RayParity(sv, sf)
+        for i, (src, n, m, dbl, paths) in enumerate(acc.get('bladder', [])):
+            if not re.search(r'urethra', n): continue
+            lo, hi = m[0].min(0) - 0.01, m[0].max(0) + 0.01
+            cen = sv[sf].mean(1); near = np.all(cen > lo, axis=1) & np.all(cen < hi, axis=1)
+            if not near.any(): continue
+            v2, (b, a) = inset(m, sv, sf[near], rays, depth=0.0005)
+            if b > -0.0005:
+                acc['bladder'][i] = (src, n, (v2, m[1]), dbl, paths)
+                log.setdefault('urethra_skin_reach_mm', {})[n] = dict(before=round(b * 1000, 2), after=round(a * 1000, 2))
     # thread-thin HRA ureters (female): offset outward to a 1.6 mm radius (adult ureter 3-4 mm across), at most 1.2 mm
     for i, (src, n, m, dbl, paths) in enumerate(acc.get('ureters', [])):
         r = tube_radius(*m)
@@ -377,6 +605,8 @@ def assemble(sex):
     for pid, items in acc.items():
         for src, n, m, _, _ in items:
             struct_v[re.sub(r'^VH_[MF]_', '', n.split('/')[-1])] = m[0] + off
+    for (sx, n), v0 in LANDMARK_V.items():  # trimmed structures keep their landmarks (a flexure repeated by its neighbours)
+        if sx == sex: struct_v[re.sub(r'^VH_[MF]_', '', n)] = v0 + off
     s = source(f'hra-{sex}')
     for pid, spec in HRA_PARTS.items():  # sub-structures of rebuilt parts (lobes' segments, pancreas head, uterus cervix...)
         if spec.get('mode') != 'solid': continue
@@ -399,7 +629,7 @@ def assemble(sex):
             _, fi, fu = facing(*m); ar_in += fi * a; ar_un += fu * a; ar_all += a
             if fi > 0.005: worst.append((n, round(fi, 4)))
         inward[pid] = round(ar_in / max(ar_all, 1e-12), 5); undecided = round(ar_un / max(ar_all, 1e-12), 4)
-        parts[pid] = dict(SPEC[pid], double=any(d for _, _, _, d, _ in items), bounds=[lo.round(4).tolist(), hi.round(4).tolist()], tris=int(len(f)),
+        parts[pid] = dict(SPEC[pid], double=any(d for _, _, _, d, _ in items) or 'double' in SPEC[pid]['flags'], bounds=[lo.round(4).tolist(), hi.round(4).tolist()], tris=int(len(f)),
                           sources=sorted({src for src, *_ in items}), inward=inward[pid], open_area=undecided)
         structures[pid] = [dict(name=n, source=src, tris=int(len(m[1])), paths=paths) for src, n, m, _, paths in items]
         parts_v[pid] = v
@@ -410,12 +640,15 @@ def assemble(sex):
     marks, pins, lm_missing = landmarks(struct_v, parts_v, sex)
     skin_v = parts_v['skin']
     failing = {p: x for p, x in inward.items() if x > INWARD_MAX}
+    log['solid_thickness_mm'] = {n: x for (sx, n), x in SOLIDS.items() if sx == sex}
+    thin = {n: x['thickness_mm'] for n, x in log['solid_thickness_mm'].items() if x['thickness_mm'] < THIN_SOLID * 1000}
     rig = dict(sex=sex, height=round(height, 4), offset=off.round(5).tolist(), bounds=[skin_v.min(0).round(4).tolist(), skin_v.max(0).round(4).tolist()],
                parts=parts, missing=missing, landmarks=marks, pins=pins, landmarks_missing=lm_missing, repairs=log,
-               inward_max=INWARD_MAX, inward_failing=failing)
+               inward_max=INWARD_MAX, inward_failing=failing, thin_solids=thin)
     json.dump(rig, open(os.path.join(od, 'rig.json'), 'w'), indent=1)
     print(f'{sex}: {len(parts)} parts, missing {missing}, repairs {log} ({time.time() - t0:.0f} s)')
     if failing: print(f'{sex}: FAIL: parts with more than {INWARD_MAX * 100:.0f} % of their area facing inward: {failing}')
+    if thin: print(f'{sex}: WARNING: rebuilt solids thinner than {THIN_SOLID * 1000:.0f} mm (shells, not organs): {thin}')
     return rig
 
 
@@ -456,7 +689,9 @@ LANDMARKS = {
               ('Common bile duct', r'^common_bile_duct$', 'front')],
     'stomach': [('Fundus', 'part:stomach', 'top'), ('Body', 'part:stomach', 'face'), ('Greater curvature', 'part:stomach', 'dir:0.7,-0.6,0.3'),
                 ('Pylorus', 'part:stomach', 'right')],
-    'spleen': [('Hilum', r'^hilum_of_spleen$', 'face'), ('Splenic artery', r'^splenic_artery$', 'face'), ('Splenic vein', r'^splenic_vein$', 'face')],
+    # the splenic artery runs along the upper border of the pancreas, the vein behind it: different rules keep the two
+    # labels apart (the female's 'face' points were 1.5 mm apart)
+    'spleen': [('Hilum', r'^hilum_of_spleen$', 'face'), ('Splenic artery', r'^splenic_artery$', 'top'), ('Splenic vein', r'^splenic_vein$', 'back')],
     'pancreas': [('Head', r'^head_of_pancreas$', 'face'), ('Neck', r'^neck_of_pancreas$', 'face'), ('Body', r'^body_of_pancreas$', 'face'), ('Tail', r'^tail_of_pancreas$', 'left'),
                  ('Uncinate process', r'^(uncinate_process_of_the_pancreas|ucinate_process1)$', 'bottom'), ('Pancreatic duct', r'^ventral_pancreatic_duct$', 'face')],
     'kidneys': [('Renal cortex', 'part:kidneys', 'face'), ('Medullary pyramids', r'^renal_pyramid_L_a$', 'face'), ('Renal pelvis', r'^renal_pelvis_L$', 'face'),

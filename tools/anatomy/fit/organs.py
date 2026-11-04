@@ -11,7 +11,10 @@ organs_settle):
                              glands slid onto the lobes' posterior surface
   2. adrenals                undistorted gland laid on its warped pose, free-space pose search, 2 mm off the kidney
   3. diaphragm               as-rigid-as-possible fit (openings follow the HRA IVC / aorta, domes under the lung bases
-                             and heart, collision push-out, local thinning); the glands then re-seated in the remaining
+                             and heart, collision push-out, local thinning); fitted against the liver as assembled
+                             (the heart chambers, coronary arteries and cardiac veins plus 4 mm carved out of its dome),
+                             a vertex inside the heart leaving it straight down through its inferior surface, so the
+                             central tendon lies in the carved space; the glands then re-seated in the remaining
                              free space (the right one behind the IVC) and the crura made to give way to them
   4. stomach                 the smooth boundary of the free part of its bed (organs_bed): the warped Z-Anatomy
                              stomach voxelised, its neighbours subtracted, bridges to the cardiac ring and the HRA
@@ -25,7 +28,9 @@ organs_settle):
                              split) settled locally off our oesophagus (hiatus), stomach and glands and the HRA
                              aorta, its two faces paired so that it thins rather than folds (its domes stay as stage
                              3 balanced them between thorax and abdomen; the liver is measured as assembled, with the
-                             heart + 4 mm carved out)
+                             heart and its surface vessels + 4 mm carved out); then the crura give way to the glands
+                             two-way (a gland's thin edge poking into the sheet: the near face walks inwards past it,
+                             the crus thinning before it moves; organs_final.crus_yield)
 Stages are cached in .cache/fit/<sex>/organs/cache/stage-*.pkl; --from=<stage> reruns from that stage.
 Contacts with our own thin structures are measured with fields that use their own (consistent) face normals, and
 the oesophagus, trachea and bronchi count as solid organs (lumen included).
@@ -48,7 +53,7 @@ from fit.organs_diaphragm import fit_diaphragm, crossing  # noqa: E402
 from fit.organs_gi import loop_axis, esophagus_field, warped_esophagus_field  # noqa: E402
 from fit.organs_bed import fit_stomach_bed  # noqa: E402
 from fit.organs_tube import fit_esophagus_sweep, profile, end_radius  # noqa: E402
-from fit.organs_final import reseat_gland, settle_diaphragm  # noqa: E402
+from fit.organs_final import reseat_gland, settle_diaphragm, crus_yield  # noqa: E402
 
 GROUP = 'organs'
 DEPTH_MAX = 1.0        # mm
@@ -430,6 +435,9 @@ def fit(sex, render=True, frm=None):
         own = [('stomach', sfl), ('esophagus', esophagus_field(*es, aux['esophagus_centreline']))]
         own += [(f'adrenal_{s_}', mesh_field(*ad2[s_], 0.0005)) for s_ in 'lr']
         dia, r['diaphragm'] = settle_diaphragm(sex, out['diaphragm'], own)
+        # the crura give way to the glands where a gland's thin edge still pokes into the sheet (two-way: the near
+        # face walks inwards past the edge; organs_final.crus_yield)
+        dia, r['crus_yield'] = crus_yield(sex, dia, {f'adrenal_{s_}': ad2[s_] for s_ in 'lr'})
         return dia, ad2, r
     dia, ad2, rep['final'] = _stage(sex, 'final', frm, final)
     out['diaphragm'] = dia; out['adrenal_l'], out['adrenal_r'] = ad2['l'], ad2['r']

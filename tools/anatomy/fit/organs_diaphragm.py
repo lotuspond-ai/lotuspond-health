@@ -13,6 +13,14 @@ faces move together), solved repeatedly with these soft targets:
     gallbladder, IVC, aorta, vertebrae, ribs and costal cartilages, the oesophagus, lungs or heart is pushed out along
     that neighbour's normal.
 
+The heart and the liver are taken as assemble.py ships them: the heart is its chambers plus the coronary arteries and
+cardiac veins on its surface (organs_final.heart_union), and the liver is the HRA liver with that heart plus
+HEART_CARVE (4 mm) carved out of its dome (organs_final.liver_carved; the HRA heart's diaphragmatic surface sinks up to
+4 mm into the HRA liver, so without the carve there is no room for the central tendon). The heart is above the sheet
+everywhere it touches it: a vertex inside the heart leaves it straight down, through the heart's inferior surface
+(HeartBed), not through its nearest wall (the trunk warp carries the female left dome up to 20 mm into the left
+ventricle, whose nearest wall is then its lateral one).
+
 Where the HRA lung base lies closer to the liver or spleen than the sheet is thick, a pass lets the two faces move
 apart from each other (no cross-sheet edges), which thins the sheet there instead of driving it into an organ; a
 minimum thickness MIN_THICK is kept.
@@ -24,11 +32,13 @@ from lib.mesh import orient_outward
 from fit.organs_data import hra, field, log, vessel_centreline, za_original
 from lib.register import umeyama
 from fit.organs_geom import laplacian, smooth_solve, vertex_normals, smoothstep, edges_of, ARAP, push_out, refine_long_edges
+from fit.organs_final import heart_union, liver_carved
 
 GAP_LUNG = 0.0015
 GAP_HEART = 0.001
 CLEAR = 0.0006
 MIN_THICK = 0.0006
+THIN_ITERS = 8
 ABD = ('liver', 'spleen', 'kidney_l', 'kidney_r', 'colon', 'pancreas', 'duodenum', 'gallbladder')
 VESSELS = ('ivc', 'aorta')
 BONES = ('spine', 'ribs')
@@ -133,6 +143,46 @@ def vessel_targets(sex, W, v0, f, thor, rep):
     return np.concatenate(idx), np.concatenate(disp), np.concatenate(wt)
 
 
+class HeartBed:
+    """The heart (organs_final.heart_union) as the diaphragm meets it. The sheet lies under the heart's diaphragmatic
+    surface, so a point inside the heart leaves it straight down, through the heart's surface below it (a vertical
+    march on the field, refined by bisection), with the outward normal there; points outside use the closest surface
+    as usual. Field-like: coarse, __call__, outward. (Used on the sheet's vertices only: with the triangle points as
+    well, points just inside the left ventricle's steep lateral wall, which the sheet hugs on its way up to the left
+    dome, were dragged down along that wall and folded the sheet into the heart: 0.66 % / 6.7 mm instead of 0.13 % /
+    1.6 mm in the female; letting those shallow points leave through the wall instead gave 0.26 % / 5.0 mm.)"""
+
+    DOWN = np.array([0.0, -1.0, 0.0])
+
+    def __init__(self, fl, step=0.0005, reach=0.08):
+        self.fl, self.step, self.reach = fl, step, reach
+
+    def coarse(self, p):
+        return self.fl.coarse(p)
+
+    def __call__(self, p, band=None):
+        return self.fl(p)
+
+    def outward(self, p):
+        p = np.asarray(p, float)
+        n, q = self.fl.outward(p)
+        ins = self.fl(p) < 0
+        if not ins.any(): return n, q
+        P = p[ins]; t = np.zeros(len(P)); act = np.ones(len(P), bool)
+        while act.any() and t.max() < self.reach:
+            t[act] += self.step
+            act[act] = self.fl.coarse(P[act] + t[act, None] * self.DOWN) < 0
+        lo, hi = np.maximum(t - self.step, 0.0), t.copy()
+        for _ in range(5):
+            mid = 0.5 * (lo + hi); inside = self.fl(P + mid[:, None] * self.DOWN) < 0
+            lo = np.where(inside, mid, lo); hi = np.where(inside, hi, mid)
+        Q = P + hi[:, None] * self.DOWN
+        nq, _ = self.fl.outward(Q)
+        nq = nq.copy(); nq[nq[:, 1] > -0.2] = self.DOWN           # an exit face that does not look down: straight down
+        n = n.copy(); q = q.copy(); n[ins] = nq; q[ins] = Q
+        return n, q
+
+
 def face_targets(v, nrm, verts, fl, gap, reach, cosmin=0.6):
     """Targets keeping the vertices `verts` (thoracic face) `gap` below the surface of field `fl` when it faces them."""
     s = fl.coarse(v[verts])
@@ -145,9 +195,42 @@ def face_targets(v, nrm, verts, fl, gap, reach, cosmin=0.6):
     facing = (np.einsum('ij,ij->i', dvec, nrm[ii]) > cosmin * dl) | (sd < 0)
     ok = facing & (sd < reach)
     ii, sd, on = ii[ok], sd[ok], on[ok]
-    # move along the neighbour's normal so the surface is `gap` away (on its outer side)
-    tgt = v[ii] + (gap - sd)[:, None] * on
+    # move along the neighbour's normal so the surface is `gap` away (on its outer side); a vertex inside goes to the
+    # exit point the field gives (the closest surface point, or the heart's surface below it) plus `gap`
+    tgt = np.where((sd < 0)[:, None], q[ok] + gap * on, v[ii] + (gap - sd)[:, None] * on)
     return ii, tgt
+
+
+BARY = np.array([[1 / 3, 1 / 3, 1 / 3], [0.5, 0.5, 0.0], [0.0, 0.5, 0.5], [0.5, 0.0, 0.5]])
+
+
+def face_push_targets(v, f, fields, clear=CLEAR, band=0.004):
+    """push_targets on four points inside each triangle near a field (centroid and edge midpoints): a sharp edge of a
+    neighbour (the carved liver's rim, a cardiac vein) pokes between the sheet's vertices. A point's move is carried
+    by its triangle's vertices (least-norm barycentric split); each vertex keeps its largest move."""
+    n = len(v); best = np.zeros(n); mv = np.zeros((n, 3)); worst = {}
+    for name, fl in fields:
+        near = fl.coarse(v) < clear + band
+        fi = np.flatnonzero(near[f].any(1))
+        if not len(fi): continue
+        F = f[fi]
+        for b in BARY:
+            P = np.einsum('k,ikj->ij', b, v[F])
+            sd = fl(P); m = sd < clear
+            if not m.any(): continue
+            on, q = fl.outward(P[m])
+            tgt = np.where((sd[m] < 0)[:, None], q + clear * on, P[m] + (clear - sd[m])[:, None] * on)
+            d = tgt - P[m]; k = b / (b @ b)
+            worst[name] = max(worst.get(name, -1e9), round(float(-sd[m].min() * 1000), 2))
+            for j in range(3):
+                if b[j] == 0: continue
+                vid = F[m, j]; dj = d * k[j]; mag = np.linalg.norm(dj, axis=1)
+                # largest move per vertex (unbuffered: sort so the largest is written last)
+                o = np.argsort(mag); vid, dj, mag = vid[o], dj[o], mag[o]
+                upd = mag > best[vid]
+                best[vid[upd]] = mag[upd]; mv[vid[upd]] = dj[upd]
+    ii = np.flatnonzero(best > 0)
+    return ii, v[ii] + mv[ii], worst
 
 
 def push_targets(v, fields, clear=CLEAR, band=0.004):
@@ -159,7 +242,7 @@ def push_targets(v, fields, clear=CLEAR, band=0.004):
         if not m.any(): continue
         ii = cand[m]
         on, q = fl.outward(v[ii])
-        idx.append(ii); tgt.append(v[ii] + (clear - sd[m])[:, None] * on)
+        idx.append(ii); tgt.append(np.where((sd[m] < 0)[:, None], q + clear * on, v[ii] + (clear - sd[m])[:, None] * on))
         worst[name] = round(float(-sd[m].min() * 1000), 2)
     if not idx: return np.zeros(0, np.int64), np.zeros((0, 3)), worst
     return np.concatenate(idx), np.concatenate(tgt), worst
@@ -188,34 +271,40 @@ def fit_diaphragm(sex, W, extra=(), outer=10):
     vi, vd, vw = vessel_targets(sex, W, v0, f, thor, rep)
     guide = v0.copy(); guide[vi] = v0[vi] + vd
     gw = np.full(n, 0.02); gw[vi] = np.maximum(gw[vi], vw)
-    lungs, heart = field(sex, 'lungs'), field(sex, 'heart')
-    pushers = [(k, field(sex, k)) for k in ABD + VESSELS + BONES] + list(extra) + [('lungs', lungs), ('heart', heart)]
+    lungs, heart = field(sex, 'lungs'), HeartBed(heart_union(sex))
+    # the liver as assembled (heart + HEART_CARVE carved out of its dome)
+    pushers = [(k, liver_carved(sex) if k == 'liver' else field(sex, k)) for k in ABD + VESSELS + BONES] + list(extra) + [('lungs', lungs), ('heart', heart)]
     T = np.flatnonzero(thor)
+    # the carved liver is also tested inside the sheet's triangles (the carve leaves a sharp rim at the liver's
+    # posterior border under the heart that poked 4.5 mm between the sheet's vertices)
+    tri = [(k, fl) for k, fl in pushers if k == 'liver']
     v = v0.copy()
     for it in range(outer):
         nrm = vertex_normals(v, f)
         li, lt = face_targets(v, nrm, T, lungs, GAP_LUNG, 0.025)
         hi, ht = face_targets(v, nrm, T, heart, GAP_HEART, 0.020)
         pi, pt, worst = push_targets(v, pushers)
-        idx = np.concatenate([np.arange(n), li, hi, pi])
-        tgt = np.concatenate([guide, lt, ht, pt])
-        wts = np.concatenate([gw, np.full(len(li), 1.0), np.full(len(hi), 1.0), np.full(len(pi), 20.0)])
+        ti, tt, tworst = face_push_targets(v, f, tri)
+        idx = np.concatenate([np.arange(n), li, hi, pi, ti])
+        tgt = np.concatenate([guide, lt, ht, pt, tt])
+        wts = np.concatenate([gw, np.full(len(li), 1.0), np.full(len(hi), 1.0), np.full(len(pi), 20.0), np.full(len(ti), 20.0)])
         v = arap.solve(v, idx, tgt, wts, iters=4)
-        log(f'    diaphragm iter {it}: lung targets {len(li)}, heart {len(hi)}, pushed {len(pi)}, worst {worst}')
+        log(f'    diaphragm iter {it}: lung targets {len(li)}, heart {len(hi)}, pushed {len(pi)}, triangles {len(ti)}, worst {worst}, in triangles {tworst}')
     rep['coupled_fit_worst_mm'] = worst
     # thinning pass: the faces may move apart from each other (no cross-sheet edges) where the space between thorax
     # and abdomen is thinner than the sheet
     arap2 = ARAP(rest, f)
     vfit = v.copy()
-    for it in range(6):
+    for it in range(THIN_ITERS):
         pi, pt, worst = push_targets(v, pushers)
-        if not len(pi): break
+        ti, tt, tworst = face_push_targets(v, f, tri)
+        if not len(pi) and not len(ti): break
         nrm = vertex_normals(v, f)
         li, lt = face_targets(v, nrm, T, lungs, GAP_LUNG, 0.006)
-        idx = np.concatenate([np.arange(n), pi, li]); tgt = np.concatenate([vfit, pt, lt])
-        wts = np.concatenate([np.full(n, 0.02), np.full(len(pi), 20.0), np.full(len(li), 0.5)])
+        idx = np.concatenate([np.arange(n), pi, ti, li]); tgt = np.concatenate([vfit, pt, tt, lt])
+        wts = np.concatenate([np.full(n, 0.02), np.full(len(pi), 20.0), np.full(len(ti), 20.0), np.full(len(li), 0.5)])
         v = arap2.solve(v, idx, tgt, wts, iters=4)
-        log(f'    thinning iter {it}: pushed {len(pi)}, worst {worst}')
+        log(f'    thinning iter {it}: pushed {len(pi)}, triangles {len(ti)}, worst {worst}, in triangles {tworst}')
     v = keep_thickness(v, vfit, thor)
     rep['thinning_worst_mm'] = worst
     rep['thinning_max_move_mm'] = round(float(np.linalg.norm(v - vfit, axis=1).max() * 1000), 2)

@@ -87,7 +87,7 @@ for side, S in (('l', 'L'), ('r', 'R')):
 # ------------------------------------------------------------------------------------------------ app parts
 # One glTF node per part: the app's mesh id. organ = OrganId; tissue = key in src/anatomy/organs.ts TISSUE;
 # flags: 'shell' (see-through in x-ray), 'hollow' (inside drawn as cut tissue in cross-sections), 'noinner' (see-through
-# tissue without an inner layer). budget = target triangles after simplification. Sources are filled in by assemble.py
+# tissue without an inner layer), 'double' (drawn double-sided: open surface patches). budget = target triangles after simplification. Sources are filled in by assemble.py
 # from HRA (by group path / name) and from the fitted Z-Anatomy structures (.cache/fit/<sex>/<group>/manifest.json).
 PARTS = [
     # id                 organ           tissue          flags                budget
@@ -148,7 +148,7 @@ PARTS = [
     ('skel_hands',       'marrow',       'bone',         (),                  30000),
     ('skel_legs',        'marrow',       'bone',         (),                  30000),
     ('skel_feet',        'marrow',       'bone',         (),                  24000),
-    ('joints',           'marrow',       'ligament',     (),                  8000),
+    ('joints',           'marrow',       'ligament',     ('double',),         8000),  # menisci, cartilage: open patches
     ('thymus',           'marrow',       'thymus',       (),                  3000),
     ('skin',             'skin',         'skin',         (),                  70000),
 ]

@@ -393,10 +393,11 @@ def _lattice_box(v, h, pad, origin):
     return lo, np.ceil((hi - lo) / h).astype(int) + 1
 
 
-def voxel_solid(meshes, lo, n, h, close=2, opening=0, specks=0.02):
+def voxel_solid(meshes, lo, n, h, close=2, opening=0, specks=0.02, membrane=False, info=None):
     """Solid voxels of (possibly open, overlapping) surface patches on the grid (lo, n, h): rasterise the patches, close
     gaps of up to `close` voxels, fill the inside, optionally open away strands thinner than ~2*opening voxels and drop
-    specks smaller than `specks` of the main body."""
+    specks smaller than `specks` of the main body. membrane: the patches are a membrane wrapped round the organ (see
+    _membrane_fill); info (a dict) receives the closing radius that filled it."""
     from scipy import ndimage
     v, f = merge(meshes)
     shell = np.zeros(n, bool)
@@ -409,8 +410,32 @@ def voxel_solid(meshes, lo, n, h, close=2, opening=0, specks=0.02):
     solid = ndimage.binary_fill_holes(shut)
     solid = ndimage.binary_erosion(solid, st, iterations=close) | shell
     solid = ndimage.binary_fill_holes(solid)
+    if membrane:
+        solid, r = _membrane_fill(solid, shell)
+        if info is not None: info['membrane_close_mm'] = round(r * h * 1000, 1)
     if opening: solid = ndimage.binary_opening(solid, st, iterations=opening)
     return _drop_specks(solid, specks)
+
+
+def _membrane_fill(solid, shell, factor=3.0, radii=(3, 4, 5, 6, 8, 10, 12, 15, 18)):
+    """A membrane wrapped round an organ fills only to itself. The HRA renal capsule is one closed surface whose outer
+    and inner walls run 0.3 mm apart and meet round the hilum, a bowl whose mouth is the hilum: filling it gives a shell
+    under 0.5 mm thick, not the kidney. When the filled solid is less than `factor` times the rasterised surface, the
+    surface is closed with balls of growing radius (voxels, by distance transforms) until the bowl's interior fills; the
+    mouth is sealed along the closing's envelope and the rest of the outline is unchanged (a closing only adds material
+    in concavities narrower than the ball). Returns (solid, radius used, 0 when no closing was needed or none filled)."""
+    from scipy import ndimage
+    if solid.sum() >= factor * shell.sum(): return solid, 0
+    R = radii[-1] + 2
+    sh = np.pad(shell, R)
+    d = ndimage.distance_transform_edt(~sh)
+    for r in radii:
+        c = ndimage.binary_fill_holes(d <= r)
+        c = (ndimage.distance_transform_edt(c) > r) | sh
+        c = ndimage.binary_fill_holes(c)
+        if c.sum() >= factor * sh.sum():
+            return c[R:-R, R:-R, R:-R] | solid, r
+    return solid, 0
 
 
 def _drop_specks(solid, frac):
@@ -469,13 +494,15 @@ def carve_region(carve, lo, n, h):
     return cut
 
 
-def _extract(solid, lo, h, smooth, src=None, cut=None, gap=None):
+def _extract(solid, lo, h, smooth, src=None, cut=None, gap=None, deep=None):
     """Closed surface of a voxel solid: zero level of its (slightly blurred) signed distance, Taubin-smoothed, optionally
     projected onto the source patches src = (v, f) where they are near. `gap`: a distance field (metres, on the same
     grid) the surface keeps away from by half its own value (used to leave a thin cleft between neighbouring solids).
     The faces come out of surface_nets wound from the inside to the outside end of each grid edge, that is along the
     field's gradient: checked face by face against the gradient below, and never re-oriented by a breadth-first walk over
-    shared edges (which carries a wrong flip through the non-manifold edges surface nets makes at ambiguous cells)."""
+    shared edges (which carries a wrong flip through the non-manifold edges surface nets makes at ambiguous cells).
+    deep: never snap onto source surface buried more than this inside the solid (the inner wall of a filled membrane,
+    the lining of the renal sinus behind a sealed hilum)."""
     from scipy import ndimage
     sdf = (ndimage.distance_transform_edt(~solid) - ndimage.distance_transform_edt(solid)).astype(np.float32) * h
     if gap is not None: sdf = np.maximum(sdf, gap)
@@ -496,23 +523,27 @@ def _extract(solid, lo, h, smooth, src=None, cut=None, gap=None):
             dc = ndimage.distance_transform_edt(~cut).astype(np.float32) * h
             near = lambda p: ndimage.map_coordinates(dc, ((p - lo) / h).T, order=1, mode='nearest')
             w = np.where((near(q) < 1.5 * h) | (near(rv) < 3.0 * h), 0.0, w)
+        if deep is not None:
+            w = np.where(ndimage.map_coordinates(sdf, ((q - lo) / h).T, order=1, mode='nearest') < -deep, 0.0, w)
         rv = rv * (1 - w[:, None]) + q * w[:, None]
     return rv, rf
 
 
-def remesh_solid(meshes, h=0.0012, close=2, smooth=4, project=True, opening=0, carve=None):
+def remesh_solid(meshes, h=0.0012, close=2, smooth=4, project=True, opening=0, carve=None, membrane=False, info=None):
     """One closed surface enclosing the union of (possibly open, overlapping) surface patches.
     Rasterises the patches into voxels, closes gaps of up to `close` voxels, fills the inside, removes the solids of
     `carve` = [(meshes, margin), ...] grown by their margins (room for a neighbour), extracts the zero level of a signed
-    distance field and projects it onto the original patches where they are close (keeping their detail)."""
+    distance field and projects it onto the original patches where they are close (keeping their detail).
+    membrane: the patches wrap the organ (a capsule): its interior is filled (_membrane_fill) and the surface is never
+    snapped onto source surface buried inside the solid."""
     v, f = merge(meshes)
     lo, n = _lattice_box(v, h, close + 4, v.min(0))
-    solid = voxel_solid(meshes, lo, n, h, close=close, opening=opening)
+    solid = voxel_solid(meshes, lo, n, h, close=close, opening=opening, membrane=membrane, info=info)
     cut = None
     if carve:
         cut = carve_region(carve, lo, n, h)
         solid = _drop_specks(solid & ~cut, 0.02)
-    return _extract(solid, lo, h, smooth, src=(v, f) if project else None, cut=cut)
+    return _extract(solid, lo, h, smooth, src=(v, f) if project else None, cut=cut, deep=2 * h if membrane else None)
 
 
 def remesh_solids(groups, h=0.0012, close=2, smooth=4, project=True, opening=0, carve=None, cleft=0.0006):

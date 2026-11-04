@@ -69,12 +69,45 @@ class CarvedField:
         return nb, qb
 
 
-_CARVED = {}
+class UnionField:
+    """Signed distance to a union of solids: the minimum of their fields; outward from the part that is nearest (or
+    deepest inside). Field-like: coarse, __call__, outward."""
+
+    def __init__(self, parts):
+        self.parts = list(parts)
+
+    def coarse(self, p):
+        return np.min([fl.coarse(p) for fl in self.parts], axis=0)
+
+    def __call__(self, p, band=None):
+        return np.min([fl(p) for fl in self.parts], axis=0)
+
+    def outward(self, p):
+        p = np.asarray(p, float)
+        k = np.argmin([fl.coarse(p) for fl in self.parts], axis=0)
+        n = np.zeros_like(p); q = np.zeros_like(p)
+        for i, fl in enumerate(self.parts):
+            m = k == i
+            if m.any(): n[m], q[m] = fl.outward(p[m])
+        return n, q
+
+
+_CARVED, _HEART = {}, {}
+
+
+def heart_union(sex):
+    """The heart as assemble.py carves it out of the liver: its chambers and the coronary arteries and cardiac veins on
+    its surface."""
+    if sex not in _HEART:
+        parts = [field(sex, 'heart')] + ([field(sex, 'heart_vessels')] if has_hra(sex, 'heart_vessels') else [])
+        _HEART[sex] = UnionField(parts)
+    return _HEART[sex]
 
 
 def liver_carved(sex):
-    """The liver as assembled: HRA liver minus (heart + HEART_CARVE)."""
-    if sex not in _CARVED: _CARVED[sex] = CarvedField(field(sex, 'liver'), field(sex, 'heart'), HEART_CARVE)
+    """The liver as assembled: HRA liver minus (heart chambers + coronary arteries + cardiac veins + HEART_CARVE), the
+    same carve list as assemble.py's liver part."""
+    if sex not in _CARVED: _CARVED[sex] = CarvedField(field(sex, 'liver'), heart_union(sex), HEART_CARVE)
     return _CARVED[sex]
 
 
@@ -164,3 +197,37 @@ def hra_room(sex):
                        deepest_overlap_mm=round(float(max(0.0, -d.min()) * 1000), 1),
                        by_organ_under_1_4mm_pct={k: round(float(((d < 0.0014) & (who == k)).mean() * 100), 1) for k in ('liver', 'spleen', 'colon')})
     return out
+
+
+
+CRUS_CLEAR = 0.0012       # clearance the crus keeps from a gland in its two-way yield (more than half the gland's
+                          # thin medial edge, so that the sheet points beside the edge see it)
+
+
+def crus_yield(sex, mesh, glands, iters=12, log_=log):
+    """The crura give way to the suprarenal glands: a thin edge of a gland poking into the crus between the sheet's
+    test points (the male left gland's medial edge, 3.5 mm into the left crus) is invisible to the settle above,
+    which pushes sheet points along the gland's normal: beside a thin edge that normal points sideways, so the near
+    face only slides along the edge. Here the sheet points within CRUS_CLEAR of a gland walk along the sheet's own
+    inward normal until they are clear of it (organs_settle.settle, inward=True): the crus's near face retreats past
+    the edge's tip, with the smooth bi-Laplacian falloff of the settle; the two faces are paired, so the crus thins
+    (down to MIN_THICK) before its other face moves (behind the male left crus lies the L1 vertebral body).
+    glands: {name: (v, f)}. Returns (v, f), report."""
+    from scipy.spatial import cKDTree
+    from fit.organs_settle import settle
+    from fit.organs_diaphragm import sides
+    from fit.organs_geom import mesh_field
+    v, f = mesh; v = np.asarray(v, float); f = orient_outward(v, f)
+    thor = sides(v, f)
+    T, A = np.flatnonzero(thor), np.flatnonzero(~thor)
+    d, j = cKDTree(v[A]).query(v[T]); m = d < 0.010
+    P, Q = T[m], A[j[m]]
+    ax = v[P] - v[Q]; th = np.linalg.norm(ax, axis=1); ax /= np.maximum(th, 1e-12)[:, None]
+    fields = [(k, mesh_field(gv, gf, 0.0005), CRUS_CLEAR) for k, (gv, gf) in glands.items()]
+    v2, rep = settle(v, f, fields, clear=CRUS_CLEAR, iters=iters, pairs=(P, Q, ax), min_thick=np.minimum(th, MIN_THICK), pair_split=0.5,
+                     w=30.0, inward=True, log=log_, label='crus yield')
+    th2 = np.einsum('ij,ij->i', v2[P] - v2[Q], ax)
+    mv = np.linalg.norm(v2 - v, axis=1)
+    rep['moved_vertices'] = int((mv > 0.0001).sum())
+    rep['thickness_mm'] = dict(min_before=round(float(th.min() * 1000), 2), min_after=round(float(th2.min() * 1000), 2))
+    return (v2, orient_outward(v2, f)), rep

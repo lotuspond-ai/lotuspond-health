@@ -5,13 +5,15 @@ scale) marks the bed; the stomach is rebuilt as the smooth boundary of the part 
 free, so it carries their impressions (as a real stomach does), keeps its volume where the bed allows and has no folds:
 
   1. the warped stomach is voxelised (H = 1 mm; its orifices and the 3 cm hole in Z-Anatomy's anterior wall capped);
-  2. the union of its neighbours (liver, gallbladder, spleen, pancreas, colon, jejunum, duodenum away from the
-     pyloric junction, kidneys, aorta, IVC, lung bases, heart, our diaphragm and left suprarenal gland), dilated by CLR,
-     is subtracted;
+  2. the union of its neighbours (liver, gallbladder, spleen, pancreas, colon, jejunum, duodenum (its bulb included)
+     away from the pyloric junction, kidneys, aorta, IVC, splenic artery and vein, lung bases, heart, our diaphragm and
+     left suprarenal gland), dilated by CLR, is subtracted; so is the pylorus's shadow: behind the plane of the bulb's
+     lip, within PYL_CONE of the bulb's axis (the duodenum continues there; gastric tissue in it would wrap the bulb);
   3. two bridges join the orifices to their partners along their axes: a cylinder from the cardiac ring (centre and
      axis of the warped cardia, radius of the oesophagus's distal end) into the stomach, and a tapered tube (cubic
-     Hermite path) from the rim of the HRA duodenal opening, leaving along the duodenum's axis, to the nearest deep
-     point of the antrum; the bridges obey the same neighbour constraint;
+     Hermite path) from the pyloric ring (the outer wall of the HRA duodenal bulb just behind the crest of its free
+     lipped end, organs_gi.bulb_opening), leaving along the bulb's axis, to the nearest deep point of the antrum; the
+     bridges obey the same neighbour constraint;
   4. a morphological opening (OPEN_R ball) drops free space too thin to hold a stomach (the shells a neighbour leaves
      when it bulges into the bed: the HRA male's splenic flexure), the bridges are added, and the largest connected
      component is kept;
@@ -19,7 +21,7 @@ free, so it carries their impressions (as a real stomach does), keeps its volume
      field outside wherever a dilated neighbour is: the smoothed surface never re-enters a neighbour;
   6. the zero level is extracted (surface nets, about H edges, even), Taubin-smoothed; each orifice is opened by
      cutting the bridge end at its ring plane, and its rim laid exactly onto its ring (the cardiac circle the
-     oesophagus ends in, the HRA duodenal rim) by a bi-Laplacian displacement with a smooth falloff;
+     oesophagus ends in, the ring on the bulb's lip) by a bi-Laplacian displacement with a smooth falloff;
   7. a final settle (organs_settle) clears what the voxel resolution leaves, both rims held.
 """
 import numpy as np
@@ -36,7 +38,8 @@ SIGMA = 1.5          # gaussian smoothing per pass (voxels)
 PASSES = 4
 OPEN_R = 5            # opening radius (voxels): free space thinner than 1 cm holds no stomach
 BED_NB = ('liver', 'gallbladder', 'spleen', 'pancreas', 'colon', 'kidney_l', 'kidney_r', 'duodenum', 'jejunum', 'aorta', 'ivc',
-          'lungs', 'heart')
+          'splenic_a', 'splenic_v', 'lungs', 'heart')
+PYL_CONE = (np.radians(45.0), 0.035)    # the pylorus's shadow: half-angle about the bulb's axis, depth behind the lip plane
 
 
 def loop_axis(P):
@@ -98,6 +101,20 @@ def beyond_ring(lo, h, shape, c, n_out, r, length):
     x = lo + h * g - c; ax = x @ n_out
     rad = np.linalg.norm(x - np.outer(ax, n_out), axis=1)
     g = g[(ax > 0) & (ax < length) & (rad < r)]
+    out = np.zeros(shape, bool); out[g[:, 0], g[:, 1], g[:, 2]] = True
+    return out
+
+
+def shadow_voxels(lo, h, shape, c, n, r0, ang, depth):
+    """Voxels behind the plane (c, n) (on the -n side), up to `depth`, within r0 + tan(ang) * (distance behind the
+    plane) of the axis."""
+    shp = np.array(shape)
+    i0 = np.clip(np.floor((c - depth - lo) / h).astype(int), 0, shp - 1)
+    i1 = np.clip(np.ceil((c + depth - lo) / h).astype(int), 0, shp - 1)
+    g = np.stack(np.meshgrid(*[np.arange(i0[a], i1[a] + 1) for a in range(3)], indexing='ij'), -1).reshape(-1, 3)
+    x = lo + h * g - c; ax = -(x @ n)
+    rad = np.linalg.norm(x + np.outer(ax, n), axis=1)
+    g = g[(ax > 0) & (np.linalg.norm(x, axis=1) < depth) & (rad < r0 + np.tan(ang) * ax)]
     out = np.zeros(shape, bool); out[g[:, 0], g[:, 1], g[:, 2]] = True
     return out
 
@@ -164,11 +181,10 @@ def fit_stomach_bed(sex, W, r_cardia, own=(), log_=log):
                               angle_deg=round(float(np.degrees(np.arccos(np.clip(cn @ te, -1, 1)))), 1))
     cn = te
     pc0 = v0[pyl0].mean(0)
-    from fit.organs_gi import duodenal_opening
-    ring = duodenal_opening(sex, pc0)
-    cr, nr, rr = loop_axis(ring)
-    dv = hra(sex, 'duo_sup')[0]
-    if nr @ (cr - dv[np.linalg.norm(dv - cr, axis=1) < 0.03].mean(0)) < 0: nr = -nr   # out of the duodenum
+    # the pylorus opens into the free lipped end of the duodenal bulb (the first duodenal segment), not into the ring
+    # where the bulb meets the superior part: nr points out of the bulb, towards the stomach
+    from fit.organs_gi import bulb_opening
+    ring, cr, nr, rr, rep['bulb'] = bulb_opening(sex)
     rep['cardia'] = dict(centre=np.round(cc, 4).tolist(), axis=np.round(cn, 3).tolist(), radius_mm=round(r_cardia * 1000, 1))
     rep['duodenal_opening'] = dict(centre=np.round(cr, 4).tolist(), axis=np.round(nr, 3).tolist(), radius_mm=round(rr * 1000, 1),
                                    warped_pylorus_offset_mm=round(float(np.linalg.norm(pc0 - cr) * 1000), 1))
@@ -188,6 +204,12 @@ def fit_stomach_bed(sex, W, r_cardia, own=(), log_=log):
         return (np.linalg.norm(X - cr, axis=1) < rr + 0.008) & ((X - cr) @ nr > 0)
     D = neighbour_distance(fields, lo, H, shape, relax)
     FREE = D > CLR
+    # the pylorus's shadow: behind the lip plane, within PYL_CONE of the bulb's axis (rr + 2 mm at the plane)
+    ang, depth = PYL_CONE
+    SH = shadow_voxels(lo, H, shape, cr, nr, rr + 0.002, ang, depth)
+    rep['pylorus_shadow'] = dict(half_angle_deg=round(float(np.degrees(ang)), 1), depth_mm=round(depth * 1000, 1),
+                                 warped_bed_removed_cm3=round(float((S0 & FREE & SH).sum() * H ** 3 * 1e6), 2))
+    FREE &= ~SH
     free0 = S0 & FREE
     # the cardiac ring and the oesophagus's end must fit between their neighbours (the warped end lies partly in the
     # HRA liver's oesophageal impression): the ring centre moves to the nearest point where a disc of the ring's radius

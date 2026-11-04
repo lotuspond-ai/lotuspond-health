@@ -126,7 +126,13 @@ HRA = {
     'spleen_diaph': _rx('diaphragmatic_surface_of_spleen'),
     'pancreas': _rx('head_of_pancreas', 'neck_of_pancreas', 'body_of_pancreas', 'tail_of_pancreas', 'uncinate_process_of_the_pancreas'),
     'duo_sup': _rx('duodenum_superior'),
-    'duodenum': _rx('duodenum_superior', 'duodenum_descending', 'duodenum_horizonal', 'duodenum_horizontal', 'duodenum_ascending'),
+    # the duodenal ampulla (bulb) is the first duodenal segment: the pylorus opens into its free lipped end (HRA files it
+    # under duodenum_superior, as its own mesh)
+    'duo_bulb': _rx('duodenal_ampulla'),
+    'duodenum': _rx('duodenal_ampulla', 'duodenum_superior', 'duodenum_descending', 'duodenum_horizonal', 'duodenum_horizontal', 'duodenum_ascending'),
+    # the splenic artery and vein run in the stomach bed, behind its posterior wall (along the pancreas's upper border)
+    'splenic_a': _rx('splenic_artery'),
+    'splenic_v': _rx('splenic_vein'),
     'jejunum': _rx('jejunum'),
     'colon': _rx('transverse_colon', 'splenic_flexure_of_colon', 'hepatic_flexure_of_colon', 'descending_colon', 'ascending_colon'),
     'kidney_l': _rx('kidney_capsule_L', 'hilum_of_kidney_L', 'outer_cortex_of_kidney_L'),
@@ -144,6 +150,12 @@ HRA = {
     'thyroid_cart': _rx('thyroid_cartilage'),
     'la': _rx('left_cardiac_atrium'),
     'heart': _rx('left_cardiac_atrium', 'right_cardiac_atrium', 'heart_left_ventricle', 'left_ventricle', 'heart_right_ventricle', 'right_ventricle'),
+    # the coronary arteries and cardiac veins on the heart's surface (the posterior interventricular vessels, the middle
+    # and small cardiac veins and the coronary sinus stand proud of the chambers on its diaphragmatic surface): the
+    # same selection as assemble.py's liver carve list (its CORONARY / CARDIAC_VEINS patterns)
+    'heart_vessels': ('path', r'blood_vasculature_of_heart/.*(coronary_artery|anterior_descending|circumflex|diagonal_branch|left_marginal_branch|'
+                              r'right_marginal_artery|posterior_descending|posterior_left_ventricular|right_posterior_descending|'
+                              r'cardiac_vein|coronary_sinus|oblique_vein_of_left_atrium|posterior_vein_of_left_ventricle|left_marginal_vein)'),
 }
 LOBES = list(LOBE_PATH)
 for lobe in LOBES: HRA[lobe] = ('path', LOBE_PATH[lobe] + r'(?!.*hilum)[^/]*segme')
@@ -187,9 +199,11 @@ def hra(sex, key):
 from fit.organs_geom import Field  # noqa: E402
 
 _FIELDS = {}
-FIELD_H = {'lungs': 0.001, 'ribs': 0.0008, 'trach_cart': 0.0005, 'cricoid': 0.0005, 'thyroid_cart': 0.0005, 'bronchi': 0.0006, 'celiac': 0.0006, 'trachea': 0.0006}
+FIELD_H = {'lungs': 0.001, 'ribs': 0.0008, 'trach_cart': 0.0005, 'cricoid': 0.0005, 'thyroid_cart': 0.0005, 'bronchi': 0.0006, 'celiac': 0.0006, 'trachea': 0.0006,
+           'heart_vessels': 0.0005, 'splenic_a': 0.0005, 'splenic_v': 0.0006, 'duo_bulb': 0.0005}
 # open-ended tubes (and chambers with vessel openings): boundary loops are capped before filling
-FIELD_CAP = {'ivc', 'aorta', 'aorta_abd', 'duo_sup', 'duodenum', 'colon', 'jejunum', 'trachea', 'bronchi', 'celiac', 'la', 'heart'}
+FIELD_CAP = {'ivc', 'aorta', 'aorta_abd', 'duo_sup', 'duo_bulb', 'duodenum', 'colon', 'jejunum', 'trachea', 'bronchi', 'celiac', 'la', 'heart', 'heart_vessels',
+             'splenic_a', 'splenic_v'}
 # hollow tubes whose wall is a closed double shell (the lumen stays open at the ends, so a flood fill leaves it out):
 # each horizontal cross-section is filled (its convex hull), so that the lumen counts as inside the organ
 SLICE_FILL = {'ivc', 'trachea', 'bronchi'}
