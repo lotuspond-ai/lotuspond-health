@@ -190,6 +190,9 @@ _FIELDS = {}
 FIELD_H = {'lungs': 0.001, 'ribs': 0.0008, 'trach_cart': 0.0005, 'cricoid': 0.0005, 'thyroid_cart': 0.0005, 'bronchi': 0.0006, 'celiac': 0.0006, 'trachea': 0.0006}
 # open-ended tubes (and chambers with vessel openings): boundary loops are capped before filling
 FIELD_CAP = {'ivc', 'aorta', 'aorta_abd', 'duo_sup', 'duodenum', 'colon', 'jejunum', 'trachea', 'bronchi', 'celiac', 'la', 'heart'}
+# hollow tubes whose wall is a closed double shell (the lumen stays open at the ends, so a flood fill leaves it out):
+# each horizontal cross-section is filled (its convex hull), so that the lumen counts as inside the organ
+SLICE_FILL = {'ivc', 'trachea', 'bronchi'}
 
 
 def field(sex, key, h=None):
@@ -202,12 +205,13 @@ def field(sex, key, h=None):
         tag = 'ribs-' + (f'fit{int(os.stat(man).st_mtime)}' if ribs(sex)[1] == 'ribcage group' else 'za')
         for old in os.listdir(cache_dir(sex)):
             if old.startswith('field-ribs-') and old != f'field-{tag}.npz': os.remove(os.path.join(cache_dir(sex), old))
+    if key in SLICE_FILL: tag = key + '-filled'
     path = os.path.join(cache_dir(sex), f'field-{tag}.npz')
     v, f = hra(sex, key)
     crop = None
     if key == 'lungs':                       # only the bases matter here
         crop = (v.min(0) - 0.02, np.array([9, v[:, 1].min() + 0.17, 9]))
-    fl = Field.cached(v, f, h, path, cap=key in FIELD_CAP, slice_axis=1 if key in ('ivc',) else None, crop=crop)
+    fl = Field.cached(v, f, h, path, cap=key in FIELD_CAP, slice_axis=1 if key in SLICE_FILL else None, crop=crop)
     _FIELDS[ck] = fl
     return fl
 

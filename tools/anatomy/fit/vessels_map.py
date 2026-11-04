@@ -7,16 +7,18 @@ Each Z-Anatomy (za-cardio) vertex x goes through
     leg map      L_s(x), hip_s(x) = fit.foot.leg_deform(sex, s), .hip_weight  (thigh to toes of side s)
 blended as
     x1 = (1 - h) T + h H            h = smoothstep of the Z-Anatomy height from the C3 to the C1 vertebral body
-    x2 = (1 - a) x1 + a A_s         a = w_s(x) (1 - h), for vessels of side s above the pelvis
+    x2 = (1 - a) x1 + a A_s         a = w_s(x) (1 - h), for every neck, thorax and arm vessel, by position (side s by
+                                    the vessel's side; midline vessels by the sign of x): vessels that meet at the root
+                                    of the neck (jugular / subclavian / brachiocephalic veins, carotid / subclavian /
+                                    vertebral / internal thoracic arteries) get the same map where they meet
     x3 = (1 - g) x2 + g L_s         g = hip_s(x), for the femoral vessels and everything below them
-The trunk warp is corrected near the bones other groups placed from Z-Anatomy with a shape of their own (rib cage:
-ribs, costal cartilages, sternum; arms: clavicle, scapula, humerus): the placed bones keep Z-Anatomy's vertex order, so
-each bone vertex X has a displacement d = placed(X) - T(X); vessel points within 15 mm of those bones get the Gaussian
-average of d (sigma 6 mm) of their nearest bone vertices, faded out from 4 to 15 mm (vessels lying against a bone follow
-it; the roots of the great vessels, 1.5-3 cm behind the manubrium, keep the warp that fits them to the HRA vessels). Vertebrae, sacrum and hip bones
-(the warp's own anchors) take part with d = 0. In the male the placed manubrium's notches lie 9 / 24 mm from where the
-trunk warp puts them (female 12 / 38 mm), so without this the internal thoracic vessels and the roots of the neck
-vessels would not follow the sternum and clavicles they lie against.
+The trunk warp is corrected toward the bones other groups placed from Z-Anatomy with a shape of their own (rib cage:
+ribs, costal cartilages, sternum; arms: clavicle, scapula): the placed bones keep Z-Anatomy's vertex order, so each bone
+vertex X has a displacement d = placed(X) - T(X). d is interpolated smoothly through space (SkelCorrection: thin-plate
+spline through those bones, with d = 0 on the vertebrae, sacrum, hip bones and the great vessels the warp fits), so the
+internal thoracic vessels follow the sternum and cartilages they lie against without zig-zagging between them. This
+matters most in the female, whose trunk warp puts the right costal cartilages up to 12 cm from the placed ones (the
+sternum is stretched to 15 cm wide); in the male the placed manubrium's notches lie 9 / 24 mm from the warped ones.
     x0 = T(x) + d(x)                (trunk, with the skeletal correction)
 Every map's output is cached per Z-Anatomy name in .cache/fit/<sex>/vessels/work/map-*.npz together with the
 modification times of the files it was computed from; a cache whose sources changed is recomputed.
@@ -109,6 +111,19 @@ REFERENCE = [
 ]
 
 ZA_C3_Y, ZA_C1_Y = None, None
+REFINE = 0.004      # Z-Anatomy vessel meshes are refined to edges of at most 4 mm before mapping (vessels_geom.refine)
+_ZA = {}
+
+
+def za_mesh(name):
+    """Z-Anatomy vessel mesh, refined (conforming edge bisection, shape unchanged) so that every deformation is sampled
+    at least every 4 mm: the source meshes are coarse (the popliteal artery has 425 vertices and 2 cm long faces, whose
+    interiors cut through a bone when only their vertices are pushed out of it)."""
+    if name not in _ZA:
+        from fit.vessels_geom import refine
+        v, f = source('za-cardio').get(name)
+        _ZA[name] = refine(v, f, REFINE)
+    return _ZA[name]
 
 
 def specs(sex):
@@ -151,7 +166,7 @@ class Cache:
     map is computed from have changed)."""
 
     def __init__(self, sex, key):
-        self.path = os.path.join(work_dir(sex), f'map-{key}.npz')
+        self.path = os.path.join(work_dir(sex), f'map-{key}-r{int(round(REFINE * 1e4))}.npz')
         self.sig = sources_signature(sex, key)
         self.d = dict(np.load(self.path)) if os.path.exists(self.path) else {}
         if str(self.d.pop('__sig__', '')) != self.sig: self.d = {}
@@ -166,8 +181,11 @@ class Cache:
         if self.dirty: np.savez(self.path, __sig__=np.array(self.sig), **self.d); self.dirty = False
 
 
-SKEL_SIGMA, SKEL_NEAR, SKEL_FAR, SKEL_STEP = 0.006, 0.004, 0.015, 0.0025
+SKEL_STEP, ZERO_STEP = 0.010, 0.016     # control-point spacing on displaced / fixed bones (m)
+SKEL_NEAR, SKEL_FAR = 0.020, 0.050      # the correction fades out between these distances from the nearest control point
+SKEL_SMOOTH = 2e-4                      # thin-plate smoothing
 ZERO_BONES = r'^(Atlas_\(C1\)|Axis_\(C2\)|Vertebra_[CTL]\d+|Sacrum|Coccyx|Hip_bone[lr])$'
+ZERO_VESSELS = ('Ascending_aorta', 'Aortic_arch', 'Brachiocephalic_trunk', 'Thoracic_aorta', 'Superior_vena_cava', 'Pulmonary_trunk')
 
 
 def voxel_pick(p, h):
@@ -178,19 +196,30 @@ def voxel_pick(p, h):
 
 
 class SkelCorrection:
-    """d(x): displacement of the trunk warp toward the bones placed by the rib cage and arms groups (see the docstring)."""
+    """d(x): smooth correction of the trunk warp toward the bones the rib cage and arms groups placed.
+
+    Control points: Z-Anatomy vertices (one per 10 mm voxel) of the placed ribs, costal cartilages, sternum, clavicles
+    and scapulae, each with d = placed(X) - T(X) (the placed bones keep Z-Anatomy's vertex order), and fixed points
+    (d = 0, one per 16 mm voxel) on the vertebrae, sacrum, coccyx and hip bones (the warp's own anchors) and on the
+    Z-Anatomy great vessels the trunk warp fits to the HRA ones (ascending aorta, arch, brachiocephalic trunk, thoracic
+    aorta, superior vena cava, pulmonary trunk). d is interpolated by a thin-plate spline (scipy RBFInterpolator,
+    biharmonic kernel, light smoothing), so it varies smoothly along a vessel that passes cartilages and intercostal
+    spaces (a nearest-bone average makes such a vessel zig-zag where neighbouring bones moved differently: the female
+    trunk warp puts the right third costal cartilage 8 cm from where the rib cage group placed it), and it is faded out
+    between 20 and 50 mm from the nearest control point. The humerus is left out: the free limb is the arm map's."""
 
     def __init__(self, sex, trunk):
         import json
         from scipy.spatial import cKDTree
+        from scipy.interpolate import RBFInterpolator
         from lib.mesh import load
-        path = os.path.join(work_dir(sex), 'skel-corr.npz'); sig = sources_signature(sex, 'skel')
+        path = os.path.join(work_dir(sex), 'skel-tps.npz'); sig = sources_signature(sex, 'skel') + f';v2;{SKEL_STEP};{ZERO_STEP}'
         d = dict(np.load(path)) if os.path.exists(path) else {}
         if str(d.get('sig', '')) != sig:
             zs = source('za-skeletal'); X, D = [], []
             for g in ('ribcage', 'arms'):
                 for o in json.load(open(os.path.join(FIT, sex, g, 'manifest.json'))):
-                    if g == 'arms' and not o['name'].startswith(('Clavicle', 'Scapula', 'Humerus')): continue
+                    if g == 'arms' and not o['name'].startswith(('Clavicle', 'Scapula', 'clavicle', 'scapula')): continue
                     if o['part'] == 'discs' or not o['source']: continue
                     zv = zs.get(o['source'][0])[0]; pv = load(os.path.join(FIT, sex, g, o['file']))[0]
                     if len(zv) != len(pv): continue
@@ -198,16 +227,33 @@ class SkelCorrection:
             import re as _re
             for n in zs.names():
                 if _re.match(ZERO_BONES, n):
-                    zv = zs.get(n)[0]; i = voxel_pick(zv, SKEL_STEP); X.append(zv[i]); D.append(np.zeros((len(i), 3)))
-            d = dict(X=np.concatenate(X), D=np.concatenate(D), sig=np.array(sig)); np.savez(path, **d)
+                    zv = zs.get(n)[0]; i = voxel_pick(zv, ZERO_STEP); X.append(zv[i]); D.append(np.zeros((len(i), 3)))
+            zc = source('za-cardio')
+            for n in ZERO_VESSELS:
+                if n in zc.by_name:
+                    zv = zc.get(n)[0]; i = voxel_pick(zv, ZERO_STEP); X.append(zv[i]); D.append(np.zeros((len(i), 3)))
+            X = np.concatenate(X); D = np.concatenate(D)
+            i = voxel_pick(X, 0.008); X, D = X[i], D[i]
+            d = dict(X=X, D=D, sig=np.array(sig)); np.savez(path, **d)
         self.X, self.D = d['X'], d['D']; self.tree = cKDTree(self.X)
+        import pickle
+        pk = path[:-4] + '.pkl'
+        try:
+            sg, self.rbf = pickle.load(open(pk, 'rb'))
+            if sg != sig: raise ValueError
+        except Exception:
+            self.rbf = RBFInterpolator(self.X, self.D, kernel='linear', degree=1, smoothing=SKEL_SMOOTH)
+            pickle.dump((sig, self.rbf), open(pk, 'wb'))
 
-    def __call__(self, x, k=48):
-        dist, idx = self.tree.query(x, k=k)
-        K = np.exp(-0.5 * (dist / SKEL_SIGMA) ** 2) + 1e-30
-        avg = np.einsum('ij,ijk->ik', K, self.D[idx]) / K.sum(1, keepdims=True)
-        fade = smoothstep((SKEL_FAR - dist[:, 0]) / (SKEL_FAR - SKEL_NEAR))
-        return fade[:, None] * avg
+    def __call__(self, x, chunk=4000):
+        x = np.atleast_2d(np.asarray(x, float))
+        out = np.zeros_like(x)
+        dist, _ = self.tree.query(x)
+        fade = smoothstep((SKEL_FAR - dist) / (SKEL_FAR - SKEL_NEAR))
+        m = np.flatnonzero(fade > 0)
+        for k in range(0, len(m), chunk):
+            j = m[k:k + chunk]; out[j] = fade[j, None] * self.rbf(x[j])
+        return out
 
 
 class Mapper:
@@ -251,7 +297,7 @@ class Mapper:
 
     def map_vessel(self, name, side, region):
         """-> (mapped vertices (n, 3), dict of blend weights h, a, g per vertex)."""
-        x = source('za-cardio').get(name)[0]
+        x = za_mesh(name)[0]
         T = self.cache('trunk').get(name, lambda: self.trunk()(x))
         h = head_weight(x) if region in ('neck', 'head', 'thorax', 'arm') else np.zeros(len(x))
         dsk = self.skel()(x)
@@ -262,12 +308,17 @@ class Mapper:
             H = self.cache('head').get(name, hm)
             out = (1 - h)[:, None] * out + h[:, None] * H
         a = np.zeros(len(x)); g = np.zeros(len(x))
-        if side in 'lr' and region == 'arm':
-            def am():
-                f, w = self.arm(side); return np.concatenate([f(x), w(x)[:, None]], 1)
-            AW = self.cache(f'arm-{side}').get(name, am)
-            a = AW[:, 3] * (1 - h)
-            out = (1 - a)[:, None] * out + a[:, None] * AW[:, :3]
+        if region in ('neck', 'thorax', 'arm'):
+            # the arm blend by position (arm_deform's weight is 0 on the chest wall and spine, 1 on the girdle and limb),
+            # so vessels that meet at the root of the neck or in the axilla get the same map
+            for s_ in (('l', 'r') if side == 'm' else (side,)):
+                def am(s_=s_):
+                    f, w = self.arm(s_); return np.concatenate([f(x), w(x)[:, None]], 1)
+                AW = self.cache(f'arm-{s_}').get(name, am)
+                sel = np.ones(len(x), bool) if side != 'm' else ((x[:, 0] > 0) == (s_ == 'l'))
+                a_s = np.where(sel, AW[:, 3] * (1 - h), 0.0)
+                out = (1 - a_s)[:, None] * out + a_s[:, None] * AW[:, :3]
+                a = a + a_s
         if side in 'lr' and region == 'leg':
             def lm():
                 L = self.leg(side); return np.concatenate([L(x), L.hip_weight(x)[:, None]], 1)

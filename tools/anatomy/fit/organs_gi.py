@@ -2,10 +2,14 @@
 
 Stomach: deformed as-rigidly-as-possible from the undistorted Z-Anatomy stomach (scaled and placed by the similarity
 that best matches the warped one), guided weakly by the warped positions, with
+  * an emptier, contracted stomach where the body's bed is too small (the rest shape and guide scaled down; the fit,
+    its orifices held, bends and lengthens it between them: fundus, body, antrum, pylorus and curvatures stay),
+  * a rigid pose search in the bed (shift and turn about the cardia, the pylorus kept near the duodenal opening),
   * the pyloric orifice snapped onto the opening of the HRA duodenum's superior part (ring to ring, matched by angle
     about the common axis; the antrum follows smoothly),
-  * collision push-out from the liver, gallbladder, spleen, pancreas, colon, left kidney, duodenum (away from the
-    pyloric junction), jejunum, aorta and our diaphragm and left adrenal.
+  * collision push-out from the liver, gallbladder, spleen, pancreas, colon, kidneys, duodenum (away from the pyloric
+    junction), jejunum, aorta and our diaphragm and left adrenal, then a final settle (organs_settle) checked on the
+    whole surface, both orifice rims held.
 The cardiac orifice stays where the fit puts it (guided by the warp, which seats it under the oesophageal hiatus).
 
 Oesophagus: a tube re-routed along a new centreline with its cross-sections unchanged (rotation-minimising frames):
@@ -13,20 +17,21 @@ the warped centreline, bent smoothly over its last 9 cm so that it ends at the c
 along the orifice's axis, then moved out of its neighbours (trachea and its cartilages, main bronchi, left atrium and
 heart, aorta, vertebrae, cricoid and thyroid cartilages, thyroid gland, liver, diaphragm, stomach) by smoothed
 per-station pushes perpendicular to the tube. The last centimetre is then flared or narrowed with a smooth falloff
-so that its wall meets the rim of the cardiac orifice (the gastro-oesophageal junction).
+so that its wall meets the rim of the cardiac orifice, the wall is laid exactly through that rim (snap_rim), and a
+final settle clears what is left, the lumen wall giving way where the outer wall is pressed in.
 """
 import numpy as np
 from scipy.spatial import cKDTree
 from scipy import ndimage
 
-from lib.mesh import orient_outward
+from lib.mesh import orient_outward, signed_volume
 from lib.register import umeyama
 from fit.organs_data import hra, field, log, za_original, has_hra
 from fit.organs_geom import ARAP, boundary_loops, vertex_normals, Tube, centreline, smoothstep, push_out, laplacian, resample_polyline, refine_long_edges
 
 CLEAR = 0.0006
 TOP_ABOVE_CRICOID = 0.004
-STOMACH_NB = ('liver', 'gallbladder', 'spleen', 'pancreas', 'colon', 'kidney_l', 'duodenum', 'jejunum', 'aorta')
+STOMACH_NB = ('liver', 'gallbladder', 'spleen', 'pancreas', 'colon', 'kidney_l', 'kidney_r', 'duodenum', 'jejunum', 'aorta')
 
 
 def loop_axis(P):
@@ -82,7 +87,7 @@ def match_rings(P, Q, c, n):
     return Qd[order][j]
 
 
-def stomach_pose(v, f, pyl, car, cr, cc0, fls, inside=(), radius=0.015, step=0.003, ang=0.17):
+def stomach_pose(v, f, pyl, car, cr, cc0, fls, inside=(), radius=0.015, step=0.003, ang=0.17, hinge_deg=0.0):
     """inside: point sets (our small organs, e.g. the left adrenal) that must not end up inside the stomach: tested with
     the stomach's own solid carried along with the pose."""
     from fit.organs_adrenal import rotvec
@@ -99,11 +104,24 @@ def stomach_pose(v, f, pyl, car, cr, cc0, fls, inside=(), radius=0.015, step=0.0
             e += 4.0 * float(np.sum(np.maximum(0.003 - sfl.coarse(loc), 0) ** 2))
         return e + len(Q) * 0.05 * (float(np.sum((pc - cr) ** 2)) + float(np.sum((ccar - cc0) ** 2)))
     pc0 = v[pyl].mean(0); ca0 = v[car].mean(0)
-    rots = [np.eye(3)] + [rotvec(sg * ang * ax) for ax in np.eye(3) for sg in (1, -1)]
     g = np.arange(-radius, radius + 1e-9, step)
     T = np.stack(np.meshgrid(g, g, g, indexing='ij'), -1).reshape(-1, 3); T = T[np.linalg.norm(T, axis=1) <= radius + 1e-9]
-    best = (energy(P, pc0, ca0, np.eye(3), np.zeros(3)), np.eye(3), np.zeros(3))
-    e0 = best[0]
+    e0 = energy(P, pc0, ca0, np.eye(3), np.zeros(3))
+    # 1. swing about the cardia-pylorus line (both orifices stay put): the body and greater curvature hang into the
+    #    freest part of the bed
+    hinge = (pc0 - ca0) / np.linalg.norm(pc0 - ca0)
+    g2 = np.arange(-2 * step, 2 * step + 1e-9, step)
+    T2 = np.stack(np.meshgrid(g2, g2, g2, indexing='ij'), -1).reshape(-1, 3)
+    best = (e0, np.eye(3), np.zeros(3)); swing = 0.0
+    for a in np.radians(np.arange(-hinge_deg, hinge_deg + 1e-9, 5.0)):
+        R = rotvec(a * hinge)
+        Q = (P - ca0) @ R.T + ca0; pr = (pc0 - ca0) @ R.T + ca0
+        for t in T2:
+            e = energy(Q + t, pr + t, ca0 + t, R, t)
+            if e < best[0]: best = (e, R, t); swing = float(np.degrees(a))
+    Rh = best[1]
+    # 2. small turns about the cardia and shifts around the swung pose
+    rots = [Rh] + [rotvec(sg * ang * ax) @ Rh for ax in np.eye(3) for sg in (1, -1)]
     for R in rots:
         Q = (P - ca0) @ R.T + ca0; pr = (pc0 - ca0) @ R.T + ca0
         for t in T:
@@ -111,7 +129,7 @@ def stomach_pose(v, f, pyl, car, cr, cc0, fls, inside=(), radius=0.015, step=0.0
             if e < best[0]: best = (e, R, t)
     e, R, t = best
     out = (v - ca0) @ R.T + ca0 + t
-    return out, dict(energy_before=float(e0), energy_after=float(e), shift_mm=round(float(np.linalg.norm(t) * 1000), 1),
+    return out, dict(energy_before=float(e0), energy_after=float(e), shift_mm=round(float(np.linalg.norm(t) * 1000), 1), swing_deg=swing,
                      rotation_deg=round(float(np.degrees(np.arccos(np.clip((np.trace(R) - 1) / 2, -1, 1)))), 1))
 
 
@@ -151,8 +169,12 @@ def indent(v, f, fls, fixed, rep, iters=5, max_depth=0.025):
     return v
 
 
-def fit_stomach(sex, W, own=(), outer=24, inside=()):
-    """own: [(name, Field)] of our fitted neighbours (diaphragm, left adrenal). Returns (v, f), report, loops."""
+def fit_stomach(sex, W, own=(), outer=24, inside=(), empty=None):
+    """own: [(name, Field)] of our fitted neighbours (diaphragm, left adrenal). Returns (v, f), report, loops.
+    empty: linear scale (< 1) of an emptier, contracted stomach: the undistorted rest shape and the guide are scaled
+    down and the as-rigid-as-possible fit, its orifices held at the oesophagus end and the duodenal opening, bends and
+    lengthens it between them, so fundus, body, antrum, pylorus and both curvatures stay while the lumen narrows.
+    None: the scale follows the free share of the warped stomach's bed (at least 0.8)."""
     rep = {}
     v0, f = W['stomach']
     zv = za_original('stomach')[0]
@@ -189,7 +211,8 @@ def fit_stomach(sex, W, own=(), outer=24, inside=()):
         if name == 'duodenum': continue
         free &= fl.coarse(g) > 0
     fill = float(free.mean())
-    sc = float(np.clip(fill ** (1 / 3), 0.8, 1.0))
+    sc = float(np.clip(fill ** (1 / 3), 0.8, 1.0)) if empty is None else float(empty)
+    vol_full = abs(signed_volume(rest, f))
     c_rest = rest.mean(0); rest = c_rest + sc * (rest - c_rest)
     rep['bed_free_fraction'] = round(fill, 3); rep['rest_scale'] = round(sc, 3)
     # rigid pose in the bed: the deflated stomach is turned/shifted (about its cardia) to the pose with the least overlap
@@ -227,6 +250,15 @@ def fit_stomach(sex, W, own=(), outer=24, inside=()):
         if it % 5 == 0 or it == outer - 1: log(f'    stomach iter {it}: active {len(active)}, worst {worst}')
     v[pyl] = tgt_p
     rep['arap_worst_mm'] = worst
+    # final settle: what the as-rigid-as-possible fit leaves inside a neighbour is pushed out with a smooth falloff
+    # (checked on the whole surface), both orifice rims held
+    from fit.organs_settle import settle
+    allow = ~(np.linalg.norm(v - v[pyl].mean(0), axis=1) < 0.012)
+    sfields = [(name, fl, None, allow) if name == 'duodenum' else (name, fl, None) for name, fl in fields]
+    rims = np.concatenate([pyl, car])
+    v, rep['settle'] = settle(v, f, sfields, clear=0.0004, iters=16, fixed=rims, w=2.0, log=log, label='stomach settle')
+    rep['volume_cm3'] = dict(fitted=round(abs(signed_volume(v, f)) * 1e6, 1), z_anatomy_in_body_scale=round(vol_full * 1e6, 1),
+                             rest_linear_scale=round(sc, 3))
     return (v, orient_outward(v, f)), rep, (pyl, car, ring)
 
 
@@ -322,8 +354,80 @@ def fit_esophagus(sex, W, stomach, car, own=(), iters=45):
     # residual overlaps: smooth push-out, the junction fixed
     fix = np.flatnonzero(tube.vs > Ls - 0.003)
     vv = push_out(vv, f, [(fl, None) for name, fl in fields if name != 'stomach'], clearance=0.0004, iters=8, fixed=fix, fixed_val=vv[fix], log=None)
+    # the junction: the oesophageal wall laid exactly through the cardiac rim of the stomach
+    vv, rep['junction_snap_mm'] = snap_rim(vv, f, tube, sv[car])
+    # final settle (organs_settle) over the whole surface, the upper end and the junction held
+    from fit.organs_settle import settle
+    hold = np.flatnonzero((tube.vs < 0.004) | (tube.vs > Ls - 0.006))
+    sf = [(name, fl, None, tube.vs < Ls - 0.02) if name == 'stomach' else (name, fl, None) for name, fl in fields]
+    # the tube is double-walled: each outer-wall vertex is paired with the nearest lumen-wall vertex, which gives way
+    # when the outer wall is pushed in (the lumen collapses, the wall keeps its thickness)
+    nrm = vertex_normals(vv, f)
+    s2 = np.concatenate([[0], np.cumsum(np.linalg.norm(np.diff(C, axis=0), axis=1))])
+    cpos = tube.point_at(tube.vs / tube.s[-1] * s2[-1], C, s2)                  # each vertex's centreline point
+    outer = np.einsum('ij,ij->i', nrm, vv - cpos) > 0
+    Po, Qi = np.flatnonzero(outer), np.flatnonzero(~outer)
+    dq, jq = cKDTree(vv[Qi]).query(vv[Po]); mq = dq < 0.004
+    Po, Qi = Po[mq], Qi[jq[mq]]
+    axq = vv[Po] - vv[Qi]; thq = np.linalg.norm(axq, axis=1); axq /= np.maximum(thq, 1e-12)[:, None]
+    vv, rep['settle'] = settle(vv, f, sf, clear=0.0004, iters=12, fixed=hold, pairs=(Po, Qi, axq), min_thick=0.8 * thq, pair_split=0.0,
+                               log=log, label='oesophagus settle')
     rep['centreline'] = C
     return (vv, orient_outward(vv, f)), rep, tube
+
+
+def warped_esophagus_field(W, h=0.0008):
+    """esophagus_field of the warped Z-Anatomy oesophagus (the stand-in the diaphragm is fitted around)."""
+    v0, f = W['esophagus']
+    top = v0[v0[:, 1] > v0[:, 1].max() - 0.004].mean(0)
+    bot = v0[v0[:, 1] < v0[:, 1].min() + 0.004].mean(0)
+    return esophagus_field(v0, f, centreline(v0, top, bot, n=120, iters=4), h)
+
+
+def esophagus_field(v, f, C, h=0.0006):
+    """The oesophagus as a solid organ for contacts: its outer wall (faces whose normal points away from the
+    centreline C), the open ends capped, lumen included; the lumen wall takes no part."""
+    from fit.organs_geom import mesh_field
+    Cd = resample_polyline(C, 400)[0]
+    cen = v[f].mean(1)
+    _, j = cKDTree(Cd).query(cen)
+    fa = np.cross(v[f[:, 1]] - v[f[:, 0]], v[f[:, 2]] - v[f[:, 0]])
+    outer = np.einsum('ij,ij->i', fa, cen - Cd[j]) > 0
+    return mesh_field(v, f[outer], h, cap=True)
+
+
+def snap_rim(vv, f, tube, rim, iters=4, length=0.03):
+    """Move the distal oesophagus so that each vertex of the stomach's cardiac rim lies on its wall: the closest wall
+    point to each rim vertex is carried onto it (by its triangle's vertices), with a smooth bi-Laplacian falloff over
+    the last `length` of the tube. Returns (vertices, worst gap before / after in mm)."""
+    from lib.mesh import closest_on_mesh
+    from fit.organs_geom import smooth_solve
+    Ls = tube.s[-1]
+    far = np.flatnonzero(tube.vs < Ls - length)
+    before = None
+    for it in range(iters):
+        q, d = closest_on_mesh(vv, f, rim)
+        if before is None: before = float(d.max())
+        if d.max() < 0.0002: break
+        # triangle of each closest point: the nearest face centroid among the distal faces
+        cen = vv[f].mean(1)
+        distal = np.flatnonzero(tube.vs[f].min(1) > Ls - length)
+        _, j = cKDTree(cen[distal]).query(q)
+        F = f[distal[j]]
+        idx, tgt = [], []
+        for k in range(len(rim)):
+            tri = vv[F[k]]
+            # barycentric coordinates of q in its triangle (least squares), least-norm split of the move
+            A = np.column_stack([tri[1] - tri[0], tri[2] - tri[0]])
+            ab = np.linalg.lstsq(A, q[k] - tri[0], rcond=None)[0]
+            b = np.clip(np.array([1 - ab.sum(), ab[0], ab[1]]), 0, 1); b /= b.sum()
+            mv = (rim[k] - q[k]) * (b / (b @ b))[:, None]
+            idx.extend(F[k].tolist()); tgt.extend(mv.tolist())
+        idx = np.array(idx); tgt = np.array(tgt)
+        u = smooth_solve(len(vv), f, idx, tgt, 10.0, fixed=far, fixed_val=np.zeros((len(far), 3)))
+        vv = vv + u
+    q, d = closest_on_mesh(vv, f, rim)
+    return vv, dict(before=round(before * 1000, 2), after=round(float(d.max()) * 1000, 2))
 
 
 def snap_end(vv, tube, C, rim, cc, cn, length=0.012):

@@ -254,18 +254,18 @@ class TriSet:
                 zz = np.unique(np.round(z[r, ahead[r]], 9)); out[grp[r]] = len(zz) % 2 == 1
         return out
 
-    def closest(self, p, k=10):
+    def closest(self, p, k=10, with_tri=False):
         from lib.mesh import _closest_point_triangle
         p = np.atleast_2d(np.asarray(p, float))
         kk = min(k, len(self.f))
         _, cand = self.tree.query(p, k=kk)
         if cand.ndim == 1: cand = cand[:, None]
-        best = np.full(len(p), np.inf); bq = np.zeros_like(p)
+        best = np.full(len(p), np.inf); bq = np.zeros_like(p); bt = np.zeros(len(p), np.int64)
         for j in range(cand.shape[1]):
             t = cand[:, j]
             q = _closest_point_triangle(p, self.A[t], self.B[t], self.C[t])
-            d = np.linalg.norm(q - p, axis=1); m = d < best; best[m] = d[m]; bq[m] = q[m]
-        return bq, best
+            d = np.linalg.norm(q - p, axis=1); m = d < best; best[m] = d[m]; bq[m] = q[m]; bt[m] = t[m]
+        return (bq, best, bt) if with_tri else (bq, best)
 
     def inside(self, p):
         p = np.atleast_2d(np.asarray(p, float))
@@ -548,3 +548,113 @@ def section_frame(v, f, hint, near=None, reach=0.05, depths=np.arange(0.002, 0.0
         return dict(c=tip, n=hint, r=0.002, kind='section', tip=tip, centres=[])
     k = int(np.argmin(Dv))
     return dict(c=C[k], n=a, r=float(np.sqrt(Aref / np.pi)), kind='section', tip=tip, centres=C, area_mm2=round(Aref * 1e6, 1))
+
+
+def march(v, f, p0, a0, step=0.002, length=0.06, r0=0.004):
+    """Centerline of a tube by marching plane sections from a point p0 at one end along a0 (pointing into the tube):
+    at each step the section through the next point perpendicular to the running axis, whose largest polygon near the
+    axis (the outer wall of a double-walled HRA vessel) gives the next centre; the axis follows the last centres.
+    Returns dict(p=(k, 3) centres, a=(k,) section areas (m2), s=(k,) arc length from p0)."""
+    a = unit(a0); P = [np.asarray(p0, float)]; A = [0.0]; r = r0
+    for _ in range(int(length / step)):
+        q = P[-1] + step * a
+        best = None
+        for L in slice_loops(v, f, q, a):
+            ar, c = polygon_area_centroid(L, a)
+            if ar <= 0 or np.linalg.norm(c - q) > max(2.0 * r, 0.004): continue
+            if best is None or ar > best[0]: best = (ar, c)
+        if best is None: break
+        P.append(best[1]); A.append(best[0]); r = 0.7 * r + 0.3 * np.sqrt(best[0] / np.pi)
+        if len(P) >= 4: a = unit(0.5 * a + 0.5 * unit(P[-1] - P[-4]))
+    P = np.array(P); A = np.array(A)
+    s = np.concatenate([[0], np.cumsum(np.linalg.norm(np.diff(P, axis=0), axis=1))])
+    return dict(p=P, a=A, s=s)
+
+
+def march_frame(v, f, p0, a0, length=0.05, near=0.006, span=0.012):
+    """End frame of a tube from a marched centerline (see march) started at p0 going in along a0: the end centre is the
+    first section of at least half the reference area (median of the sections 6-20 mm in: the tapering tip of a capped
+    end is skipped), the outward axis is fitted through the centres over `span` from there."""
+    m = march(v, f, p0, a0, length=length)
+    P, A, s = m['p'], m['a'], m['s']
+    if len(P) < 4: return None, m
+    ref = A[(s >= near) & (s <= 0.020)]
+    Aref = float(np.median(ref)) if len(ref) else float(np.median(A[1:]))
+    ok = np.flatnonzero((A >= 0.5 * Aref) & (np.arange(len(A)) > 0))
+    k = int(ok[0]) if len(ok) else 1
+    w = (s >= s[k]) & (s <= s[k] + span)
+    Q = P[w] if w.sum() >= 3 else P[k:k + 4]
+    ax = pca_axis(Q) if len(Q) >= 2 else unit(a0)
+    if ax @ unit(a0) > 0: ax = -ax                      # outward
+    return dict(c=P[k], n=ax, r=float(np.sqrt(Aref / np.pi)), area_mm2=round(Aref * 1e6, 1), depth_mm=round(float(s[k]) * 1000, 1)), m
+
+
+def trunk_centerline(v, f, a, b, h=0.0015, smooth=2):
+    """Centerline of the main tube of a vessel mesh between its end rings a and b (vertex index arrays), from a.
+    Vertices of the main tube: those whose geodesic distances to both rings add up to within max(4 radii, 10 % of the
+    length, 3 edges) of the shortest such sum (side branches and their caps are left out). The centerline is a kernel
+    regression of their positions on their geodesic distance from a (Gaussian, bandwidth 1.2 median edge lengths, at
+    least 2 mm), sampled every h: Z-Anatomy vessel meshes are coarse (the abdominal aorta has 425 vertices over
+    23 cm), so plain level-set bins hold a vertex or two and zig-zag. Returns dict(p, s, t, gd)."""
+    G_ = graph(v, f)
+    ga = geodesic(G_, a); gb = geodesic(G_, b)
+    tot = ga + gb
+    ok = np.isfinite(tot)
+    el = np.linalg.norm(v[edge_list(f)[:, 0]] - v[edge_list(f)[:, 1]], axis=1)
+    e = float(np.median(el)) if len(el) else 0.002
+    if not ok.any(): return centerline(v, f, a, h=h, smooth=smooth)
+    L = float(tot[ok].min())
+    r = 0.5 * (ring_frame(v[a])[2] + ring_frame(v[b])[2])
+    m = ok & (tot <= L + max(4 * r, 0.1 * L, 3 * e))
+    sig = max(1.2 * e, 0.002)
+    g = ga[m]; X = v[m]
+    grid = np.arange(0.0, g.max() + 1e-9, h)
+    W = np.exp(-0.5 * ((g[None, :] - grid[:, None]) / sig) ** 2)
+    sw = W.sum(1)
+    good = sw > 1e-6
+    P = (W[good] @ X) / sw[good, None]
+    for _ in range(smooth):
+        if len(P) > 2: P[1:-1] = 0.25 * P[:-2] + 0.5 * P[1:-1] + 0.25 * P[2:]
+    seg = np.linalg.norm(np.diff(P, axis=0), axis=1)
+    s_ = np.concatenate([[0], np.cumsum(seg)])
+    T = np.gradient(P, axis=0) if len(P) > 1 else np.array([[0, 1, 0.]])
+    return dict(p=P, r=np.zeros(len(P)), s=s_, t=unit(T), gd=ga, bin=None)
+
+
+def refine(v, f, max_edge=0.003, iters=8):
+    """Conforming refinement of a triangle mesh until no edge is longer than max_edge: every triangle marks its
+    longest edge if it is too long, marked edges get their midpoint, and each triangle is split by its 1, 2 or 3
+    marked edges (2, 3 or 4 triangles, winding kept). New vertices lie on the old facets, so the shape is unchanged; a
+    smooth deformation applied afterwards is sampled finely (Z-Anatomy vessels have edges up to 2 cm)."""
+    v = np.asarray(v, float); f = np.asarray(f, np.int64)
+    for _ in range(iters):
+        E = np.stack([f[:, [0, 1]], f[:, [1, 2]], f[:, [2, 0]]], 1)          # (m, 3, 2): edge k joins corner k, k+1
+        L = np.linalg.norm(v[E[:, :, 0]] - v[E[:, :, 1]], axis=2)
+        k = np.argmax(L, 1); long = L[np.arange(len(f)), k] > max_edge
+        if not long.any(): break
+        key = np.sort(E, 2); kk = key[:, :, 0] * (len(v) + 1) + key[:, :, 1]
+        marked_keys = np.unique(kk[np.arange(len(f)), k][long])
+        mk = np.isin(kk, marked_keys)                                        # (m, 3) marked edges per triangle
+        uk, inv = np.unique(kk[mk], return_inverse=True)
+        a = (uk // (len(v) + 1)).astype(np.int64); b = (uk % (len(v) + 1)).astype(np.int64)
+        mid = np.full(kk.shape, -1, np.int64); mid[mk] = len(v) + inv
+        v = np.concatenate([v, 0.5 * (v[a] + v[b])])
+        out = [f[mk.sum(1) == 0]]
+        for r in range(3):
+            # one marked edge, at position r
+            m1 = (mk.sum(1) == 1) & mk[:, r]
+            if m1.any():
+                t = f[m1]; c0, c1, c2 = t[:, r], t[:, (r + 1) % 3], t[:, (r + 2) % 3]; mm = mid[m1, r]
+                out += [np.stack([c0, mm, c2], 1), np.stack([mm, c1, c2], 1)]
+            # two marked edges: the unmarked one at position r (edges r+1 and r+2 marked)
+            m2 = (mk.sum(1) == 2) & ~mk[:, r]
+            if m2.any():
+                t = f[m2]; c0, c1, c2 = t[:, r], t[:, (r + 1) % 3], t[:, (r + 2) % 3]
+                m_12, m_20 = mid[m2, (r + 1) % 3], mid[m2, (r + 2) % 3]
+                out += [np.stack([m_12, c2, m_20], 1), np.stack([c0, c1, m_12], 1), np.stack([c0, m_12, m_20], 1)]
+        m3 = mk.sum(1) == 3
+        if m3.any():
+            t = f[m3]; m01, m12, m20 = mid[m3, 0], mid[m3, 1], mid[m3, 2]
+            out += [np.stack([t[:, 0], m01, m20], 1), np.stack([m01, t[:, 1], m12], 1), np.stack([m20, m12, t[:, 2]], 1), np.stack([m01, m12, m20], 1)]
+        f = np.concatenate(out)
+    return v, f

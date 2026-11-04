@@ -13,7 +13,7 @@ faces move together), solved repeatedly with these soft targets:
     gallbladder, IVC, aorta, vertebrae, ribs and costal cartilages, the oesophagus, lungs or heart is pushed out along
     that neighbour's normal.
 
-Where the HRA lung base lies closer to the liver or spleen than the sheet is thick, a final pass lets the two faces move
+Where the HRA lung base lies closer to the liver or spleen than the sheet is thick, a pass lets the two faces move
 apart from each other (no cross-sheet edges), which thins the sheet there instead of driving it into an organ; a
 minimum thickness MIN_THICK is kept.
 """

@@ -48,7 +48,8 @@ def rigid_refine(v, kfl, others, iters=60, log_=None):
             near = dk < dk.min() + 0.0015
         nk, q = kfl.outward(v[near])
         tgt = v[near] + (GAP_TARGET - dk[near])[:, None] * nk
-        src.append(v[near]); dst.append(tgt); w.append(np.full(near.sum(), 1.0))
+        # the gap to the kidney must stay >= 1 mm: vertices nearer than 1.2 mm weigh 4x
+        src.append(v[near]); dst.append(tgt); w.append(np.where(dk[near] < 0.0012, 4.0, 1.0))
         worst = 0.0
         for fl in others:
             s = fl.coarse(v); cand = s < CLEAR + 0.004
@@ -76,7 +77,7 @@ def rotvec(w):
     return np.eye(3) + np.sin(th) * K + (1 - np.cos(th)) * K @ K
 
 
-def pose_energy(P, kfl, others, c0, lam=0.25):
+def pose_energy(P, kfl, others, c0, lam=0.25, extra=None):
     """Penetration energy of gland points P (m^2): other organs within CLEAR, kidney nearer than 1.5 mm or farther
     than 3.5 mm at its closest, plus a pull to the warp's seat (lam per m^2 of centroid shift)."""
     e = 0.0
@@ -85,10 +86,11 @@ def pose_energy(P, kfl, others, c0, lam=0.25):
     dk = kfl.coarse(P)
     e += float(np.sum(np.maximum(0.0015 - dk, 0) ** 2)) + len(P) * 0.2 * max(dk.min() - 0.0035, 0) ** 2
     e += lam * len(P) * 1e-2 * float(np.sum((P.mean(0) - c0) ** 2))
+    if extra is not None: e += extra(P)
     return e
 
 
-def search_pose(v, kfl, others, radius=0.015, step=0.003, angles=(0.0, 0.26), log_=None):
+def search_pose(v, kfl, others, radius=0.015, step=0.003, angles=(0.0, 0.26), log_=None, extra=None):
     """Rigid pose of the gland in the free space next to the kidney: candidates translated within `radius` of the warp's
     seat (on a grid) and turned by +-15 degrees about each axis; the lowest pose_energy wins. Returns the moved vertices."""
     rng = np.random.default_rng(0)
@@ -101,11 +103,11 @@ def search_pose(v, kfl, others, radius=0.015, step=0.003, angles=(0.0, 0.26), lo
     g = np.arange(-radius, radius + 1e-9, step)
     T = np.stack(np.meshgrid(g, g, g, indexing='ij'), -1).reshape(-1, 3)
     T = T[np.linalg.norm(T, axis=1) <= radius + 1e-9]
-    best = (pose_energy(P, kfl, others, c), np.eye(3), np.zeros(3))
+    best = (pose_energy(P, kfl, others, c, extra=extra), np.eye(3), np.zeros(3))
     for R in rots:
         Q = (P - c) @ R.T + c
         for t in T:
-            e = pose_energy(Q + t, kfl, others, c)
+            e = pose_energy(Q + t, kfl, others, c, extra=extra)
             if e < best[0]: best = (e, R, t)
     e, R, t = best
     if log_: log_(f'    pose search: energy {e:.3e}, shift {np.linalg.norm(t) * 1000:.1f} mm, rotation {np.degrees(np.arccos(np.clip((np.trace(R) - 1) / 2, -1, 1))):.0f} deg')

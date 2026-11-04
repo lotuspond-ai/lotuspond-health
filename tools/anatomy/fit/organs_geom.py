@@ -122,13 +122,19 @@ def _trilinear(field, lo, h, p):
 class Field:
     """Signed distance to a closed-ish surface (metres, negative inside)."""
 
-    def __init__(self, v, f, lo, h, sdf):
+    def __init__(self, v, f, lo, h, sdf, oriented=False):
         self.v, self.f = np.asarray(v, float), np.asarray(f, np.int64)
         self.lo, self.h, self.sdf = np.asarray(lo, float), float(h), sdf.astype(np.float32)
         self.hi = self.lo + h * (np.array(sdf.shape) - 1)
         A, B, C = self.v[self.f[:, 0]], self.v[self.f[:, 1]], self.v[self.f[:, 2]]
         n = np.cross(B - A, C - A); fn = n / np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-20)
         cen = (A + B + C) / 3
+        self.oriented = oriented
+        if oriented:
+            # one of our own closed, consistently wound meshes: its own face normals are exact, whereas normals taken
+            # from the voxel field's gradient are unreliable across sheets and walls only a few voxels thick
+            self.fsel = np.arange(len(self.f)); self.tree = cKDTree(cen); self.fn = fn
+            return
         # only faces on the solid's outer boundary take part in exact distances: inner walls of double-walled capsules
         # and faces buried inside overlapping patches face the wrong way or lie deep inside
         # face normals made to agree with the solid (open patches have no reliable winding of their own), and only
@@ -142,7 +148,7 @@ class Field:
         self.fn = fn
 
     @classmethod
-    def build(cls, v, f, h, pad=0.012, crop=None, cap=False, close=2, parity=False, slice_axis=None):
+    def build(cls, v, f, h, pad=0.012, crop=None, cap=False, close=2, parity=False, slice_axis=None, oriented=False):
         lo = v.min(0) - pad; hi = v.max(0) + pad
         if crop is not None:
             lo = np.maximum(lo, crop[0]); hi = np.minimum(hi, crop[1])
@@ -152,7 +158,7 @@ class Field:
         sdf = (ndimage.distance_transform_edt(~occ) - ndimage.distance_transform_edt(occ)).astype(np.float32) * h
         # voxel centres sit h/2 either side of the true surface: shift so the zero level lies between them
         sdf = sdf - np.sign(sdf) * 0.5 * h
-        return cls(v, f, lo, h, sdf)
+        return cls(v, f, lo, h, sdf, oriented=oriented)
 
     @classmethod
     def cached(cls, v, f, h, path, **kw):
@@ -173,7 +179,9 @@ class Field:
         far = np.linalg.norm(out, axis=1)
         return np.where(far > 0, np.maximum(d, 0) + far, d)
 
-    def closest(self, p, k=12):
+    def closest(self, p, k=12, pseudo=False):
+        """Closest surface point, its distance and face; pseudo=True also returns the mean normal of all candidate
+        faces that share that closest point (an edge or vertex of the mesh): the sign test there."""
         p = np.asarray(p, float)
         _, cand = self.tree.query(p, k=min(k, len(self.fsel)))
         if cand.ndim == 1: cand = cand[:, None]
@@ -181,12 +189,16 @@ class Field:
         from lib.mesh import _closest_point_triangle
         best_d = np.full(len(p), np.inf); best_q = np.zeros_like(p); best_t = np.zeros(len(p), np.int64)
         A, B, C = self.v[self.f[:, 0]], self.v[self.f[:, 1]], self.v[self.f[:, 2]]
+        D = np.zeros(cand.shape)
         for j in range(cand.shape[1]):
             t = cand[:, j]
             q = _closest_point_triangle(p, A[t], B[t], C[t])
-            d = np.linalg.norm(q - p, axis=1)
+            d = np.linalg.norm(q - p, axis=1); D[:, j] = d
             m = d < best_d; best_d[m] = d[m]; best_q[m] = q[m]; best_t[m] = t[m]
-        return best_q, best_d, best_t
+        if not pseudo: return best_q, best_d, best_t
+        tie = D <= best_d[:, None] + 1e-7
+        nrm = np.einsum('ij,ijk->ik', tie.astype(float), self.fn[cand])
+        return best_q, best_d, best_t, nrm
 
     def __call__(self, p, band=None):
         """Signed distance: voxel value away from the surface, exact distance (sign from the voxel solid, or from the
@@ -194,12 +206,18 @@ class Field:
         p = np.asarray(p, float)
         s = self.coarse(p)
         band = 2.5 * self.h if band is None else band
+        if self.oriented: band = max(band, 4.0 * self.h)
         near = np.abs(s) < band
         if near.any():
-            q, d, t = self.closest(p[near])
-            sgn_n = np.sign(np.einsum('ij,ij->i', p[near] - q, self.fn[t]))
+            if self.oriented:
+                q, d, t, nps = self.closest(p[near], pseudo=True)
+                sgn_n = np.sign(np.einsum('ij,ij->i', p[near] - q, nps))
+            else:
+                q, d, t = self.closest(p[near])
+                sgn_n = np.sign(np.einsum('ij,ij->i', p[near] - q, self.fn[t]))
             sv = s[near]
-            sgn = np.where(np.abs(sv) > 1.2 * self.h, np.sign(sv), sgn_n)
+            # oriented meshes: the exact sign everywhere in the band (a thin sheet's voxels are too coarse for it)
+            sgn = sgn_n if self.oriented else np.where(np.abs(sv) > 1.2 * self.h, np.sign(sv), sgn_n)
             sgn[sgn == 0] = 1
             s = s.copy(); s[near] = sgn * d
         return s
@@ -219,7 +237,9 @@ class Field:
 
 
 def mesh_field(v, f, h, pad=0.012, **kw):
-    """A Field around one of our own meshes (not cached)."""
+    """A Field around one of our own meshes (not cached). Our closed meshes are consistently wound, so their own face
+    normals give the inside/outside sign near the surface (oriented=True, unless the mesh is open and capped)."""
+    kw.setdefault('oriented', not kw.get('cap', False))
     return Field.build(v, f, h, pad=pad, **kw)
 
 

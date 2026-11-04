@@ -1,15 +1,22 @@
 """Organs group: stomach, oesophagus, diaphragm, suprarenal glands, thyroid gland and parathyroid glands.
-Usage: python3 fit/organs.py [male|female|all] [--no-render]
+Usage: python3 fit/organs.py [male|female|all] [--no-render] [--from=<stage>]  (earlier stages from the stage cache)
 
 Every structure starts from the cached trunk warp (fit.common.get_warp(sex, 'trunk')) and is then refined against the
-HRA neighbours it touches (see organs_neck, organs_adrenal, organs_diaphragm, organs_gi for each method):
+HRA neighbours it touches (see organs_neck, organs_adrenal, organs_diaphragm, organs_gi, organs_settle):
   1. thyroid + parathyroids  similarity from the larynx cartilages, slide to tracheal rings 2-4, smooth push-out,
                              glands slid onto the lobes' posterior surface
-  2. diaphragm               as-rigid-as-possible fit: openings follow the HRA IVC / aorta, domes 1.5 mm under the
-                             lung bases and heart, collision push-out, local thinning where HRA leaves no room
-  3. adrenals                undistorted gland laid on its warped pose, free-space pose search, 2 mm off the kidney
-  4. stomach                 as-rigid-as-possible fit: pylorus snapped onto the duodenal opening, push-out
-  5. oesophagus              tube re-routed to the cardia through the hiatus, cross-sections kept, junction snapped
+  2. adrenals                undistorted gland laid on its warped pose, free-space pose search, 2 mm off the kidney
+  3. diaphragm               as-rigid-as-possible fit (openings follow the HRA IVC / aorta, domes under the lung bases
+                             and heart, collision push-out, local thinning); the glands then re-seated in the remaining
+                             free space (the right one behind the IVC) and the crura made to give way to them
+  4. stomach                 as-rigid-as-possible fit: pylorus snapped onto the duodenal opening; in the male an
+                             emptier, contracted stomach (the HRA male's high splenic flexure fills the bed of
+                             Z-Anatomy's filled stomach); final settle (smooth push-out checked on the whole surface)
+  5. oesophagus              tube re-routed to the cardia through the hiatus, cross-sections kept, the wall laid
+                             through the cardiac rim, final settle with the lumen wall giving way
+Stages are cached in .cache/fit/<sex>/organs/cache/stage-*.pkl; --from=<stage> reruns from that stage.
+Contacts with our own thin structures are measured with fields that use their own (consistent) face normals, and
+the oesophagus, trachea and bronchi count as solid organs (lumen included).
 Outputs: .cache/fit/<sex>/organs/ (write_group): one .npz per structure, manifest.json, report.json, qa-*.png.
 """
 import os, sys, json, time
@@ -26,7 +33,7 @@ from fit.organs_geom import Field, mesh_field  # noqa: E402
 from fit.organs_neck import fit_neck, isthmus, ring_profile, PTH  # noqa: E402
 from fit.organs_adrenal import fit_adrenals  # noqa: E402
 from fit.organs_diaphragm import fit_diaphragm, crossing  # noqa: E402
-from fit.organs_gi import fit_stomach, fit_esophagus, loop_axis  # noqa: E402
+from fit.organs_gi import fit_stomach, fit_esophagus, loop_axis, esophagus_field, warped_esophagus_field  # noqa: E402
 
 GROUP = 'organs'
 DEPTH_MAX = 1.0        # mm
@@ -91,13 +98,38 @@ def lung_base(sex):
     return P
 
 
+def arcuate(sex, dv):
+    """Where the aorta leaves the thorax behind the median arcuate ligament: going down the HRA abdominal aorta from
+    its top, the last station (of the run that starts at the top) with diaphragm vertices directly in front of the
+    vessel (within 60 % of its radius of its midline, up to 2 cm in front of its anterior wall)."""
+    av = hra(sex, 'aorta_abd')[0]
+    Ca = vessel_centreline(av)
+    Ca = Ca[np.argsort(-Ca[:, 1])]
+    last, miss = None, 0.0
+    for c in Ca:
+        sl = av[np.abs(av[:, 1] - c[1]) < 0.002]
+        if len(sl) < 5: continue
+        r = float(np.median(np.linalg.norm((sl - c)[:, [0, 2]], axis=1))); zf = sl[:, 2].max()
+        band = np.abs(dv[:, 1] - c[1]) < 0.0025
+        m = band & (np.abs(dv[:, 0] - c[0]) < 0.6 * r) & (dv[:, 2] > zf - 0.002) & (dv[:, 2] < zf + 0.02)
+        if m.sum() >= 3:
+            side = lambda sg: int((band & (np.abs(dv[:, 2] - c[2]) < r) & (sg * (dv[:, 0] - c[0]) > 0.8 * r) & (sg * (dv[:, 0] - c[0]) < r + 0.02)).sum())
+            last = dict(y=float(c[1]), gap_mm=round(float((dv[m, 2].min() - zf) * 1000), 1), crura=dict(right=side(-1), left=side(1)))
+            miss = 0.0
+        elif last is not None:
+            miss += 0.002
+            if miss > 0.004: break
+    return last
+
+
 def measure(sex, out, aux):
     """All acceptance criteria. out: {name: (v, f)}; aux: fit by-products."""
     R = {}
     F = lambda k: field(sex, k)
     own = {}
-    for k in ('stomach', 'esophagus', 'diaphragm', 'adrenal_l', 'adrenal_r', 'thyroid'):
+    for k in ('stomach', 'diaphragm', 'adrenal_l', 'adrenal_r', 'thyroid'):
         own[k] = mesh_field(*out[k], 0.0006, cap=(k == 'stomach'))
+    own['esophagus'] = esophagus_field(*out['esophagus'], aux['esophagus_centreline'])
     st, es, di = out['stomach'], out['esophagus'], out['diaphragm']
     pyl, car, ring = aux['stomach_loops']
     cc, cn, crad = loop_axis(st[0][car])
@@ -152,10 +184,13 @@ def measure(sex, out, aux):
     cov, i = crossing(di[0], C)
     R['esophageal_hiatus_level'] = level_crit(sex, C[i][1], 'T9', 'T11') if i is not None else crit(None, 'T9-T11', False)
     if i is not None: R['esophageal_hiatus_level']['coverage'] = round(cov, 2)
-    Ca = vessel_centreline(hra(sex, 'aorta_abd')[0])
-    cov, i = crossing(di[0], Ca)
-    R['aortic_hiatus_level'] = level_crit(sex, Ca[i][1], 'T11', 'L1') if i is not None else crit(None, 'T11-L1', False)
-    if i is not None: R['aortic_hiatus_level']['coverage'] = round(cov, 2)
+    arc = arcuate(sex, di[0])
+    if arc is None: R['aortic_hiatus_level'] = crit(None, 'T11-L1', False)
+    else:
+        R['aortic_hiatus_level'] = level_crit(sex, arc['y'], 'T11', 'L1')
+        R['aortic_hiatus_level'].update(method='lower border of the median arcuate ligament: the lowest level of the HRA aorta with '
+                                               'diaphragm directly in front of it, crura on both sides', gap_in_front_mm=arc['gap_mm'],
+                                        crura_beside=arc['crura'])
     Ci = vessel_centreline(hra(sex, 'ivc')[0])
     Ci = Ci[Ci[:, 1] > di[0][:, 1].max() - 0.06]
     cov, i = crossing(di[0], Ci, first=0.7)
@@ -215,48 +250,109 @@ def measure(sex, out, aux):
     return R
 
 
-def fit(sex, render=True):
+STAGES = ('neck', 'adrenals', 'diaphragm', 'stomach', 'esophagus')
+# an emptier, contracted stomach (linear scale of the rest shape, see organs_gi.fit_stomach): the HRA male's splenic
+# flexure rises into the left upper quadrant and leaves a bed far smaller than Z-Anatomy's filled stomach; the female
+# bed takes a nearly full one (None: the scale follows the free share of the bed)
+EMPTY = {'male': 0.72, 'female': None}
+
+
+def _stage(sex, name, frm, compute):
+    """Run one fitting stage, or (with --from=<later stage>) load its result from the stage cache."""
+    import pickle
+    path = os.path.join(cache_dir(sex), f'stage-{name}.pkl')
+    if frm is not None and STAGES.index(name) < STAGES.index(frm) and os.path.exists(path):
+        log(sex, name, '(stage cache)')
+        with open(path, 'rb') as fh: return pickle.load(fh)
+    res = compute()
+    with open(path, 'wb') as fh: pickle.dump(res, fh)
+    return res
+
+
+def reseat_adrenals(sex, ad, dfl):
+    """The diaphragm's crura may now touch the glands: re-seat each gland rigidly (shape kept) in the remaining free
+    space next to its kidney, then a rigid refinement clears what the pose grid leaves (kidney gap kept near 2 mm)."""
+    from fit.organs_adrenal import search_pose, rigid_refine
+    out = {}
+    iv = hra(sex, 'ivc')[0]
+
+    def behind_ivc(P):
+        # right gland: its medial part lies behind the IVC (energy when the IVC's back wall is not >= 1.5 mm in front)
+        band = iv[(iv[:, 1] > P[:, 1].min()) & (iv[:, 1] < P[:, 1].max())]
+        if not len(band): return 0.0
+        med = P[P[:, 0] > np.percentile(P[:, 0], 70)]
+        return len(P) * 0.5 * max(0.0, 0.0015 - (band[:, 2].min() - med[:, 2].mean())) ** 2
+    for s_ in 'lr':
+        v_, f_ = ad[s_]
+        kfl = field(sex, f'kidney_{s_}')
+        oth = [dfl] + [field(sex, k) for k in ('ivc', 'liver', 'spleen', 'pancreas', 'aorta', 'duodenum', 'colon', 'celiac', 'spine')]
+        ex = behind_ivc if s_ == 'r' else None
+        v2 = search_pose(v_, kfl, oth, radius=0.0045, step=0.0009, angles=(0.0, 0.07), log_=log, extra=ex)
+        v2 = rigid_refine(v2, kfl, oth, iters=60, log_=log)
+        out[s_] = (v2, orient_outward(v2, f_))
+    return out
+
+
+def fit(sex, render=True, frm=None):
     t0 = time.time()
     od = out_dir(sex); os.makedirs(od, exist_ok=True)
     W = warped(sex)
     rep = dict(sex=sex, group=GROUP, ribs_source=ribs(sex)[1])
     out, aux = {}, {}
-    log(sex, 'neck')
-    thy, pth, rep['thyroid'], tfl, ax = fit_neck(sex, W)
-    out['thyroid'] = thy; out.update(pth); aux['thyroid_field'] = tfl; aux['airway_axis'] = ax
-    log(sex, 'adrenals')
-    ad, rep['adrenals'] = fit_adrenals(sex, W)
-    out['adrenal_l'], out['adrenal_r'] = ad['l'], ad['r']
-    afl = {s: mesh_field(*ad[s], 0.0005) for s in 'lr'}
-    log(sex, 'diaphragm')
-    eso_proxy = mesh_field(*W['esophagus'], 0.0008)
-    (dv, df), rep['diaphragm'], _ = fit_diaphragm(sex, W, extra=[('esophagus', eso_proxy), ('adrenal_l', afl['l']), ('adrenal_r', afl['r'])])
+
+    def neck():
+        log(sex, 'neck')
+        thy, pth, r, tfl, ax = fit_neck(sex, W)
+        return thy, pth, r, ax
+    thy, pth, rep['thyroid'], ax = _stage(sex, 'neck', frm, neck)
+    out['thyroid'] = thy; out.update(pth); aux['airway_axis'] = ax
+    aux['thyroid_field'] = mesh_field(*thy, 0.0003, pad=0.01)
+
+    def adrenals():
+        log(sex, 'adrenals')
+        return fit_adrenals(sex, W)
+    ad, rep['adrenals'] = _stage(sex, 'adrenals', frm, adrenals)
+
+    def diaphragm():
+        afl = {s: mesh_field(*ad[s], 0.0005) for s in 'lr'}
+        log(sex, 'diaphragm')
+        eso_proxy = warped_esophagus_field(W)
+        (dv, df), r, _ = fit_diaphragm(sex, W, extra=[('esophagus', eso_proxy), ('adrenal_l', afl['l']), ('adrenal_r', afl['r'])])
+        ad2 = reseat_adrenals(sex, ad, mesh_field(dv, df, 0.0006))
+        log(sex, 'adrenals re-seated')
+        # the crura give way locally to the re-seated glands: a settle of the sheet off them, checked over the sheet's
+        # triangles (a gland is small against the sheet's triangles and would slip between its vertices)
+        from fit.organs_settle import settle
+        dv, r['crura_off_glands'] = settle(dv, df, [(f'adrenal_{s_}', mesh_field(*ad2[s_], 0.0005), 0.0006) for s_ in 'lr'],
+                                           iters=8, w=2.0, inward=False, log=log, label='crura settle')
+        return (dv, orient_outward(dv, df)), r, ad2
+    (dv, df), rep['diaphragm'], ad = _stage(sex, 'diaphragm', frm, diaphragm)
     out['diaphragm'] = (dv, df)
-    dfl = mesh_field(dv, df, 0.0006)
-    # the sheet's crura may now touch the glands: re-seat each gland rigidly (shape kept) in the remaining free space
-    from fit.organs_adrenal import search_pose, seat_on_kidney
-    for s_ in 'lr':
-        v_, f_ = ad[s_]
-        kfl = field(sex, f'kidney_{s_}')
-        oth = [dfl] + [field(sex, k) for k in ('ivc', 'liver', 'spleen', 'pancreas', 'aorta', 'duodenum', 'colon', 'celiac', 'spine')]
-        v2 = search_pose(v_, kfl, oth, radius=0.004, step=0.0008, angles=(0.0, 0.07), log_=log)
-        ad[s_] = (v2, orient_outward(v2, f_))
     out['adrenal_l'], out['adrenal_r'] = ad['l'], ad['r']
+    dfl = mesh_field(dv, df, 0.0006)
     afl = {s_: mesh_field(*ad[s_], 0.0005) for s_ in 'lr'}
-    log(sex, 'stomach')
-    st, rep['stomach'], loops = fit_stomach(sex, W, own=[('diaphragm', dfl), ('adrenal_l', afl['l'])], inside=[ad['l'][0]])
+
+    def stomach():
+        log(sex, 'stomach')
+        return fit_stomach(sex, W, own=[('diaphragm', dfl), ('adrenal_l', afl['l'])], inside=[ad['l'][0]], empty=EMPTY[sex])
+    st, rep['stomach'], loops = _stage(sex, 'stomach', frm, stomach)
     out['stomach'] = st; aux['stomach_loops'] = loops
-    log(sex, 'oesophagus')
-    sfl = mesh_field(*st, 0.0008, cap=True)
-    thf = mesh_field(*thy, 0.0005)
-    es, erep, tube = fit_esophagus(sex, W, st, loops[1], own=[('thyroid', thf), ('diaphragm', dfl), ('stomach', sfl)])
-    aux['esophagus_centreline'] = erep.pop('centreline'); rep['esophagus'] = erep
+
+    def esophagus():
+        log(sex, 'oesophagus')
+        sfl = mesh_field(*st, 0.0008, cap=True)
+        thf = mesh_field(*thy, 0.0005)
+        es, erep, tube = fit_esophagus(sex, W, st, loops[1], own=[('thyroid', thf), ('diaphragm', dfl), ('stomach', sfl)])
+        return es, erep
+    es, erep = _stage(sex, 'esophagus', frm, esophagus)
+    erep = dict(erep); aux['esophagus_centreline'] = erep.pop('centreline'); rep['esophagus'] = erep
     out['esophagus'] = es
     log(sex, 'measuring')
     rep['criteria'] = measure(sex, out, aux)
     crit_keys = [k for k, v in rep['criteria'].items() if isinstance(v, dict) and 'ok' in v]
     rep['ok'] = all(rep['criteria'][k]['ok'] for k in crit_keys)
     rep['runtime_s'] = round(time.time() - t0, 1)
+    if frm is not None: rep['stages_from_cache'] = list(STAGES[:STAGES.index(frm)])
     outputs = []
     src = lambda k: ZA_NAMES.get(k) or za_original(k) and ZA_NAMES.get(k)
     names = [('stomach', 'stomach', 'stomach'), ('esophagus', 'esophagus', 'esophagus'), ('diaphragm', 'diaphragm', 'diaphragm'),
@@ -310,10 +406,16 @@ def qa(sex, out, aux):
     # close-ups
     pyl, car, ring = aux['stomach_loops']
     cc = out['stomach'][0][car].mean(0); pc = out['stomach'][0][pyl].mean(0)
-    ge_items = [dict(mesh=out['stomach'], color=COL['stomach'], opacity=0.85), dict(mesh=out['esophagus'], color=COL['esophagus']),
-                dict(mesh=out['diaphragm'], color=COL['diaphragm'], opacity=0.5), dict(mesh=hra(sex, 'aorta'), color='#e74c3c', opacity=0.6),
-                dict(mesh=hra(sex, 'liver'), color='#7b4a36', opacity=0.25), dict(mesh=hra(sex, 'spine'), color='#e5e5e5', opacity=0.4)]
-    render_views(ge_items, {'ge-junction-front': dict(dir=(0.3, 0.2, 1), target=cc, radius=0.05), 'ge-junction-back': dict(dir=(-0.2, 0.2, -1), target=cc, radius=0.05)},
+    ge_items = [dict(mesh=out['stomach'], color=COL['stomach'], opacity=0.9), dict(mesh=out['esophagus'], color=COL['esophagus']),
+                dict(mesh=out['diaphragm'], color=COL['diaphragm'], opacity=0.22), dict(mesh=hra(sex, 'aorta'), color='#e74c3c', opacity=0.5),
+                dict(mesh=hra(sex, 'liver'), color='#7b4a36', opacity=0.12), dict(mesh=hra(sex, 'spine'), color='#e5e5e5', opacity=0.3)]
+    render_views(ge_items, {'ge-junction-front': dict(dir=(0.3, 0.2, 1), target=cc, radius=0.07), 'ge-junction-back': dict(dir=(-0.2, 0.2, -1), target=cc, radius=0.07)},
+                 os.path.join(od, 'qa'))
+    # the stomach's own shape: with the oesophagus and duodenum only
+    st_items = [dict(mesh=out['stomach'], color=COL['stomach']), dict(mesh=out['esophagus'], color=COL['esophagus']),
+                dict(mesh=hra(sex, 'duodenum'), color='#ca9a5c', opacity=0.85)]
+    cs = out['stomach'][0].mean(0)
+    render_views(st_items, {'stomach-front': dict(dir=(0, 0.1, 1), target=cs, radius=0.11), 'stomach-left': dict(dir=(1, 0.1, 0.2), target=cs, radius=0.11)},
                  os.path.join(od, 'qa'))
     py_items = [dict(mesh=out['stomach'], color=COL['stomach'], opacity=0.9), dict(mesh=hra(sex, 'duodenum'), color='#ca9a5c', opacity=0.9),
                 dict(mesh=hra(sex, 'pancreas'), color='#d4ac0d', opacity=0.4), dict(mesh=hra(sex, 'liver'), color='#7b4a36', opacity=0.2),
@@ -322,12 +424,14 @@ def qa(sex, out, aux):
                  os.path.join(od, 'qa'))
     for s in 'lr':
         a = out[f'adrenal_{s}']
-        ad_items = [dict(mesh=a, color=COL['adrenal']), dict(mesh=hra(sex, f'kidney_{s}'), color='#a04000', opacity=0.6), dict(mesh=hra(sex, 'ivc'), color='#2e4c9a', opacity=0.6),
-                    dict(mesh=hra(sex, 'aorta'), color='#e74c3c', opacity=0.5), dict(mesh=hra(sex, 'liver' if s == 'r' else 'spleen'), color='#7b4a36', opacity=0.25),
-                    dict(mesh=out['diaphragm'], color=COL['diaphragm'], opacity=0.3), dict(mesh=hra(sex, 'pancreas'), color='#d4ac0d', opacity=0.3)]
-        ca = a[0].mean(0)
-        render_views(ad_items, {f'adrenal-{s}-back': dict(dir=(0, 0.3, -1), target=ca, radius=0.045), f'adrenal-{s}-front': dict(dir=(0, 0.3, 1), target=ca, radius=0.045)},
-                     os.path.join(od, 'qa'))
+        # the gland on its kidney with the great vessels; the diaphragm (crura) faint, liver / spleen / pancreas left
+        # out so that the gland is visible (they are checked by the contact measurements)
+        ad_items = [dict(mesh=a, color=COL['adrenal']), dict(mesh=hra(sex, f'kidney_{s}'), color='#a04000', opacity=0.55),
+                    dict(mesh=hra(sex, 'ivc'), color='#2e4c9a', opacity=0.6), dict(mesh=hra(sex, 'aorta'), color='#e74c3c', opacity=0.5),
+                    dict(mesh=out['diaphragm'], color=COL['diaphragm'], opacity=0.18)]
+        ca = a[0].mean(0); sx = -1 if s == 'r' else 1
+        render_views(ad_items, {f'adrenal-{s}-back': dict(dir=(0, 0.3, -1), target=ca, radius=0.06), f'adrenal-{s}-front': dict(dir=(0, 0.3, 1), target=ca, radius=0.06),
+                                f'adrenal-{s}-side': dict(dir=(sx, 0.2, 0), target=ca, radius=0.06)}, os.path.join(od, 'qa'))
     th_items = [dict(mesh=out['thyroid'], color=COL['thyroid'], opacity=0.9), dict(mesh=hra(sex, 'thyroid_cart'), color='#f0f0f0', opacity=0.7),
                 dict(mesh=hra(sex, 'cricoid'), color='#d6eaf8', opacity=0.8), dict(mesh=hra(sex, 'trachea'), color='#abebc6', opacity=0.5),
                 dict(mesh=hra(sex, 'trach_cart'), color='#d5f5e3', opacity=0.7), dict(mesh=out['esophagus'], color=COL['esophagus'], opacity=0.8)]
@@ -340,5 +444,7 @@ def qa(sex, out, aux):
 if __name__ == '__main__':
     args = [a for a in sys.argv[1:] if not a.startswith('--')]
     which = args[0] if args else 'all'
+    frm = next((a.split('=', 1)[1] for a in sys.argv[1:] if a.startswith('--from=')), None)
+    assert frm is None or frm in STAGES, f'--from=<one of {STAGES}>'
     for sex in (['male', 'female'] if which == 'all' else [which]):
-        fit(sex, render='--no-render' not in sys.argv)
+        fit(sex, render='--no-render' not in sys.argv, frm=frm)
