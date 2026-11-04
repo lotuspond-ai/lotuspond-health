@@ -248,7 +248,8 @@ def fit_side(ctx, side, log=log):
     s0 = ctx.s0
     sv, sf = ctx.skin
     maps = {}
-    info = dict(side=side)
+    info = dict(side=side, carpal_seat=L.seat_info)
+    log(f'  {side}: carpus seated on the radius {L.seat_info}')
     # 1. girdle -------------------------------------------------------------------------------------------------
     G = girdle_cached(ctx, L, side, log=log)
     maps['clav'] = BoneMap(G['clav']); maps['scap'] = BoneMap(G['scap'])
@@ -547,10 +548,11 @@ def save_maps(sex, side, r):
     """The per-bone maps, each taking raw Z-Anatomy coordinates: the hand bones' maps were fitted on the hand seated on
     the radius (Limb.seat, a Z-Anatomy-space translation), which is folded in here as a pre-translation."""
     d = cache_dir(sex)
-    seat = Aff(np.eye(3), np.asarray(r['L'].seat, float))
+    extra = getattr(r['L'], 'seat_bone', {})   # the lunate's own seating between the radius and the capitate
     out = {}
     for b, m in r['maps'].items():
-        if b in HAND_BONES: m = _PreRot(seat, m.stretch, m.aff)
+        if b in HAND_BONES:
+            m = _PreRot(Aff(np.eye(3), np.asarray(r['L'].seat, float) + np.asarray(extra.get(b, np.zeros(3)), float)), m.stretch, m.aff)
         out[b] = m.to_dict()
     data = dict(side=side, seat_mm=(np.asarray(r['L'].seat) * 1e3).tolist(), maps=out)
     json.dump(data, open(os.path.join(d, f'maps-{side}.json'), 'w'))

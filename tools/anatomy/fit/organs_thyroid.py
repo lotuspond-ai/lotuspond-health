@@ -64,6 +64,13 @@ def lower_target(rings_below, s_i):
     return s_i + 0.012
 
 
+def lower_min(rings_below, s_i):
+    """The highest the lower poles are drawn up to when a lobe would be too long: tracheal ring 5 (its upper edge)."""
+    if len(rings_below) >= 5:
+        return rings_below[4][0]
+    return s_i + 0.010
+
+
 def lamina_target(sex, c0, a, P_top=None, sg=1):
     """The thyroid lamina on one side: (lower border s, height, target s for the lobe's upper pole: OBLIQUE of the
     height above the lower border, where the oblique line runs above the inferior thyroid tubercle). Read per 3 mm band
@@ -208,13 +215,17 @@ def grow_gland(sex, tv, tf, c0, a, s_i, rings_below, hull, rep):
         top = tv[lobe & (s < s[lobe].min() + 0.25 * (s[lobe].max() - s[lobe].min()))]
         lb, H, s_up = lamina_target(sex, c0, a, top, sg)
         s_lo = s_dn
-        if s_lo - s_up > LOBE_MAX:                       # too long for an adult lobe: both ends drawn towards the isthmus
-            k = LOBE_MAX / (s_lo - s_up); s_up = s_i - k * (s_i - s_up); s_lo = s_i + k * (s_lo - s_i)
+        if s_lo - s_up > LOBE_MAX:
+            # too long for an adult lobe (a long larynx: the male lamina's lower border lies 2.4 cm above the cricoid's):
+            # the lower pole gives way first, up to tracheal ring 5 (the poles' range is rings 4-7), and
+            # only past that the upper pole, which must reach the lamina's oblique line
+            s_lo = max(lower_min(rings_below, s_i), s_up + LOBE_MAX)
+            s_up = max(s_up, s_lo - LOBE_MAX)
         k_up[sg] = float(np.clip((s_i - s_up) / max(U, 1e-3), *K_RANGE))
         k_dn[sg] = float(np.clip((s_lo - s_i) / max(Lo, 1e-3), *K_RANGE))
         info[nm] = dict(upper_extent_mm=round(U * 1000, 1), lower_extent_mm=round(Lo * 1000, 1), lamina_lower_border_mm=round(lb * 1000, 1),
-                        lamina_height_mm=round(H * 1000, 1), upper_target_mm=round(s_up * 1000, 1), lower_target_mm=round(s_dn * 1000, 1),
-                        k_up=round(k_up[sg], 3), k_down=round(k_dn[sg], 3))
+                        lamina_height_mm=round(H * 1000, 1), upper_target_mm=round(s_up * 1000, 1), lower_target_mm=round(s_lo * 1000, 1),
+                        ring_5_6_mm=round(s_dn * 1000, 1), k_up=round(k_up[sg], 3), k_down=round(k_dn[sg], 3))
     f_s = stretch_fn(s_i, k_up, k_dn, PYR_STRETCH)
 
     def along(p):
@@ -364,8 +375,18 @@ def pth_shape(v, f, centre, normal, along):
     return w + centre
 
 
-def seat_pth(v, f, tfl, gap):
-    """Slide a gland along the thyroid's normal until its nearest point lies `gap` off the gland's surface."""
+def exact_sd(P, mesh):
+    """Exact signed distance from points to a closed mesh: distance to its surface, negative inside (winding number).
+    The gland's voxel field misreads the folds of the stretched lobes' surface (up to 1.3 mm false insides)."""
+    from lib.mesh import closest_on_mesh
+    _, d = closest_on_mesh(*mesh, P)
+    w = winding(P, *mesh)
+    return np.where(np.abs(w) > 0.5, -d, d)
+
+
+def seat_pth_field(v, f, tfl, gap):
+    """Slide a gland along the thyroid's normal until its nearest vertex lies `gap` off the gland's surface (voxel
+    field: fast, but it misreads folds of the lobes' surface, so seat_pth follows with the exact distance)."""
     for _ in range(80):
         sd = tfl(v)
         i = int(np.argmin(sd))
@@ -374,6 +395,23 @@ def seat_pth(v, f, tfl, gap):
         if abs(step) < 2e-5: break
         v = v + 0.8 * step * nrm[0]
     return v
+
+
+def seat_pth(v, f, thy, gap, iters=4):
+    """Exact clearance of a seated gland: while its nearest test point (vertices and the faces' samples) is closer than
+    `gap` to the thyroid mesh (exact signed distance) the gland moves rigidly along that point's way out of the
+    lobe (towards / away from its closest surface point) by the missing amount. Idempotent for a seated gland."""
+    from lib.mesh import closest_on_mesh
+    P = np.vstack([v, sample_surface(v, f, 800, seed=1)])
+    shift = np.zeros(3)
+    for _ in range(iters):
+        q, d = closest_on_mesh(*thy, P + shift)
+        sd = np.where(np.abs(winding(P + shift, *thy)) > 0.5, -d, d)
+        i = int(np.argmin(sd))
+        if sd[i] >= gap - 1e-5: break
+        u = (q[i] - (P[i] + shift)) if sd[i] < 0 else ((P[i] + shift) - q[i])
+        shift = shift + (gap - sd[i] + 2e-5) * u / max(np.linalg.norm(u), 1e-12)
+    return v + shift
 
 
 def thyroid_measures(sex, thy, pth, c0, a, nb=None):

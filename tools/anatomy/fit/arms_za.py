@@ -147,9 +147,58 @@ def seat_carpus(M, sg, cover=LUNATE_COVER, log=None):
     return d, info
 
 
+def seat_lunate(M, sg, n_s=1500):
+    """The lunate is the intercalated segment of the proximal row, between the radius's lunate fossa and the head of the
+    capitate. Z-Anatomy's carpus is packed (lunate-capitate 0.1 mm, no midcarpal space) and, with the scaphoid seated,
+    its lunate stands ~5.4 mm off the radius. The lunate alone is translated toward the radius (directions within 40 deg
+    of proximal along the forearm, none ulnar, so its cover by the radius is kept) to where its joint spaces to the
+    radius and to the capitate are equal (never closer than RC_SPACE to the radius), without overlapping the scaphoid,
+    triquetrum or hamate more than Z-Anatomy's own packing (+0.2 mm); of those placements the most congruent (smallest
+    joint spaces) is kept. Returns (Z-Anatomy-space translation, info)."""
+    fa, ru, _, Tr = _wrist_frame(M, sg)
+    Tl = TriMesh(*M['lun']); Pl = sample_surface(*M['lun'], n_s, seed=7)
+    Tc = TriMesh(*M['cap']); Pc = sample_surface(*M['cap'], n_s, seed=7)
+    nb = {b: (TriMesh(*M[b]), sample_surface(*M[b], n_s, seed=7)) for b in ('sca', 'tri', 'ham')}
+
+    def gaps(d):
+        return float(Tr.signed(Pl + d).min()), float(min(Tc.signed(Pl + d).min(), Tl.signed(Pc - d).min()))
+
+    def nbgap(d):
+        return {b: float(min(T.signed(Pl + d).min(), Tl.signed(P - d).min())) for b, (T, P) in nb.items()}
+    g_r0, g_c0 = gaps(np.zeros(3)); nb0 = nbgap(np.zeros(3))
+    floor = {b: min(v, 0.0) - 0.0002 for b, v in nb0.items()}
+    e1 = unit(np.cross(fa, ru)); e2 = unit(np.cross(fa, e1))
+    dirs = [-fa]
+    for th in (15, 30, 40):
+        for ph in range(0, 360, 45):
+            t, f = np.radians(th), np.radians(ph)
+            u = unit(-np.cos(t) * fa + np.sin(t) * (np.cos(f) * e1 + np.sin(f) * e2))
+            if u @ ru >= -1e-9: dirs.append(u)      # never ulnar: the lunate stays over the lunate fossa (seat_carpus)
+    best = (max(g_r0, g_c0), 0.0, np.zeros(3), g_r0, g_c0)
+    for u in dirs:
+        prev = None
+        for s in np.arange(0.0004, g_r0, 0.0004):
+            d = s * u; g_r, g_c = gaps(d)
+            if g_r < RC_SPACE: break
+            ok = all(v >= floor[b] for b, v in nbgap(d).items())
+            if not ok: break
+            prev = (max(g_r, g_c), s, d, g_r, g_c)
+            if g_c >= g_r: break                       # spaces equal (or the capitate side now the larger)
+        if prev is not None and prev[0] < best[0] - 1e-5: best = prev
+    m, s, d, g_r, g_c = best
+    info = dict(delta_mm=(d * 1e3).round(2).tolist(), shift_mm=round(s * 1e3, 2),
+                radius_lunate_before_mm=round(g_r0 * 1e3, 2), capitate_lunate_before_mm=round(g_c0 * 1e3, 2),
+                radius_lunate_mm=round(g_r * 1e3, 2), capitate_lunate_mm=round(g_c * 1e3, 2),
+                lunate_to_before_mm={b: round(v * 1e3, 2) for b, v in nb0.items()}, lunate_to_mm={b: round(v * 1e3, 2) for b, v in nbgap(d).items()},
+                lunate_cover_pct=round(100 * _coverage(M, fa, ru, d), 1))
+    return d, info
+
+
 class Limb:
     """Joint centres, axes and articular surfaces of one Z-Anatomy upper limb (in Z-Anatomy space). The hand bones are
-    seated on the radius (seat_carpus): L.seat is their Z-Anatomy-space translation, already applied to L.M / L.P."""
+    seated on the radius (seat_carpus): L.seat is their Z-Anatomy-space translation, already applied to L.M / L.P; the
+    lunate is then seated between the radius and the capitate (seat_lunate): L.seat_bone['lun'] is its own extra
+    translation, also applied."""
 
     def __init__(self, side):
         self.side = side
@@ -157,6 +206,9 @@ class Limb:
         self.M = load_bones(side)
         self.seat, self.seat_info = seat_carpus(self.M, self.sg)
         for k in HAND_BONES: self.M[k] = (self.M[k][0] + self.seat, self.M[k][1])
+        dl, self.seat_info['lunate'] = seat_lunate(self.M, self.sg)
+        self.seat_bone = {'lun': dl}
+        self.M['lun'] = (self.M['lun'][0] + dl, self.M['lun'][1])
         self.man = manubrium()
         self.T = {k: TriMesh(*m) for k, m in self.M.items()}
         self.Tman = TriMesh(*self.man)

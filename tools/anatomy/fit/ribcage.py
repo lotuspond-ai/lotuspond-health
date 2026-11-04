@@ -12,7 +12,8 @@ Pipeline (each stage cached under .cache/fit/<sex>/ribcage/cache/; --rebuild rec
   2. sternum: the manubrium stays where the warp puts it (the arms fit seats the clavicles there) unless a criterion
      forces it; the body and xiphoid turn about their joints and move only as needed to clear heart, lungs and liver
   3. costal cartilages: the joints follow the bones they join (harmonic interpolation of the rib-end and sternum or
-     upper-cartilage motions over each cartilage), then the same centreline bending clears lungs, heart and liver
+     upper-cartilage motions over each cartilage), then the same centreline bending clears lungs, heart and liver;
+     the interchondral ends of 8-10 (which the bending cannot move) turn about their joint line where still in an organ
   4. discs from the HRA end plates (ribcage_discs)
   5. acceptance measurements (ribcage_measure), report.json, manifest, QA renders
 """
@@ -495,6 +496,47 @@ def harmonic(f, n, fixed_idx, fixed_val):
     return u
 
 
+HINGE_MAX = 30.0         # deg: largest turn of an interchondral end about its joint line
+HINGE_RAMP = 0.02        # m of arc length over which that turn fades in before the joint
+HINGE_PATCH_MOVE = 0.0012  # m: the joint patch may move at most this far (the joint gap limit is 2 mm)
+
+
+def hinge_clear(v, sarc, patch, s1, obstacles, ramp=HINGE_RAMP, max_deg=HINGE_MAX):
+    """The interchondral end of cartilages 8-10 runs 2-3 cm along the lower border of the cartilage above (a gliding
+    joint), so the centreline bending, which vanishes over the joint, cannot move it: where its deep side still enters
+    an organ (the liver under the right costal margin), the end turns about the joint's own line - the principal axis
+    of its joint patch, which then stays on its partner (it may move at most HINGE_PATCH_MOVE) - by the smallest angle
+    that clears the organs, or failing that the one that leaves the least overlap, the turn fading in smoothly over
+    `ramp` of arc length before the joint (male 8r: 9.5 deg, liver -3.1 -> -0.5 mm; female 9r: 13 deg, -0.5 -> +0.3 mm).
+    Returns (vertices, info)."""
+    reg = sarc >= s1 - ramp
+
+    def deficit(x):
+        return max(float((cl - tg.sdf(x[reg])).max()) for tg, cl in obstacles)
+    base = deficit(v)
+    if base <= 0.0002: return v, dict(hinge_deg=0.0)
+    P = v[patch]; c = P.mean(0)
+    ax = np.linalg.svd(P - c, full_matrices=False)[2][0]
+    w = RB.smoothstep((sarc - (s1 - ramp)) / ramp)
+    r = v - c; ra = r @ ax; cr = np.cross(ax, r)
+
+    def turned(deg):
+        th = np.radians(deg) * w
+        return c + r * np.cos(th)[:, None] + cr * np.sin(th)[:, None] + np.outer(ra, ax) * (1 - np.cos(th))[:, None]
+    best = (base, 0.0)
+    for deg in sorted(np.arange(-max_deg, max_deg + 0.1, 0.5), key=abs):
+        if deg == 0: continue
+        vt = turned(deg)
+        if np.linalg.norm(vt[patch] - v[patch], axis=1).max() > HINGE_PATCH_MOVE: continue
+        d = deficit(vt)
+        if d <= 0.0: best = (d, deg); break
+        if d < best[0] - 1e-5: best = (d, deg)
+    if best[1] == 0.0: return v, dict(hinge_deg=0.0, deficit_mm=mm1(base))
+    vt = turned(best[1])
+    return vt, dict(hinge_deg=float(best[1]), deficit_before_mm=mm1(base), deficit_after_mm=mm1(best[0]),
+                    patch_moved_max_mm=mm1(np.linalg.norm(vt[patch] - v[patch], axis=1).max()))
+
+
 def fit_cartilages(sex, W, ZA, T, C, ribs_v, st_v):
     """Costal cartilages: Z-Anatomy's shape at body scale, placed by its two joints and bent between them.
     1. the rigid placement (body scale) that best puts both joint patches - the rib end and the sternum (1-7) or the
@@ -537,11 +579,14 @@ def fit_cartilages(sex, W, ZA, T, C, ribs_v, st_v):
             far = e['sternum'] if n <= 7 else e['above']
             Bf = RB.bar_basis(sarc, sarc.max(), spacing=0.012, end=0.006, s0=float(sarc[e['rib']].max()), s1=float(sarc[far].min()))
             vb, ib = RB.bend(vh, Bf, obstacles, T['skin'], sub=1)
+            if n >= 8:
+                vb, ih = hinge_clear(vb, sarc, e['above'], float(sarc[far].min()), obstacles)
+                ib = dict(ib, hinge=ih)
             out[key] = vb
             # length change against Z-Anatomy at body scale (along the arc from the rib joint)
             sz, _, _ = RB.arc_length(s0 * vz, f, e['rib'])
             info[f'{n}{s}'] = dict(joint_closing_max_mm=mm1(np.linalg.norm(tgt - v0[idx], axis=1).max()), bend_max_mm=round(ib['max_mm'], 2),
-                                   length_ratio=round(float(sarc.max() / max(sz.max(), 1e-9)), 3))
+                                   length_ratio=round(float(sarc.max() / max(sz.max(), 1e-9)), 3), **({'hinge': ib['hinge']} if 'hinge' in ib else {}))
     return out, info
 
 

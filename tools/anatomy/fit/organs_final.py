@@ -5,11 +5,18 @@ oesophagus are in place.
      the kidney come closer between them): its nearest point GAP_TARGET off its kidney, the IVC, liver, spleen,
      pancreas, aorta, duodenum, colon, coeliac trunk, vertebrae and our stomach cleared; then a lift along the
      kidney's outward normal under the gland (a line search) to a LIFT_TARGET gap, as far as the other neighbours
-     allow; the diaphragm is no obstacle here, its crura give way in step 2 (muscle yields to the gland);
+     allow; the stage-3 diaphragm is an obstacle too (step 2's one-way test cannot see a gland its crus encloses: the
+     male left gland ended 8 % inside the crus when it was not);
   2. the diaphragm: a local, shape-preserving settle (organs_settle: bi-Laplacian displacement checked over the whole
      surface, active set, pushes along the obstacle's normal) off the structures that pass through or lie in its
-     openings and beside its crura: our oesophagus (hiatus), stomach and glands, and the HRA aorta (not the IVC: the
-     retrohepatic IVC is embedded in the liver, and pushing the caval rim off it drove the sheet 15 mm into the liver).
+     openings and beside its crura: our oesophagus (hiatus), stomach and glands, and the HRA aorta; edges longer than
+     SPLIT_EDGE are split first (triangles
+     of up to 23 mm bridged the aorta between their test points). Not the IVC: the retrohepatic IVC is embedded in
+     the liver and the HRA leaves no room for the caval rim between them (an unmasked IVC push drove the sheet 15 mm
+     into the liver; a push of the rim only, the sheet within 6 mm of the IVC, with the liver resisting there, left
+     both at 7 mm and folded the sheet through itself). Not the colon: where the male sheet's left costal part dips
+     through the splenic flexure the HRA colon overlaps the costal cartilages, and lifting the sheet to the colon's
+     thoracic side moved it up to 47 mm sideways into the ribs (tried, removed).
      The test is one-way (sheet points against the gland): a gland the crus encloses has no sheet point inside it (a
      two-way test from gland samples on the local sheet patch was tried: its pseudo-normal signs gave false insides
      and pushed the sheet up to 34 mm, so it was removed). Its domes stay
@@ -25,10 +32,12 @@ from lib.register import umeyama
 from fit.organs_data import hra, field, log, has_hra
 
 HEART_CARVE = 0.004       # assemble.py carves the HRA heart plus 4 mm out of the liver (the diaphragm's room under the heart)
+SPLIT_EDGE = 0.004        # diaphragm edges longer than this are split before the settle
 GAP_TARGET = 0.002
 MIN_THICK = 0.0006
 ADR_NB = ('ivc', 'liver', 'spleen', 'pancreas', 'aorta', 'duodenum', 'colon', 'celiac', 'spine')
 LIFT_TARGET = 0.0015
+LIFT_TOL = 0.00025
 DIA_NB = ('aorta',)
 
 
@@ -87,24 +96,35 @@ def reseat_gland(sex, s, mesh, own=(), log_=log):
     def worst_other(X):
         return max([0.0] + [float(max(0.0, -fl(X).min())) for fl in others])
     w0 = worst_other(Q); best_t = 0.0; gaps = []
+    g_prev = float(kfl(Q).min())
     for t in np.arange(0.00025, 0.0030001, 0.00025):
         g = float(kfl(Q + t * dirn).min()); w = worst_other(Q + t * dirn); gaps.append((round(t * 1000, 2), round(g * 1000, 2), round(w * 1000, 2)))
-        if w > max(w0, 0.0003) + 1e-5 or g > 0.005: break
-        best_t = t
-        if g >= LIFT_TARGET: break
+        # below the 1 mm minimum gap (the gland lies in the perirenal fat, not on the kidney) it may press up to
+        # LIFT_TOL further into a soft neighbour to reach that minimum, and no further
+        tol = LIFT_TOL if g_prev < 0.001 else 0.0
+        if w > max(w0, 0.0003) + tol + 1e-5 or g > 0.005: break
+        best_t = t; g_prev = g
+        if g >= LIFT_TARGET or (g >= 0.001 and w > max(w0, 0.0003) + 1e-5): break
     v2 = v2 + best_t * dirn
     g1 = float(kfl(sample_surface(v2, f, 6000, seed=1)).min())
     return (v2, orient_outward(v2, f)), dict(kidney_gap_mm=dict(before=round(g0 * 1000, 2), after=round(g1 * 1000, 2)), lift_mm=round(best_t * 1000, 2),
                                              lift_search=gaps, moved_mm=round(float(np.linalg.norm(v2 - v, axis=1).max() * 1000), 2))
 
 
-def settle_diaphragm(sex, mesh, own, iters=14, log_=log):
+def settle_diaphragm(sex, mesh, own, iters=18, log_=log):
     """own: [(name, Field)] our stomach, oesophagus and glands. Returns (v, f), report (with the room the HRA bodies
     leave between the lung bases / the heart's inferior surface and the liver, spleen and colon)."""
     from fit.organs_diaphragm import sides
     from fit.organs_settle import settle
     from scipy.spatial import cKDTree
+    from fit.organs_geom import refine_long_edges
     v, f = mesh
+    # triangles longer than SPLIT_EDGE (at the openings and along the crura: up to 23 mm, bridging across the aorta at
+    # T10 and the caval rim) are split first, so that the settle's per-triangle test points (centroid and edge
+    # midpoints) see what passes through them
+    n0 = len(v)
+    v, f = refine_long_edges(v, f, SPLIT_EDGE)
+    f = orient_outward(v, f)
     thor = sides(v, f)
     T = np.flatnonzero(thor); A = np.flatnonzero(~thor)
     d, j = cKDTree(v[A]).query(v[T])
@@ -112,11 +132,10 @@ def settle_diaphragm(sex, mesh, own, iters=14, log_=log):
     P, Q = T[m], A[j[m]]
     ax = v[P] - v[Q]; th = np.linalg.norm(ax, axis=1); ax /= np.maximum(th, 1e-12)[:, None]
     fields = [(k, field(sex, k), None) for k in DIA_NB if has_hra(sex, k)] + [(k, fl, None) for k, fl in own]
-    # under the heart: the heart and the liver as assembled (heart + 4 mm carved out), so that the central tendon settles
-    # into the carved gap; only the sheet within 30 mm of the heart may be moved by them (the domes elsewhere stay as the
-    # diaphragm stage balanced them between the lungs and the abdominal organs)
-    near_heart = field(sex, 'heart').coarse(v) < 0.03
-    fields += [('heart', field(sex, 'heart'), None, near_heart), ('liver (heart carved)', liver_carved(sex), None, near_heart)]
+    # (not the heart and the liver as assembled, heart + HEART_CARVE carved out, under the heart: tried with the sheet
+    # within 30 mm of the heart; in the female body, where the stage-3 dome passes 11.6 mm into the heart, the settle
+    # did not converge in 18 rounds (heart 9 mm, carved liver 13 mm left), moved the sheet up to 56 mm and folded it
+    # through itself; the dome has to be fitted against the carved liver in the diaphragm stage itself)
     v2, rep = settle(v, f, fields, clear=0.0004, iters=iters, pairs=(P, Q, ax), min_thick=np.minimum(th, MIN_THICK), pair_split=0.5,
                      w=30.0, inward=False, log=log_, label='diaphragm settle')
     th2 = np.einsum('ij,ij->i', v2[P] - v2[Q], ax)
@@ -124,6 +143,7 @@ def settle_diaphragm(sex, mesh, own, iters=14, log_=log):
     rep['thickness_mm'] = dict(before_p5=round(float(np.percentile(th, 5) * 1000), 2), after_p5=round(float(np.percentile(th2, 5) * 1000), 2),
                                after_min=round(float(th2.min() * 1000), 2))
     rep['move_mm'] = dict(p95=round(float(np.percentile(mv, 95) * 1000), 2), max=round(float(mv.max() * 1000), 2))
+    rep['split_long_edges'] = dict(max_edge_mm=SPLIT_EDGE * 1000, vertices_before=n0, vertices_after=len(v))
     rep['hra_room'] = hra_room(sex)
     return (v2, orient_outward(v2, f)), rep
 

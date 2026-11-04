@@ -19,10 +19,13 @@ organs_settle):
                              extracted, orifice rims laid onto their rings
   5. oesophagus              a smooth tube swept along a smoothed route (organs_tube) with Z-Anatomy's own
                              cross-sections, flattened front-to-back where squeezed, ending in the cardiac ring
-  6. final clearances        (organs_final) the glands re-seated rigidly off their kidneys (dense surface samples, then
-                             a lift along the kidney's normal); the diaphragm settled locally off our oesophagus
-                             (hiatus), stomach and glands and the HRA aorta, its two faces paired so that it thins
-                             rather than folds (its domes stay as stage 3 balanced them between thorax and abdomen)
+  6. final clearances        (organs_final) the glands re-seated rigidly off their kidneys (the left one also out of
+                             the stage-3 sheet; dense surface samples, then a lift along the kidney's normal); the
+                             diaphragm (long edges
+                             split) settled locally off our oesophagus (hiatus), stomach and glands and the HRA
+                             aorta, its two faces paired so that it thins rather than folds (its domes stay as stage
+                             3 balanced them between thorax and abdomen; the liver is measured as assembled, with the
+                             heart + 4 mm carved out)
 Stages are cached in .cache/fit/<sex>/organs/cache/stage-*.pkl; --from=<stage> reruns from that stage.
 Contacts with our own thin structures are measured with fields that use their own (consistent) face normals, and
 the oesophagus, trachea and bronchi count as solid organs (lumen included).
@@ -272,11 +275,12 @@ def measure(sex, out, aux):
                               lobes_from_mm=round(float(sv.min() * 1000), 1), lobes_to_mm=round(float(sv.max() * 1000), 1),
                               note='distances below the cricoid\'s lower border along the airway; rings from the anterior tracheal cartilage profile')
     # parathyroids
-    tfl = aux['thyroid_field']
+    from fit.organs_thyroid import exact_sd
     for k in PTH:
-        p = sample_surface(*out[k], 800, seed=1); d = tfl(p)
+        p = sample_surface(*out[k], 800, seed=1); d = exact_sd(p, out['thyroid'])
         R[f'{k}_to_thyroid'] = crit(round(float(d.min() * 1000), 2), '0-1 mm, none inside', (d.min() <= 0.001) and (d >= 0).all(),
-                                    inside_pct=round(float((d < 0).mean() * 100), 2), centre=np.round(out[k][0].mean(0), 4).tolist())
+                                    inside_pct=round(float((d < 0).mean() * 100), 2), centre=np.round(out[k][0].mean(0), 4).tolist(),
+                                    method='exact distance to the thyroid mesh, inside by its winding number')
     # the gland's size, extent, bed and neck contacts; the parathyroids' size and levels (organs_thyroid)
     from fit.organs_thyroid import thyroid_measures
     R.update(thyroid_measures(sex, out['thyroid'], {k: out[k] for k in PTH}, c0, av, aux.get('neck_neighbours')))
@@ -357,6 +361,14 @@ def fit(sex, render=True, frm=None):
     thy, pth, rep['thyroid'], ax = _stage(sex, 'neck', frm, neck)
     out['thyroid'] = thy; out.update(pth); aux['airway_axis'] = ax
     aux['thyroid_field'] = mesh_field(*thy, 0.0003, pad=0.01)
+    # each parathyroid cleared of its lobe by the exact distance (organs_thyroid.seat_pth; idempotent, so a neck stage
+    # cached before this rule is corrected here too)
+    from fit.organs_thyroid import seat_pth
+    from fit.organs_neck import GAP_PTH
+    for k in PTH:
+        v_, f_ = out[k]; v2 = seat_pth(v_, f_, thy, GAP_PTH)
+        rep['thyroid'].setdefault('parathyroids', {}).setdefault(k, {})['final_seat_shift_mm'] = round(float(np.linalg.norm(v2 - v_, axis=1).max() * 1000), 2)
+        out[k] = (v2, f_)
 
     def adrenals():
         log(sex, 'adrenals')
@@ -409,7 +421,12 @@ def fit(sex, render=True, frm=None):
         sfl = mesh_field(*st, 0.0008, cap=True)
         ad2 = {}
         for s_ in 'lr':
-            ad2[s_], r[f'adrenal_{s_}'] = reseat_gland(sex, s_, out[f'adrenal_{s_}'], own=[('stomach', sfl)] if s_ == 'l' else [])
+            # the left gland also keeps out of the stage-3 sheet: the settle below cannot see a gland its left crus
+            # encloses (the male gland ended 8 % inside it); the right one is boxed in by the IVC, liver, spine and
+            # kidney, and the crus there gives way in the settle (with the sheet as an obstacle it was pushed 1.8 mm
+            # into the vertebral body)
+            own_ = [('diaphragm', dfl()), ('stomach', sfl)] if s_ == 'l' else []
+            ad2[s_], r[f'adrenal_{s_}'] = reseat_gland(sex, s_, out[f'adrenal_{s_}'], own=own_)
         own = [('stomach', sfl), ('esophagus', esophagus_field(*es, aux['esophagus_centreline']))]
         own += [(f'adrenal_{s_}', mesh_field(*ad2[s_], 0.0005)) for s_ in 'lr']
         dia, r['diaphragm'] = settle_diaphragm(sex, out['diaphragm'], own)

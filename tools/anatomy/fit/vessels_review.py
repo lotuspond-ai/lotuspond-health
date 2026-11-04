@@ -13,6 +13,7 @@ measurements that go with them. numpy + scipy only.
 import os, sys, json
 import numpy as np
 from scipy.spatial import cKDTree
+from scipy.ndimage import minimum_filter1d
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, HERE)
@@ -413,6 +414,9 @@ def pelvic_calibres(sex, VES, J, aorta_tube=None, log=print):
     return out
 
 
+RR_END = 0.020     # re-round: falloff of an end ring's re-snap (m)
+
+
 def reround(VES, names, J, log=print, smooth_iters=12):
     """Re-sweep crushed veins as round tubes about their main-trunk centrelines, keeping vertices and faces: each vertex
     goes to the circle of the Z-Anatomy radius at its centreline parameter (the Z-Anatomy vertex's distance to the
@@ -466,13 +470,26 @@ def reround(VES, names, J, log=print, smooth_iters=12):
             e = e + 0.5 * ((A_ @ e) / deg[:, None] - e)
             e = G.unit(e - np.einsum('ij,ij->i', e, T[idx])[:, None] * T[idx])
         before = calibre_profile(x['v'], x['f'], cl)
+        v_old = x['v'].copy()
         x['v'] = q + r_v[:, None] * e
+        # the end rings keep their centres (continuity with what they join; a chain junction's ring goes back onto the
+        # HRA stub's end): each ring's centre shift is undone with a raised-cosine falloff over RR_END of centreline
+        snapped = []
+        for l in end_loops(x['v'], x['f']):
+            tgt = v_old[l['idx']].mean(0)
+            for j in cj:
+                if np.linalg.norm(tgt - j['end']['c']) < 0.02 and min(end_loops(v_old, x['f']), key=lambda m: np.linalg.norm(v_old[m['idx']].mean(0) - j['end']['c']))['idx'][0] == l['idx'][0]:
+                    tgt = j['end']['c']
+            dc = tgt - x['v'][l['idx']].mean(0)
+            s_l = float(project(cl, l['c'][None])[0][0])
+            x['v'] = x['v'] + raised(np.abs(s - s_l) / RR_END)[:, None] * dc
+            snapped.append(r2(np.linalg.norm(dc) * 1000, 1))
         after = calibre_profile(x['v'], x['f'], cl)
         out[n] = dict(max_aspect_before=r2(max(p['aspect'] for p in before), 2) if before else None,
                       max_aspect_after=r2(max(p['aspect'] for p in after), 2) if after else None,
                       max_width_before_mm=r2(max(p['width'] for p in before) * 1000, 1) if before else None,
                       max_width_after_mm=r2(max(p['width'] for p in after) * 1000, 1) if after else None,
-                      za_radius_mm=[r2(rb.min() * 1000, 1), r2(np.median(rb) * 1000, 1), r2(rb.max() * 1000, 1)])
+                      za_radius_mm=[r2(rb.min() * 1000, 1), r2(np.median(rb) * 1000, 1), r2(rb.max() * 1000, 1)], end_ring_resnap_mm=snapped)
         log(f'  re-round {n}: {out[n]}')
     return out
 
@@ -482,6 +499,9 @@ ZA_LIMB_SKIN = r'(arm|elbow|forearm|wrist|hand|Cubital|Deltoid|thigh|knee|leg|an
 SUP_GROUPS = (('Cephalic_vein', 'Basilic_vein', 'Median_cubital_vein'), ('Great_saphenous_vein', 'Small_saphenous_vein'))
 SUP_MIN, SUP_MAX, SUP_IF = 0.0020, 0.005, 0.006     # target wall depth clip(Z-Anatomy depth, 2, 5) mm where it is < 6 mm (2 mm: clear of the push-out's 1.5 mm skin rule)
 SUP_STEP, SUP_SIGMA, SUP_FADE = 0.004, 0.010, 0.025
+SUP_SPACE, SUP_PASSES = 0.003, 8    # spatial averaging of a group's shifts (sigma, m); passes (each re-measures the depths)
+SUP_KEEP = 0.0015                   # a shift never takes a wall vertex shallower than this (the push-out's skin rule)
+SUP_ERODE = 3                       # bins over which a cut-back shift is eroded (odd)
 DEEP_VEINS = ('Axillary_vein', 'Brachial_veins', 'Subclavian', 'Femoral_vein', 'Popliteal_vein', 'Left_subclavian', 'Right_subclavian')
 _ZSK = {}
 
@@ -549,10 +569,11 @@ def superficial_layer(sex, VES, skin, log=print):
     group stay joined."""
     ztree = za_skin_tree()
     out = {}
-    for side in 'lr':
-        for members in SUP_GROUPS:
+    v0 = {n: VES[n]['v'].copy() for m in SUP_GROUPS for n in [k + s for k in m for s in 'lr'] if n in VES}
+    for side, members in [(sd, mm) for _ in range(SUP_PASSES) for sd in 'lr' for mm in SUP_GROUPS]:
+        if True:
             names = [m + side for m in members if m + side in VES and VES[m + side]['placed'] and not VES[m + side].get('dropped')]
-            Xs, Ds, own = [], [], []
+            Xs, Ds, own, Ss = [], [], [], []
             for n in names:
                 x = VES[n]
                 cl = trunk(x['v'], x['f'])
@@ -565,22 +586,40 @@ def superficial_layer(sex, VES, skin, log=print):
                 sk = (np.arange(len(D)) + 0.5) * SUP_STEP
                 vec *= _deep_end_fade(VES, n, names, x, cl, sk)[:, None]
                 dv = np.stack([np.interp(s, sk, vec[:, a]) for a in range(3)], 1)
-                Xs.append(x['v']); Ds.append(dv); own.append(n)
-                out[n] = dict(target_bins=int(w.sum()), bins=int(np.isfinite(D).sum()), depth_before_median_mm=r2(np.nanmedian(D) * 1000, 1),
-                              depth_before_target_bins_mm=r2(np.median(D[w]) * 1000, 1) if w.any() else None,
-                              za_depth_target_bins_mm=r2(np.median(ZD[w]) * 1000, 1) if w.any() else None)
+                Xs.append(x['v']); Ds.append(dv); own.append(n); Ss.append(s)
+                if n not in out:    # the first pass's numbers are the 'before' state
+                    out[n] = dict(target_bins=int(w.sum()), bins=int(np.isfinite(D).sum()), depth_before_median_mm=r2(np.nanmedian(D) * 1000, 1),
+                                  depth_before_target_bins_mm=r2(np.median(D[w]) * 1000, 1) if w.any() else None,
+                                  za_depth_target_bins_mm=r2(np.median(ZD[w]) * 1000, 1) if w.any() else None)
             if not Xs: continue
             X = np.concatenate(Xs); Dd = np.concatenate(Ds)
-            tr = cKDTree(X); M = tr.sparse_distance_matrix(tr, 0.018, output_type='coo_matrix')
+            tr = cKDTree(X); M = tr.sparse_distance_matrix(tr, 3 * SUP_SPACE, output_type='coo_matrix')
             i, j, d = np.r_[M.row, np.arange(len(X))], np.r_[M.col, np.arange(len(X))], np.r_[M.data, np.zeros(len(X))]
-            K = np.exp(-0.5 * (d / 0.006) ** 2)
+            K = np.exp(-0.5 * (d / SUP_SPACE) ** 2)
             num = np.zeros_like(X); den = np.zeros(len(X))
             np.add.at(num, i, K[:, None] * Dd[j]); np.add.at(den, i, K)
             Dsm = num / den[:, None]
+            # never out through the skin (a crease or fold can turn a smoothed outward shift into a crossing): per vertex
+            # the largest fraction of the shift that leaves it SUP_KEEP under the skin (or no shallower than it is), per
+            # centreline bin the smallest, eroded over +-2 bins and smoothed along the vessel; then averaged in space
+            # again so the veins of the group stay joined
+            sd0 = skin(X)[0]
+            al = np.zeros(len(X)); done = np.zeros(len(X), bool)
+            for a in (1.0, 0.75, 0.5, 0.25):
+                sda = skin(X + a * Dsm)[0]
+                ok = ~done & ((-sda >= SUP_KEEP) | (sda <= sd0)); al[ok] = a; done |= ok
+            o = 0; Da = np.zeros_like(Dsm)
+            for n, s in zip(own, Ss):
+                k = len(s); b = np.floor(s / SUP_STEP).astype(int); nb = b.max() + 1
+                ab = np.ones(nb); np.minimum.at(ab, b, al[o:o + k])
+                ab = minimum_filter1d(ab, SUP_ERODE, mode="nearest")
+                ab = gauss_along(ab[:, None], np.ones(nb), SUP_STEP, SUP_STEP)[:, 0]
+                Da[o:o + k] = np.interp(s, (np.arange(nb) + 0.5) * SUP_STEP, ab)[:, None] * Dsm[o:o + k]; o += k
+            num = np.zeros_like(X); np.add.at(num, i, K[:, None] * Da[j]); Dsm = num / den[:, None]
             o = 0
             for n in own:
                 k = len(VES[n]['v']); VES[n]['v'] = VES[n]['v'] + Dsm[o:o + k]
-                out[n]['max_shift_mm'] = r2(np.linalg.norm(Dsm[o:o + k], axis=1).max() * 1000, 1); o += k
+                out[n]['max_shift_mm'] = r2(np.linalg.norm(VES[n]['v'] - v0[n], axis=1).max() * 1000, 1); o += k
             log(f'  superficial layer {side}: ' + ', '.join(f'{n} max {out[n]["max_shift_mm"]} mm' for n in own))
     return out
 

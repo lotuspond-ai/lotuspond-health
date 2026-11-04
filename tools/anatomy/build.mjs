@@ -6,8 +6,10 @@
 // src/anatomy/bodies/<sex>.json (part metadata, bounds, organ pins and landmark positions). Each part is simplified
 // structure by structure, so small structures (a valve, a papilla) keep their share of the part's triangle budget, and
 // each structure's true (Hausdorff) error is bounded: the simplifier's quadric error lets thin double-layer shells (the
-// eyelid conjunctivae) fold into a crumpled sheet, so the result is checked by sampled distances both ways and the
-// structure gets more triangles until it is within tolerance. One node per part, named by its id, with its organ, tissue
+// eyelid conjunctivae) fold into a crumpled sheet, so the result is checked by sampled distances both ways (at most
+// 0.5 % of the probes beyond the structure's tolerance, none beyond twice it) and the structure gets more triangles
+// until it is within tolerance; each connected piece is simplified on its own so that small pieces cannot vanish. The
+// measured errors of every structure go to .cache/parts/<sex>/simplify.json. One node per part, named by its id, with its organ, tissue
 // and flags in the node's extras; no materials. Refuses to build when assemble.py found a part facing inward.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -24,12 +26,31 @@ await MeshoptSimplifier.ready; await MeshoptEncoder.ready;
 
 const read = (file, T) => { const b = fs.readFileSync(file); return new T(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength)); };
 
-/** Simplify one structure (a triangle range) towards `target` triangles, never past 1.5 mm of quadric error. */
-function simplifyRange(P, I, target) {
+/** Connected pieces (triangles joined by shared vertices) of a triangle range, as index arrays. */
+function pieces(I) {
+  const par = new Map();
+  const find = x => { let r = x; while (par.get(r) !== r) r = par.get(r); while (x !== r) { const nx = par.get(x); par.set(x, r); x = nx; } return r; };
+  for (const x of I) if (!par.has(x)) par.set(x, x);
+  for (let t = 0; t < I.length; t += 3) { const a = find(I[t]); par.set(find(I[t + 1]), a); par.set(find(I[t + 2]), a); }
+  const groups = new Map();
+  for (let t = 0; t < I.length; t += 3) { const r = find(I[t]); let l = groups.get(r); if (!l) groups.set(r, (l = [])); l.push(I[t], I[t + 1], I[t + 2]); }
+  return [...groups.values()].map(l => Uint32Array.from(l));
+}
+
+const concat = arrs => { const all = new Uint32Array(arrs.reduce((a, c) => a + c.length, 0)); let o = 0; for (const c of arrs) { all.set(c, o); o += c.length; } return all; };
+
+/** Simplify one structure (a triangle range) towards `target` triangles, never past `tol` of quadric error. Each
+ * connected piece is simplified on its own with its share of the target and at least 8 triangles, so a small piece
+ * (a cartilage ring, a fragment of a parcel) is reduced instead of collapsing to nothing. */
+function simplifyRange(P, I, target, tol) {
   const n = I.length / 3;
   if (target >= n) return I;
-  const [out] = MeshoptSimplifier.simplify(I, P, 3, Math.max(3, target * 3), 0.0015, ['LockBorder', 'ErrorAbsolute']);
-  return out;
+  const out = [];
+  for (const c of pieces(I)) {
+    const nc = c.length / 3, tc = Math.min(nc, Math.max(8, Math.round((target * nc) / n)));
+    out.push(tc >= nc ? c : MeshoptSimplifier.simplify(c, P, 3, Math.max(3, tc * 3), tol, ['LockBorder', 'ErrorAbsolute', 'Sparse'])[0]);
+  }
+  return concat(out);
 }
 
 /** Uniform grid over triangles (flat index array I into positions P) for "is any triangle within r" queries. */
@@ -112,23 +133,30 @@ function tolerance(P, I) {
   return Math.min(0.001, Math.max(0.00025, 0.04 * Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2])));
 }
 
-/** Fraction of probes of surface A farther than tol from surface B (sampled one-sided Hausdorff test). */
+/** Fractions of the probes of surface A farther than tol and farther than 2 tol from surface B (sampled one-sided
+ * Hausdorff test). */
 function outside(P, A, B, tol, m = 3000) {
-  const g = triGrid(P, B, Math.max(tol, meanEdge(P, B)));
-  const pr = probes(P, A, m); let bad = 0;
-  for (const p of pr) if (!near(g, p, tol)) bad++;
-  return pr.length ? bad / pr.length : 0;
+  const g = triGrid(P, B, Math.max(2 * tol, meanEdge(P, B)));
+  const pr = probes(P, A, m); let far = 0, far2 = 0;
+  for (const p of pr) if (!near(g, p, tol)) { far++; if (!near(g, p, 2 * tol)) far2++; }
+  return pr.length ? [far / pr.length, far2 / pr.length] : [0, 0];
 }
 
-/** Simplify towards target, doubling the target until both directions are within tolerance. */
+// a simplified structure is within tolerance when, both ways, at most FAR of its probes lie beyond its tolerance and
+// none beyond twice it (the true error is bounded; a single probe a hair past the tolerance does not cost full detail)
+const FAR = 0.005;
+const within = e => Math.max(e[0], e[2]) <= FAR && e[1] === 0 && e[3] === 0;
+
+/** Simplify towards target, doubling the target until both directions are within tolerance. err = [orig->new beyond
+ * tol, beyond 2 tol, new->orig beyond tol, beyond 2 tol] (fractions of probes) of the result. */
 function simplifyBounded(P, I, target) {
-  const n = I.length / 3; const tol = tolerance(P, I);
-  let t = target, out = simplifyRange(P, I, t), tries = 0;
-  while (out.length < I.length && tries < 7) {
-    if (outside(P, I, out, tol) === 0 && outside(P, out, I, tol) === 0) break;
-    tries++; t = Math.min(n, t * 2); out = t >= n ? I : simplifyRange(P, I, t);
+  const n = I.length / 3, tol = tolerance(P, I);
+  for (let t = target, tries = 0; ; tries++, t = Math.min(n, t * 2)) {
+    const out = t >= n ? I : simplifyRange(P, I, t, tol);
+    if (out.length >= I.length) return { out: I, tol, raised: tries, target, err: [0, 0, 0, 0] };
+    const err = [...outside(P, I, out, tol), ...outside(P, out, I, tol)];
+    if (within(err) || tries === 7) return { out, tol, raised: tries, target, err };
   }
-  return { out, tol, raised: tries, target };
 }
 
 /** Drop unused vertices; returns [positions, indices]. */
@@ -173,7 +201,7 @@ async function build(sex) {
   if (rig.inward_failing && Object.keys(rig.inward_failing).length)
     throw new Error(`${sex}: parts with more than ${rig.inward_max * 100} % of their area facing inward: ${JSON.stringify(rig.inward_failing)} (assemble.py)`);
   const names = JSON.parse(fs.readFileSync(path.join(dir, 'structures.json'), 'utf8'));
-  const raised = [];
+  const raised = [], errors = [], failing = [];
   const doc = new Document();
   const buffer = doc.createBuffer();
   const scene = doc.createScene('anatomy');
@@ -191,11 +219,13 @@ async function build(sex) {
       if (!n) return;
       const target = Math.min(n, Math.max(Math.min(n, 60), Math.round((part.budget * w[s]) / W)));
       const r = simplifyBounded(P, I.subarray(seg[s] * 3, seg[s + 1] * 3), target);
-      if (r.raised) raised.push(`${pid}/${names[pid]?.[s]?.name ?? s} ${n}->${target}->${r.out.length / 3} (tol ${(r.tol * 1000).toFixed(2)} mm)`);
+      const name = `${pid}/${names[pid]?.[s]?.name ?? s}`;
+      if (r.raised) raised.push(`${name} ${n}->${target}->${r.out.length / 3} (tol ${(r.tol * 1000).toFixed(2)} mm)`);
+      errors.push({ name, tris: n, target, out: r.out.length / 3, tol_mm: +(r.tol * 1000).toFixed(2), err: r.err.map(x => +x.toFixed(4)) });
+      if (!within(r.err)) failing.push(name);
       chunks.push(r.out);
     });
-    const all = new Uint32Array(chunks.reduce((a, c) => a + c.length, 0));
-    let o = 0; for (const c of chunks) { all.set(c, o); o += c.length; }
+    const all = concat(chunks);
     const [pos, idx] = compact(P, all);
     const nor = normals(pos, idx);
     const prim = doc.createPrimitive()
@@ -223,8 +253,11 @@ async function build(sex) {
   const bodies = path.join(root, 'src', 'anatomy', 'bodies');
   fs.mkdirSync(bodies, { recursive: true });
   fs.writeFileSync(path.join(bodies, `${sex}.json`), JSON.stringify({ ...out, triangles: total, license: sources.outputLicense.spdx }, null, 1) + '\n');
-  fs.writeFileSync(path.join(dir, 'simplify.json'), JSON.stringify({ raised }, null, 1));
-  console.log(`${sex}: ${Object.keys(out.parts).length} parts, ${total} triangles, ${(fs.statSync(glb).size / 1e6).toFixed(2)} MB, ${raised.length} structures given more triangles to stay within tolerance (${((Date.now() - t0) / 1000).toFixed(0)} s)`);
+  // every structure's sampled error both ways: [orig->GLB beyond tol, beyond 2 tol, GLB->orig beyond tol, beyond 2 tol]
+  fs.writeFileSync(path.join(dir, 'simplify.json'), JSON.stringify({ rule: `at most ${FAR * 100} % of probes beyond tol, none beyond 2 tol, both ways`, raised, failing, structures: errors }, null, 0));
+  const worst = errors.filter(e => e.out < e.tris).sort((a, b) => Math.max(b.err[0], b.err[2]) - Math.max(a.err[0], a.err[2]))[0];
+  console.log(`${sex}: ${Object.keys(out.parts).length} parts, ${total} triangles, ${(fs.statSync(glb).size / 1e6).toFixed(2)} MB, ${raised.length} structures given more triangles to stay within tolerance, `
+    + `${failing.length} outside it${failing.length ? ' ' + JSON.stringify(failing) : ''}; worst ${worst?.name} ${JSON.stringify(worst?.err)} at ${worst?.tol_mm} mm (${((Date.now() - t0) / 1000).toFixed(0)} s)`);
 }
 
 const which = process.argv[2] ?? 'all';

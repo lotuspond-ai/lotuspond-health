@@ -50,8 +50,11 @@ HRA_PARTS = {
     'veins': dict(sel=[r'blood_vasculature/.*(vena_cava|brachiocephalic_vein|renal_vein|iliac_vein|pudendal_vein|rectal_vein|sacral_vein|uterine_vein|ophthalmic_vein|retinal_vein|pulmonary_trunk|pulmonary_artery)'],
                   exclude=PORTAL + r'|superior_rectal_vein'),
     'hepatic_artery': dict(sel=[r'blood_vasculature/.*' + HEPATIC_ARTERIES]),
-    # the HRA heart's diaphragmatic surface sinks into the liver dome: carve the heart plus 4 mm (the diaphragm's room)
-    'liver': dict(sel=[r'_liver/'], exclude=r'(ligament|artery|vein|duct|_portal|blood_vasculature)', mode='solid', opening=1, carve=[(r'cardiac_chamber/', 0.004)]),
+    # the HRA heart's diaphragmatic surface sinks into the liver dome: carve the heart and the vessels on its surface
+    # (the posterior interventricular vessels and the middle and small cardiac veins stand proud of the chambers) plus
+    # 4 mm, the diaphragm's room
+    'liver': dict(sel=[r'_liver/'], exclude=r'(ligament|artery|vein|duct|_portal|blood_vasculature)', mode='solid', opening=1,
+                  carve=[(r'cardiac_chamber/', 0.004), (r'blood_vasculature_of_heart/.*' + CORONARY, 0.004), (r'blood_vasculature_of_heart/.*' + CARDIAC_VEINS, 0.004)]),
     'liver_ligaments': dict(sel=[r'_liver/.*ligament'], double=True),
     'gallbladder': dict(sel=[r'_gallbladder_/']),
     'bile_ducts': dict(sel=[r'_biliary_tree/']),
@@ -83,7 +86,9 @@ HRA_PARTS = {
     'thymus': dict(sel=[r'_thymus/']),
 }
 SPEC = {p[0]: dict(organ=p[1], tissue=p[2], flags=list(p[3]), budget=p[4]) for p in PARTS}
-LOBE_CARVE = [(r'cardiac_chamber/', 0.001), (r'blood_vasculature/.*/VH_[MF]_[^/]*aort[^/]*$', 0.001), (r'superior_vena_cava$', 0.001), (r'_thymus/', 0.001)]
+# the HRA male's right lower lobe reaches 3.2 mm into the liver dome: carving it keeps a 3 mm space for the diaphragm
+LOBE_CARVE = [(r'cardiac_chamber/', 0.001), (r'blood_vasculature/.*/VH_[MF]_[^/]*aort[^/]*$', 0.001), (r'superior_vena_cava$', 0.001), (r'_thymus/', 0.001),
+              (r'_liver/', 0.003)]
 INWARD_MAX = 0.01  # a part fails the build when more of its area than this is inside-out (lib.mesh.facing: exact parity test per patch)
 
 

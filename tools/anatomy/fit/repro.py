@@ -15,6 +15,8 @@ Male (the HRA male has the prostate, seminal vesicles and vasa deferentia, but n
 4. The HRA vas deferens of each side (matched by position, the HRA _L/_R names are swapped) stops above the tail of
    the epididymis; a duct of its own radius continues it from its end, along its direction, to the moved tail, kept
    outside the testis.
+5. The corpora cavernosa, corpus spongiosum and glans (fit/repro_penis.py) follow the HRA urethra into the cadaver's
+   penis, 1-2 mm inside its skin, with the urethra on the spongiosum's centre line.
 Female: the urethra (fit/repro_female.py), output with part 'bladder'.
 """
 import os, sys, json
@@ -300,8 +302,13 @@ def fit(sex='male'):
                                other_testis_clearance_mm=round(ext_other * 1000, 2),
                                start_gap_to_hra_end_mm=round(float(np.linalg.norm(Ce[0] - vas[s]['end'])) * 1000, 2),
                                hra_duct=vas[s]['name']))
+    # the erectile bodies (fit/repro_penis.py), kept clear of the fitted testes
+    from fit.repro_penis import fit_penis
+    pen_out, pen_rep, pen_aux = fit_penis(sex, [fitted[s]['t'] for s in 'lr'])
+    outputs += pen_out
+    report['penis'] = pen_rep
     report['ok'] = bool(all(v['ok'] for side in report['sides'].values() for k, v in side.items()
-                            if isinstance(v, dict) and 'ok' in v and k not in ('testis_volume_ml', 'testis_length_mm')))
+                            if isinstance(v, dict) and 'ok' in v and k not in ('testis_volume_ml', 'testis_length_mm')) and pen_rep['ok'])
     report['note'] = 'testis_volume_ml and testis_length_mm compare with adult values and do not gate ok: the contracted VH scrotum limits the size'
     write_group(sex, 'repro', outputs, report)
     qa(sex, outputs, out_dir)
@@ -312,7 +319,7 @@ def fit(sex='male'):
 def qa(sex, outputs, out_dir):
     from lib.qa import render_views, FRONT, LEFT, BOTTOM
     sk = skin(sex)
-    col = dict(testis='#c0392b', epididymis='#2e86c1', vas='#27ae60')
+    col = dict(testis='#c0392b', epididymis='#2e86c1', vas='#27ae60', corpora='#7d3c98', corpus='#e59866', glans='#f5b7b1')
     items = [dict(mesh=sk, color='#e8c4a8', opacity=0.3)]
     for o in outputs: items.append(dict(mesh=o['mesh'], color=col[o['name'].split('_')[0]]))
     for side in 'LR':
@@ -322,6 +329,14 @@ def qa(sex, outputs, out_dir):
     cams = {'front': dict(FRONT, target=c, radius=0.07), 'left': dict(LEFT, target=c, radius=0.07), 'bottom': dict(BOTTOM, target=c, radius=0.07),
             'back': dict(dir=(0, 0.02, -1), target=c, radius=0.06)}
     render_views(items, cams, os.path.join(out_dir, 'qa'))
+    # the penis: side view, and a sagittal section through the urethra
+    pen = [o for o in outputs if o['name'] in ('corpora_cavernosa', 'corpus_spongiosum', 'glans_penis')]
+    if pen:
+        cp = np.concatenate([o['mesh'][0] for o in pen]); c2 = cp.mean(0)
+        xu = float(np.median(hra_mesh(sex, r'other_urethra$')[0][:, 0]))
+        cams = {'penis-left': dict(LEFT, target=c2, radius=0.11), 'penis-front': dict(FRONT, target=c2, radius=0.11),
+                'penis-section': dict(LEFT, target=c2, radius=0.1, clip=[dict(normal=(-1, 0, 0), constant=xu + 0.0005)])}
+        render_views(items, cams, os.path.join(out_dir, 'qa'))
 
 
 def qa_female(sex, outputs, aux, out_dir):

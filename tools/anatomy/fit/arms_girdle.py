@@ -11,8 +11,9 @@ clavicle) is fitted by least squares to
     (subscapularis and serratus anterior lie between; Z-Anatomy p5/p50 5.3/11.6 mm) within a two-sided band, the
     inferior angle at its Z-Anatomy distance, no part of the scapula closer than 3 mm to a rib,
   - joint spaces: sternoclavicular (clavicle to the final manubrium) and acromioclavicular closest approach 1.2-2.8 mm,
+    with each facet facing its partner (facet centre to centre within Z-Anatomy's distance + 3 / 2 mm),
   - the costoclavicular space: the clavicle at least 6 mm from rib 1 and its cartilage lateral to the sternal end
-    (subclavius and the subclavian vein pass there), 3 mm at the sternal end (articular disc, costoclavicular ligament),
+    (subclavius and the subclavian vein pass there), 3 mm over the medial 25 mm (articular disc, costoclavicular ligament),
   - the clavicle (lateral two thirds) and the acromion subcutaneous, both bones inside the skin, the humeral head under
     the deltoid and centred front-to-back in the shoulder as in Z-Anatomy,
   - priors: the scapula's tilt, upward rotation and internal rotation relative to the chest wall as in Z-Anatomy, small
@@ -117,8 +118,10 @@ WALL_TOL = 3.5                  # mm: scapulothoracic gap band around Z-Anatomy'
 WALL_MIN = 3.0                  # mm: nowhere closer to a rib
 JOINT_SPACE = (1.2, 2.8)        # mm: sternoclavicular and acromioclavicular closest approach
 COSTOCLAV = (3.0, 6.0)          # mm: clavicle to rib 1 / first costal cartilage at the sternal end, lateral to it
-COSTOCLAV_MEDIAL = 0.015        # m (Z-Anatomy): the sternal end region, from the sternal facet centre
+COSTOCLAV_MEDIAL = 0.025        # m (Z-Anatomy): the sternal end region, from the sternal facet centre (costoclavicular
+                                # ligament and subclavius tendon; the subclavian vein passes lateral to them)
 PRIOR_DEG = dict(up=8.0, tilt=5.0, int=8.0, clav=10.0)
+FACET_TOL = dict(sc=3.0, ac=2.0)  # mm beyond Z-Anatomy's facet centre distances (criteria: <= 8 and <= 6 mm)
 GLIDE_MM = 2.0
 
 
@@ -228,6 +231,10 @@ def fit_girdle(L, W, skinT, lungsT, sex, log=print):
     Pc_sc = sub(Pc_sc, 150); Pc_ac = sub(Pc_ac, 120); Ps_ac = sub(Ps_ac, 120)
     medial = np.linalg.norm(Pc_z - c_se, axis=1) < COSTOCLAV_MEDIAL
     need_cc = np.where(medial, COSTOCLAV[0], COSTOCLAV[1])
+    # articular congruence: each facet faces its partner (centre to centre at most Z-Anatomy's distance + FACET_TOL), so
+    # the joint spaces cannot be met by sliding the clavicle's end along the manubrium or the acromion
+    notch_c = Gm(notch).mean(0); ae_c = ae.mean(0); af_c = af.mean(0)
+    sc_facet_hi = s0 * za_sc * 1e3 + FACET_TOL['sc']; ac_facet_hi = s0 * za_ac * 1e3 + FACET_TOL['ac']
 
     def soft_min(c, tau=0.4):
         m = c.min(); return m - tau * np.log(np.exp(-(c - m) / tau).sum())
@@ -283,6 +290,10 @@ def fit_girdle(L, W, skinT, lungsT, sex, log=print):
         dac = np.r_[d1, d2]
         out['ac_space'] = 1.5 * band(soft_min(dac, 0.2), *JOINT_SPACE)
         out['ac_min'] = 1.0 * np.sqrt(np.sum(np.maximum(0, 0.8 - dac) ** 2))
+        d_scf = float(np.linalg.norm(C(c_se[None])[0] - notch_c) * 1e3)
+        d_acf = float(np.linalg.norm(C(ae_c[None])[0] - S(af_c[None])[0]) * 1e3)
+        out['sc_facet'] = 2.0 * band(d_scf, None, sc_facet_hi)
+        out['ac_facet'] = 2.0 * band(d_acf, None, ac_facet_hi)
         dcc = rcT.closest(pc)[0] * 1e3
         out['costoclavicular'] = 1.0 * np.sqrt(np.sum(np.maximum(0, need_cc - dcc) ** 2))
         lc = lungsT.closest(pc)[0] * 1e3
@@ -297,7 +308,7 @@ def fit_girdle(L, W, skinT, lungsT, sex, log=print):
             out = {k: float(v) for k, v in out.items()}
             out.update({f'scap_{k}_deg': float(np.degrees(v)) for k, v in rot.items()})
             out.update(wall_p5=float(np.percentile(dw, 5)), wall_p50=float(np.median(dw)), wall_in_band_pct=float(np.mean(rw == 0) * 100),
-                       ia_mm=dia, sc_mm=float(ms.min()), ac_mm=float(dac.min()), costoclav_lat_mm=float(dcc[~medial].min()),
+                       ia_mm=dia, sc_mm=float(ms.min()), ac_mm=float(dac.min()), sc_facet_mm=d_scf, ac_facet_mm=d_acf, costoclav_lat_mm=float(dcc[~medial].min()),
                        costoclav_med_mm=float(dcc[medial].min()) if medial.any() else None)
             return out
         pri = [rot[k] / np.radians(PRIOR_DEG[k]) for k in ('up', 'tilt', 'int')]
@@ -305,7 +316,7 @@ def fit_girdle(L, W, skinT, lungsT, sex, log=print):
 
     x0 = np.zeros(12)
     step = np.r_[np.full(3, 1e-3), np.full(3, 0.05), np.full(3, 1e-3), np.full(3, 0.05)]
-    res = least_squares(resid, x0, method='trf', diff_step=step, max_nfev=50, x_scale=np.r_[np.full(3, 0.05), np.ones(3), np.full(3, 0.05), np.ones(3)])
+    res = least_squares(resid, x0, method='trf', diff_step=step, max_nfev=100, x_scale=np.r_[np.full(3, 0.05), np.ones(3), np.full(3, 0.05), np.ones(3)])
     C, S = maps(res.x)
     terms = {k: round(v, 2) for k, v in resid(res.x, detail=True).items()}
     t0 = {k: round(v, 2) for k, v in resid(x0, detail=True).items()}

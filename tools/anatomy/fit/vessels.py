@@ -607,8 +607,10 @@ LIMB = ('arm', 'leg')
 # veins re-swept as round tubes (crushed into flat sheets / crumpled by the deformation at the root of the neck)
 REROUND = {'male': ('Left_subclavian_vein', 'Right_subclavian_vein'), 'female': ('Right_subclavian_vein', 'Left_subclavian_vein', 'Right_brachiocephalic_vein')}
 AORTA_CLEAR = 0.0005      # veins kept this far outside the HRA aorta's outer wall (m)
+# HRA structures a placed Z-Anatomy vessel replaces: the assembly must leave them out (assemble.py is not this group's)
+ASSEMBLY_EXCLUDE = {'male': ['VH_M_left_common_carotid_artery_a', 'VH_M_left_common_carotid_artery_b']}
 REVIEW_MAX_MM, REVIEW_ASPECT, REVIEW_SUP_MM, REVIEW_PULSE_MM = 1.0, 2.0, 6.0, 5.0   # review criteria thresholds
-REALIGN_ABOVE = CHAIN_TOL + 5.0   # chain junctions whose measured end angle (vessels_measure) exceeds this are turned again
+REALIGN_ABOVE = CHAIN_TOL + 2.0   # chain junctions whose measured end angle (vessels_measure) exceeds this are turned again (the push-out adds a few degrees)
 PIN_CHAIN = 0.025                 # push-out fade-in from a chain junction ring: covers the stretch its axis is measured on
 
 
@@ -867,6 +869,7 @@ def run(sex, stage='all', render=True):
     step('internal_thoracic_lateral_to_sternum', RV.internal_thoracic_offsets, sex, VES)
     step('ijv_relative_to_carotid', RV.ijv_position, VES)
     rep['review'] = review
+    rep['assembly_exclude_hra'] = ASSEMBLY_EXCLUDE.get(sex, [])
     crit.append(dict(criterion='vessels inside the lung lobes (deepest)', value_mm=rm['lungs']['worst_mm'], threshold_mm=REVIEW_MAX_MM,
                      pass_=rm['lungs']['worst_mm'] <= REVIEW_MAX_MM))
     crit.append(dict(criterion='veins inside the HRA thoracic aorta (deepest)', value_mm=rm['aorta_veins']['worst_mm'], threshold_mm=REVIEW_MAX_MM,

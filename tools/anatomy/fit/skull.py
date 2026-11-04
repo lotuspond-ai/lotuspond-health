@@ -18,12 +18,15 @@ Method (per body):
     contents clear of the orbital walls, bone inside the skin with a minimum soft tissue (the brain wins where the
     Allen brain lies closer to the skin than bone + gap + scalp allow), occipital condyles onto the HRA C1 superior
     facets, the gland body below the HRA optic chiasm (the sella region moves down with it).
- 4. Teeth (fit/skull_teeth.py): each arch is moved rigidly with its jaw (one similarity per arch from the Z-Anatomy
-    alveolar bone to the placed bone; every tooth keeps its Z-Anatomy shape, no warp or field on the teeth), the upper
-    lateral incisors are stepped up along their axes to 0.75 mm above the central incisal edges, incisors and canines
-    closer than 3.8 mm to the skin are tipped lingually (rigidly, about their apical third), and the mandible with
-    the lower arch is re-seated in centric occlusion: condyles in the fossae (joint space 0.8-3 mm), arches in contact
-    without interpenetration, best overjet / canine / midline relation.
+ 4. Teeth (fit/skull_teeth.py): every tooth is moved rigidly (one similarity per tooth, its Z-Anatomy shape kept
+    exactly, no warp or field on the teeth): the arch's similarity from the Z-Anatomy alveolar bone to the placed bone,
+    then a translation with its own socket (mean bone residual around the root, smoothed along the arch). Incisors and
+    canines closer than 3 mm to the skin are tipped lingually about their apical third, never below a normal
+    inclination floor, then moved bodily lingually by up to 1.5 mm; the upper lateral incisors are stepped up along
+    their axes to 0.75 mm above the central incisal edges; and the mandible with the lower arch is re-seated in centric
+    occlusion: condyles in the fossae (joint space 0.8-3 mm), arches in contact without interpenetration, best overjet /
+    canine / midline relation with the posterior teeth in contact. Where the condyles leave too little overjet, the
+    lower incisors are tipped lingually (dentoalveolar compensation, up to 20 deg) and the jaw is seated again.
  5. Attachments (fit/skull_attach.py): the pituitary stalk stretched to the tuberal hypothalamus (gland body fixed);
     the female hyoid translated to the male HRA hyoid's position relative to the thyroid cartilage (scaled).
  6. Measurements (report.json), QA renders, write_group().
@@ -773,7 +776,14 @@ def run(sex, argv, L, zsk):
     P, lip_tr, teeth_info['lip_cover'] = K.fit_lips(P, T.skin_signed, log=log)
     for n, (Rl, tl) in lip_tr.items():
         Tn = tooth_tr[n]; tooth_tr[n] = Sim(Tn.s, Rl @ Tn.R, Rl @ Tn.t + tl)
-    P, seat1 = K.seat_occlusion(P, L, fmn, log=log)
+    P, lat_tr, teeth_info['upper_lateral_incisor_step'] = K.step_laterals(P, log=log)
+    for n, d_ in lat_tr.items():
+        Tn = tooth_tr[n]; tooth_tr[n] = Sim(Tn.s, Tn.R, Tn.t + d_)
+    P, seat1, comp_tr, teeth_info['lower_incisor_compensation'] = K.seat_compensated(P, L, fmn, log=log)
+    for n, (Rc, tc) in comp_tr.items():   # in the unseated jaw's frame (the seating below is applied after it)
+        Tn = tooth_tr[n]; tooth_tr[n] = Sim(Tn.s, Rc @ Tn.R, Rc @ Tn.t + tc)
+    # the seating closes the jaw (lower incisors up and forward): the lower anterior teeth get the lip cover again
+    P, lip2_tr, teeth_info['lip_cover_after_seating'] = K.fit_lips(P, T.skin_signed, jaws=('lower',), log=log)
     seat = dict(before_refinement=seat0, after_refinement=seat1, teeth=teeth_info)
     json.dump(dict(pre=seat0['transform'], post=seat1['transform']), open(os.path.join(work_dir(sex), 'mandible_seat.json'), 'w'))
     R1, t1 = np.array(seat1['transform']['R']), np.array(seat1['transform']['t'])
@@ -781,6 +791,7 @@ def run(sex, argv, L, zsk):
     for n, Tn in tooth_tr.items():   # x' = s R x + t from Z-Anatomy to the placed tooth (lower teeth: with the seating)
         sR, tt = Tn.s * Tn.R, Tn.t
         if n.startswith('lower_'): sR, tt = R1 @ sR, R1 @ tt + t1
+        if n in lip2_tr: R2, t2 = lip2_tr[n]; sR, tt = R2 @ sR, R2 @ tt + t2
         tj[n] = dict(sR=sR.tolist(), t=tt.tolist())
     json.dump(tj, open(os.path.join(work_dir(sex), 'teeth_rigid.json'), 'w'))
     # 3. the pituitary stalk stretched up to the tuberal hypothalamus; the female hyoid placed relative to the larynx

@@ -229,20 +229,24 @@ def lung_at_joints(ribgeoms, ribs, verts, lungs):
     return out
 
 
-def geodesic_length(mesh, n=3000):
-    """Length of a bar-shaped mesh: the geodesic diameter over a k-nearest-neighbour graph of surface samples (mm)."""
+def geodesic_length(mesh, n=3000, seeds=5):
+    """Length of a bar-shaped mesh: the geodesic diameter over a k-nearest-neighbour graph of surface samples (mm),
+    the median over `seeds` sample sets (one set alone scatters by 1-2 mm sd on a 10-16 cm cartilage)."""
     from scipy.sparse.csgraph import shortest_path
     from scipy import sparse as sp
-    P = sample_surface(mesh[0], mesh[1], n, seed=0)
-    d, i = cKDTree(P).query(P, k=8)
-    G = sp.coo_matrix((d[:, 1:].ravel(), (np.repeat(np.arange(len(P)), 7), i[:, 1:].ravel())), shape=(len(P), len(P))).tocsr()
-    g = shortest_path(G, indices=[0], directed=False)[0]; b = int(np.argmax(np.where(np.isfinite(g), g, -1)))
-    g = shortest_path(G, indices=[b], directed=False)[0]
-    return float(np.max(np.where(np.isfinite(g), g, -1))) * 1000
+    out = []
+    for seed in range(seeds):
+        P = sample_surface(mesh[0], mesh[1], n, seed=seed)
+        d, i = cKDTree(P).query(P, k=8)
+        G = sp.coo_matrix((d[:, 1:].ravel(), (np.repeat(np.arange(len(P)), 7), i[:, 1:].ravel())), shape=(len(P), len(P))).tocsr()
+        g = shortest_path(G, indices=[0], directed=False)[0]; b = int(np.argmax(np.where(np.isfinite(g), g, -1)))
+        g = shortest_path(G, indices=[b], directed=False)[0]
+        out.append(float(np.max(np.where(np.isfinite(g), g, -1))) * 1000)
+    return float(np.median(out))
 
 
 def cartilage_symmetry(C, carts, sternum, limit=1.2):
-    """Left/right symmetry of the costal cartilages per level: geodesic length of each and the distance of its
+    """Left/right symmetry of the costal cartilages per level: geodesic length of each (median of 5 sample sets) and the distance of its
     costochondral junction (the centre of its rib joint patch) from the sternum's midline (mm). Criterion: each
     cartilage within `limit` times its contralateral length."""
     xm = float(np.median(sternum[0][:, 0]))

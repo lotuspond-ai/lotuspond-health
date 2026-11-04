@@ -142,7 +142,7 @@ def fit_neck(sex, W, extra_fields=()):
     """The gland: cartilage similarity, slide so the isthmus lies over tracheal rings 2-4, growth to adult size about
     the isthmus (organs_thyroid: upper poles to the laminae's oblique lines, lower poles to ring 5, thickened about
     its bed), push-out and seating on the airway; the parathyroids follow and are reshaped to adult glands."""
-    from fit.organs_thyroid import isthmus_depth, grow_gland, place_gland, pth_shape, seat_pth, frame, PTH_EXT
+    from fit.organs_thyroid import isthmus_depth, grow_gland, place_gland, pth_shape, seat_pth, seat_pth_field, frame, PTH_EXT
     from lib.mesh import signed_volume
     from fit.organs_geom import vertex_normals
     rep = {}
@@ -195,7 +195,7 @@ def fit_neck(sex, W, extra_fields=()):
         nrm = vn[i] / np.linalg.norm(vn[i])
         centre = tv2[i] + nrm * (0.5 * PTH_EXT[2] + GAP_PTH)
         w = pth_shape(v, f, centre, nrm, a)
-        w = seat_pth(w, f, tfl, GAP_PTH)
+        w = seat_pth(seat_pth_field(w, f, tfl, GAP_PTH), f, thy, GAP_PTH)
         pth[k] = (w, orient_outward(w, f))
         prep[k] = dict(carried_to_seat_mm=round(float(np.linalg.norm(tv2[i] - c) * 1000), 2), seat=np.round(tv2[i], 4).tolist())
     rep['parathyroids'] = prep

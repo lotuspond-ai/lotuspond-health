@@ -422,14 +422,38 @@ def _drop_specks(solid, frac):
     return solid
 
 
+def cap_holes(v, f):
+    """(v, f) with each border loop closed by a fan of triangles around the loop's centroid, so that a voxel fill sees
+    the lumen of an open tube (the HRA aorta and vena cava segments are open at both ends and at their branches) as
+    inside, not just its wall. Loops through non-manifold border vertices are followed as far as they close."""
+    v = np.asarray(v, float); f = np.asarray(f, np.int64)
+    if not len(f): return v, f
+    e = np.concatenate([f[:, [0, 1]], f[:, [1, 2]], f[:, [2, 0]]])
+    _, inv, cnt = np.unique(np.sort(e, axis=1), axis=0, return_inverse=True, return_counts=True)
+    nxt = {}
+    for a, b in e[cnt[inv.ravel()] == 1]: nxt.setdefault(int(a), []).append(int(b))
+    nv, nf = [], []
+    for start in list(nxt):
+        while nxt.get(start):
+            loop, cur = [start], nxt[start].pop()
+            while cur != start and nxt.get(cur):
+                loop.append(cur); cur = nxt[cur].pop()
+            if cur != start or len(loop) < 3: continue
+            ci = len(v) + len(nv); nv.append(v[loop].mean(0))
+            nf += [(loop[(i + 1) % len(loop)], loop[i], ci) for i in range(len(loop))]
+    if not nv: return v, f
+    return np.vstack([v, np.array(nv)]), np.vstack([f, np.array(nf, np.int64)])
+
+
 def carve_region(carve, lo, n, h):
     """Voxels of the grid (lo, n, h) within `margin` of the solids of `carve` = [(meshes, margin), ...]. Each carving
-    solid is voxelised on its own box of the same lattice (so a solid cut by the grid's border still fills), then its
-    margin is added by a distance transform and the box is mapped into the grid."""
+    solid is capped (cap_holes: open tubes carve their lumen too) and voxelised on its own box of the same lattice (so
+    a solid cut by the grid's border still fills), then its margin is added by a distance transform and the box is
+    mapped into the grid."""
     from scipy import ndimage
     cut = np.zeros(n, bool)
     for meshes, margin in carve or ():
-        meshes = [m for m in meshes if len(m[1])]
+        meshes = [cap_holes(*m) for m in meshes if len(m[1])]
         if not meshes: continue
         v = np.concatenate([m[0] for m in meshes])
         pad = int(np.ceil(margin / h)) + 4
