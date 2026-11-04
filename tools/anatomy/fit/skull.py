@@ -311,7 +311,7 @@ def load_za(sex):
 
 # ------------------------------------------------------------------------------------------------ refinement
 REF = dict(gap_brain=0.0016, soft_min=0.0038, soft_max_vault=0.0090, eye_clear=0.0010, condyle_gap=0.0015, ball=0.005,
-           sigma=0.012, sigma_fine=0.006, ridge=1e-3, iters=4, iters_fine=6, w_brain=3.0, w_brain_out=5.0, w_skin_out=8.0, w_skin=2.0, w_skin_far=3.0,
+           sigma=0.012, sigma_fine=0.006, ridge=1e-3, iters=4, iters_fine=6, w_brain=3.0, w_brain_out=5.0, w_skin_out=8.0, w_skin=2.0, w_skin_far=2.0,
            w_eye=3.0, w_condyle=3.0, w_keep=0.6, max_step=0.0015, skin_hard=0.0012, orbit_clear=0.0005, w_orbit=4.0, soft_min_nasal=0.0033,
            pit_gap=0.0015, pit_r=0.009, w_pit=3.0)
 
@@ -398,26 +398,18 @@ def refine(sex, Wz, Z, T, L, M, zsk, cfg=REF, log=log, pre=None):
             fdisp = field(S0)  # this stage's own displacement: targets are increments of it
             tgt = fdisp.copy(); wts = np.full(len(S0), cfg['w_keep']); best = np.zeros(len(S0))
             ci = np.flatnonzero(is_cran); tr = cKDTree(S[ci])
-            column = np.zeros(len(S0), bool)
             if vb.any():
                 for kk, js in zip(np.flatnonzero(vb), tr.query_ball_point(bp[vb], 0.006)):
                     if not js: continue
                     js = ci[np.asarray(js)]; js = js[need[kk] > best[js]]
                     tgt[js] = fdisp[js] + need[kk] * bn[kk]; best[js] = need[kk]
                     wts[js] = np.maximum(wts[js], cfg['w_brain_out'] if not inside[kk] else cfg['w_brain'])
-                # the whole bone column over a brain point that needs room (inner and outer table, within 9 mm in a 60
-                # degree cone along the brain's outward normal): the scalp minimum must not push it back in
-                for kk, js in zip(np.flatnonzero(vb), tr.query_ball_point(bp[vb], 0.009)):
-                    if not js: continue
-                    js = ci[np.asarray(js)]; dv = S[js] - bp[kk]
-                    column[js[dv @ bn[kk] > 0.5 * np.linalg.norm(dv, axis=1)]] = True
             ss = T.skin_signed(S)
             _, js_ = T.skin_signed.tree.query(S); nsk = T.skin_signed.n[js_]
             # where the brain needs the bone to move out (the Allen brain lies within a few mm of the skin) the brain
-            # wins over the soft-tissue minimum; only bone closer than `skin_hard` to the skin is pulled back in. In the
-            # coarse stage this is decided afresh each iteration (early, widespread brain contacts must not switch the
-            # scalp minimum off for good); in the fine stage it is sticky, so brain and scalp do not take turns
-            relaxed = (relaxed if si > 0 else np.zeros(len(S0), bool)) | (best > 0) | column
+            # wins over the soft-tissue minimum; only bone closer than `skin_hard` to the skin is pulled back in. Sticky
+            # (once relaxed, always relaxed), so that brain and scalp do not take turns from one iteration to the next
+            relaxed |= best > 0
             smin = np.where(relaxed, cfg['skin_hard'], np.where(is_nasal, cfg['soft_min_nasal'], cfg['soft_min']))
             vs = ss > -smin
             tgt[vs] = fdisp[vs] - np.minimum(ss[vs] + smin[vs], cfg['max_step'])[:, None] * nsk[vs]
@@ -439,7 +431,8 @@ def refine(sex, Wz, Z, T, L, M, zsk, cfg=REF, log=log, pre=None):
             if far.any():
                 dd, jj = cKDTree(S).query(hitp[far]); ok = dd < 0.003
                 jj = jj[ok]; amt = np.minimum(t[far][ok] - cfg['soft_max_vault'], cfg['max_step'])
-                free = ~vs[jj] & (best[jj] == 0)
+                # never pull bone more than 4 mm in total (thick scalp over nuchal fat is not a reason to bulge the bone)
+                free = ~vs[jj] & (best[jj] == 0) & (np.linalg.norm(disp[jj], axis=1) < 0.004)
                 tgt[jj[free]] = fdisp[jj[free]] + amt[free][:, None] * vn[vault_all][far][ok][free]
                 wts[jj[free]] = cfg['w_skin_far']
             n_eye = 0
