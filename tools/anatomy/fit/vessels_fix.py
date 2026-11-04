@@ -12,7 +12,10 @@ spread with a Gaussian (SIGMA) over the vertices of the same group (vessels join
 Gaussian x ask so the largest ask nearby dominates, and scaled by the nearest ask's kernel value, so a vertex that asks
 gets its full push and its neighbours, across the tube and along it, nearly the same: the tube is translated locally,
 with a smooth falloff. The field is multiplied by the pin weight (0 at the junction rings, 1 beyond PIN of geodesic
-distance from them).
+distance from them). Between candidate refreshes a vertex is queried again once it has moved as far as its last
+clearance allowed (a neighbour the spread carries into a bone is seen at once). After the vertex iterations, PROBE_ITERS
+iterations also probe the inside of the faces near a bone (centroid and edge midpoints): a bone edge can poke through a
+4 mm face whose vertices are all clear, and the report measures surface samples.
 """
 import os, sys, json, re
 import numpy as np
@@ -30,6 +33,13 @@ SKIN_DEPTH = 0.0015   # vessel surface kept this far under the skin (m)
 SIGMA = 0.006         # spread of a push over the vessel (m)
 PIN = 0.015           # push-out fades in over this geodesic distance from a junction ring (m)
 ITERS = 40
+PROBE_ITERS = 30      # iterations with face probes after the vertex iterations
+PROBE_CAP = 0.0015    # largest move per probe iteration (m)
+FREE_R = 0.004        # while probing, an asking vertex is pushed toward the free part of its tube within this radius
+PROBE_NEAR = 0.0012   # faces with a vertex this close to a bone are probed (the vertex iterations leave contacts at CLEAR)
+# barycentric weights of the probes inside each face: centroid and edge midpoints (the measured penetration is on surface
+# samples, and a bone edge can poke through a 4 mm face whose vertices are all clear)
+PROBES = np.array([[1 / 3, 1 / 3, 1 / 3], [0.5, 0.5, 0.0], [0.0, 0.5, 0.5], [0.5, 0.0, 0.5]])
 BONE_SKIP = r'(ligament|enthesis|cartilage|meniscus|point|perichond|condyle|fossa|surface|groove|spongy)'
 GROUP_BONES = (('arms', ('skel_arms', 'skel_hands')), ('skull', ('skel_skull',)), ('foot', ('skel_feet',)),
                ('ribcage', ('skel_thorax', 'costal_cartilage', 'discs')))
@@ -68,6 +78,17 @@ def organ_meshes(sex):
         for o in parts.get(p, []):
             if o.get('source', 'HRA') != 'HRA' or o['name'] not in S.by_name: continue
             out.append((f'{p}/{o["name"]}', S.get(o['name'])))
+    # pelvic organs the iliac vessels pass: the ureters and ovaries where HRA gives them as closed surfaces (the uterine
+    # tubes and the bowel are open double-walled patches, whose lumen ray parity cannot tell from the outside)
+    from lib.mesh import is_closed
+    for p in ('ureters', 'reproductive'):
+        for o in parts.get(p, []):
+            if o.get('source', 'HRA') != 'HRA' or o['name'] not in S.by_name or not re.search(r'(ureter|ovary)$', o['name']): continue
+            m = S.get(o['name'])
+            if is_closed(m[1]): out.append((f'{p}/{o["name"]}', m))
+    # the lung lobes are solids rebuilt by assemble.py (their HRA entries are surface patches): taken as assembled
+    from fit.vessels_review import lung_meshes
+    out = [m for m in out if not m[0].startswith('lung_')] + lung_meshes(sex)
     man = os.path.join(FIT, sex, 'organs', 'manifest.json')
     if os.path.exists(man):
         for o in json.load(open(man)):
@@ -114,6 +135,7 @@ class Fixer:
     Only candidate vertices are queried exactly: those within CAND of a bone's dense surface samples or of the skin
     (coarse skin solid), refreshed every REFRESH iterations."""
     CAND, REFRESH = 0.016, 8
+    OCAND = 0.025         # organ candidates: vessels up to 2 cm deep in a lung lobe must be seen
 
     def __init__(self, sex, pts, log=print):
         from lib.mesh import dense_points
@@ -136,32 +158,91 @@ class Fixer:
         cb = np.flatnonzero(np.isfinite(d))
         cs = np.flatnonzero(self.skin_solid(X) > -self.CAND)
         if self.otree is not None:
-            d, _ = self.otree.query(X, distance_upper_bound=0.012); co = np.flatnonzero(np.isfinite(d))
+            d, _ = self.otree.query(X, distance_upper_bound=self.OCAND); co = np.flatnonzero(np.isfinite(d))
         else: co = np.zeros(0, int)
         return cb, cs, co
 
-    def run(self, X, groups, pin, log=print, iters=ITERS, skin_mask=None):
-        """X (n, 3) vessel vertices, groups (n,) system id, pin (n,) in [0, 1]. Returns the moved X and a log."""
+    def run(self, X, groups, pin, log=print, iters=ITERS, skin_mask=None, faces=None, probe_iters=PROBE_ITERS, extra=()):
+        """X (n, 3) vessel vertices, groups (n,) system id, pin (n,) in [0, 1]. Returns the moved X and a log.
+        With `faces` (m, 3) (vertex indices into X), `probe_iters` more iterations follow in which points inside the
+        faces near a bone are probed too (see PROBES)."""
         X = X.copy(); hist = []
         skin_mask = np.ones(len(X), bool) if skin_mask is None else skin_mask
         last = np.full(len(X), np.inf); lasto = np.full(len(X), np.inf)
-        for it in range(iters):
-            if it % self.REFRESH == 0:
-                cb, cs, co = self.candidates(X); q = cb; qo = co
+        # movement since each vertex's last exact query (bones, organs) and since the last candidate refresh: a vertex is
+        # queried again as soon as it may have come within reach, so a neighbour that the spread carries into a bone is
+        # seen in the next iteration (not only at the next refresh)
+        moved = np.zeros(len(X)); movedo = np.zeros(len(X)); moved_ref = np.zeros(len(X))
+        Fs = None; probe_from = iters; it = -1
+        while True:
+            it += 1
+            if it >= probe_from + (probe_iters if faces is not None else 0): break
+            probing = it >= probe_from
+            if it == probe_from:
+                # face probes: refresh every candidate's distance, then probe the faces with a vertex within PROBE_NEAR
+                cb, cs, co = self.candidates(X); moved_ref[:] = 0
+                sd, _, _ = self.bones.query(X[cb]); last[cb] = sd; moved[cb] = 0
+                nearv = np.zeros(len(X), bool); nearv[cb[sd < PROBE_NEAR]] = True
+                Fs = faces[nearv[faces].any(1)]
+                lastp = np.full(len(Fs) * len(PROBES), -np.inf); movedp = np.zeros(len(lastp))
+                log(f'  push-out face probes: {len(Fs)} faces near a bone, {len(Fs) * len(PROBES)} probes')
+                q = cb[last[cb] < CLEAR + 0.004]; qo = co[lasto[co] - movedo[co] < ORGAN_CLEAR + 0.004]
+            elif (it % self.REFRESH == 0 and not probing) or moved_ref.max() > 0.008:
+                cb, cs, co = self.candidates(X); q = cb; qo = co; moved_ref[:] = 0
             else:
-                q = cb[last[cb] < CLEAR + 0.004]            # between refreshes, only the vertices near a bone
-                qo = co[lasto[co] < ORGAN_CLEAR + 0.004]
+                q = cb[last[cb] - moved[cb] < CLEAR + 0.004]            # between refreshes, only the vertices that may be near a bone
+                qo = co[lasto[co] - movedo[co] < ORGAN_CLEAR + 0.004]
             need_b = np.full(len(X), -1.0); dirn = np.zeros_like(X)
             if len(q):
                 sd, dn, who = self.bones.query(X[q])
-                last[q] = sd
+                last[q] = sd; moved[q] = 0
                 need_b[q] = CLEAR - sd; dirn[q] = dn
+            worst_probe = 0.0
+            if probing and len(Fs):
+                # a probe inside a face asks for the push of the whole face: each of its three vertices takes the largest
+                # ask among its own and its faces' probes
+                P = np.einsum('pk,fkd->fpd', PROBES, X[Fs]).reshape(-1, 3)
+                qp = np.flatnonzero(lastp - movedp < CLEAR + 0.0015)
+                if len(qp):
+                    sdp, dnp, _ = self.bones.query(P[qp]); lastp[qp] = sdp; movedp[qp] = 0
+                    needp = CLEAR - sdp; a = needp > 1e-5
+                    worst_probe = float(max(0.0, needp.max() - CLEAR)) if len(needp) else 0.0
+                    if a.any():
+                        pa, nd, dd = qp[a], needp[a], dnp[a]
+                        fi = pa // len(PROBES)
+                        for k in range(3):
+                            vid = Fs[fi, k]
+                            best = need_b.copy(); np.maximum.at(best, vid, nd)
+                            win = nd >= best[vid] - 1e-12
+                            upd = vid[win]
+                            need_b[upd] = nd[win]; dirn[upd] = dd[win]
             act_b = need_b > 1e-5
+            if probing and act_b.any():
+                # a tube whose axis runs inside a thin bony wall (a sinus wall, the groove of a rib) asks to move both
+                # ways (each vertex toward its own nearest surface) and stalls: each asking vertex is pushed instead
+                # toward the free (clear) part of its own tube cross-section, so the section moves out to one side
+                A = np.flatnonzero(act_b)
+                clear = (last - moved) > CLEAR
+                tX = cKDTree(X)
+                for a, nb in zip(A, tX.query_ball_point(X[A], FREE_R)):
+                    nb = np.asarray(nb); nb = nb[(groups[nb] == groups[a]) & clear[nb]]
+                    if len(nb) < 3: continue
+                    u = X[nb].mean(0) - X[a]; L_ = np.linalg.norm(u)
+                    if L_ < 0.0008: continue
+                    u /= L_
+                    if u @ dirn[a] < -0.2: dirn[a] = u          # only where its own nearest surface points across the tube
             need_o = np.full(len(X), -1.0); dirno = np.zeros_like(X)
             if len(qo):
                 sd, dn, who = self.organs.query(X[qo])
-                lasto[qo] = sd
+                lasto[qo] = sd; movedo[qo] = 0
                 need_o[qo] = ORGAN_CLEAR - sd; dirno[qo] = dn
+            for ob, mask, clr in extra:
+                # extra obstacles for a subset of the vertices (the HRA aorta for the veins): asked like an organ
+                qe = np.flatnonzero(mask & (np.all((X >= ob.lo) & (X <= ob.hi), axis=1)))
+                if not len(qe): continue
+                sd, dn, _ = ob.query(X[qe]); ne = clr - sd
+                better = ne > need_o[qe]
+                need_o[qe[better]] = ne[better]; dirno[qe[better]] = dn[better]
             act_o = (need_o > 1e-5) & ~act_b
             need_s = np.full(len(X), -1.0); gsk = np.zeros_like(X)
             if len(cs):
@@ -177,12 +258,19 @@ class Fixer:
                              worst_bone_mm=round(float(max(0, need_b.max() - CLEAR) * 1000), 2),
                              worst_organ_mm=round(float(max(0, need_o.max() - ORGAN_CLEAR) * 1000), 2),
                              worst_skin_mm=round(float(max(0, (need_s[skin_mask].max() if skin_mask.any() else 0) - SKIN_DEPTH) * 1000), 2),
-                             candidates=[int(len(cb)), int(len(cs)), int(len(co))]))
-            if not len(src): break
+                             candidates=[int(len(cb)), int(len(cs)), int(len(co))],
+                             **(dict(phase='face probes', worst_probe_mm=round(worst_probe * 1000, 2)) if probing else {})))
+            if not len(src):
+                if probing or faces is None: break
+                probe_from = it + 1                         # converged on the vertices: go on to the face probes
+                continue
             fld = spread(X, src, vec[src], groups) * pin[:, None]
-            # never move more than 2 mm per iteration
-            L = np.linalg.norm(fld, axis=1); big = L > 0.002
-            fld[big] *= (0.002 / L[big])[:, None]
+            # never move more than 2 mm per iteration (1 mm while probing faces)
+            cap = PROBE_CAP if probing else 0.002
+            L = np.linalg.norm(fld, axis=1); big = L > cap
+            fld[big] *= (cap / L[big])[:, None]
             X += fld
+            step = np.minimum(L, cap); moved += step; movedo += step; moved_ref += step
+            if Fs is not None and len(Fs): movedp += np.repeat(step[Fs].max(1), len(PROBES))
         log(f'  push-out: {len(hist)} iterations, first {hist[0]}, last {hist[-1]}')
         return X, hist

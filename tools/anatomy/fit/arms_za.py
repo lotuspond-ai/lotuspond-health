@@ -86,13 +86,68 @@ def refine_sphere(P, c, r, band=0.003, iters=4, keep=None):
     return c, r
 
 
+# Radiocarpal seating. Z-Anatomy's carpus sits one fossa too far ulnar on the radius: its lunate is only ~20 % over the
+# radius (centre 6 mm ulnar of the radius's ulnar edge, 4.7 mm from the radius, 1.4 mm from the ulnar head, i.e. on the
+# ulna with no room for the articular disc) and its scaphoid spans both fossae. The hand (carpus, metacarpals, digits,
+# their joints kept) is translated, in Z-Anatomy space, so the lunate's proximal surface lies over the lunate fossa (the
+# ulnar LUNATE_FOSSA share of the radius's distal articular surface, its centre at LUNATE_FOSSA / 2) and the proximal
+# row is RC_SPACE from the radius (the scaphoid then lies in the scaphoid fossa against the styloid).
+LUNATE_FOSSA = 0.42
+RC_SPACE = 0.0018
+
+
+def _wrist_frame(M, sg):
+    """Distal-radius frame in Z-Anatomy space: fa (along the forearm, distal), ru (ulnar -> radial), and the radius's
+    distal articular surface samples."""
+    rv, rf = M['rad']; uv, _ = M['uln']
+    P = sample_surface(rv, rf, 20000, seed=4)
+    T = TriMesh(rv, rf)
+    _, _, _, nrm = T.signed_full(P)
+    c = rv.mean(0); w, V = np.linalg.eigh(np.cov((rv - c).T)); fa = V[:, -1]
+    if fa[1] > 0: fa = -fa                                   # distal = down in anatomical position
+    dist_r = rv[(rv - c) @ fa > ((rv - c) @ fa).max() - 0.02].mean(0)
+    dist_u = uv[(uv - c) @ fa > ((uv - c) @ fa).max() - 0.02].mean(0)
+    ru = dist_r - dist_u; ru = unit(ru - (ru @ fa) * fa)
+    t = (P - c) @ fa
+    art = P[(t > t.max() - 0.012) & (nrm @ fa > 0.6)]       # distal-facing surface of the distal 12 mm
+    return fa, ru, art, T
+
+
+def seat_carpus(M, sg, log=None):
+    """Z-Anatomy-space translation of the hand bones that seats the proximal carpal row on the radius (see above)."""
+    fa, ru, art, Trad = _wrist_frame(M, sg)
+    hand = {k: M[k] for k in ('sca', 'lun')}
+    prox = {}
+    for k, (v, f) in hand.items():
+        P = sample_surface(v, f, 4000, seed=6)
+        _, _, _, nrm = TriMesh(v, f).signed_full(P)
+        t = (P - P.mean(0)) @ fa
+        prox[k] = P[(nrm @ fa < -0.5) & (t < np.percentile(t, 35))]   # the proximal (radius-facing) surface
+    a = art @ ru
+    ul, rd = float(a.min()), float(a.max())
+    target = ul + 0.5 * LUNATE_FOSSA * (rd - ul)
+    d_ru = target - float(np.median(prox['lun'] @ ru))
+    delta = d_ru * ru
+    # joint space along the forearm axis: closest approach of scaphoid and lunate to the radius
+    for _ in range(3):
+        g = min(float(Trad.signed(sample_surface(*M[k], 3000, seed=7) + delta).min()) for k in ('sca', 'lun'))
+        delta = delta + (RC_SPACE - g) * fa
+    info = dict(delta_mm=(delta * 1e3).round(2).tolist(), radial_mm=float(d_ru * 1e3), articular_width_mm=float((rd - ul) * 1e3),
+                lunate_proximal_before_mm=float((np.median(prox['lun'] @ ru) - ul) * 1e3),
+                scaphoid_proximal_before_mm=float((np.median(prox['sca'] @ ru) - ul) * 1e3))
+    return delta, info
+
+
 class Limb:
-    """Joint centres, axes and articular surfaces of one Z-Anatomy upper limb (in Z-Anatomy space)."""
+    """Joint centres, axes and articular surfaces of one Z-Anatomy upper limb (in Z-Anatomy space). The hand bones are
+    seated on the radius (seat_carpus): L.seat is their Z-Anatomy-space translation, already applied to L.M / L.P."""
 
     def __init__(self, side):
         self.side = side
         self.sg = 1.0 if side == 'l' else -1.0
         self.M = load_bones(side)
+        self.seat, self.seat_info = seat_carpus(self.M, self.sg)
+        for k in HAND_BONES: self.M[k] = (self.M[k][0] + self.seat, self.M[k][1])
         self.man = manubrium()
         self.T = {k: TriMesh(*m) for k, m in self.M.items()}
         self.Tman = TriMesh(*self.man)

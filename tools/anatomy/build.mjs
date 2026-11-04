@@ -4,8 +4,11 @@
 //
 // Reads tools/anatomy/.cache/parts/<sex>/ (assemble.py) and writes public/models/anatomy-<sex>.glb plus the body's rig,
 // src/anatomy/bodies/<sex>.json (part metadata, bounds, organ pins and landmark positions). Each part is simplified
-// structure by structure, so small structures (a valve, a papilla) keep their share of the part's triangle budget.
-// One node per part, named by its id, with its organ, tissue and flags in the node's extras; no materials.
+// structure by structure, so small structures (a valve, a papilla) keep their share of the part's triangle budget, and
+// each structure's true (Hausdorff) error is bounded: the simplifier's quadric error lets thin double-layer shells (the
+// eyelid conjunctivae) fold into a crumpled sheet, so the result is checked by sampled distances both ways and the
+// structure gets more triangles until it is within tolerance. One node per part, named by its id, with its organ, tissue
+// and flags in the node's extras; no materials. Refuses to build when assemble.py found a part facing inward.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -21,12 +24,111 @@ await MeshoptSimplifier.ready; await MeshoptEncoder.ready;
 
 const read = (file, T) => { const b = fs.readFileSync(file); return new T(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength)); };
 
-/** Simplify one structure (a triangle range) towards `target` triangles, never past 1.5 mm of error. */
+/** Simplify one structure (a triangle range) towards `target` triangles, never past 1.5 mm of quadric error. */
 function simplifyRange(P, I, target) {
   const n = I.length / 3;
   if (target >= n) return I;
   const [out] = MeshoptSimplifier.simplify(I, P, 3, Math.max(3, target * 3), 0.0015, ['LockBorder', 'ErrorAbsolute']);
   return out;
+}
+
+/** Uniform grid over triangles (flat index array I into positions P) for "is any triangle within r" queries. */
+function triGrid(P, I, cell) {
+  const map = new Map();
+  const key = (i, j, k) => (i * 32768 + j) * 32768 + k;
+  const c = x => Math.floor(x / cell) + 16384;
+  for (let t = 0; t < I.length; t += 3) {
+    let lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+    for (let v = 0; v < 3; v++) for (let a = 0; a < 3; a++) { const x = P[I[t + v] * 3 + a]; if (x < lo[a]) lo[a] = x; if (x > hi[a]) hi[a] = x; }
+    for (let i = c(lo[0]); i <= c(hi[0]); i++) for (let j = c(lo[1]); j <= c(hi[1]); j++) for (let k = c(lo[2]); k <= c(hi[2]); k++) {
+      const kk = key(i, j, k); let l = map.get(kk); if (!l) map.set(kk, (l = [])); l.push(t);
+    }
+  }
+  return { map, cell, key, c, P, I };
+}
+
+/** Squared distance from point p to triangle (a, b, c) (Ericson). */
+function d2tri(p, a, b, c) {
+  const sub = (x, y) => [x[0] - y[0], x[1] - y[1], x[2] - y[2]], dot = (x, y) => x[0] * y[0] + x[1] * y[1] + x[2] * y[2];
+  const ab = sub(b, a), ac = sub(c, a), ap = sub(p, a);
+  const d1 = dot(ab, ap), d2 = dot(ac, ap); let q;
+  if (d1 <= 0 && d2 <= 0) q = a;
+  else {
+    const bp = sub(p, b), d3 = dot(ab, bp), d4 = dot(ac, bp);
+    if (d3 >= 0 && d4 <= d3) q = b;
+    else {
+      const vc = d1 * d4 - d3 * d2;
+      if (vc <= 0 && d1 >= 0 && d3 <= 0) { const v = d1 / (d1 - d3); q = [a[0] + v * ab[0], a[1] + v * ab[1], a[2] + v * ab[2]]; }
+      else {
+        const cp = sub(p, c), d5 = dot(ab, cp), d6 = dot(ac, cp);
+        if (d6 >= 0 && d5 <= d6) q = c;
+        else {
+          const vb = d5 * d2 - d1 * d6;
+          if (vb <= 0 && d2 >= 0 && d6 <= 0) { const w = d2 / (d2 - d6); q = [a[0] + w * ac[0], a[1] + w * ac[1], a[2] + w * ac[2]]; }
+          else {
+            const va = d3 * d6 - d5 * d4;
+            if (va <= 0 && d4 - d3 >= 0 && d5 - d6 >= 0) { const w = (d4 - d3) / ((d4 - d3) + (d5 - d6)); q = [b[0] + w * (c[0] - b[0]), b[1] + w * (c[1] - b[1]), b[2] + w * (c[2] - b[2])]; }
+            else { const den = 1 / (va + vb + vc), v = vb * den, w = vc * den; q = [a[0] + ab[0] * v + ac[0] * w, a[1] + ab[1] * v + ac[1] * w, a[2] + ab[2] * v + ac[2] * w]; }
+          }
+        }
+      }
+    }
+  }
+  const d = sub(p, q); return dot(d, d);
+}
+
+/** Whether some triangle of the grid lies within r (r <= cell) of p. */
+function near(g, p, r) {
+  const r2 = r * r, { P, I } = g; const pt = k => [P[k * 3], P[k * 3 + 1], P[k * 3 + 2]];
+  const ci = g.c(p[0]), cj = g.c(p[1]), ck = g.c(p[2]);
+  for (let i = ci - 1; i <= ci + 1; i++) for (let j = cj - 1; j <= cj + 1; j++) for (let k = ck - 1; k <= ck + 1; k++) {
+    const l = g.map.get(g.key(i, j, k)); if (!l) continue;
+    for (const t of l) if (d2tri(p, pt(I[t]), pt(I[t + 1]), pt(I[t + 2])) <= r2) return true;
+  }
+  return false;
+}
+
+/** Points to check a surface by: its vertices (strided to at most m) and its triangle centroids (strided). */
+function probes(P, I, m) {
+  const out = []; const nt = I.length / 3; const st = Math.max(1, Math.floor(nt / m));
+  for (let t = 0; t < nt; t += st) {
+    const a = I[t * 3] * 3, b = I[t * 3 + 1] * 3, c = I[t * 3 + 2] * 3;
+    out.push([P[a], P[a + 1], P[a + 2]]);
+    out.push([(P[a] + P[b] + P[c]) / 3, (P[a + 1] + P[b + 1] + P[c + 1]) / 3, (P[a + 2] + P[b + 2] + P[c + 2]) / 3]);
+  }
+  return out;
+}
+
+const meanEdge = (P, I) => {
+  let s = 0, n = 0; const st = Math.max(3, Math.floor(I.length / 3 / 500) * 3);
+  for (let t = 0; t + 2 < I.length; t += st) { const a = I[t] * 3, b = I[t + 1] * 3; s += Math.hypot(P[a] - P[b], P[a + 1] - P[b + 1], P[a + 2] - P[b + 2]); n++; }
+  return n ? s / n : 0;
+};
+
+/** Error tolerance of a structure: 4 % of its size, between 0.25 and 1 mm. */
+function tolerance(P, I) {
+  const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+  for (let i = 0; i < I.length; i++) for (let a = 0; a < 3; a++) { const x = P[I[i] * 3 + a]; if (x < lo[a]) lo[a] = x; if (x > hi[a]) hi[a] = x; }
+  return Math.min(0.001, Math.max(0.00025, 0.04 * Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2])));
+}
+
+/** Fraction of probes of surface A farther than tol from surface B (sampled one-sided Hausdorff test). */
+function outside(P, A, B, tol, m = 3000) {
+  const g = triGrid(P, B, Math.max(tol, meanEdge(P, B)));
+  const pr = probes(P, A, m); let bad = 0;
+  for (const p of pr) if (!near(g, p, tol)) bad++;
+  return pr.length ? bad / pr.length : 0;
+}
+
+/** Simplify towards target, doubling the target until both directions are within tolerance. */
+function simplifyBounded(P, I, target) {
+  const n = I.length / 3; const tol = tolerance(P, I);
+  let t = target, out = simplifyRange(P, I, t), tries = 0;
+  while (out.length < I.length && tries < 7) {
+    if (outside(P, I, out, tol) === 0 && outside(P, out, I, tol) === 0) break;
+    tries++; t = Math.min(n, t * 2); out = t >= n ? I : simplifyRange(P, I, t);
+  }
+  return { out, tol, raised: tries, target };
 }
 
 /** Drop unused vertices; returns [positions, indices]. */
@@ -68,6 +170,10 @@ async function build(sex) {
   const t0 = Date.now();
   const dir = path.join(here, '.cache', 'parts', sex);
   const rig = JSON.parse(fs.readFileSync(path.join(dir, 'rig.json'), 'utf8'));
+  if (rig.inward_failing && Object.keys(rig.inward_failing).length)
+    throw new Error(`${sex}: parts with more than ${rig.inward_max * 100} % of their area facing inward: ${JSON.stringify(rig.inward_failing)} (assemble.py)`);
+  const names = JSON.parse(fs.readFileSync(path.join(dir, 'structures.json'), 'utf8'));
+  const raised = [];
   const doc = new Document();
   const buffer = doc.createBuffer();
   const scene = doc.createScene('anatomy');
@@ -84,7 +190,9 @@ async function build(sex) {
     sizes.forEach((n, s) => {
       if (!n) return;
       const target = Math.min(n, Math.max(Math.min(n, 60), Math.round((part.budget * w[s]) / W)));
-      chunks.push(simplifyRange(P, I.subarray(seg[s] * 3, seg[s + 1] * 3), target));
+      const r = simplifyBounded(P, I.subarray(seg[s] * 3, seg[s + 1] * 3), target);
+      if (r.raised) raised.push(`${pid}/${names[pid]?.[s]?.name ?? s} ${n}->${target}->${r.out.length / 3} (tol ${(r.tol * 1000).toFixed(2)} mm)`);
+      chunks.push(r.out);
     });
     const all = new Uint32Array(chunks.reduce((a, c) => a + c.length, 0));
     let o = 0; for (const c of chunks) { all.set(c, o); o += c.length; }
@@ -115,7 +223,8 @@ async function build(sex) {
   const bodies = path.join(root, 'src', 'anatomy', 'bodies');
   fs.mkdirSync(bodies, { recursive: true });
   fs.writeFileSync(path.join(bodies, `${sex}.json`), JSON.stringify({ ...out, triangles: total, license: sources.outputLicense.spdx }, null, 1) + '\n');
-  console.log(`${sex}: ${Object.keys(out.parts).length} parts, ${total} triangles, ${(fs.statSync(glb).size / 1e6).toFixed(2)} MB (${((Date.now() - t0) / 1000).toFixed(0)} s)`);
+  fs.writeFileSync(path.join(dir, 'simplify.json'), JSON.stringify({ raised }, null, 1));
+  console.log(`${sex}: ${Object.keys(out.parts).length} parts, ${total} triangles, ${(fs.statSync(glb).size / 1e6).toFixed(2)} MB, ${raised.length} structures given more triangles to stay within tolerance (${((Date.now() - t0) / 1000).toFixed(0)} s)`);
 }
 
 const which = process.argv[2] ?? 'all';

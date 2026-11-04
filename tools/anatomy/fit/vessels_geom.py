@@ -197,7 +197,9 @@ def mesh_components(n, f):
 # ------------------------------------------------------------------------------------------------ exact signed distance
 class TriSet:
     """Exact closest-point distance to a triangle mesh plus the inside test by ray parity (rays along +z, -z and +x;
-    majority vote, so small holes in a mesh do not flip the sign)."""
+    majority vote, so small holes in a mesh do not flip the sign; when those three disagree, two more rays (-x, +y)
+    decide by a majority of five: a ray grazing a defect of the HRA femur's posterior condyles otherwise turns points
+    5 mm behind the bone into deep "insides", which the push-out then drives into the bone)."""
 
     def __init__(self, v, f, cell=0.002):
         self.v = np.asarray(v, float); self.f = np.asarray(f, np.int64)
@@ -207,7 +209,7 @@ class TriSet:
         self.lo = self.v.min(0); self.hi = self.v.max(0)
         self.maxedge = float(np.max([np.linalg.norm(A - B, axis=1).max(), np.linalg.norm(B - C, axis=1).max(), np.linalg.norm(C - A, axis=1).max()]))
         self.cell = cell
-        self.bins = {ax: self._bin(ax) for ax in (2, 0)}
+        self.bins = {ax: self._bin(ax) for ax in (2, 0, 1)}
 
     def _bin(self, ax):
         """Triangles binned by their bounding box in the plane perpendicular to axis ax: (sorted cell keys, start
@@ -274,7 +276,13 @@ class TriSet:
         if inb.any():
             q = p[inb]
             votes = self._parity(q, 2, 1).astype(int) + self._parity(q, 2, -1).astype(int) + self._parity(q, 0, 1).astype(int)
-            res[inb] = votes >= 2
+            r = votes >= 2
+            amb = (votes == 1) | (votes == 2)
+            if amb.any():
+                qa = q[amb]
+                v5 = votes[amb] + self._parity(qa, 0, -1).astype(int) + self._parity(qa, 1, 1).astype(int)
+                r[amb] = v5 >= 3
+            res[inb] = r
         return res
 
     def signed(self, p, band=0.004):

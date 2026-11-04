@@ -8,7 +8,7 @@
    degrees of the stub's axis; their branch angles stay Z-Anatomy's. A side junction (a vessel ending on the wall of an
    HRA vessel) is measured by how far its end ring centre lies outside that vessel (0 = on or inside the wall).
  - bone penetration: surface samples of each vessel against every bone (exact closest-point distance, inside test by
-   majority vote of three ray-parity tests): fraction inside and deepest penetration, samples in a bony canal or foramen
+   majority vote of three ray-parity tests, five when they disagree): fraction inside and deepest penetration, samples in a bony canal or foramen
    reported apart; vertebral arteries also through each transverse foramen of
    C6-C1 (the centerline point at the foramen's level is enclosed by the vertebra in its transverse plane and the
    vessel keeps clear of the bone).
@@ -184,6 +184,25 @@ def bones(VES, names, obstacles):
                        worst_bone=obstacles.names[who[np.argmin(out_)]] if np.isfinite(out_).any() and who[np.argmin(out_)] >= 0 else None,
                        pass_=bool(depth <= BONE_MAX))
     return rows
+
+
+def stub_conflicts(VES, J, bone_rows, obstacles):
+    """Informative, for the vessels that fail the bone criterion and join an HRA stub: how deep that HRA stub itself lies
+    in the same bone, and how far the vessel's deepest sample is from the junction (an HRA vessel that penetrates a bone
+    another group placed leaves no clear position for the vessel that must meet its end)."""
+    out = {}
+    for n, b in bone_rows.items():
+        if b['pass_'] or b['worst_bone'] not in obstacles.names: continue
+        T = obstacles.sets[obstacles.names.index(b['worst_bone'])]
+        x = VES[n]; ps = samples(x['v'], x['f']); sdv, _ = T.signed(ps, band=0.01); i = int(np.argmin(sdv))
+        for j in J:
+            if n not in j['vessels']: continue
+            hv, hf = j['hra_mesh']
+            p = np.concatenate([hv, sample_surface(hv, hf, 4000, seed=1)])
+            sd, _ = T.signed(p, band=0.01)
+            out[n] = dict(junction=j['key'], hra=j['info']['hra'], bone=b['worst_bone'], hra_stub_max_depth_mm=r3(max(0.0, -float(np.min(sd))) * 1000),
+                          vessel_max_depth_mm=r3(max(0.0, -float(sdv[i])) * 1000), deepest_point_to_junction_mm=r3(np.linalg.norm(ps[i] - j['c']) * 1000))
+    return out
 
 
 def organs(VES, names, obstacles):

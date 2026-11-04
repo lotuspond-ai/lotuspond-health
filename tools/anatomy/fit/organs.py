@@ -2,18 +2,24 @@
 Usage: python3 fit/organs.py [male|female|all] [--no-render] [--from=<stage>]  (earlier stages from the stage cache)
 
 Every structure starts from the cached trunk warp (fit.common.get_warp(sex, 'trunk')) and is then refined against the
-HRA neighbours it touches (see organs_neck, organs_adrenal, organs_diaphragm, organs_gi, organs_settle):
+HRA neighbours it touches (see organs_neck, organs_adrenal, organs_diaphragm, organs_bed, organs_tube, organs_final,
+organs_settle):
   1. thyroid + parathyroids  similarity from the larynx cartilages, slide to tracheal rings 2-4, smooth push-out,
                              glands slid onto the lobes' posterior surface
   2. adrenals                undistorted gland laid on its warped pose, free-space pose search, 2 mm off the kidney
   3. diaphragm               as-rigid-as-possible fit (openings follow the HRA IVC / aorta, domes under the lung bases
                              and heart, collision push-out, local thinning); the glands then re-seated in the remaining
                              free space (the right one behind the IVC) and the crura made to give way to them
-  4. stomach                 as-rigid-as-possible fit: pylorus snapped onto the duodenal opening; in the male an
-                             emptier, contracted stomach (the HRA male's high splenic flexure fills the bed of
-                             Z-Anatomy's filled stomach); final settle (smooth push-out checked on the whole surface)
-  5. oesophagus              tube re-routed to the cardia through the hiatus, cross-sections kept, the wall laid
-                             through the cardiac rim, final settle with the lumen wall giving way
+  4. stomach                 the smooth boundary of the free part of its bed (organs_bed): the warped Z-Anatomy
+                             stomach voxelised, its neighbours subtracted, bridges to the cardiac ring and the HRA
+                             duodenal opening, signed distance smoothed under the no-overlap constraint, surface
+                             extracted, orifice rims laid onto their rings
+  5. oesophagus              a smooth tube swept along a smoothed route (organs_tube) with Z-Anatomy's own
+                             cross-sections, flattened front-to-back where squeezed, ending in the cardiac ring
+  6. final clearances        (organs_final) the glands re-seated rigidly off their kidneys (dense surface samples, then
+                             a lift along the kidney's normal); the diaphragm settled locally off our oesophagus
+                             (hiatus), stomach and glands and the HRA aorta, its two faces paired so that it thins
+                             rather than folds (its domes stay as stage 3 balanced them between thorax and abdomen)
 Stages are cached in .cache/fit/<sex>/organs/cache/stage-*.pkl; --from=<stage> reruns from that stage.
 Contacts with our own thin structures are measured with fields that use their own (consistent) face normals, and
 the oesophagus, trachea and bronchi count as solid organs (lumen included).
@@ -29,11 +35,14 @@ from lib.mesh import sample_surface, signed_volume, orient_outward, merge  # noq
 from fit.common import write_group  # noqa: E402
 from fit.organs_data import (warped, hra, field, log, level, level_name, VERTS, vertebrae, out_dir, cache_dir, ZA_NAMES, LOBES,  # noqa: E402
                              vessel_centreline, ribs, za_original)
-from fit.organs_geom import Field, mesh_field  # noqa: E402
+from fit.organs_geom import Field, mesh_field, winding, is_closed  # noqa: E402
 from fit.organs_neck import fit_neck, isthmus, ring_profile, PTH  # noqa: E402
 from fit.organs_adrenal import fit_adrenals  # noqa: E402
 from fit.organs_diaphragm import fit_diaphragm, crossing  # noqa: E402
-from fit.organs_gi import fit_stomach, fit_esophagus, loop_axis, esophagus_field, warped_esophagus_field  # noqa: E402
+from fit.organs_gi import loop_axis, esophagus_field, warped_esophagus_field  # noqa: E402
+from fit.organs_bed import fit_stomach_bed  # noqa: E402
+from fit.organs_tube import fit_esophagus_sweep, profile, end_radius  # noqa: E402
+from fit.organs_final import reseat_gland, settle_diaphragm  # noqa: E402
 
 GROUP = 'organs'
 DEPTH_MAX = 1.0        # mm
@@ -47,18 +56,30 @@ def crit(value, threshold, ok, unit='', **kw):
     return d
 
 
-def penetration(mesh, fl, n=20000, seed=3, exclude=None):
-    """(% of the mesh surface inside fl, deepest mm)."""
+def penetration(mesh, fl, n=20000, seed=3, exclude=None, closed=None):
+    """(% of the mesh surface inside fl, deepest mm, samples the field put inside that the exact test clears).
+    closed: the neighbour's own closed mesh (v, f) when fl is one of our oriented fields: every sample the field puts
+    inside is checked with the exact winding number of that mesh (a voxel field's sign can be wrong in folds and
+    narrow pockets of a thin sheet such as the diaphragm's crura)."""
     p = sample_surface(*mesh, n, seed=seed)
     if exclude is not None: p = p[~exclude(p)]
     d = fl(p)
     ins = d < 0
-    return round(float(ins.mean() * 100), 3), round(float(max(0.0, -d.min()) * 1000), 2)
+    cleared = 0
+    if closed is not None and ins.any():
+        w = winding(p[ins], *closed)
+        keep = np.abs(w) > 0.5
+        cleared = int((~keep).sum())
+        idx = np.flatnonzero(ins); ins[idx[~keep]] = False
+    depth = float(-d[ins].min()) if ins.any() else 0.0
+    return round(float(ins.mean() * 100), 3), round(max(0.0, depth) * 1000, 2), cleared
 
 
-def pair(mesh, fl, n=20000, exclude=None, listed=True):
-    frac, depth = penetration(mesh, fl, n=n, exclude=exclude)
-    return dict(inside_pct=frac, deepest_mm=depth, ok=bool(frac <= FRAC_MAX and depth <= DEPTH_MAX), listed=listed)
+def pair(mesh, fl, n=20000, exclude=None, listed=True, closed=None):
+    frac, depth, cleared = penetration(mesh, fl, n=n, exclude=exclude, closed=closed)
+    d = dict(inside_pct=frac, deepest_mm=depth, ok=bool(frac <= FRAC_MAX and depth <= DEPTH_MAX), listed=listed)
+    if closed is not None: d['field_flags_cleared_by_winding_number'] = cleared
+    return d
 
 
 def level_crit(sex, y, lo, hi):
@@ -130,6 +151,8 @@ def measure(sex, out, aux):
     for k in ('stomach', 'diaphragm', 'adrenal_l', 'adrenal_r', 'thyroid'):
         own[k] = mesh_field(*out[k], 0.0006, cap=(k == 'stomach'))
     own['esophagus'] = esophagus_field(*out['esophagus'], aux['esophagus_centreline'])
+    # exact inside test for our own closed meshes (diaphragm, glands, thyroid)
+    cl = {k: (out[k] if is_closed(out[k][1]) else None) for k in ('diaphragm', 'adrenal_l', 'adrenal_r', 'thyroid')}
     st, es, di = out['stomach'], out['esophagus'], out['diaphragm']
     pyl, car, ring = aux['stomach_loops']
     cc, cn, crad = loop_axis(st[0][car])
@@ -139,16 +162,16 @@ def measure(sex, out, aux):
     pairs = {}
     # stomach
     pairs['stomach'] = {k: pair(st, F(k)) for k in ('liver', 'spleen', 'pancreas', 'colon', 'kidney_l', 'kidney_r')}
-    pairs['stomach']['diaphragm'] = pair(st, own['diaphragm'])
+    pairs['stomach']['diaphragm'] = pair(st, own['diaphragm'], closed=cl['diaphragm'])
     pairs['stomach']['gallbladder'] = pair(st, F('gallbladder'), listed=False)
     pairs['stomach']['duodenum (beyond the pylorus)'] = pair(st, F('duodenum'), exclude=near_pylorus, listed=False)
-    pairs['stomach']['adrenal_l'] = pair(st, own['adrenal_l'], listed=False)
+    pairs['stomach']['adrenal_l'] = pair(st, own['adrenal_l'], listed=False, closed=cl['adrenal_l'])
     # oesophagus
     pairs['esophagus'] = {k: pair(es, F(k)) for k in ('trachea', 'trach_cart', 'la', 'aorta', 'spine')}
-    pairs['esophagus']['diaphragm'] = pair(es, own['diaphragm'])
+    pairs['esophagus']['diaphragm'] = pair(es, own['diaphragm'], closed=cl['diaphragm'])
     for k in ('heart', 'bronchi', 'cricoid', 'thyroid_cart', 'liver'):
         pairs['esophagus'][k] = pair(es, F(k), listed=False)
-    pairs['esophagus']['thyroid'] = pair(es, own['thyroid'], listed=False)
+    pairs['esophagus']['thyroid'] = pair(es, own['thyroid'], listed=False, closed=cl['thyroid'])
     pairs['esophagus']['stomach (beyond the junction)'] = pair(es, own['stomach'], exclude=near_junction, listed=False)
     # diaphragm
     pairs['diaphragm'] = {k: pair(di, F(k), n=40000) for k in ('lungs', 'heart', 'liver', 'spleen', 'ivc', 'aorta')}
@@ -161,7 +184,7 @@ def measure(sex, out, aux):
         a = out[f'adrenal_{s}']
         pairs[f'adrenal_{s}'] = {k: pair(a, F(k), n=6000) for k in ('ivc', 'liver', 'spleen', 'pancreas', 'aorta', 'duodenum', 'colon', 'spine',
                                                                     f'kidney_{s}')}
-        pairs[f'adrenal_{s}']['diaphragm'] = pair(a, own['diaphragm'], n=6000)
+        pairs[f'adrenal_{s}']['diaphragm'] = pair(a, own['diaphragm'], n=6000, closed=cl['diaphragm'])
         pairs[f'adrenal_{s}']['stomach'] = pair(a, own['stomach'], n=6000)
     # thyroid
     pairs['thyroid'] = {k: pair(out['thyroid'], F(k), n=10000) for k in ('thyroid_cart', 'cricoid', 'trachea', 'trach_cart')}
@@ -228,8 +251,15 @@ def measure(sex, out, aux):
                                          vertical=round(float((cv[:, 1].min() - ic[1]) * 1000), 1))
     rings = ring_profile(sex, c0, av)
     ri = [j + 1 for j, (a0, a1) in enumerate(rings) if a0 - 0.002 <= depth / 1000 <= a1 + 0.002]
+    # tracheal rings proper: the profile's bands that start below the cricoid's lower border (bands above it are the
+    # cricoid arch itself), numbered from the first
+    below = [(a0, a1) for a0, a1 in rings if a0 >= -0.001]
+    ri2 = [j + 1 for j, (a0, a1) in enumerate(below) if a0 - 0.002 <= depth / 1000 <= a1 + 0.002]
+    if not ri2 and below:
+        ri2 = [1 + int(np.argmin([min(abs(depth / 1000 - a0), abs(depth / 1000 - a1)) for a0, a1 in below]))]
     tv = out['thyroid'][0]; sv = (tv - c0) @ av
     R['thyroid_rings'] = dict(rings_mm=[(round(a0 * 1000, 1), round(a1 * 1000, 1)) for a0, a1 in rings], isthmus_ring=ri,
+                              isthmus_tracheal_ring=ri2, isthmus_in_front_of_rings_2_4=bool(ri2 and min(ri2) <= 4 and max(ri2) >= 2),
                               lobes_from_mm=round(float(sv.min() * 1000), 1), lobes_to_mm=round(float(sv.max() * 1000), 1),
                               note='distances below the cricoid\'s lower border along the airway; rings from the anterior tracheal cartilage profile')
     # parathyroids
@@ -247,14 +277,20 @@ def measure(sex, out, aux):
     for k in ('stomach', 'esophagus', 'diaphragm', 'adrenal_l', 'adrenal_r', 'thyroid'):
         vol[k] = round(abs(signed_volume(*out[k])) * 1e6, 2)
     R['volumes_cm3'] = vol
+    # stomach shape: the fundus rises above the cardia, to its left, under the left dome of the diaphragm
+    sv = st[0]
+    apex = sv[int(np.argmax(sv[:, 1]))]
+    _, dd = closest_on_mesh(*di, apex[None])
+    R['fundus_under_left_dome'] = crit(round(float((apex[1] - cc[1]) * 1000), 1), '> 0 above the GE junction, left of it, <= 15 mm below the diaphragm',
+                                       bool(apex[1] > cc[1] and apex[0] > cc[0] and dd[0] <= 0.015), unit='mm above the GE junction',
+                                       apex=np.round(apex, 4).tolist(), left_of_cardia_mm=round(float((apex[0] - cc[0]) * 1000), 1),
+                                       gap_to_diaphragm_mm=round(float(dd[0] * 1000), 1),
+                                       pylorus_right_of_cardia_mm=round(float((cc[0] - pc[0]) * 1000), 1),
+                                       lowest_point_below_cardia_mm=round(float((cc[1] - sv[:, 1].min()) * 1000), 1))
     return R
 
 
-STAGES = ('neck', 'adrenals', 'diaphragm', 'stomach', 'esophagus')
-# an emptier, contracted stomach (linear scale of the rest shape, see organs_gi.fit_stomach): the HRA male's splenic
-# flexure rises into the left upper quadrant and leaves a bed far smaller than Z-Anatomy's filled stomach; the female
-# bed takes a nearly full one (None: the scale follows the free share of the bed)
-EMPTY = {'male': 0.72, 'female': None}
+STAGES = ('neck', 'adrenals', 'diaphragm', 'stomach', 'esophagus', 'final', 'measure')   # --from=measure: re-measure only
 
 
 def _stage(sex, name, frm, compute):
@@ -324,17 +360,23 @@ def fit(sex, render=True, frm=None):
         # triangles (a gland is small against the sheet's triangles and would slip between its vertices)
         from fit.organs_settle import settle
         dv, r['crura_off_glands'] = settle(dv, df, [(f'adrenal_{s_}', mesh_field(*ad2[s_], 0.0005), 0.0006) for s_ in 'lr'],
-                                           iters=8, w=2.0, inward=False, log=log, label='crura settle')
+                                           iters=20, w=8.0, inward=False, log=log, label='crura settle')
         return (dv, orient_outward(dv, df)), r, ad2
     (dv, df), rep['diaphragm'], ad = _stage(sex, 'diaphragm', frm, diaphragm)
     out['diaphragm'] = (dv, df)
     out['adrenal_l'], out['adrenal_r'] = ad['l'], ad['r']
-    dfl = mesh_field(dv, df, 0.0006)
+    _dfl = {}
+
+    def dfl():                                          # built only when a stage that needs it runs (about a minute)
+        if 'd' not in _dfl: _dfl['d'] = mesh_field(dv, df, 0.0006)
+        return _dfl['d']
     afl = {s_: mesh_field(*ad[s_], 0.0005) for s_ in 'lr'}
+
+    prof = profile(W)                                   # Z-Anatomy's oesophagus cross-sections at body scale
 
     def stomach():
         log(sex, 'stomach')
-        return fit_stomach(sex, W, own=[('diaphragm', dfl), ('adrenal_l', afl['l'])], inside=[ad['l'][0]], empty=EMPTY[sex])
+        return fit_stomach_bed(sex, W, end_radius(prof), own=[('diaphragm', dfl()), ('adrenal_l', afl['l'])])
     st, rep['stomach'], loops = _stage(sex, 'stomach', frm, stomach)
     out['stomach'] = st; aux['stomach_loops'] = loops
 
@@ -342,11 +384,24 @@ def fit(sex, render=True, frm=None):
         log(sex, 'oesophagus')
         sfl = mesh_field(*st, 0.0008, cap=True)
         thf = mesh_field(*thy, 0.0005)
-        es, erep, tube = fit_esophagus(sex, W, st, loops[1], own=[('thyroid', thf), ('diaphragm', dfl), ('stomach', sfl)])
-        return es, erep
+        return fit_esophagus_sweep(sex, W, st, loops[1], own=[('thyroid', thf), ('stomach', sfl)], prof=prof)
     es, erep = _stage(sex, 'esophagus', frm, esophagus)
     erep = dict(erep); aux['esophagus_centreline'] = erep.pop('centreline'); rep['esophagus'] = erep
     out['esophagus'] = es
+
+    def final():
+        log(sex, 'final clearances')
+        r = {}
+        sfl = mesh_field(*st, 0.0008, cap=True)
+        ad2 = {}
+        for s_ in 'lr':
+            ad2[s_], r[f'adrenal_{s_}'] = reseat_gland(sex, s_, out[f'adrenal_{s_}'], own=[('stomach', sfl)] if s_ == 'l' else [])
+        own = [('stomach', sfl), ('esophagus', esophagus_field(*es, aux['esophagus_centreline']))]
+        own += [(f'adrenal_{s_}', mesh_field(*ad2[s_], 0.0005)) for s_ in 'lr']
+        dia, r['diaphragm'] = settle_diaphragm(sex, out['diaphragm'], own)
+        return dia, ad2, r
+    dia, ad2, rep['final'] = _stage(sex, 'final', frm, final)
+    out['diaphragm'] = dia; out['adrenal_l'], out['adrenal_r'] = ad2['l'], ad2['r']
     log(sex, 'measuring')
     rep['criteria'] = measure(sex, out, aux)
     crit_keys = [k for k, v in rep['criteria'].items() if isinstance(v, dict) and 'ok' in v]

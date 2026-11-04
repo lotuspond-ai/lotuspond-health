@@ -38,8 +38,11 @@ from lib.register import umeyama  # noqa: E402
 GROUP = 'ribcage'
 SIDE_SIGN = {'l': 1.0, 'r': -1.0}
 RIB_OBSTACLES = [('lungs', RB.LUNG_CLEAR), ('heart', RB.ORGAN_CLEAR), ('liver', RB.ORGAN_CLEAR), ('spleen', RB.ORGAN_CLEAR),
-                 ('kidneys', RB.ORGAN_CLEAR), ('aorta', 0.001)]
-CART_OBSTACLES = [('lungs', RB.LUNG_CLEAR), ('heart', 0.002), ('liver', RB.ORGAN_CLEAR)]
+                 ('kidneys', RB.ORGAN_CLEAR), ('aorta', 0.001), ('great_veins', 0.0015)]
+CART_OBSTACLES = [('lungs', RB.LUNG_CLEAR), ('heart', 0.002), ('liver', RB.ORGAN_CLEAR), ('great_veins', 0.0015)]
+CCJ_TOL = 0.003          # a rib's anterior end is bent toward its costochondral target only as far as it lies beyond this
+CCJ_WEIGHT = 300.0       # weight (per mm^2) of that pull in the bending QP: below the clearances, above the smoothness
+CCJ_MAX = 0.05           # the bend moves a rib's end at most this far toward its target; its cartilage takes up the rest
 STERNUM_CLEAR = dict(heart=0.0035, lungs=0.0005, liver=0.0015, skin=0.004)
 
 
@@ -88,22 +91,93 @@ def chain_stretch_pair(cands, w_sym=SYM_WEIGHT):
     return dict(l=float(sl[i]), r=float(sr[j]))
 
 
-def chain_stretch(place, rg, e, ZA, n, s, st_v, s0, default):
-    """Length factor of true rib n (1-7) that closes the spine-rib-cartilage-sternum chain: the rib's anterior end
-    (where its costal cartilage attaches) lands one natural cartilage length (Z-Anatomy's chord between the
-    cartilage's two joints, at body scale) from the cartilage's facet on the fitted sternum. A weak pull toward the
-    warp's own course length breaks ties."""
+MIRROR = np.array([-1.0, 1.0, 1.0])
+
+
+def ccj_targets(sex, places, stretch, RG, C, ZA, st_v, s0):
+    """Where the anterior end of ribs 1-10 belongs (its costochondral junction): one natural cartilage chord (Z-Anatomy's
+    distance between the cartilage's two joint patches, at body scale) from the cartilage's other joint - its facet on
+    the fitted sternum (ribs 1-7), or its facet on the cartilage above (8-10, the interchondral joints: Z-Anatomy's
+    cartilage above carried rigidly to its own target) - in the direction the two sides agree on: the mean of the left
+    rib's direction and the mirrored right one (about the sternum's midline), each read off the warped course.
+    The trunk warp alone compresses some courses (female right ribs 1-3 to 0.66-0.72 of their length, left 8-10 short):
+    the ribs there ended 2-4 cm from their partners and the cartilages stretched to 1.3-2.3x their other side.
+    Returns ({(n, side): dict(T=target, q=anchor, R=cartilage rotation)}, info)."""
     st_keys = ['manubrium', 'sternum_body', 'xiphoid']
-    q = np.concatenate([st_v[k][e['sternum_nn'][e['sternum_piece'] == pi]] for pi, k in enumerate(st_keys)]).mean(0)
-    cz = ZA[f'cart_{n}_{s}'][0]
-    chord = s0 * float(np.linalg.norm(cz[e['rib']].mean(0) - cz[e['sternum']].mean(0)))
-    tip_idx = np.unique(e['rib_nn'])
-    sts = np.arange(STRETCH_RANGE[0], STRETCH_RANGE[1] + 1e-9, 0.01); costs = []; ds = []
+    Rst = {k: umeyama(s0 * ZA[k][0], st_v[k], scale=False).R for k in st_keys}
+    out, info = {}, {}
+    for n in range(1, 11):
+        q, chord, u, tip, Rloc, dza = {}, {}, {}, {}, {}, {}
+        for s in 'lr':
+            e = C[(n, s)]; cz = ZA[f'cart_{n}_{s}'][0]
+            if n <= 7:
+                q[s] = np.concatenate([st_v[k][e['sternum_nn'][e['sternum_piece'] == pi]] for pi, k in enumerate(st_keys)]).mean(0)
+                other = cz[e['sternum']].mean(0)
+                Rloc[s] = Rst[st_keys[int(np.bincount(e['sternum_piece']).argmax())]]
+            else:
+                up = out[(n - 1, s)]; cp = ZA[f'cart_{n - 1}_{s}'][0]; ep = C[(n - 1, s)]
+                q[s] = up['T'] + s0 * up['R'] @ (cp[e['above_nn']].mean(0) - cp[ep['rib']].mean(0))
+                other = cz[e['above']].mean(0)
+                Rloc[s] = up['R']
+            dza[s] = cz[e['rib']].mean(0) - other
+            chord[s] = s0 * float(np.linalg.norm(dza[s]))
+            v, _ = places[(n, s)](stretch[(n, s)])
+            tip[s] = v[np.unique(e['rib_nn'])].mean(0)
+            u[s] = (tip[s] - q[s]) / np.linalg.norm(tip[s] - q[s])
+        # each side's direction counts by how well its warped rib already closes the chain at the natural cartilage
+        # length (inverse variance, 5% floor): a side whose warped course is compressed or overshoots counts little
+        wt = {s: 1.0 / (0.05 ** 2 + (np.linalg.norm(tip[s] - q[s]) / chord[s] - 1) ** 2) for s in 'lr'}
+        us = wt['l'] * u['l'] + wt['r'] * MIRROR * u['r']; us /= np.linalg.norm(us)
+        for s, uu in (('l', us), ('r', MIRROR * us)):
+            Tt = q[s] + chord[s] * uu
+            R = RB_rotation_between(Rloc[s] @ dza[s], Tt - q[s]) @ Rloc[s]      # the cartilage's own turn, for the level below
+            out[(n, s)] = dict(T=Tt, q=q[s], R=R)
+            info[f'{n}{s}'] = dict(anchor='sternum' if n <= 7 else f'cartilage {n - 1}', chord_mm=mm1(chord[s]),
+                                   warped_tip_to_anchor_mm=mm1(np.linalg.norm(tip[s] - q[s])), warped_tip_to_target_mm=mm1(np.linalg.norm(tip[s] - Tt)),
+                                   direction_weight=round(wt[s] / (wt['l'] + wt['r']), 3),
+                                   direction_left_vs_mirrored_right_deg=round(float(np.degrees(np.arccos(np.clip(u['l'] @ (MIRROR * u['r']), -1, 1)))), 1))
+    return out, info
+
+
+def RB_rotation_between(a, b):
+    from lib.register import rotation_between
+    return rotation_between(a, b)
+
+
+NECK_TURN_MAX = 15.0     # deg: the rib's turn about its neck axis (the costovertebral axis through head and tubercle)
+NECK_TURN_COST = 1.0     # mm^2 of end-to-target error per deg^2 of that turn
+
+
+def neck_axis(rg, v):
+    """The rib's axis of motion: through the head (centre of its articular facets) and the tubercle."""
+    head = np.concatenate([rg.facets[k][0] for k in ('head_lo', 'head_up') if k in rg.facets])
+    c = v[head].mean(0)
+    t = v[rg.facets['tub'][0]].mean(0) if 'tub' in rg.facets else v[(rg.s > rg.s_head + 0.015) & (rg.s < rg.s_head + 0.03)].mean(0)
+    ax = t - c
+    return c, ax / np.linalg.norm(ax)
+
+
+def turn(p, c, ax, th):
+    r = np.atleast_2d(p) - c
+    return c + r * np.cos(th) + np.cross(ax, r) * np.sin(th) + np.outer(r @ ax, ax) * (1 - np.cos(th))
+
+
+def target_stretch(place, rg, tip_idx, Tt, default, lo=STRETCH_RANGE[0], hi=STRETCH_RANGE[1]):
+    """The two degrees of freedom a rib has between its joints and its costochondral target: its length (the stretch
+    of the body-scale Z-Anatomy rib along the warped course) and its turn about the neck axis (pump/bucket handle).
+    Returns (stretches, cost per stretch, best turn per stretch): the anterior end to the target (mm^2), plus weak
+    pulls toward the warp's own course length and no turn."""
+    sts = np.arange(lo, hi + 1e-9, 0.01); ths = np.radians(np.arange(-NECK_TURN_MAX, NECK_TURN_MAX + 1e-6, 0.5))
+    costs, best = [], []
     for st in sts:
         v, _ = place(st)
-        d = float(np.linalg.norm(v[tip_idx].mean(0) - q)); ds.append(d)
-        costs.append(((d - chord) * 1000) ** 2 + 0.25 * ((st - default) * 100) ** 2)
-    return sts, np.array(costs), dict(cartilage_chord_target_mm=mm1(chord), tip_to_sternal_facet_mm={round(float(a), 2): mm1(b) for a, b in zip(sts, ds)})
+        c, ax = neck_axis(rg, v)
+        p0 = v[tip_idx].mean(0)
+        Q = np.array([turn(p0, c, ax, th)[0] for th in ths])
+        k =(np.linalg.norm(Q - Tt, axis=1) * 1000) ** 2 + NECK_TURN_COST * np.degrees(ths) ** 2
+        j = int(np.argmin(k))
+        costs.append(k[j] + 0.25 * ((st - default) * 100) ** 2); best.append(float(ths[j]))
+    return sts, np.array(costs), np.array(best)
 
 
 def fit_ribs(sex, W, ZA, RG, T, verts, overlap, C=None, st_v=None):
@@ -111,29 +185,31 @@ def fit_ribs(sex, W, ZA, RG, T, verts, overlap, C=None, st_v=None):
     obstacles = [(T[k], c) for k, c in RIB_OBSTACLES if k in T]
     radial = RB.Radial(T['lungs'])
     s0 = warp_scale(sex)
-    # the Z-Anatomy rib at body scale along the warped rib's course (the warp alone stretches ribs 0.7-1.5x); the true
-    # ribs' lengths close the chain to the sternum (both sides of a level together, nearly symmetric), the others
-    # follow the warp within 10%
+    # the Z-Anatomy rib at body scale along the warped rib's course (the warp alone stretches ribs 0.7-1.5x); ribs 1-10
+    # are sized to bring their anterior end to its costochondral target (both sides of a level together, nearly
+    # symmetric) and then bent smoothly the rest of the way; ribs 11 and 12 follow the warp within 10%
     places, stretch, chain = {}, {}, {}
     for key, rg in RG.items():
         places[key], stretch[key] = RB.sweep(rg, ZA[f'rib_{key[0]}_{key[1]}'][0], W[f'rib_{key[0]}_{key[1]}'][0], s0, prepared=True)
+    tgt, tinfo, neck = {}, {}, {}
     if C is not None and st_v is not None:
-        for n in range(1, 8):
-            cands = {}
-            for s in 'lr':
-                sts, costs, ic = chain_stretch(places[(n, s)], RG[(n, s)], C[(n, s)], ZA, n, s, st_v, s0, stretch[(n, s)])
-                cands[s] = (sts, costs); chain[(n, s)] = ic
-            pick = chain_stretch_pair(cands)
+        tgt, tinfo = ccj_targets(sex, places, stretch, RG, C, ZA, st_v, s0)
+        for n in range(1, 11):
+            full = {s: target_stretch(places[(n, s)], RG[(n, s)], np.unique(C[(n, s)]['rib_nn']), tgt[(n, s)]['T'], stretch[(n, s)]) for s in 'lr'}
+            pick = chain_stretch_pair({s: full[s][:2] for s in 'lr'})
             for s in 'lr':
                 stretch[(n, s)] = pick[s]
-                ic = chain[(n, s)]; chain[(n, s)] = dict(cartilage_chord_target_mm=ic['cartilage_chord_target_mm'],
-                                                         tip_to_sternal_facet_mm=ic['tip_to_sternal_facet_mm'][round(pick[s], 2)])
+                neck[(n, s)] = float(full[s][2][np.argmin(np.abs(full[s][0] - pick[s]))])
+                chain[(n, s)] = dict(ccj_target=tinfo[f'{n}{s}'], neck_turn_deg=round(float(np.degrees(neck[(n, s)])), 1))
     for key, rg in RG.items():
         n, s = key; place = places[key]; st = stretch[key]
         v, i0 = place(st); i0.update(chain.get(key, {}))
-        # keep the rib inside the body: shorten it (down to 0.85) while its anterior quarter comes within SKIN_CLEAR + 1.5 mm of the skin
+        if neck.get(key):
+            c, ax = neck_axis(rg, v); v = turn(v, c, ax, neck[key])
+        # ribs 11, 12 (no costochondral target): shorten (down to 0.85) while the anterior quarter comes within
+        # SKIN_CLEAR + 1.5 mm of the skin; ribs 1-10 are kept inside by the bending below
         tip = rg.s > rg.length * 0.75
-        while -T['skin'].sdf(v[tip]).max() < RB.SKIN_CLEAR + 0.0015 and st > STRETCH_RANGE[0] + 1e-9:
+        while key not in tgt and -T['skin'].sdf(v[tip]).max() < RB.SKIN_CLEAR + 0.0015 and st > STRETCH_RANGE[0] + 1e-9:
             st = max(STRETCH_RANGE[0], st - 0.01); v, i0b = place(st); i0 = dict(i0, **i0b, shortened_for_skin=True)
         i0['stretch'] = round(st, 3)
         zone = RB.conflict_zone(v, s, n, overlap, verts, rg=rg)
@@ -143,10 +219,17 @@ def fit_ribs(sex, W, ZA, RG, T, verts, overlap, C=None, st_v=None):
             v1, i1b = RB.seat(rg, v1, verts, T['lungs'], skip=zone)
             i1 = dict(i1, second_pass=i1b)
         zone = RB.conflict_zone(v1, s, n, overlap, verts, rg=rg)
-        v2, i2 = RB.bend(v1, RB.rib_basis(rg.s, rg.length, rg.s_rigid + 0.004), obstacles, T['skin'], radial=radial, skip=zone)
+        target = None
+        if key in tgt:
+            ti = np.unique(C[key]['rib_nn']); tp = v1[ti].mean(0); Tt = tgt[key]['T']
+            dT = float(np.linalg.norm(Tt - tp))
+            if dT > CCJ_MAX: Tt = tp + (Tt - tp) * (CCJ_MAX / dT)            # the cartilage takes up the rest
+            target = (ti, Tt, CCJ_TOL, CCJ_WEIGHT)
+        v2, i2 = RB.bend(v1, RB.rib_basis(rg.s, rg.length, rg.s_rigid + 0.004), obstacles, T['skin'], radial=radial, skip=zone, target=target)
         out[key] = v2
         info[f'{n}{s}'] = dict(sweep=i0, seat=i1, bend=i2)
-        log(sex, f'rib {n}{s}: seat {i1["rot_deg"]:.1f} deg / {i1["shift_mm"]:.1f} mm, bend max {i2["max_mm"]:.1f} mm')
+        log(sex, f'rib {n}{s}: stretch {st:.2f}, seat {i1["rot_deg"]:.1f} deg / {i1["shift_mm"]:.1f} mm, bend max {i2["max_mm"]:.1f} mm'
+                 + (f', end to target {i2["target_before_mm"]:.1f} -> {i2["target_after_mm"]:.1f} mm' if target is not None else ''))
     return out, info
 
 
@@ -345,8 +428,8 @@ def rib_lengths(RG, ribs_v, s0):
     lr = {str(n): round(lens[(n, 'l')] / lens[(n, 'r')], 3) for n in range(1, 13)}
     r = np.array([v['ratio_to_body_scale'] for v in out.values()])
     return dict(note='length of the fitted rib along its centreline / Z-Anatomy rib at body scale (the trunk warp alone gives '
-                     '0.72-1.54); true ribs are sized within 0.85-1.20 to close the chain to the sternum, the others follow the '
-                     'warp within 0.9-1.1', range=[round(float(r.min()), 3), round(float(r.max()), 3)], left_over_right=lr, per_rib=out)
+                     '0.72-1.54); ribs 1-10 are sized within 0.85-1.20 and turned about their neck axis to bring their anterior end to '
+                     'its costochondral target (ccj_targets), then bent smoothly the rest of the way; ribs 11, 12 follow the warp within 0.9-1.1', range=[round(float(r.min()), 3), round(float(r.max()), 3)], left_over_right=lr, per_rib=out)
 
 
 def mm1(x):

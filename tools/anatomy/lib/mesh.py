@@ -386,36 +386,302 @@ def _closest_point_triangle(p, a, b, c):
     return out
 
 
-def remesh_solid(meshes, h=0.0012, close=2, smooth=4, project=True, opening=0):
-    """One closed surface enclosing the union of (possibly open, overlapping) surface patches.
-    Rasterises the patches into voxels, closes gaps of up to `close` voxels, fills the inside, extracts the zero level of
-    a signed distance field and projects it onto the original patches where they are close (keeping their detail)."""
+def _lattice_box(v, h, pad, origin):
+    """Grid corner and size covering points v with `pad` voxels of margin, on the lattice origin + h * integer."""
+    lo = origin + h * np.floor((v.min(0) - origin) / h - pad)
+    hi = v.max(0) + pad * h
+    return lo, np.ceil((hi - lo) / h).astype(int) + 1
+
+
+def voxel_solid(meshes, lo, n, h, close=2, opening=0, specks=0.02):
+    """Solid voxels of (possibly open, overlapping) surface patches on the grid (lo, n, h): rasterise the patches, close
+    gaps of up to `close` voxels, fill the inside, optionally open away strands thinner than ~2*opening voxels and drop
+    specks smaller than `specks` of the main body."""
     from scipy import ndimage
     v, f = merge(meshes)
-    lo = v.min(0) - (close + 4) * h; hi = v.max(0) + (close + 4) * h
-    n = np.ceil((hi - lo) / h).astype(int) + 1
     shell = np.zeros(n, bool)
     pts = dense_points(v, f, spacing=h * 0.45)
-    ijk = np.clip(np.round((pts - lo) / h).astype(int), 0, n - 1)
+    ijk = np.round((pts - lo) / h).astype(int)
+    ok = np.all((ijk >= 0) & (ijk < n), axis=1); ijk = ijk[ok]
     shell[ijk[:, 0], ijk[:, 1], ijk[:, 2]] = True
     st = ndimage.generate_binary_structure(3, 1)
     shut = ndimage.binary_dilation(shell, st, iterations=close)
     solid = ndimage.binary_fill_holes(shut)
     solid = ndimage.binary_erosion(solid, st, iterations=close) | shell
     solid = ndimage.binary_fill_holes(solid)
-    if opening: solid = ndimage.binary_opening(solid, st, iterations=opening)  # drop strands thinner than ~2*opening voxels
+    if opening: solid = ndimage.binary_opening(solid, st, iterations=opening)
+    return _drop_specks(solid, specks)
+
+
+def _drop_specks(solid, frac):
+    from scipy import ndimage
     lab, k = ndimage.label(solid)
     if k > 1:  # keep the main body (drop specks)
         sizes = ndimage.sum(np.ones_like(lab), lab, index=np.arange(1, k + 1))
-        solid = np.isin(lab, 1 + np.flatnonzero(sizes >= 0.02 * sizes.max()))
-    sdf = (ndimage.distance_transform_edt(~solid) - ndimage.distance_transform_edt(solid)).astype(np.float32)
+        solid = np.isin(lab, 1 + np.flatnonzero(sizes >= frac * sizes.max()))
+    return solid
+
+
+def carve_region(carve, lo, n, h):
+    """Voxels of the grid (lo, n, h) within `margin` of the solids of `carve` = [(meshes, margin), ...]. Each carving
+    solid is voxelised on its own box of the same lattice (so a solid cut by the grid's border still fills), then its
+    margin is added by a distance transform and the box is mapped into the grid."""
+    from scipy import ndimage
+    cut = np.zeros(n, bool)
+    for meshes, margin in carve or ():
+        meshes = [m for m in meshes if len(m[1])]
+        if not meshes: continue
+        v = np.concatenate([m[0] for m in meshes])
+        pad = int(np.ceil(margin / h)) + 4
+        clo, cn = _lattice_box(v, h, pad, lo)
+        # only the part that can reach the grid matters
+        if np.any(clo > lo + n * h) or np.any(clo + cn * h < lo): continue
+        sol = voxel_solid(meshes, clo, cn, h, close=2, specks=0.0)
+        if margin > 0: sol = ndimage.distance_transform_edt(~sol) * h <= margin
+        o = np.round((clo - lo) / h).astype(int)
+        a = np.maximum(o, 0); b = np.minimum(o + cn, n)
+        if np.any(b <= a): continue
+        cut[a[0]:b[0], a[1]:b[1], a[2]:b[2]] |= sol[a[0] - o[0]:b[0] - o[0], a[1] - o[1]:b[1] - o[1], a[2] - o[2]:b[2] - o[2]]
+    return cut
+
+
+def _extract(solid, lo, h, smooth, src=None, cut=None, gap=None):
+    """Closed surface of a voxel solid: zero level of its (slightly blurred) signed distance, Taubin-smoothed, optionally
+    projected onto the source patches src = (v, f) where they are near. `gap`: a distance field (metres, on the same
+    grid) the surface keeps away from by half its own value (used to leave a thin cleft between neighbouring solids).
+    The faces come out of surface_nets wound from the inside to the outside end of each grid edge, that is along the
+    field's gradient: checked face by face against the gradient below, and never re-oriented by a breadth-first walk over
+    shared edges (which carries a wrong flip through the non-manifold edges surface nets makes at ambiguous cells)."""
+    from scipy import ndimage
+    sdf = (ndimage.distance_transform_edt(~solid) - ndimage.distance_transform_edt(solid)).astype(np.float32) * h
+    if gap is not None: sdf = np.maximum(sdf, gap)
     sdf = ndimage.gaussian_filter(sdf, 0.7)
-    rv, rf = surface_nets(sdf, lo, h, level=0.0)
+    rv, rf = surface_nets(sdf / h, lo, h, level=0.0)
+    if not len(rf): return rv, rf
+    q = ((rv[rf].mean(1) - lo) / h).T
+    grad = np.stack([ndimage.map_coordinates(gi, q, order=1, mode='nearest') for gi in np.gradient(sdf)], 1)
+    bad = np.einsum('ij,ij->i', face_normals(rv, rf, unit=False), grad) < 0
+    rf[bad] = rf[bad][:, ::-1]
     rv = taubin(rv, rf, iters=smooth)
-    if project:
+    if src is not None:
         # snap fully where the source surface is near; fade out only across bridged gaps (partial blending would band)
-        q, d = closest_on_mesh(v, f, rv)
-        w = np.clip((3.0 * h - d) / (1.5 * h), 0, 1)[:, None]
-        rv = rv * (1 - w) + q * w
-    rf = orient_outward(rv, rf)
+        q, d = closest_on_mesh(src[0], src[1], rv)
+        w = np.clip((3.0 * h - d) / (1.5 * h), 0, 1)
+        if cut is not None and cut.any():
+            # never snap back onto source surface that was carved away (or towards it)
+            dc = ndimage.distance_transform_edt(~cut).astype(np.float32) * h
+            near = lambda p: ndimage.map_coordinates(dc, ((p - lo) / h).T, order=1, mode='nearest')
+            w = np.where((near(q) < 1.5 * h) | (near(rv) < 3.0 * h), 0.0, w)
+        rv = rv * (1 - w[:, None]) + q * w[:, None]
     return rv, rf
+
+
+def remesh_solid(meshes, h=0.0012, close=2, smooth=4, project=True, opening=0, carve=None):
+    """One closed surface enclosing the union of (possibly open, overlapping) surface patches.
+    Rasterises the patches into voxels, closes gaps of up to `close` voxels, fills the inside, removes the solids of
+    `carve` = [(meshes, margin), ...] grown by their margins (room for a neighbour), extracts the zero level of a signed
+    distance field and projects it onto the original patches where they are close (keeping their detail)."""
+    v, f = merge(meshes)
+    lo, n = _lattice_box(v, h, close + 4, v.min(0))
+    solid = voxel_solid(meshes, lo, n, h, close=close, opening=opening)
+    cut = None
+    if carve:
+        cut = carve_region(carve, lo, n, h)
+        solid = _drop_specks(solid & ~cut, 0.02)
+    return _extract(solid, lo, h, smooth, src=(v, f) if project else None, cut=cut)
+
+
+def remesh_solids(groups, h=0.0012, close=2, smooth=4, project=True, opening=0, carve=None, cleft=0.0006):
+    """remesh_solid for neighbouring organs whose patches overlap (lung lobes): all solids on one grid; a voxel claimed by
+    several goes to the one it lies deepest in (the overlap is split along its medial surface, like a fissure), the
+    solids of `carve` plus their margins are removed, and neighbours keep a cleft of `cleft` metres between them.
+    groups: {key: [meshes]}; returns {key: (v, f)}."""
+    from scipy import ndimage
+    keys = list(groups)
+    allv = np.concatenate([merge(groups[k])[0] for k in keys])
+    lo, n = _lattice_box(allv, h, close + 4, allv.min(0))
+    solids = {k: voxel_solid(groups[k], lo, n, h, close=close, opening=opening) for k in keys}
+    owner = -np.ones(n, np.int8); best = np.zeros(n, np.float32)
+    for i, k in enumerate(keys):
+        d = ndimage.distance_transform_edt(solids[k]).astype(np.float32)
+        m = d > best; owner[m] = i; best[m] = d[m]
+    del best
+    cut = carve_region(carve, lo, n, h) if carve else None
+    if cut is not None: owner[cut] = -1
+    out = {}
+    for i, k in enumerate(keys):
+        sol = _drop_specks(owner == i, 0.02)
+        idx = np.argwhere(sol)
+        if not len(idx): continue
+        a = np.maximum(idx.min(0) - close - 4, 0); b = np.minimum(idx.max(0) + close + 5, n)
+        sl = tuple(slice(a[j], b[j]) for j in range(3))
+        others = (owner[sl] >= 0) & (owner[sl] != i)
+        # the voxel faces between two owners lie h/2 from the other's voxel centres: keep the surface cleft/2 beyond them
+        gap = (0.5 * (h + cleft) - ndimage.distance_transform_edt(~others) * h).astype(np.float32) if cleft and others.any() else None
+        src = merge(groups[k]) if project else None
+        out[k] = _extract(sol[sl], lo + a * h, h, smooth, src=src, cut=None if cut is None else cut[sl], gap=gap)
+    return out
+
+
+# ---------------------------------------------------------------- exact orientation tests
+def _manifold_pairs(f):
+    """Face pairs across manifold edges (edges with exactly two faces) and whether both run the edge the same way."""
+    e = np.concatenate([f[:, [0, 1]], f[:, [1, 2]], f[:, [2, 0]]])
+    fid = np.tile(np.arange(len(f)), 3)
+    key = np.sort(e, axis=1)
+    order = np.lexsort((key[:, 1], key[:, 0]))
+    ks = key[order]
+    new = np.concatenate([[True], np.any(ks[1:] != ks[:-1], axis=1)])
+    start = np.flatnonzero(new); cnt = np.diff(np.append(start, len(ks)))
+    s2 = start[cnt == 2]
+    a, b = order[s2], order[s2 + 1]
+    return fid[a], fid[b], np.all(e[a] == e[b], axis=1)
+
+
+def winding_patches(f):
+    """Consistent winding propagated over manifold edges only (a non-manifold edge never passes a flip on).
+    Returns (flip: faces to reverse, patch: label per face of the consistently wound patches)."""
+    F = len(f)
+    if not F: return np.zeros(0, bool), np.zeros(0, np.int64)
+    a, b, same = _manifold_pairs(f)
+    s = same.astype(np.int64)
+    # two states per face (kept, reversed); an edge ties the states that make the pair consistent
+    rows = np.concatenate([a, a + F]); cols = np.concatenate([b + F * s, b + F * (1 - s)])
+    G = sparse.coo_matrix((np.ones(len(rows)), (rows, cols)), shape=(2 * F, 2 * F))
+    _, lab = connected_components(G, directed=False)
+    c0, c1 = lab[:F], lab[F:]
+    return c1 < c0, np.unique(np.minimum(c0, c1), return_inverse=True)[1]
+
+
+class RayParity:
+    """Exact inside test by ray parity against a triangle mesh: crossings of the rays along +z, +x and +y from each
+    point, majority vote (a small hole flips one ray at most); crossings through a shared edge or vertex count once.
+    With `group` (a label per face, e.g. its connected component) a query only counts the faces of its own group."""
+
+    def __init__(self, v, f, group=None):
+        v = np.asarray(v, float); f = np.asarray(f, np.int64)
+        self.T = v[f]
+        self.group = None if group is None else np.asarray(group, np.int64)
+        self.lo = v.min(0)
+        span = float((v.max(0) - v.min(0)).max()) or 1e-3
+        ext = (self.T.max(1) - self.T.min(1)).max(1)
+        self.cell = max(2.0 * float(np.median(ext)), span / 400.0, 1e-6)
+        self.bins = {}
+
+    def _bin(self, ax):
+        if ax not in self.bins:
+            u, w = [a for a in range(3) if a != ax]
+            lo2 = self.lo[[u, w]]
+            i0 = np.floor((self.T[:, :, [u, w]].min(1) - lo2) / self.cell).astype(np.int64)
+            i1 = np.floor((self.T[:, :, [u, w]].max(1) - lo2) / self.cell).astype(np.int64)
+            nw = i1[:, 1] - i0[:, 1] + 1; cnt = (i1[:, 0] - i0[:, 0] + 1) * nw
+            tid = np.repeat(np.arange(len(self.T)), cnt)
+            k = np.arange(cnt.sum()) - np.repeat(np.cumsum(cnt) - cnt, cnt)
+            key = (np.repeat(i0[:, 0], cnt) + k // np.repeat(nw, cnt)) * 2000003 + np.repeat(i0[:, 1], cnt) + k % np.repeat(nw, cnt)
+            o = np.argsort(key, kind='stable'); key, tid = key[o], tid[o]
+            uk, st = np.unique(key, return_index=True)
+            self.bins[ax] = (uk, np.append(st, len(key)), tid)
+        return self.bins[ax]
+
+    def parity(self, p, ax, group=None, chunk=20000):
+        p = np.asarray(p, float)
+        out = np.zeros(len(p), bool)
+        uk, st, tid = self._bin(ax)
+        u, w = [a for a in range(3) if a != ax]
+        for c0 in range(0, len(p), chunk):
+            q = p[c0:c0 + chunk]
+            key = np.floor((q[:, u] - self.lo[u]) / self.cell).astype(np.int64) * 2000003 + np.floor((q[:, w] - self.lo[w]) / self.cell).astype(np.int64)
+            pos = np.clip(np.searchsorted(uk, key), 0, len(uk) - 1)
+            nn = np.where(uk[pos] == key, st[pos + 1] - st[pos], 0)
+            pid = np.repeat(np.arange(len(q)), nn)
+            t = tid[np.repeat(st[pos], nn) + np.arange(nn.sum()) - np.repeat(np.cumsum(nn) - nn, nn)]
+            if group is not None and self.group is not None:
+                m = self.group[t] == np.asarray(group)[c0:c0 + chunk][pid]; pid, t = pid[m], t[m]
+            a, b, c = self.T[t, 0], self.T[t, 1], self.T[t, 2]
+            x = q[pid, u]; y = q[pid, w]
+            d = (b[:, w] - c[:, w]) * (a[:, u] - c[:, u]) + (c[:, u] - b[:, u]) * (a[:, w] - c[:, w])
+            ok = np.abs(d) > 1e-24; d = np.where(ok, d, 1.0)
+            l1 = ((b[:, w] - c[:, w]) * (x - c[:, u]) + (c[:, u] - b[:, u]) * (y - c[:, w])) / d
+            l2 = ((c[:, w] - a[:, w]) * (x - c[:, u]) + (a[:, u] - c[:, u]) * (y - c[:, w])) / d
+            l3 = 1 - l1 - l2
+            z = l1 * a[:, ax] + l2 * b[:, ax] + l3 * c[:, ax]
+            hit = ok & (l1 >= 0) & (l2 >= 0) & (l3 >= 0) & (z > q[pid, ax])
+            if hit.any():
+                pz = np.unique(np.stack([pid[hit].astype(float), np.round(z[hit], 9)], 1), axis=0)
+                out[c0:c0 + chunk] = np.bincount(pz[:, 0].astype(np.int64), minlength=len(q)) % 2 == 1
+        return out
+
+    def inside(self, p, group=None):
+        return sum(self.parity(p, ax, group).astype(int) for ax in (2, 0, 1)) >= 2
+
+
+def _face_votes(v, f, faces, group, rays, eps):
+    """For sampled faces: +1 where the normal points out of the solid of its group, -1 where it points in, 0 undecided."""
+    c = v[f[faces]].mean(1); nrm = face_normals(v, f[faces])
+    g = None if group is None else group[faces]
+    out_in = rays.inside(c + eps * nrm, g); back_in = rays.inside(c - eps * nrm, g)
+    return np.where(~out_in & back_in, 1, np.where(out_in & ~back_in, -1, 0))
+
+
+def facing(v, f, n=160, eps=2e-4, seed=0):
+    """Exact orientation measure: area fractions (outward, inward, undecided) of a mesh's faces whose normal points out
+    of / into the solid its connected component encloses. Area-weighted samples per component; each sampled face's
+    centroid is offset by eps along +/- its normal and both points are tested by ray parity against that component's
+    own faces (overlapping components do not count as inside each other). Open sheets come out 'undecided'."""
+    v = np.asarray(v, float); f = np.asarray(f, np.int64)
+    if not len(f): return 0.0, 0.0, 0.0
+    comps = components(v, f)
+    lab = np.zeros(len(f), np.int64)
+    for i, cf in enumerate(comps): lab[cf] = i
+    ar = 0.5 * np.linalg.norm(np.cross(v[f[:, 1]] - v[f[:, 0]], v[f[:, 2]] - v[f[:, 0]]), axis=1)
+    tot = ar.sum()
+    if tot <= 0: return 0.0, 0.0, 0.0
+    rng = np.random.default_rng(seed)
+    pick, wt = [], []
+    for cf in comps:
+        a = ar[cf]; A = a.sum()
+        if A <= 0: continue
+        k = min(n, len(cf))
+        s = rng.choice(cf, size=k, replace=len(cf) < n, p=a / A) if k < len(cf) else cf
+        pick.append(s); wt.append(np.full(len(s), A / len(s)) if k < len(cf) else a)
+    pick = np.concatenate(pick); wt = np.concatenate(wt)
+    vote = _face_votes(v, f, pick, lab, RayParity(v, f, lab), eps)
+    return float(wt[vote > 0].sum() / tot), float(wt[vote < 0].sum() / tot), float(wt[vote == 0].sum() / tot)
+
+
+def orient_exact(v, f, n=48, eps=2e-4, seed=0):
+    """Outward winding that does not trust non-manifold edges or centroids: the winding is made consistent over manifold
+    edges only (winding_patches), then each patch is turned so that its normals point out of the solid its connected
+    component encloses (exact ray-parity votes, see facing). Patches the test cannot decide (open sheets) keep the
+    centroid rule of orient_outward."""
+    v = np.asarray(v, float); f = np.asarray(f, np.int64).copy()
+    if not len(f): return f
+    flip, patch = winding_patches(f)
+    f[flip] = f[flip][:, ::-1]
+    comps = components(v, f)
+    lab = np.zeros(len(f), np.int64)
+    for i, cf in enumerate(comps): lab[cf] = i
+    rays = RayParity(v, f, lab)
+    rng = np.random.default_rng(seed)
+    order = np.argsort(patch, kind='stable'); brk = np.flatnonzero(np.diff(patch[order])) + 1
+    groups = np.split(order, brk)
+    ar = 0.5 * np.linalg.norm(np.cross(v[f[:, 1]] - v[f[:, 0]], v[f[:, 2]] - v[f[:, 0]]), axis=1)
+    pick, pof = [], []
+    for j, g in enumerate(groups):
+        a = ar[g]
+        s = g if len(g) <= n or a.sum() <= 0 else rng.choice(g, size=n, replace=False, p=a / a.sum())
+        pick.append(s); pof.append(np.full(len(s), j))
+    pick = np.concatenate(pick); pof = np.concatenate(pof)
+    vote = _face_votes(v, f, pick, lab, rays, eps)
+    score = np.bincount(pof, weights=vote, minlength=len(groups))
+    decided = np.bincount(pof, weights=np.abs(vote), minlength=len(groups))
+    for j, g in enumerate(groups):
+        if decided[j] > 0:
+            if score[j] < 0: f[g] = f[g][:, ::-1]
+            continue
+        # undecided (an open sheet): normals away from its component's centroid on average
+        cmp = comps[lab[g[0]]]
+        c = v[np.unique(f[cmp])].mean(0)
+        nrm = face_normals(v, f[g], unit=False); cent = v[f[g]].mean(1)
+        if np.einsum('ij,ij->i', nrm, cent - c).sum() < 0: f[g] = f[g][:, ::-1]
+    return f

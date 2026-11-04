@@ -95,7 +95,7 @@ PARTS = [
     ('ventricles',       'brain',        'csf',          (),                  6000),
     ('pituitary',        'brain',        'pituitary',    (),                  2500),
     ('spinal_cord',      'brain',        'spinal',       (),                  8000),
-    ('eyes',             'brain',        'eye',          (),                  12000),
+    ('eyes',             'brain',        'eye',          (),                  48000),
     ('eye_muscles',      'brain',        'muscle',       (),                  6000),
     ('thyroid',          'thyroid',      'thyroid',      (),                  6000),
     ('parathyroids',     'thyroid',      'parathyroid',  (),                  1200),
@@ -135,7 +135,7 @@ PARTS = [
     ('small_int',        'intestine',    'smallgut',     (),                  45000),
     ('colon',            'colon',        'colon',        (),                  30000),
     ('reproductive',     'reproductive', 'reproductive', (),                  20000),
-    ('breasts',          'breast',       'breast',       (),                  12000),
+    ('breasts',          'breast',       'breast',       (),                  36000),
     ('skel_skull',       'marrow',       'bone',         (),                  60000),
     ('teeth',            'marrow',       'tooth',        (),                  8000),
     ('skel_spine',       'marrow',       'bone',         (),                  60000),
@@ -154,6 +154,7 @@ PARTS = [
 ]
 PART_IDS = [p[0] for p in PARTS]
 
-# HRA structures that must never be used (pregnancy structures in the female body, placement markers, single
-# reference specimens that are not part of the body plan).
-HRA_EXCLUDE = r'(placenta|amnion|chorion|chorionic|basal_plate|umbilical|decidua|distal_most_point|_point_of_|enthesis|perichondular|Yao_|lymph_node|tonsil)'
+# HRA structures that must never be used (pregnancy structures in the female body, single reference specimens that
+# are not part of the body plan). The femur's entheses, perichondral surfaces and 'distal most point' patches are kept:
+# they are pieces of the bone's surface at the knee, and without them the distal femur has holes.
+HRA_EXCLUDE = r'(placenta|amnion|chorion|chorionic|basal_plate|umbilical|decidua|Yao_|lymph_node|tonsil)'

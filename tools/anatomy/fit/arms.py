@@ -110,6 +110,10 @@ def girdle_cached(ctx, L, side, log=log):
         h.update(open(os.path.join(HERE, 'fit', fn), 'rb').read())
     wp = os.path.join(FIT, ctx.sex, 'warp-trunk.npz')
     h.update(str(os.path.getmtime(wp) if os.path.exists(wp) else 0).encode())
+    from fit.arms_girdle import ribcage_files
+    rf = ribcage_files(ctx.sex, side)
+    for fp in rf['ribs'] + [rf['man'], rf['rib1'], rf['cc1']]:   # the rib cage group's final thorax
+        h.update(open(fp, 'rb').read())
     key = h.hexdigest()[:16]
     path = os.path.join(cache_dir(ctx.sex), f'girdle-{side}.pkl')
     if os.path.exists(path) and not os.environ.get('ARMS_REBUILD'):
@@ -119,7 +123,7 @@ def girdle_cached(ctx, L, side, log=log):
                 log(f'  girdle {side}: cached ({path})'); return d['G']
         except Exception as e:  # noqa: BLE001
             log(f'  girdle {side}: cache unreadable ({e}), refitting')
-    G = fit_girdle(L, ctx.W, ctx.skinT, ctx.lungsT, log=log)
+    G = fit_girdle(L, ctx.W, ctx.skinT, ctx.lungsT, ctx.sex, log=log)
     G = {k: G[k] for k in GIRDLE_KEYS}
     pickle.dump(dict(key=key, G=G), open(path, 'wb'))
     return G

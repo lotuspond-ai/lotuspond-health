@@ -604,3 +604,59 @@ def refine_long_edges(V, f, lmax, cols=slice(0, 3), max_iter=12):
         keep = np.ones(len(f), bool); keep[kill] = False
         V = np.concatenate([V, np.array(newV)]); f = np.concatenate([f[keep], np.array(newF, np.int64)])
     return V, f
+
+
+# ------------------------------------------------------------------------------------------------ exact inside test
+def winding(P, v, f, chunk=16):
+    """Generalized winding number of the closed, consistently wound mesh (v, f) at points P (van Oosterom-Strackee
+    solid angles): ~1 inside, ~0 outside, exact for closed meshes whatever a voxel field's flood fill makes of folds
+    and narrow pockets."""
+    P = np.asarray(P, float)
+    A, B, C = v[f[:, 0]], v[f[:, 1]], v[f[:, 2]]
+    out = np.zeros(len(P))
+    for s in range(0, len(P), chunk):
+        p = P[s:s + chunk, None, :]
+        a, b, c = A[None] - p, B[None] - p, C[None] - p
+        la, lb, lc = (np.linalg.norm(x, axis=2) for x in (a, b, c))
+        det = np.einsum('ijk,ijk->ij', a, np.cross(b, c))
+        den = (la * lb * lc + np.einsum('ijk,ijk->ij', a, b) * lc + np.einsum('ijk,ijk->ij', b, c) * la
+               + np.einsum('ijk,ijk->ij', c, a) * lb)
+        out[s:s + chunk] = (2 * np.arctan2(det, den)).sum(1) / (4 * np.pi)
+    return out
+
+
+def is_closed(f):
+    e = np.sort(np.concatenate([f[:, [0, 1]], f[:, [1, 2]], f[:, [2, 0]]]), axis=1)
+    _, cnt = np.unique(e, axis=0, return_counts=True)
+    return bool((cnt == 2).all())
+
+
+def fair_folds(v, f, fixed=None, cos_max=0.5, rings=2, iters=30, lam=0.5, mu=-0.53):
+    """Taubin (lambda|mu) fairing of the crumpled patches only: vertices of edges whose faces fold sharply (normals
+    more than ~60 deg apart), grown by `rings` neighbour rings; every other vertex (and `fixed`) stays. Removes the
+    folds and shards a push-out leaves where neighbours press from several sides, without shrinking the organ (the
+    mu step undoes the lambda step's shrinkage). Returns (v, number of faired vertices)."""
+    v = np.asarray(v, float).copy(); n = len(v)
+    fn = np.cross(v[f[:, 1]] - v[f[:, 0]], v[f[:, 2]] - v[f[:, 0]])
+    fn /= np.maximum(np.linalg.norm(fn, axis=1, keepdims=True), 1e-20)
+    e = np.concatenate([f[:, [0, 1]], f[:, [1, 2]], f[:, [2, 0]]]); key = np.sort(e, axis=1)
+    fid = np.tile(np.arange(len(f)), 3)
+    o = np.lexsort((key[:, 1], key[:, 0])); key, fid = key[o], fid[o]
+    same = (key[1:] == key[:-1]).all(1)
+    a, b = fid[:-1][same], fid[1:][same]
+    sharp = np.einsum('ij,ij->i', fn[a], fn[b]) < cos_max
+    sel = np.zeros(n, bool); sel[f[a[sharp]].ravel()] = True; sel[f[b[sharp]].ravel()] = True
+    E = edges_of(f)
+    for _ in range(rings):
+        grow = sel.copy(); grow[E[sel[E[:, 0]], 1]] = True; grow[E[sel[E[:, 1]], 0]] = True; sel = grow
+    if fixed is not None: sel[np.asarray(fixed)] = False
+    idx = np.flatnonzero(sel)
+    if not len(idx): return v, 0
+    from scipy import sparse
+    A = sparse.coo_matrix((np.ones(2 * len(E)), (np.r_[E[:, 0], E[:, 1]], np.r_[E[:, 1], E[:, 0]])), shape=(n, n)).tocsr()
+    deg = np.maximum(np.asarray(A.sum(1)).ravel(), 1)
+    for _ in range(iters):
+        for k in (lam, mu):
+            Lv = (A @ v) / deg[:, None] - v
+            v[idx] += k * Lv[idx]
+    return v, int(len(idx))

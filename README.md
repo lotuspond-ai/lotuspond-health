@@ -256,13 +256,14 @@ cd tools/anatomy
 python3 fetch.py            # the sources pinned in sources.json (commits and SHA-256), about 170 MB each
 node extract.mjs            # their meshes, in metres, into .cache/raw/
 python3 fit/arms.py && python3 fit/skull.py && python3 fit/foot.py && python3 fit/ribcage.py && python3 fit/organs.py && python3 fit/repro.py && python3 fit/larynx.py
-python3 fit/vessels.py      # after arms and foot: it uses their limb deformations
+python3 fit/vessels.py      # last: it follows the arm, leg and head fits and clears the placed bones and organs
 python3 assemble.py         # parts, landmarks and pins per body
 node build.mjs              # public/models/anatomy-<body>.glb and src/anatomy/bodies/<body>.json
 cd ../..
 node tools/render-bodymap.mjs && npm run test:anatomy
 ```
 
+- The fits take about two hours on a 4-core machine (the arms, skull, feet and organs about 20-30 minutes each).
 - `catalog.py` lists the parts of each model (organ, tissue, triangle budget) and the structures used to register the two sources; `fit/CONTRACT.md` describes the fitting modules. Each fit writes `report.json` with its acceptance measurements (joint gaps, clearances, contacts, levels) and QA renders to `.cache/fit/<body>/<group>/`.
 - `assemble.py` takes the atlas parts, rebuilds some organs as closed surfaces, adds the fitted structures and places the landmarks and pins; `build.mjs` simplifies each structure to its share of the part's budget and writes one glTF node per part, meshopt-compressed, with the credit in the file's metadata.
 - The female Visible Human has six lumbar vertebrae (L1–L6), a normal variant, and the model keeps them.

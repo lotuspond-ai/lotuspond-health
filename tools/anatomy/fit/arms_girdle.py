@@ -1,20 +1,30 @@
-"""Shoulder girdle: clavicle and scapula from the trunk warp, refined against the skin and the thorax.
+"""Shoulder girdle: clavicle and scapula placed on the rib cage group's final thorax, refined against the skin.
 
-Start: each bone takes the similarity that best matches the trunk warp over it (shape kept). Then a joint rigid
-refinement (clavicle about the sternoclavicular joint, scapula about the acromioclavicular joint) keeps
-  - the clavicle's sternal end on the manubrium's clavicular notch (the manubrium is warped with the trunk warp,
-    exactly as the thorax group places it),
-  - the acromial end on the acromion,
-  - the clavicle (lateral two thirds) and the acromion subcutaneous (they are palpable along their length),
-  - the scapula off the warped ribs (subscapularis / serratus space) and the clavicle off the first rib,
-  - all of both bones inside the skin,
-with small rotations preferred.
+The thorax the girdle articulates with is the rib cage group's output (.cache/fit/<sex>/ribcage/: ribs, manubrium,
+first costal cartilage, same HRA frame, same vertex order as Z-Anatomy). Start (the same rule on both sides): the
+scapula keeps its Z-Anatomy relation to the posterior chest wall (the rigid motion, at the body scale, that carries
+Z-Anatomy's ribs 2-8 under the scapula onto the final ribs), the clavicle's sternal facet sits on the final manubrium's
+clavicular notch and the clavicle is aimed at that scapula's acromion. Then a kinematic chain (clavicle about the
+sternoclavicular joint with a small glide, scapula about the acromioclavicular joint with a small glide, riding on the
+clavicle) is fitted by least squares to
+  - the scapulothoracic gap: every sample of the scapula's costal surface at its Z-Anatomy distance from the ribs
+    (subscapularis and serratus anterior lie between; Z-Anatomy p5/p50 5.3/11.6 mm) within a two-sided band, the
+    inferior angle at its Z-Anatomy distance, no part of the scapula closer than 3 mm to a rib,
+  - joint spaces: sternoclavicular (clavicle to the final manubrium) and acromioclavicular closest approach 1.2-2.8 mm,
+  - the costoclavicular space: the clavicle at least 6 mm from rib 1 and its cartilage lateral to the sternal end
+    (subclavius and the subclavian vein pass there), 3 mm at the sternal end (articular disc, costoclavicular ligament),
+  - the clavicle (lateral two thirds) and the acromion subcutaneous, both bones inside the skin, the humeral head under
+    the deltoid and centred front-to-back in the shoulder as in Z-Anatomy,
+  - priors: the scapula's tilt, upward rotation and internal rotation relative to the chest wall as in Z-Anatomy, small
+    clavicle rotations and joint glides.
 """
+import os
 import numpy as np
+from scipy.spatial import cKDTree
 
-from lib.mesh import source, sample_surface
+from lib.mesh import source, sample_surface, load, merge
 from lib.register import umeyama
-from fit.arms_geom import Aff, TriMesh, unit, ray_exit, FrontBack
+from fit.arms_geom import Aff, TriMesh, unit, ray_exit, FrontBack, rot_between
 from fit.arms_solve import Bodies, solve, term_surface_band, term_body_gap, term_point_target, term_points_pair, term_regular
 from fit.arms_za import contact, _samples
 
@@ -101,47 +111,123 @@ def _rot(w):
     return np.eye(3) + np.sin(a) * K + (1 - np.cos(a)) * K @ K
 
 
-def fit_girdle(L, W, skinT, lungsT, log=print):
-    """Shoulder girdle as a kinematic chain: the clavicle turns about the sternoclavicular joint, which sits on the
-    warped manubrium's clavicular notch; the scapula hangs from the clavicle's acromial end and turns about the
-    acromioclavicular joint. Six angles are fitted (least squares) to: acromion and lateral clavicle subcutaneous,
-    both bones inside the skin, scapula off the chest wall and the clavicle above the lung apex (measured against the
-    HRA lungs, which are real: the warped ribs are distorted at the shoulders), the clavicle off the manubrium, humeral
-    head under the deltoid and centred front-to-back in the shoulder as in Z-Anatomy, small rotations preferred.
-    Two starts are tried (the warp's rotation over each bone, and the rigid motion of the upper thoracic spine) and the
-    better fit is kept: the trunk warp is an extrapolation at the shoulders and can be badly distorted there.
-    Returns dict(clav=Aff, scap=Aff, man=(v, f) warped, info, ...)."""
+ORD_RIB = ['First', 'Second', 'Third', 'Fourth', 'Fifth', 'Sixth', 'Seventh', 'Eighth', 'Ninth', 'Tenth']
+WALL_RIBS = range(1, 11)        # ribs the scapula can face
+WALL_TOL = 3.5                  # mm: scapulothoracic gap band around Z-Anatomy's distance
+WALL_MIN = 3.0                  # mm: nowhere closer to a rib
+JOINT_SPACE = (1.2, 2.8)        # mm: sternoclavicular and acromioclavicular closest approach
+COSTOCLAV = (3.0, 6.0)          # mm: clavicle to rib 1 / first costal cartilage at the sternal end, lateral to it
+COSTOCLAV_MEDIAL = 0.015        # m (Z-Anatomy): the sternal end region, from the sternal facet centre
+PRIOR_DEG = dict(up=8.0, tilt=5.0, int=8.0, clav=10.0)
+GLIDE_MM = 2.0
+
+
+def ribcage_files(sex, side):
+    from fit.common import FIT
+    d = os.path.join(FIT, sex, 'ribcage')
+    return dict(ribs=[os.path.join(d, f'rib_{k}_{side}.npz') for k in WALL_RIBS], man=os.path.join(d, 'manubrium.npz'),
+                rib1=os.path.join(d, f'rib_1_{side}.npz'), cc1=os.path.join(d, f'costal_cartilage_1_{side}.npz'))
+
+
+def za_wall(side):
+    s = source('za-skeletal')
+    return [s.get(f'{ORD_RIB[k - 1]}_rib{side}') for k in WALL_RIBS]
+
+
+def wall_rigid(za_ribs, hra_ribs, zscap, s0, ks=range(2, 9), near=0.045):
+    """Rotation + translation (at the body scale s0) carrying the Z-Anatomy ribs 2-8 where the scapula lies (vertices
+    within `near` of the scapula) onto the final ribs (same vertex order). Returns (Aff, rms mm)."""
+    tree = cKDTree(zscap)
+    P, Q = [], []
+    for k in ks:
+        zv = za_ribs[k - 1][0]; hv = hra_ribs[k - 1][0]
+        if len(zv) != len(hv): continue
+        m = tree.query(zv)[0] < near
+        P.append(zv[m]); Q.append(hv[m])
+    P = np.concatenate(P); Q = np.concatenate(Q)
+    S = umeyama(s0 * P, Q, scale=False)
+    A = Aff(s0 * S.R, S.t)
+    return A, float(np.sqrt(((A(P) - Q) ** 2).sum(1).mean()) * 1e3)
+
+
+def local_rigid(zv, hv, centre, s0, r=0.03):
+    """Rigid motion at the body scale carrying Z-Anatomy vertices within r of `centre` onto the same vertices of a
+    placed copy (the final manubrium). Returns (Aff, rms mm)."""
+    m = np.linalg.norm(zv - centre, axis=1) < r
+    S = umeyama(s0 * zv[m], hv[m], scale=False)
+    A = Aff(s0 * S.R, S.t)
+    return A, float(np.sqrt(((A(zv[m]) - hv[m]) ** 2).sum(1).mean()) * 1e3)
+
+
+def _rotvec(R):
+    ang = np.arccos(np.clip((np.trace(R) - 1) / 2, -1, 1))
+    if ang < 1e-9: return np.zeros(3)
+    return np.array([R[2, 1] - R[1, 2], R[0, 2] - R[2, 0], R[1, 0] - R[0, 1]]) / (2 * np.sin(ang)) * ang
+
+
+def costal_samples(L, za_ribs, n=500, seed=3, dmax=0.03):
+    """Z-Anatomy samples of the scapula's costal surface (outward normal facing the nearest rib, within dmax of it)
+    and their distance to the ribs (m)."""
+    sv, sf = L.M['scap']
+    P = sample_surface(sv, sf, 6000, seed=seed)
+    R = TriMesh(*merge(za_ribs))
+    d, q, _, _ = R.closest(P)
+    _, _, _, nrm = L.T['scap'].signed_full(P)
+    face = np.einsum('ij,ij->i', nrm, (q - P) / np.maximum(d, 1e-9)[:, None])
+    m = (face > 0.3) & (d < dmax)
+    P, d = P[m], d[m]
+    rng = np.random.default_rng(seed)
+    k = rng.choice(len(P), min(n, len(P)), replace=False)
+    return P[k], d[k]
+
+
+def fit_girdle(L, W, skinT, lungsT, sex, log=print):
+    """Shoulder girdle as a kinematic chain on the final thorax (see the module docstring). Returns dict(clav=Aff,
+    scap=Aff, info, notch_pts (the final manubrium's clavicular notch), notch_pts_warp, se, ae, af, acr)."""
     from scipy.optimize import least_squares
-    J = L.J
+    J = L.J; sg = L.sg
     cv, cf = L.M['clav']; sv_, sf_ = L.M['scap']
     s0 = float(W.pre.s)
+    files = ribcage_files(sex, L.side)
+    hra_ribs = [load(p) for p in files['ribs']]
+    za_ribs = za_wall(L.side)
+    ribsT = TriMesh(*merge(hra_ribs), k=12)
+    man_h = load(files['man']); Tman = TriMesh(*man_h, k=12)
+    rcT = TriMesh(*merge([load(files['rib1']), load(files['cc1'])]), k=12)
+    # the clavicular notch of the final manubrium (Z-Anatomy's notch carried by the manubrium's local rigid motion)
     se0, _ = contact(L.P['clav'], L.Tman, 0.006)
     c_se = se0.mean(0)
-    mv, mf = L.man
-    man = manubrium_placement(W, mv, mf)
-    Mfun = man['map']
-    sc_target = Mfun(c_se[None])[0]       # the sternal facet on the manubrium's clavicular notch
-    man_w = man['mesh']
-    Tman = TriMesh(*man_w)
-    rv, rf = za_ribs(L.side)
-    ribs = TriMesh(W(rv), rf)
-    Pc = L.P['clav']; Ps = L.P['scap']
     Pm = _samples(L.man)
     notch, _ = contact(Pm, L.T['clav'], 0.006)
-    ae, _ = contact(Pc, L.T['scap'], 0.004)
-    af, _ = contact(Ps, L.T['clav'], 0.004)
+    Gm, man_rms = local_rigid(L.man[0], man_h[0], c_se, s0)
+    sc_target = Gm(c_se[None])[0]
+    ae, _ = contact(L.P['clav'], L.T['scap'], 0.004)
+    af, _ = contact(L.P['scap'], L.T['clav'], 0.004)
     za_sc = np.linalg.norm(se0.mean(0) - notch.mean(0)); za_ac = np.linalg.norm(ae.mean(0) - af.mean(0))
+    Pc = L.P['clav']; Ps = L.P['scap']
     acr = acromion_points(L, Ps)
     rng = np.random.default_rng(3)
     def sub(P, n): return P if len(P) <= n else P[rng.choice(len(P), n, replace=False)]
-    Pc_z = sub(Pc, 600); Ps_z = sub(Ps, 900); acr_z = sub(acr, 150)
+    Pc_z = sub(Pc, 700); Ps_z = sub(Ps, 900); acr_z = sub(acr, 150)
     hp = L.P['hum']; head = hp[np.linalg.norm(hp - J['gh'], axis=1) < J['gh_r'] + 0.003]
     head_z = sub(head[(head - J['gh']) @ J['glenoid_n'] > 0.3 * J['gh_r']], 150)  # the part of the head under the deltoid
     ap_za = za_shoulder_ap(L)
-    xs = Pc_z[:, 0] * L.sg
+    xs = Pc_z[:, 0] * sg
     edges = np.linspace(xs.min(), xs.max(), 8)
     seg = np.clip(np.searchsorted(edges, xs) - 1, 0, 6)
     fb = FrontBack(skinT, W(J['gh'][None])[0], half=0.06, step=0.005)
+    # chest wall: costal-surface samples with their Z-Anatomy gap, the inferior angle, all samples for the minimum
+    Pw, dw_za = costal_samples(L, za_ribs)
+    lo_w = np.maximum(WALL_MIN + 1.0, s0 * dw_za * 1e3 - WALL_TOL); hi_w = s0 * dw_za * 1e3 + WALL_TOL
+    ia = sv_[np.argmin(sv_[:, 1])]
+    ia_za = float(TriMesh(*merge(za_ribs)).closest(ia[None])[0][0] * 1e3)
+    Pmin = sub(Ps, 500)
+    # joints: sternal end, acromial end and acromial facet samples
+    Pc_sc = Pc[np.linalg.norm(Pc - c_se, axis=1) < 0.015]
+    Pc_ac = Pc[np.linalg.norm(Pc - J['ac'], axis=1) < 0.012]; Ps_ac = Ps[np.linalg.norm(Ps - J['ac'], axis=1) < 0.012]
+    Pc_sc = sub(Pc_sc, 300); Pc_ac = sub(Pc_ac, 200); Ps_ac = sub(Ps_ac, 200)
+    medial = np.linalg.norm(Pc_z - c_se, axis=1) < COSTOCLAV_MEDIAL
+    need_cc = np.where(medial, COSTOCLAV[0], COSTOCLAV[1])
 
     def soft_min(c, tau=0.4):
         m = c.min(); return m - tau * np.log(np.exp(-(c - m) / tau).sum())
@@ -152,56 +238,88 @@ def fit_girdle(L, W, skinT, lungsT, log=print):
         if hi is not None and v > hi: r += v - hi
         return r
 
-    def run(Gc, Gs):
-        sc_h = Gc(c_se[None])[0]
-        ac_h0 = Gc(J['ac'][None])[0]
+    # start: the scapula on the chest wall as in Z-Anatomy, the clavicle from the notch aimed at its acromion
+    Gw, wall_rms = wall_rigid(za_ribs, hra_ribs, sv_, s0)
+    Gc = Aff(Gw.A, Gw.t + (sc_target - Gw(c_se[None])[0]))
+    ac_s = Gw(J['ac'][None])[0]
+    Gc = Gc.then(Aff.about(rot_between(Gc(J['ac'][None])[0] - sc_target, ac_s - sc_target), sc_target))
+    Gs = Aff(Gw.A, Gw.t + (Gc(J['ac'][None])[0] - ac_s))
+    start_ac_mismatch = float(np.linalg.norm(Gc(J['ac'][None])[0] - ac_s) * 1e3)
+    # the scapula's axes in the start pose: plane normal (upward rotation), medio-lateral (tilt), vertical (internal rot.)
+    c0 = sv_.mean(0); w_, V_ = np.linalg.eigh(np.cov((sv_ - c0).T))
+    n_s = unit(Gs.vec(V_[:, 0])); up = np.array([0.0, 1.0, 0.0])
+    e_v = unit(up - (up @ n_s) * n_s); e_ml = np.cross(n_s, e_v)
+    sc_h = sc_target; ac_h0 = Gc(J['ac'][None])[0]
 
-        def maps(x):
-            Rc = _rot(x[:3]); Rs = _rot(x[3:6])
-            C = Gc.then(Aff.about(Rc, sc_h))
-            S = Gs.then(Aff.about(Rs, ac_h0)).then(Aff.about(Rc, sc_h))  # scapula turns about AC, then rides the clavicle
-            return C, S
+    def maps(x):
+        Rc = _rot(x[0:3]); Rs = _rot(x[6:9])
+        Cm = Aff.about(Rc, sc_h).then(Aff(np.eye(3), x[3:6] * 1e-3))
+        C = Gc.then(Cm)
+        S = Gs.then(Aff.about(Rs, ac_h0)).then(Aff(np.eye(3), x[9:12] * 1e-3)).then(Cm)   # the scapula rides on the clavicle
+        return C, S
 
-        def resid(x, detail=False):
-            C, S = maps(x)
-            pc = C(Pc_z); ps = S(Ps_z); pa = S(acr_z); ph = S(head_z)
-            clc = -skinT.signed(pc) * 1e3; cls = -skinT.signed(ps) * 1e3; cla = -skinT.signed(pa) * 1e3; clh = -skinT.signed(ph) * 1e3
-            ls = lungsT.closest(ps)[0] * 1e3; lc = lungsT.closest(pc)[0] * 1e3; mc = Tman.signed(pc) * 1e3
-            out = {}
-            out['acromion'] = 2.0 * band(soft_min(cla), 1.5, 4.5)
-            out['clav_lat'] = 2.0 * band(soft_min(clc[seg == 6]), 1.5, 5.0)
-            for k in range(1, 6): out[f'clav_seg{k}'] = 0.3 * band(soft_min(clc[seg == k]), None, 5.0)
-            out['clav_in'] = 1.0 * np.sqrt(np.sum(np.maximum(0, 1.0 - clc) ** 2))
-            out['scap_in'] = 1.0 * np.sqrt(np.sum(np.maximum(0, 1.0 - cls) ** 2))
-            out['scap_lung'] = 1.0 * np.sqrt(np.sum(np.maximum(0, 12.0 - ls) ** 2))   # Z-Anatomy: 17 mm (ribs, muscles)
-            out['clav_lung'] = 1.0 * np.sqrt(np.sum(np.maximum(0, 3.0 - lc) ** 2))    # Z-Anatomy: 4-7 mm (first rib)
-            out['clav_man'] = 0.3 * np.sqrt(np.sum(np.maximum(0, 0.3 - mc) ** 2))
-            out['head_deltoid'] = 1.0 * band(soft_min(clh), 12.0, None)
-            gh = S(J['gh'][None])[0]
-            fr, bk = fb(gh)
-            out['gh_ap'] = 1.0 * band((fr - bk) * 0.5e3 - ap_za, -6.0, 6.0)
-            if detail: return out
-            return np.r_[np.array(list(out.values())), x / np.radians(10.0)]
+    def resid(x, detail=False):
+        C, S = maps(x)
+        pc = C(Pc_z); ps = S(Ps_z); pa = S(acr_z); ph = S(head_z)
+        clc = -skinT.signed(pc) * 1e3; cls = -skinT.signed(ps) * 1e3; cla = -skinT.signed(pa) * 1e3; clh = -skinT.signed(ph) * 1e3
+        out = {}
+        out['acromion'] = 2.0 * band(soft_min(cla), 1.5, 4.5)
+        out['clav_lat'] = 2.0 * band(soft_min(clc[seg == 6]), 1.5, 5.0)
+        for k in range(1, 6): out[f'clav_seg{k}'] = 0.3 * band(soft_min(clc[seg == k]), None, 5.0)
+        out['clav_in'] = 1.0 * np.sqrt(np.sum(np.maximum(0, 1.0 - clc) ** 2))
+        out['scap_in'] = 1.0 * np.sqrt(np.sum(np.maximum(0, 1.0 - cls) ** 2))
+        dw = ribsT.closest(S(Pw))[0] * 1e3
+        rw = np.maximum(0, lo_w - dw) + np.maximum(0, dw - hi_w)
+        out['scap_wall'] = 2.5 * np.sqrt(np.mean(rw ** 2))
+        dm = ribsT.closest(S(Pmin))[0] * 1e3
+        out['scap_rib_min'] = 1.0 * np.sqrt(np.sum(np.maximum(0, WALL_MIN - dm) ** 2))
+        dia = float(ribsT.closest(S(ia[None]))[0][0] * 1e3)
+        out['inferior_angle'] = 1.0 * band(dia, s0 * ia_za - 2.5, s0 * ia_za + 2.5)
+        ms = Tman.signed(C(Pc_sc)) * 1e3
+        out['sc_space'] = 1.5 * band(soft_min(ms, 0.2), *JOINT_SPACE)
+        out['sc_min'] = 1.0 * np.sqrt(np.sum(np.maximum(0, 0.8 - ms) ** 2))
+        d1 = L.T['scap'].signed(S.inverse()(C(Pc_ac))) * s0 * 1e3
+        d2 = L.T['clav'].signed(C.inverse()(S(Ps_ac))) * s0 * 1e3
+        dac = np.r_[d1, d2]
+        out['ac_space'] = 1.5 * band(soft_min(dac, 0.2), *JOINT_SPACE)
+        out['ac_min'] = 1.0 * np.sqrt(np.sum(np.maximum(0, 0.8 - dac) ** 2))
+        dcc = rcT.closest(pc)[0] * 1e3
+        out['costoclavicular'] = 1.0 * np.sqrt(np.sum(np.maximum(0, need_cc - dcc) ** 2))
+        lc = lungsT.closest(pc)[0] * 1e3
+        out['clav_lung'] = 1.0 * np.sqrt(np.sum(np.maximum(0, 3.0 - lc) ** 2))
+        out['head_deltoid'] = 1.0 * band(soft_min(clh), 12.0, None)
+        gh = S(J['gh'][None])[0]
+        fr, bk = fb(gh)
+        out['gh_ap'] = 1.0 * band((fr - bk) * 0.5e3 - ap_za, -6.0, 6.0)
+        wv = _rotvec(_rot(x[0:3]) @ _rot(x[6:9]))
+        rot = dict(up=float(wv @ n_s), tilt=float(wv @ e_ml), int=float(wv @ e_v))
+        if detail:
+            out = {k: float(v) for k, v in out.items()}
+            out.update({f'scap_{k}_deg': float(np.degrees(v)) for k, v in rot.items()})
+            out.update(wall_p5=float(np.percentile(dw, 5)), wall_p50=float(np.median(dw)), wall_in_band_pct=float(np.mean(rw == 0) * 100),
+                       ia_mm=dia, sc_mm=float(ms.min()), ac_mm=float(dac.min()), costoclav_lat_mm=float(dcc[~medial].min()),
+                       costoclav_med_mm=float(dcc[medial].min()) if medial.any() else None)
+            return out
+        pri = [rot[k] / np.radians(PRIOR_DEG[k]) for k in ('up', 'tilt', 'int')]
+        return np.r_[np.array(list(out.values())), pri, x[0:3] / np.radians(PRIOR_DEG['clav']), x[3:6] / GLIDE_MM, x[9:12] / GLIDE_MM]
 
-        res = least_squares(resid, np.zeros(6), method='trf', diff_step=1e-3, max_nfev=120, x_scale=np.full(6, 0.05))
-        C, S = maps(res.x)
-        return res, C, S, {k: round(float(v), 2) for k, v in resid(res.x, detail=True).items()}
-
-    # start A: the warp's rotation over each bone at the body scale (the warp's local scale at the shoulders swings
-    # between 0.4 and 1.9, the bones' size should not); start B: the upper thoracic spine's rigid motion
-    med = cv[(cv[:, 0] - c_se[0]) * L.sg < 0.06]
-    GcA, _ = local_similarity(W, med, scale=s0); GsA, _ = local_similarity(W, sv_, scale=s0)
-    Gu = upper_thorax_rigid(W, s0)
-    best = None
-    for name, Gc, Gs in (('warp', GcA, GsA), ('spine', Gu, Gu)):
-        Gc = Aff(Gc.A, Gc.t + (sc_target - Gc(c_se[None])[0]))                     # sternal facet on the notch
-        Gs = Aff(Gs.A, Gs.t + (Gc(J['ac'][None])[0] - Gs(J['ac'][None])[0]))       # acromion on the clavicle's end
-        res, C, S, terms = run(Gc, Gs)
-        log(f'  girdle {L.side} start {name}: cost {res.cost:.2f}, clavicle {np.degrees(np.linalg.norm(res.x[:3])):.1f} deg, scapula {np.degrees(np.linalg.norm(res.x[3:])):.1f} deg')
-        if best is None or res.cost < best[0].cost: best = (res, C, S, terms, name)
-    res, C, S, terms, name = best
-    info = dict(scale=s0, start=name, manubrium=man['how'], manubrium_warp_rms_mm=man['rms_mm'],
-                sternal_facet_to_warped_notch_mm=float(np.linalg.norm(C(se0).mean(0) - W(notch).mean(0)) * 1e3), rot_clav_deg=float(np.degrees(np.linalg.norm(res.x[:3]))), rot_scap_deg=float(np.degrees(np.linalg.norm(res.x[3:]))),
-                cost=float(res.cost), notch=W(notch).mean(0).tolist(), za_sc_mm=float(za_sc * 1e3), za_ac_mm=float(za_ac * 1e3), terms=terms)
-    log(f'  girdle {L.side}: kept start {name}, {terms}')
-    return dict(clav=C, scap=S, man=man_w, info=info, notch_pts=Mfun(notch), notch_pts_warp=W(notch), se=se0, ae=ae, af=af, acr=acr, ribs=(W(rv), rf))
+    x0 = np.zeros(12)
+    step = np.r_[np.full(3, 1e-3), np.full(3, 0.05), np.full(3, 1e-3), np.full(3, 0.05)]
+    res = least_squares(resid, x0, method='trf', diff_step=step, max_nfev=200, x_scale=np.r_[np.full(3, 0.05), np.ones(3), np.full(3, 0.05), np.ones(3)])
+    C, S = maps(res.x)
+    terms = {k: round(v, 2) for k, v in resid(res.x, detail=True).items()}
+    t0 = {k: round(v, 2) for k, v in resid(x0, detail=True).items()}
+    log(f'  girdle {L.side}: wall start (ribs 2-8 rms {wall_rms:.1f} mm, start AC mismatch {start_ac_mismatch:.1f} mm), cost {res.cost:.2f} '
+        f'({res.nfev} evaluations); clavicle {np.degrees(np.linalg.norm(res.x[:3])):.1f} deg, scapula {np.degrees(np.linalg.norm(res.x[6:9])):.1f} deg, '
+        f'glides SC {np.linalg.norm(res.x[3:6]):.1f} AC {np.linalg.norm(res.x[9:12]):.1f} mm')
+    log(f'  girdle {L.side} start terms: {t0}')
+    log(f'  girdle {L.side} final terms: {terms}')
+    info = dict(scale=s0, start='chest wall (ribs 2-8 of the rib cage group, Z-Anatomy relation)', wall_rigid_rms_mm=wall_rms,
+                manubrium='rib cage group final manubrium', manubrium_local_rms_mm=man_rms, start_ac_mismatch_mm=start_ac_mismatch,
+                sternal_facet_to_notch_mm=float(np.linalg.norm(C(se0).mean(0) - Gm(notch).mean(0)) * 1e3),
+                rot_clav_deg=float(np.degrees(np.linalg.norm(res.x[:3]))), rot_scap_deg=float(np.degrees(np.linalg.norm(res.x[6:9]))),
+                glide_sc_mm=float(np.linalg.norm(res.x[3:6])), glide_ac_mm=float(np.linalg.norm(res.x[9:12])),
+                cost=float(res.cost), notch=Gm(notch).mean(0).tolist(), za_sc_mm=float(za_sc * 1e3), za_ac_mm=float(za_ac * 1e3),
+                za_inferior_angle_mm=ia_za, terms=terms, start_terms=t0,
+                ribcage_files={k: (os.path.getmtime(v) if isinstance(v, str) else [os.path.getmtime(p) for p in v]) for k, v in files.items()})
+    return dict(clav=C, scap=S, man=man_h, info=info, notch_pts=Gm(notch), notch_pts_warp=W(notch), se=se0, ae=ae, af=af, acr=acr)

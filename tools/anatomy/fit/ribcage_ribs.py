@@ -301,13 +301,16 @@ def exit_along(tgt, p, d, clear, tmax=0.03, step=0.0003):
 
 
 def bend(v, Bf, obstacles, skin=None, skin_clear=SKIN_CLEAR, iters=5, sub=2, w_smooth=20.0, band=0.003, radial=None,
-         mu=1000.0, min_capacity=0.25, skip=None):
+         mu=1000.0, min_capacity=0.25, skip=None, target=None):
     """Smallest smooth displacement v + Bf @ C (one vector per arc length, so whole cross-sections move together)
     that clears `obstacles` [(Target, clearance)] and keeps `skin_clear` inside the skin.
     Minimises |C|^2 + w_smooth |D2 C|^2 + mu * sum(hinge^2) (mm): the clearances are soft, so conflicting ones
     give a compromise instead of a failure. Each clearance is linearised along its push direction: the field
     gradient near the surface, the chest wall's outward direction (`radial`) for points deep inside a lung.
-    Points the field cannot move (near the fixed end, basis capacity < min_capacity) are left out."""
+    Points the field cannot move (near the fixed end, basis capacity < min_capacity) are left out.
+    target = (vertex idx, point, tol, weight) also pulls the centroid of those vertices (the rib's costochondral end)
+    to within tol of the point (a soft term, weight per mm^2, below the clearances' mu): the end moves smoothly with
+    the rest of the bendable shaft."""
     nf = Bf.shape[1]
     D = np.diff(np.eye(nf), 2, axis=0) if nf > 2 else np.zeros((0, nf))
     H = np.eye(3 * nf) + w_smooth * np.kron(np.eye(3), D.T @ D)
@@ -317,6 +320,14 @@ def bend(v, Bf, obstacles, skin=None, skin_clear=SKIN_CLEAR, iters=5, sub=2, w_s
     c = np.zeros(3 * nf)
     info = dict(violated_before_mm=0.0)
     if not len(idx_all): return v.copy(), dict(info, max_mm=0.0)
+    At = bt = None
+    if target is not None:
+        t_idx, t_pt, tol, w_t = target
+        At = np.kron(np.eye(3), Bf[t_idx].mean(0)[None])          # end-centroid displacement (mm) per coefficient
+        d0 = np.asarray(t_pt) - v[t_idx].mean(0); L0 = float(np.linalg.norm(d0))
+        bt = d0 * max(0.0, 1 - tol / max(L0, 1e-9)) * 1000
+        info['target_before_mm'] = round(L0 * 1000, 2)
+        if not bt.any(): At = None
     for it in range(iters):
         cur = v + Bf @ (c.reshape(3, nf).T / 1000)
         P = cur[idx_all]
@@ -355,19 +366,23 @@ def bend(v, Bf, obstacles, skin=None, skin_clear=SKIN_CLEAR, iters=5, sub=2, w_s
                 A.append(np.hstack([Bi * g[:, k:k + 1] for k in range(3)])); b.append((d[m] + skin_clear) * 1000)
                 worst = max(worst, float((d[m] + skin_clear).max()))
         if it == 0: info['violated_before_mm'] = round(worst * 1000, 2)
-        if not A or worst <= 0.00002: break
-        A = np.concatenate(A); b = np.concatenate(b) + A @ c          # constraints on the total: A c >= b
+        if (not A or worst <= 0.00002) and (At is None or it > 0): break
+        A = np.concatenate(A) if A else np.zeros((0, 3 * nf))
+        b = (np.concatenate(b) + A @ c) if len(A) else np.zeros(0)          # constraints on the total: A c >= b
+        H0, r0 = (H, np.zeros(3 * nf)) if At is None else (H + w_t * At.T @ At, w_t * At.T @ bt)
         # squared-hinge QP by active sets
         act = (A @ c) < b
         for _ in range(30):
             Aa, ba = A[act], b[act]
-            c_new = np.linalg.solve(H + mu * Aa.T @ Aa, mu * Aa.T @ ba)
+            c_new = np.linalg.solve(H0 + mu * Aa.T @ Aa, r0 + mu * Aa.T @ ba)
             act_new = (A @ c_new) < b
             c = c_new
             if np.array_equal(act_new, act): break
             act = act_new
     disp = Bf @ (c.reshape(3, nf).T / 1000)
     info['max_mm'] = float(np.linalg.norm(disp, axis=1).max() * 1000)
+    if target is not None:
+        info['target_after_mm'] = round(float(np.linalg.norm(np.asarray(target[1]) - (v + disp)[target[0]].mean(0))) * 1000, 2)
     return v + disp, info
 
 

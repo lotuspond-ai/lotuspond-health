@@ -30,9 +30,18 @@ Method (per body):
     rigidly over S_RIGID = 1.2 cm of geodesic distance along the vessel tree (mesh edges plus contacts between touching
     vessels) and decays to zero by L_SNAP = 6.5 cm (raised cosine), several junctions blended by inverse geodesic
     distance.
- 4. Push-out (fit/vessels_fix.py): out of every bone (HRA and placed) by 0.8 mm and 1.5 mm inside the skin, with a
-    Gaussian-spread displacement that moves a tube as a whole, shared across Z-Anatomy junctions (connected vessels form
-    one group), faded in over 1.5 cm from the junction rings.
+    Re-alignment (realign): each chain junction's end axis is then measured exactly as the report measures it; those
+    more than REALIGN_ABOVE off the stub's axis are turned again about their end ring, down to CHAIN_TOL, while every
+    other junction is held where the first pass put it.
+    Femoral sheath (sheath_companion, male): the femoral arteries take their femoral vein's snap displacement (Gaussian
+    average over the vein and the fixed HRA external iliac vein), so the vein stays about 1 cm medial to its artery as
+    in Z-Anatomy instead of swinging behind it 3-5 cm below the inguinal ligament.
+ 4. Push-out (fit/vessels_fix.py): out of every bone (HRA and placed) by 0.8 mm, out of the solid organs by 0.3 mm and
+    1.5 mm inside the skin, with a Gaussian-spread displacement that moves a tube as a whole, shared across Z-Anatomy
+    junctions (connected vessels form one group), faded in over 1.5 cm from the junction rings (2.5 cm from a chain
+    junction's ring: past the stretch its end axis is measured on); vertices first, then probes inside the faces near a
+    bone. Inside tests are ray parity with a majority of three rays, five when the first three disagree
+    (fit/vessels_geom.TriSet).
  5. Measurements (fit/vessels_measure.py) -> report.json, QA renders, write_group().
 """
 import os, sys, json, time, re
@@ -74,9 +83,12 @@ JUNCTIONS = [
          vessel='Right_common_carotid_artery'),
     dict(key='right_subclavian_origin', part=A, sexes=('female',), hra='brachiocephalic_artery_b', kind='branch', end='axis', hint=(-0.3, 1, 0.2),
          parent='Brachiocephalic_trunk', children=['Right_subclavian_artery']),
-    # male: the HRA left common carotid ends at its bifurcation (upper border of the thyroid cartilage); female: a 5 cm stub
-    dict(key='left_carotid_bifurcation', part=A, sexes=('male',), hra='left_common_carotid_artery_b', kind='fork', end='tip', hint=(0, 1, 0),
-         parent='Left_common_carotid_artery', children=['Internal_carotid_arteryl', 'External_carotid_arteryl']),
+    # female: the HRA left common carotid is a 5 cm stub. male: its first 1.6 cm (_a) leaves the arch at a normal calibre,
+    # but its continuation to the bifurcation (_b) is a 2.5-4.6 mm thread beside a 9-12 mm right common carotid, stepping
+    # up 3-4x into the internal and external carotids: the Z-Anatomy left common carotid continues _a instead, and _b
+    # is left out of the assembly (assemble.py: HRA name VH_M_left_common_carotid_artery_b)
+    dict(key='left_common_carotid', part=A, sexes=('male',), hra='left_common_carotid_artery_a', kind='chain', end='tip', hint=(0, 1, 0),
+         vessel='Left_common_carotid_artery'),
     dict(key='left_common_carotid', part=A, sexes=('female',), hra='left_common_carotid_artery_b', kind='chain', end='tip', hint=(0, 1, 0.2),
          vessel='Left_common_carotid_artery'),
     dict(key='left_subclavian', part=A, hra='left_subclavian_artery_b', kind='chain', end='tip', hint=(0.3, 1, 0), vessel='Left_subclavian_artery'),
@@ -97,16 +109,19 @@ JUNCTIONS = [
     dict(key='internal_thoracic_vein_l', part=V, sexes=('male',), hra='brachiocephalic_vein_[LR]', side='l', kind='side', vessel='Internal_thoracic_veinsl'),
     dict(key='internal_thoracic_vein_r', part=V, sexes=('male',), hra='brachiocephalic_vein_[LR]', side='r', kind='side', vessel='Internal_thoracic_veinsr'),
     # male: HRA external iliac veins (capped at the inguinal ligament) -> femoral veins
+    # (their arteries follow the veins' snap in the femoral sheath: sheath_companion)
     dict(key='femoral_vein_l', part=V, sexes=('male',), hra='external_iliac_vein_[LR]', side='l', kind='chain', end='tip', hint=(0.2, -1, 0.4),
-         vessel='Femoral_veinl'),
+         vessel='Femoral_veinl', companion=True),
     dict(key='femoral_vein_r', part=V, sexes=('male',), hra='external_iliac_vein_[LR]', side='r', kind='chain', end='tip', hint=(-0.2, -1, 0.4),
-         vessel='Femoral_veinr'),
+         vessel='Femoral_veinr', companion=True),
     # female: no HRA brachiocephalic or external iliac veins: the Z-Anatomy ones continue the superior vena cava's two
     # open rings and the common iliac veins' distal rings
     dict(key='svc_right_brachiocephalic', part=V, sexes=('female',), hra='superior_vena_cava', kind='chain', end='loop', axis='march', hint=(-0.2, 1, 0),
          vessel='Right_brachiocephalic_vein'),
+    # (pin: the push-out out of the thymus lobe in front of it fades in over 4 cm from this ring instead of PIN_CHAIN: at
+    # 2.5 cm it bent the vein's first 2 cm from 10 to 24 degrees off the ring's axis without clearing the thymus)
     dict(key='svc_left_brachiocephalic', part=V, sexes=('female',), hra='superior_vena_cava', kind='chain', end='loop', hint=(1, 0.3, 0.6),
-         vessel='Left_brachiocephalic_vein'),
+         vessel='Left_brachiocephalic_vein', pin=0.040),
     dict(key='external_iliac_vein_l', part=V, sexes=('female',), hra='(?:left_|right_)?common_iliac_vein(?:_[LR])?', side='l', kind='chain', end='loop',
          axis='march', hint=(0.7, -0.6, 0.3), vessel='External_iliac_veinl'),
     dict(key='external_iliac_vein_r', part=V, sexes=('female',), hra='(?:left_|right_)?common_iliac_vein(?:_[LR])?', side='r', kind='chain', end='loop',
@@ -308,7 +323,7 @@ def setup_junctions(sex, VES, log=log):
             th = G.rotvec_between(t0, e['n']); ang = float(np.linalg.norm(th))
             theta = th * max(0.0, ang - np.radians(CHAIN_TOL)) / ang if ang > 1e-9 else th
             out.append(dict(key=J['key'], kind='chain', part=J['part'], p=p0, c=e['c'], theta=theta, seeds={J['vessel']: ring}, vessels=[J['vessel']],
-                            hra_mesh=hm, end=e, za_dir=t0, za_r=rr,
+                            hra_mesh=hm, end=e, za_dir=t0, za_r=rr, l_snap=J.get('l_snap', L_SNAP), companion=J.get('companion', False), pin=J.get('pin', PIN_CHAIN),
                             info=dict(info, vessel=J['vessel'], za_end=dict(c_mm=np.round(p0 * 1000, 1).tolist(), dir=np.round(t0, 3).tolist(), r_mm=round(rr * 1000, 2)),
                                       axis_mismatch_deg=round(float(np.degrees(ang)), 1), rotation_deg=round(float(np.degrees(np.linalg.norm(theta))), 1),
                                       shift_mm=round(float(np.linalg.norm(e['c'] - p0)) * 1000, 2))))
@@ -422,21 +437,48 @@ def pelvic_pairs(sex, VES, log=log):
     return (np.concatenate(X), np.concatenate(D)), info
 
 
+# the branches of the common iliac arteries take their start ring's displacement along them: the field moves the
+# common iliac's end ring (beside the HRA veins) 4-7 cm, but fades out within 3.5 cm of the veins, so without this the
+# external and internal iliac arteries first ran 4-5 cm back up along the common iliac before turning down (a hairpin)
+VC_PROPAGATE = ('External_iliac_artery', 'Internal_iliac_artery')
+
+
 def pelvic_correction(sex, VES, log=log):
-    """Move every vessel by the companion field (see above). Returns the info for the report."""
+    """Move every vessel by the companion field (see above); the common iliac arteries' branches carry their start
+    ring's displacement with a geodesic raised-cosine falloff over their own length (their far ends keep the field's
+    displacement, so the external iliac still meets the femoral artery). Returns the info for the report."""
     pairs, info = pelvic_pairs(sex, VES, log)
     if pairs is None: return info
     X, D = pairs
     tree = cKDTree(X)
+    disp = {}
     for n, x in VES.items():
         if n in VC_SKIP: continue
         d, i = tree.query(x['v'], k=min(24, len(X)))
         K = np.exp(-0.5 * (d / VC_SIGMA) ** 2) + 1e-30
         avg = np.einsum('ij,ijk->ik', K, D[i]) / K.sum(1, keepdims=True)
         fade = G.smoothstep((VC_FAR - d[:, 0]) / (VC_FAR - VC_NEAR))
-        x['v'] = x['v'] + fade[:, None] * avg
-        x['pelvic_mm'] = float(np.linalg.norm(fade[:, None] * avg, axis=1).max() * 1000)
+        disp[n] = fade[:, None] * avg
+    prop = {}
+    for n in list(disp):
+        par = VES.get('Common_iliac_artery' + n[-1])
+        if not n.startswith(VC_PROPAGATE) or par is None: continue
+        x = VES[n]
+        ring = min(loops_of(x['v'], x['f']), key=lambda l: np.linalg.norm(par['v'] - l['c'], axis=1).min())
+        g = G.geodesic(G.graph(x['v'], x['f']), ring['idx'])
+        g = np.where(np.isfinite(g), g, np.nanmax(np.where(np.isfinite(g), g, np.nan)))
+        d_ring = disp[n][ring['idx']].mean(0)
+        w = 0.5 * (1 + np.cos(np.pi * np.clip(g / g.max(), 0, 1)))
+        before = float(np.linalg.norm(disp[n] - d_ring, axis=1).max())
+        disp[n] = disp[n] + w[:, None] * (d_ring - disp[n])
+        prop[n] = dict(ring_shift_mm=round(float(np.linalg.norm(d_ring)) * 1000, 1), length_cm=round(float(g.max()) * 100, 1),
+                       max_lag_behind_ring_before_mm=round(before * 1000, 1))
+    for n, dv in disp.items():
+        x = VES[n]; x['v'] = x['v'] + dv
+        x['pelvic_mm'] = float(np.linalg.norm(dv, axis=1).max() * 1000)
     for k, v in info.items(): log('  pelvic pair', k, json.dumps(v))
+    for k, v in prop.items(): log('  pelvic branch propagation', k, json.dumps(v))
+    info['branch_propagation'] = prop
     return info
 
 
@@ -481,12 +523,13 @@ def snap(VES, junctions, log=log):
         W = np.zeros((len(Js), n)); Dk = np.zeros((len(Js), n, 3)); dmin = np.full(n, np.inf)
         for k, j in enumerate(Js):
             seeds = np.concatenate([S.idx(nm, ix) for nm, ix in j['seeds'].items() if nm in S.off])
-            s = G.geodesic(S.G, seeds, limit=L_SNAP)
+            Lj = j.get('l_snap', L_SNAP)
+            s = G.geodesic(S.G, seeds, limit=max(Lj, L_SNAP))
             dmin = np.minimum(dmin, s)
-            m = s < L_SNAP
+            m = s < Lj
             # rigid over the first S_RIGID (the end ring and the stretch its axis is measured on move as one piece),
-            # then a raised-cosine decay to zero at L_SNAP
-            tt = np.clip((s[m] - S_RIGID) / (L_SNAP - S_RIGID), 0.0, 1.0)
+            # then a raised-cosine decay to zero at Lj (L_SNAP unless the junction sets its own)
+            tt = np.clip((s[m] - S_RIGID) / (Lj - S_RIGID), 0.0, 1.0)
             w = np.zeros(n); w[m] = 0.5 * (1 + np.cos(np.pi * tt))
             # rigid motion scaled by w: rotation about the pivot by w*theta, translation w*(c - p)
             th = np.linalg.norm(j['theta']); ax = j['theta'] / th if th > 1e-12 else np.zeros(3)
@@ -497,6 +540,8 @@ def snap(VES, junctions, log=log):
             Dk[k, m] = xr + j['p'] + w[m, None] * (j['c'] - j['p']) - S.v[m]
             W[k, m] = (s[m] + EPS_SHEPARD) ** -2
             j['geo'] = s
+            if j.get('realign'):
+                continue                    # a re-alignment pass (realign()) keeps the first pass's rigid stretch
             # the stretch that moves rigidly, before the motion (the report recovers the applied rotation from it)
             j['rigid'] = {}
             for nm in j['vessels']:
@@ -540,22 +585,105 @@ def orient(v, f):
 
 
 LIMB = ('arm', 'leg')
+# veins re-swept as round tubes (crushed into flat sheets / crumpled by the deformation at the root of the neck)
+REROUND = {'male': ('Left_subclavian_vein', 'Right_subclavian_vein'), 'female': ('Right_subclavian_vein', 'Left_subclavian_vein', 'Right_brachiocephalic_vein')}
+AORTA_CLEAR = 0.0005      # veins kept this far outside the HRA aorta's outer wall (m)
+REVIEW_MAX_MM, REVIEW_ASPECT, REVIEW_SUP_MM, REVIEW_PULSE_MM = 1.0, 2.0, 6.0, 5.0   # review criteria thresholds
+REALIGN_ABOVE = CHAIN_TOL + 5.0   # chain junctions whose measured end angle (vessels_measure) exceeds this are turned again
+PIN_CHAIN = 0.025                 # push-out fade-in from a chain junction ring: covers the stretch its axis is measured on
 
 
-def pin_weights(VES, trees):
-    """0 at the junction rings, 1 beyond PIN of geodesic distance (the push-out leaves the snapped junctions alone)."""
+def realign(VES, J, log=log):
+    """Second turn of the chain junctions, with the end axis exactly as the report measures it (vessels_measure.
+    start_frame: the main-trunk centerline from one radius to one radius + 15 mm, after the snap): the first turn is
+    computed from the cut mesh's axis from half a radius, and the decay beyond S_RIGID gives back a few degrees, so a
+    curved vessel (the female external iliac vein over the pelvic brim) keeps up to 24 degrees. Those above REALIGN_ABOVE
+    are turned about their (snapped) end ring centre down to CHAIN_TOL, with the same rigid stretch and decay; every other
+    junction of the same part takes part with a null motion, so the blend holds its ring where the first pass put it."""
+    from fit import vessels_measure as VM
+    J2 = []
+    for j in J:
+        if j['kind'] != 'chain': continue
+        x = VES[j['vessels'][0]]
+        c, r, t = VM.start_frame(x['v'], x['f'], j['end']['c'])
+        th = G.rotvec_between(t, j['end']['n']); ang = float(np.degrees(np.linalg.norm(th)))
+        if ang <= REALIGN_ABOVE: continue
+        theta = th * (ang - CHAIN_TOL) / ang
+        J2.append(dict(key=j['key'], part=j['part'], p=c, c=c, theta=theta, seeds=j['seeds'], vessels=j['vessels'], l_snap=j.get('l_snap', L_SNAP),
+                       realign=True))
+        j['info']['realign_deg'] = round(ang - CHAIN_TOL, 1)
+        j['info']['rotation_deg'] = round(j['info'].get('rotation_deg', 0.0) + ang - CHAIN_TOL, 1)
+        log(f'  realign {j["key"]}: measured end angle {ang:.1f} deg, turned {ang - CHAIN_TOL:.1f} more')
+    if J2:
+        keys = {j['key'] for j in J2}; parts = {j['part'] for j in J2}
+        for j in J:
+            if j['key'] in keys or j['part'] not in parts: continue
+            c0 = np.asarray(j['c'], float)
+            J2.append(dict(key=j['key'] + ':hold', part=j['part'], p=c0, c=c0, theta=np.zeros(3), seeds=j['seeds'], vessels=j['vessels'], realign=True))
+        snap(VES, J2, log=log)
+    return sorted(keys) if J2 else []
+
+
+SHEATH_SIGMA, SHEATH_NEAR, SHEATH_FAR = 0.012, 0.015, 0.040
+
+
+def sheath_companion(sex, VES, J, v_pre, log=log):
+    """The femoral artery shares the femoral sheath with the femoral vein: where a femoral vein was snapped onto an HRA
+    external iliac vein (J 'companion'), the placed arteries beside it take the vein's snap displacement (Gaussian
+    average over the vein's vertices and the fixed HRA stub's, sigma SHEATH_SIGMA, faded out between SHEATH_NEAR and
+    SHEATH_FAR from them), so they keep Z-Anatomy's arrangement in the sheath (vein about 1 cm medial to the artery)
+    instead of the vein swinging behind its artery. The HRA stub's own vertices (displacement 0) hold the arteries
+    above the inguinal ligament where the pelvic correction put them."""
+    out = {}
+    for j in J:
+        if not j.get('companion'): continue
+        vn = j['vessels'][0]
+        if vn not in v_pre: continue
+        hv = j['hra_mesh'][0]
+        src = np.concatenate([v_pre[vn], hv]); D = np.concatenate([VES[vn]['v'] - v_pre[vn], np.zeros_like(hv)])
+        tree = cKDTree(src)
+        side = np.sign(v_pre[vn][:, 0].mean())
+        moved = {}
+        for n, x in VES.items():
+            if x['part'] != A or not x['placed'] or x.get('dropped'): continue
+            if np.sign(x['v'][:, 0].mean()) != side: continue
+            d, _ = tree.query(x['v'], distance_upper_bound=SHEATH_FAR)
+            m = np.isfinite(d)
+            if not m.any(): continue
+            P = x['v'][m]
+            nb = tree.query_ball_point(P, 3 * SHEATH_SIGMA)
+            disp = np.zeros_like(P)
+            for i, ii in enumerate(nb):
+                if not ii: continue
+                ii = np.asarray(ii); k = np.exp(-0.5 * (np.linalg.norm(src[ii] - P[i], axis=1) / SHEATH_SIGMA) ** 2)
+                disp[i] = (k[:, None] * D[ii]).sum(0) / k.sum()
+            fade = 1.0 - G.smoothstep((d[m] - SHEATH_NEAR) / (SHEATH_FAR - SHEATH_NEAR))
+            x['v'] = x['v'].copy(); x['v'][m] += disp * fade[:, None]
+            mm = float(np.linalg.norm(disp * fade[:, None], axis=1).max() * 1000)
+            if mm > 0.05: moved[n] = round(mm, 1)
+        out[j['key']] = moved
+        log(f'  sheath companion {j["key"]}: arteries moved (max mm) {moved}')
+    return out
+
+
+def pin_weights(VES, trees, J=()):
+    """0 at the junction rings, 1 beyond PIN of geodesic distance (the push-out leaves the snapped junctions alone);
+    from a chain junction's ring the fade-in runs over PIN_CHAIN, past the stretch its end axis is measured on."""
     from fit.vessels_fix import PIN
     out = {}
     for part, (S, dmin) in trees.items():
         w = G.smoothstep(np.where(np.isfinite(dmin), dmin, 1.0) / PIN)
+        for j in J:
+            if j['kind'] == 'chain' and j['part'] == part and len(j.get('geo', ())) == len(w):
+                g = j['geo']; w = np.minimum(w, G.smoothstep(np.where(np.isfinite(g), g, 1.0) / j.get('pin', PIN_CHAIN)))
         for nm, x in S.split(w).items(): out[nm] = x
     return out
 
 
-def push_out(sex, VES, trees, contacts, log=log):
+def push_out(sex, VES, trees, contacts, J=(), log=log, aorta_obstacles=None):
     """Bones and skin push-out (fit/vessels_fix.py). Vessels that meet at an end ring in Z-Anatomy (`contacts`) form one
     group, so a push spreads across their junction and the tree stays connected; arteries and veins never share a
-    group."""
+    group. `aorta_obstacles` [(obstacle, clearance)] apply to the veins only (the HRA thoracic aorta as a capped tube)."""
     from fit.vessels_fix import Fixer
     from scipy.sparse.csgraph import connected_components
     from scipy import sparse
@@ -564,12 +692,16 @@ def push_out(sex, VES, trees, contacts, log=log):
     e = [(ix[a], ix[b]) for a, _, b, _ in contacts if a in ix and b in ix and VES[a]['part'] == VES[b]['part']]
     Adj = sparse.coo_matrix((np.ones(len(e)), ([i for i, _ in e], [j for _, j in e])), shape=(len(names), len(names)))
     _, comp = connected_components(Adj, directed=False)
-    pins = pin_weights(VES, trees)
+    pins = pin_weights(VES, trees, J)
     X = np.concatenate([VES[n]['v'] for n in names])
+    offs = np.cumsum([0] + [len(VES[n]['v']) for n in names])[:-1]
+    Fc = np.concatenate([VES[n]['f'] + o for n, o in zip(names, offs)])
     groups = np.concatenate([np.full(len(VES[n]['v']), comp[i]) for i, n in enumerate(names)])
     pin = np.concatenate([pins.get(n, np.ones(len(VES[n]['v']))) for n in names])
     F = Fixer(sex, X, log=log)
-    X2, hist = F.run(X, groups, pin, log=log)
+    veins = np.concatenate([np.full(len(VES[n]['v']), VES[n]['part'] == V) for n in names])
+    extra = [(ob, veins, clr) for ob, clr in (aorta_obstacles or [])]
+    X2, hist = F.run(X, groups, pin, log=log, faces=Fc, extra=extra)
     o = 0
     for n in names:
         k = len(VES[n]['v']); d = np.linalg.norm(X2[o:o + k] - VES[n]['v'], axis=1)
@@ -629,10 +761,31 @@ def run(sex, stage='all', render=True):
     pel = pelvic_correction(sex, VES)
     J = setup_junctions(sex, VES)
     for j in J: log('  junction', j['key'], json.dumps({k: j['info'][k] for k in j['info'] if k not in ('candidates',)}))
+    v_pre = {n: x['v'].copy() for n, x in VES.items() if x['placed'] and not x.get('dropped')}
     trees = snap(VES, J)
+    realigned = realign(VES, J)
+    sheath = sheath_companion(sex, VES, J, v_pre)
+    for n, v0 in v_pre.items(): VES[n]['snap_mm'] = float(np.linalg.norm(VES[n]['v'] - v0, axis=1).max() * 1000)
     log(sex, 'snapped', f'{time.time() - t0:.0f}s')
-    F, hist = push_out(sex, VES, trees, contacts)
+    # ---- review fixes: calibres, crushed veins, superficial layer (fit/vessels_review.py)
+    from fit import vessels_review as RV
+    from fit.common import skin as _skin, skin_solid
+    aorta, aorta_info = RV.hra_aorta_tube(sex)
+    sv_, sf_ = _skin(sex); SK = G.SkinField(sv_, sf_, skin_solid(sex))
+    review = dict(aorta_tube=aorta_info)
+    review['neck_calibres'] = RV.neck_calibres(sex, VES, log=log)
+    review['radius_blend'] = RV.junction_radius_blend(VES, J, log=log)
+    review['pelvic_calibres'] = RV.pelvic_calibres(sex, VES, J, aorta, log=log)
+    review['reround'] = RV.reround(VES, REROUND.get(sex, ()), J, log=log)
+    review['superficial'] = RV.superficial_layer(sex, VES, SK, log=log)
+    review['radial_pulse'] = RV.radial_pulse(sex, VES, SK, log=log)
+    F, hist = push_out(sex, VES, trees, contacts, J, aorta_obstacles=[(aorta, AORTA_CLEAR)])
     log(sex, 'pushed out', f'{time.time() - t0:.0f}s')
+    # the push-out squeezes a vein that has no room between the clavicle, the first rib and the lung apex into a flat
+    # sheet: those veins are re-rounded about the pushed centreline (their residual contacts are reported)
+    review['reround_after_push'] = RV.reround(VES, REROUND.get(sex, ()), J, log=log)
+    review['bridges'] = RV.bridges(sex, VES, log=log)
+    review['bridges_push_out'] = RV.settle_bridges(F, VES, list(review['bridges']), log=log)
     # ---- measurements
     names = [n for n, x in VES.items() if x['placed'] and not x.get('dropped')]
     jr = VM.junctions(J, VES)
@@ -642,9 +795,10 @@ def run(sex, stage='all', render=True):
     rep = dict(sex=sex, group=GROUP, method=__doc__.split('Method (per body):')[1].strip() if 'Method (per body):' in __doc__ else '',
                thresholds=dict(junction_gap_mm=VM.GAP_MAX * 1000, junction_angle_deg=VM.ANGLE_MAX, bone_penetration_mm=VM.BONE_MAX * 1000,
                                limb_vessels_outside_skin_mm=0.0, snap_falloff_cm=L_SNAP * 100),
-               junctions=jr, pelvic_companion_correction=pel)
+               junctions=jr, realigned=realigned, pelvic_companion_correction=pel, sheath_companion=sheath)
     rep['bone_penetration'] = dict(per_vessel=bone, worst_mm=max(b['max_depth_mm'] for b in bone.values()),
-                                   failing=[n for n, b in bone.items() if not b['pass_']])
+                                   failing=[n for n, b in bone.items() if not b['pass_']],
+                                   hra_stub_conflicts=VM.stub_conflicts(VES, J, bone, F.bones))
     rep['skin'] = dict(limb=dict(per_vessel={n: skin_rows[n] for n in limb}, failing=[n for n in limb if not skin_rows[n]['pass_']]),
                        all_outside=[n for n in names if not skin_rows[n]['pass_']])
     org = VM.organs(VES, names, F.organs)
@@ -674,13 +828,31 @@ def run(sex, stage='all', render=True):
         if fm: crit.append(dict(criterion=f'femoral vein medial to femoral artery ({s_})', value_mm=fm['min_offset_mm'], pass_=fm['pass_']))
         if bm and 'min_offset_mm' in bm: crit.append(dict(criterion=f'brachial artery medial to humerus shaft ({s_})', value_mm=bm['min_offset_mm'], pass_=bm['pass_']))
         if vf: crit.append(dict(criterion=f'vertebral artery through C6-C1 foramina ({s_})', pass_=vf['pass_']))
+    # ---- review measurements (fit/vessels_review.measure)
+    lungs = G.Obstacles(RV.lung_meshes(sex))
+    rm = RV.measure(sex, VES, names, lungs, aorta, SK)
+    review['measured'] = rm
+    rep['review'] = review
+    crit.append(dict(criterion='vessels inside the lung lobes (deepest)', value_mm=rm['lungs']['worst_mm'], threshold_mm=REVIEW_MAX_MM,
+                     pass_=rm['lungs']['worst_mm'] <= REVIEW_MAX_MM))
+    crit.append(dict(criterion='veins inside the HRA thoracic aorta (deepest)', value_mm=rm['aorta_veins']['worst_mm'], threshold_mm=REVIEW_MAX_MM,
+                     pass_=rm['aorta_veins']['worst_mm'] <= REVIEW_MAX_MM))
+    for n in REROUND.get(sex, ()):
+        r = rm['vein_sections'].get(n)
+        if r: crit.append(dict(criterion=f'{n} round (p90 section aspect)', value=r['p90_aspect'], threshold=REVIEW_ASPECT, pass_=r['p90_aspect'] <= REVIEW_ASPECT))
+    for n, r in rm['superficial_depth'].items():
+        if n.startswith(('Cephalic', 'Basilic', 'Median_cubital', 'Great_saphenous')):
+            crit.append(dict(criterion=f'{n} wall depth under the skin (median)', value_mm=r['median_mm'], threshold_mm=REVIEW_SUP_MM, pass_=r['median_mm'] <= REVIEW_SUP_MM))
+        if 'pulse_zone_median_mm' in r:
+            crit.append(dict(criterion=f'{n} wall depth at the pulse (median over 5 cm)', value_mm=r['pulse_zone_median_mm'], threshold_mm=REVIEW_PULSE_MM,
+                             pass_=r['pulse_zone_median_mm'] <= REVIEW_PULSE_MM))
     rep['criteria'] = crit
     rep['all_pass'] = all(c['pass_'] for c in crit)
     # ---- outputs
     outs = []
     for n in names:
         x = VES[n]
-        outs.append(dict(name=x['name'], part=x['part'], mesh=(x['v'], orient(x['v'], x['f'])), source=[n]))
+        outs.append(dict(name=x['name'], part=x['part'], mesh=(x['v'], orient(x['v'], x['f'])), source=x.get('source', [n])))
     d = os.path.join(FIT, sex, GROUP)
     for fn in os.listdir(d) if os.path.isdir(d) else []:
         if fn.endswith('.npz'): os.remove(os.path.join(d, fn))
