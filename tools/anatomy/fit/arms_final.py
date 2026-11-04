@@ -29,7 +29,7 @@ FINGER_BAND = (0.9, 2.0)
 CLEAR = 1.4
 LANDMARK_LO, LANDMARK_HI = 0.8, 4.5
 KNUCKLE_W = 0.4
-LANDMARK_W = {'acromion': 0.5, 'olecranon': 0.3, 'medial epicondyle': 0.3, 'lateral epicondyle': 0.3, 'ulnar styloid': 0.3,
+LANDMARK_W = {'acromion': 0.5, 'olecranon': 0.6, 'medial epicondyle': 0.3, 'lateral epicondyle': 0.3, 'ulnar styloid': 0.3,
               'radial styloid': 0.3}   # depth upper bounds (weights): set mainly by the girdle and the limb pass
 
 

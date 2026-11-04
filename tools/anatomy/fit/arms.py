@@ -596,8 +596,21 @@ def run(sex):
     summary = {k: dict(threshold=crit['l'][k]['threshold'], **{side: dict(value=crit[side][k]['value'], ok=crit[side][k]['ok']) for side in SIDES if k in crit[side]})
                for k in crit['l']}
     failing = [f'{k} ({side}: {crit[side][k]["value"]})' for k in crit['l'] for side in SIDES if k in crit[side] and not crit[side][k]['ok']]
+    notes = list(NOTES)
+    for side in SIDES:
+        el = {k: crit[side][f'landmark_{k}_mm']['value'] for k in ('olecranon', 'medial_epicondyle', 'lateral_epicondyle')}
+        if all(v > 5.0 for v in el.values()):
+            notes.append(f'{side}: all three elbow landmarks lie deeper than 5 mm ({el} mm): the skin elbow is wider and deeper than the '
+                         'bone plus 5 mm on every side, so the limb pass shares the excess between them (olecranon weighted double); '
+                         'meeting the bound would need a distal humerus enlarged beyond the body scale, which is not done.')
+    for side in SIDES:
+        fs = res[side]['info']['fingers']
+        short = {d: round(f['length_scale'], 3) for d, f in fs.items() if f['length_scale'] < 0.88}
+        if short:
+            notes.append(f'{side}: skin digits shorter than Z-Anatomy scaled to the body (length scale {short}): phalanges scaled by 0.88 '
+                         'and the rest taken up in their shafts so each digit fits its skin finger.')
     report = dict(sex=sex, height_m=ctx.height, body_scale=ctx.s0, all_ok=not failing, failing=failing, criteria=crit, summary=summary,
-                  sides=rep_sides, notes=list(NOTES))
+                  sides=rep_sides, notes=notes)
     d = write_group(sex, GROUP, outputs, _jsonable(report))
     log('  failing: ' + ('; '.join(failing) if failing else 'none'))
     for side in SIDES:

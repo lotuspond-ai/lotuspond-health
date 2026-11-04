@@ -11,6 +11,8 @@
   own finger          every phalanx inside the skin and inside its own skin finger (its samples' nearest skin points
                       belong to that finger or to the palm, never to another finger)
   lengths             humerus / height 0.17-0.21, radius / height 0.13-0.16 (bone length along its shaft axis)
+All distances are exact closest-point distances to the meshes (fit/arms_geom.TriMesh, exact within 8 mm here).
+criteria() flattens one side's measurements into {name: {value, threshold, ok}} entries for report.json.
 """
 import numpy as np
 from scipy.spatial import cKDTree

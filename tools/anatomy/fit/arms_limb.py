@@ -5,9 +5,8 @@ the skin while the elbow and the wrist stay articulated.
              the elbow) and hand (carpals, metacarpals, phalanges, about the wrist)
   landmarks  the subcutaneous bony landmarks of the free limb (olecranon, medial and lateral epicondyles, ulnar and
              radial styloid processes, and more gently the knuckles) are drawn into LANDMARK_BAND under the skin; where
-             the skin is wider than
-             the bone allows (e.g. a fleshy elbow), the least-squares balance leaves the excess shared between
-             opposite landmarks instead of pushing one of them out
+             the skin is wider than the bone allows (e.g. a fleshy elbow), the weighted least-squares balance leaves
+             the excess shared between opposite landmarks instead of pushing one of them out
   clearance  every other bone sample at least CLEAR under the skin (the phalanges thereby stay in their fingers)
   joints     humero-ulnar, humero-radial and radiocarpal surfaces kept JOINT_BAND apart (closest approach), and the
              segments' joint centres kept within a few millimetres of each other (no dislocation)
@@ -23,6 +22,10 @@ from fit.arms_za import HAND_BONES, CARPALS
 SEGMENTS = {'hum': ['hum'], 'fore': ['uln', 'rad'], 'hand': list(HAND_BONES)}
 LANDMARK_BAND = (1.0, 4.0)       # mm under the skin
 LANDMARK_NAMES = ('olecranon', 'medial epicondyle', 'lateral epicondyle', 'ulnar styloid', 'radial styloid')
+# weights of the depth upper bounds: the olecranon counts double, being the one elbow landmark that stays thinly covered
+# however much subcutaneous fat there is (skin and bursa over the extensor surface), while the epicondyles carry the
+# common flexor and extensor origins; the knuckles are drawn gently
+LANDMARK_HI_W = {'olecranon': 2.0, 'medial epicondyle': 1.0, 'lateral epicondyle': 1.0, 'ulnar styloid': 1.0, 'radial styloid': 1.0}
 CLEAR = 1.6                      # mm, every other sample
 JOINT_BAND = {('hum', 'uln'): (1.3, 3.0), ('hum', 'rad'): (1.3, 3.5), ('rad', 'sca'): (1.3, 3.0), ('rad', 'lun'): (1.3, None)}
 
@@ -57,7 +60,7 @@ def limb_pass(L, maps, skinT, log=print, iters=30, seed=5):
             Pz = sub(P[b][msk], 400)
             terms.append(term_surface_band(seg, Pz, skinT, lo=LANDMARK_BAND[0] * 1e-3, w=3.0)); names.append(f'{name} lo')
             if name in LANDMARK_NAMES or name.startswith('knuckle'):
-                terms.append(term_surface_band(seg, Pz, skinT, hi=LANDMARK_BAND[1] * 1e-3, w=1.0 if name in LANDMARK_NAMES else 0.5, mode='min'))
+                terms.append(term_surface_band(seg, Pz, skinT, hi=LANDMARK_BAND[1] * 1e-3, w=LANDMARK_HI_W.get(name, 0.5), mode='min'))
                 names.append(f'{name} hi')
         near = (~lm) & (cl < 0.012)
         if near.any():

@@ -81,6 +81,30 @@ def match_rings(P, Q, c, n):
     return Qd[order][j]
 
 
+def stomach_pose(v, pyl, car, cr, cc0, fls, radius=0.015, step=0.003, ang=0.17):
+    from fit.organs_adrenal import rotvec
+    rng = np.random.default_rng(0)
+    P = v[rng.choice(len(v), 1500, replace=False)]
+    def energy(Q, pc, ccar):
+        e = sum(float(np.sum(np.maximum(CLEAR - fl.coarse(Q), 0) ** 2)) for fl in fls)
+        return e + len(Q) * 0.05 * (float(np.sum((pc - cr) ** 2)) + float(np.sum((ccar - cc0) ** 2)))
+    pc0 = v[pyl].mean(0); ca0 = v[car].mean(0)
+    rots = [np.eye(3)] + [rotvec(sg * ang * ax) for ax in np.eye(3) for sg in (1, -1)]
+    g = np.arange(-radius, radius + 1e-9, step)
+    T = np.stack(np.meshgrid(g, g, g, indexing='ij'), -1).reshape(-1, 3); T = T[np.linalg.norm(T, axis=1) <= radius + 1e-9]
+    best = (energy(P, pc0, ca0), np.eye(3), np.zeros(3))
+    e0 = best[0]
+    for R in rots:
+        Q = (P - ca0) @ R.T + ca0; pr = (pc0 - ca0) @ R.T + ca0
+        for t in T:
+            e = energy(Q + t, pr + t, ca0 + t)
+            if e < best[0]: best = (e, R, t)
+    e, R, t = best
+    out = (v - ca0) @ R.T + ca0 + t
+    return out, dict(energy_before=float(e0), energy_after=float(e), shift_mm=round(float(np.linalg.norm(t) * 1000), 1),
+                     rotation_deg=round(float(np.degrees(np.arccos(np.clip((np.trace(R) - 1) / 2, -1, 1)))), 1))
+
+
 def fit_stomach(sex, W, own=(), outer=24):
     """own: [(name, Field)] of our fitted neighbours (diaphragm, left adrenal). Returns (v, f), report, loops."""
     rep = {}
@@ -121,13 +145,19 @@ def fit_stomach(sex, W, own=(), outer=24):
     sc = float(np.clip(fill ** (1 / 3), 0.8, 1.0))
     c_rest = rest.mean(0); rest = c_rest + sc * (rest - c_rest)
     rep['bed_free_fraction'] = round(fill, 3); rep['rest_scale'] = round(sc, 3)
+    # rigid pose in the bed: the deflated stomach is turned/shifted (about its cardia) to the pose with the least overlap
+    # with its neighbours, its pylorus kept near the duodenal opening and its cardia near the hiatus
+    cc0 = v0[car].mean(0)
+    vs = cc0 + sc * (v0 - cc0)
+    vs, pose = stomach_pose(vs, pyl, car, cr, cc0, [fl for name, fl in fields if name != 'duodenum'])
+    rep['bed_pose'] = pose
+    v0 = vs
+    sc = 1.0
     arap = ARAP(rest, f)
     n = len(v0)
-    # guidance: the warped positions, moved near the pylorus by the pyloric shift (smooth falloff over 6 cm)
+    # guidance: the posed positions, moved near the pylorus onto the duodenum (smooth falloff over 6 cm)
     w_p = smoothstep((0.06 - np.linalg.norm(v0 - cp, axis=1)) / 0.05)
-    cc0 = v0[car].mean(0)
-    guide = cc0 + sc * (v0 - cc0)                  # the guidance deflates about the cardia too
-    guide = guide + w_p[:, None] * (cr - guide[pyl].mean(0))
+    guide = v0 + w_p[:, None] * (cr - v0[pyl].mean(0))
     v = guide.copy()
     active = {}                                    # vertex -> (field index): pushed once, kept on the surface
     for it in range(outer):
@@ -141,21 +171,10 @@ def fit_stomach(sex, W, own=(), outer=24):
             if m.any(): worst[name] = round(float(-sd[m].min() * 1000), 2)
         if active:
             ai = np.fromiter(active.keys(), np.int64); aj = np.fromiter(active.values(), np.int64)
-            nrm = vertex_normals(v, f)
             for j in np.unique(aj):
                 ii = ai[aj == j]; fl = fields[j][1]
-                # the wall is indented: each vertex walks inwards along the stomach's own normal until it is clear of
-                # the neighbour (a deep intruder's nearest exit can lie on its far side, which would drag the wall
-                # through it); if no exit within 30 mm, the neighbour's normal is used
-                t = np.zeros(len(ii)); done = fl(v[ii]) >= CLEAR
-                for step in np.arange(0.0005, 0.0305, 0.0005):
-                    if done.all(): break
-                    ok = (~done) & (fl.coarse(v[ii] - step * nrm[ii]) >= CLEAR + 0.0002)
-                    t[ok] = step; done |= ok
-                tg = v[ii] - t[:, None] * nrm[ii]
-                if (~done).any():
-                    sd = fl(v[ii[~done]]); on, q = fl.outward(v[ii[~done]])
-                    tg[~done] = v[ii[~done]] + np.maximum(CLEAR - sd, 0)[:, None] * on
+                sd = fl(v[ii]); on, q = fl.outward(v[ii])
+                tg = v[ii] + np.maximum(CLEAR - sd, 0)[:, None] * on
                 idx.append(ii); tgt.append(tg); wts.append(np.full(len(ii), 8.0))
         v = arap.solve(v, np.concatenate(idx), np.concatenate(tgt), np.concatenate(wts), iters=3)
         if it % 5 == 0 or it == outer - 1: log(f'    stomach iter {it}: active {len(active)}, worst {worst}')
@@ -204,8 +223,12 @@ def fit_esophagus(sex, W, stomach, car, own=(), iters=45):
     free = np.ones(len(C), bool)
     free[s < 0.006] = False                    # the top stays behind the cricoid
     free[s > Ls - 0.004] = False               # the end stays at the cardia
+    from fit.organs_geom import rmf
+    scl = np.ones((len(C), 2))
+    st0 = np.clip(np.searchsorted(s, tube.vs), 0, len(s) - 1)
+    rN = np.zeros(len(C)); np.maximum.at(rN, st0, np.abs(tube.local[:, 0])); rN = np.maximum(rN, 0.003)
     for it in range(iters):
-        vv = tube.rebuild(C)
+        vv = tube.rebuild(C, scale=scl)
         push = np.zeros((len(vv), 3)); worst = {}
         for name, fl in fields:
             sc = fl.coarse(vv); cand = np.flatnonzero(sc < CLEAR + 0.004)
@@ -232,10 +255,20 @@ def fit_esophagus(sex, W, stomach, car, own=(), iters=45):
         P = P - np.einsum('ij,ij->i', P, T)[:, None] * T
         P = ndimage.gaussian_filter1d(P, 2.0, axis=0, mode='nearest') * 0.8
         P[~free] = 0
+        # squeezed between neighbours in front and behind (trachea / left atrium against aorta / vertebrae): the
+        # collapsed oesophagus flattens front-to-back (down to 55 % of its depth) instead of being shoved into one
+        _, N2, _ = rmf(C, tube.N[0])
+        a = np.einsum('ij,ij->i', push[hitv], N2[st[hitv]])
+        fwd = np.zeros(len(C)); bwd = np.zeros(len(C))
+        np.maximum.at(fwd, st[hitv], np.maximum(a, 0)); np.maximum.at(bwd, st[hitv], np.maximum(-a, 0))
+        sq = np.minimum(fwd, bwd)
+        red = ndimage.gaussian_filter1d(np.where(sq > 0, (fwd + bwd) / (2 * rN), 0), 1.5, mode='nearest')
+        scl[:, 0] = np.maximum(0.55, scl[:, 0] - 0.5 * red)
         C = C + P
         if it % 5 == 0: log(f'    oesophagus iter {it}: worst {worst}')
     rep['route_worst_mm'] = worst
-    vv = tube.rebuild(C)
+    rep['flattening_min'] = round(float(scl[:, 0].min()), 2)
+    vv = tube.rebuild(C, scale=scl)
     # gastro-oesophageal junction: radial snap of the distal 12 mm onto the cardia rim, smooth falloff
     vv = snap_end(vv, tube, C, sv[car], cc, cn)
     # residual overlaps: smooth push-out, the junction fixed
