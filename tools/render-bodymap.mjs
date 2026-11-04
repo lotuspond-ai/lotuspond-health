@@ -77,7 +77,7 @@ async function renderBody(body) {
     await page.goto(new URL(`tools/bodymap-render.html?body=${body}${args.includes('--no-ao') ? '&ao=0' : ''}`, base).href);
     await page.waitForFunction(() => window.__bodymap, null, { timeout: 300000 });
     if (await page.evaluate(() => window.__bodymap.body()) !== body) throw new Error(`render page did not load the ${body} body`);
-    const { organs, colors } = await page.evaluate(() => window.__bodymap.palette());
+    const { organs, colors, present } = await page.evaluate(() => window.__bodymap.palette());
     const framing = await page.evaluate(() => window.__bodymap.framing());
     const manifestPath = path.join(outDir, `manifest.${body}.json`);
     const previous = fs.existsSync(manifestPath) ? JSON.parse(fs.readFileSync(manifestPath, 'utf8')) : null;
@@ -110,7 +110,8 @@ async function renderBody(body) {
     }
 
     const closeups = {};
-    const closeupOrgans = opt('organs', '') ? organs.filter(o => opt('organs').split(',').includes(o)) : organs;
+    // a close-up for every organ this body has
+    const closeupOrgans = (opt('organs', '') ? organs.filter(o => opt('organs').split(',').includes(o)) : organs).filter(o => present.includes(o));
     for (const organ of closeupOrgans) {
       if (only && !only.has(organ) && previous?.closeups?.[organ]) { const p = previous.closeups[organ]; closeups[organ] = p; for (const f of Object.values(p.image)) keep(f); continue; }
       const shot = await page.evaluate(([organ, sizes]) => window.__bodymap.shot({ kind: 'organ', organ }, { sizes }), [organ, sizes]);

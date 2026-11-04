@@ -11,7 +11,7 @@ import { Anatomy } from '../Anatomy';
 import { meshOrgan, meshRegistry } from '../registry';
 import { POND, StudioLight } from '../Stage';
 import { ORGANS, ORGAN_BY_ID, TISSUE, type Vec3 } from '../../anatomy/organs';
-import { RIGS, focusOf, landmarksOf, meshSpecs, pinOf } from '../../anatomy/bodies';
+import { RIGS, focusOf, landmarksOf, meshSpecs, organsIn, pinOf } from '../../anatomy/bodies';
 import { isBody, type Body } from '../../lib/body';
 import { useHealth } from '../../lib/store';
 import type { OrganId } from '../../types';
@@ -187,7 +187,8 @@ function Bridge({ setAo }: { setAo: (on: boolean) => void }) {
     }
 
     const api = {
-      palette: () => ({ organs: ID_ORGANS, colors: PALETTE }),
+      // the ID colours are shared by both bodies; `present` lists the organs this body has (the male has no breasts)
+      palette: () => ({ organs: ID_ORGANS, colors: PALETTE, present: ID_ORGANS.filter(id => organsIn(BODY_ID).has(id)) }),
       framing: () => ({ fov: FOV, body: { target: BODY.target.toArray(), distance: BODY.distance, elevation: BODY.elevation } }),
       body: () => BODY_ID,
       async shot(view: View, opts: ShotOptions): Promise<Shot> {
