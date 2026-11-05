@@ -8,18 +8,19 @@ about its isthmus to the landmarks that bound it in life:
     (isthmus and pyramidal lobe) grows less (PYR_STRETCH), blended to the lobes over the lobes' medial edges;
   * across, by thickening about its bed: every point moves away from the airway by THICKEN - 1 times its distance from
     the larynx / trachea, so the surfaces on the airway stay on it and the gland gets THICKEN times thicker;
-then pushed out of the airway, the cricothyroid muscles, the carotid sheaths' vessels and the oesophagus, and laid back
-onto its bed (isthmus and pyramidal lobe on the cricoid arch and trachea, lobes' medial surfaces on the airway) with
-soft attraction targets, by an embedded push-out (embedded_push): each step's pushes are spread into a smooth 3D
-displacement field (Gaussian kernel regression, SIGMA_3D) and capped at STEP_3D per vertex, so every step is a
-diffeomorphism of the space round the gland and the surface stays embedded: a lobe pressed by the airway on its medial
-face and by the carotid sheath on its lateral face moves and thins as a whole instead of one sheet passing through the
-other (the surface push-out used before, bi-Laplacian along the surface, moved the two sheets independently: 30 % of
-the surface folded after its first round, 5-7 % in the final glands). The carotid sheath gives way first: its pushes
-weigh SHEATH_W, so where the adult-size lobe cannot fit between the airway and the sheath it lies against the sheath
-rather than being crushed. The volume the push-out squeezed out comes back through the same smooth field.
+then rebuilt as a solid (organs_thyroid_solid): the grown gland voxelised, the airway (larynx and trachea, every slice
+filled to its convex hull) and its cartilages, the cricothyroid muscles, the carotid sheaths' vessels (the common carotids
+also as one-sided sheath walls: the lobes lie anteromedial to the sheath and take a groove from it) and the oesophagus
+removed, each dilated by its clearance; the gaps between the gland and its bed on the airway filled (the pretracheal
+fascia binds it there); slivers under 2 mm opened away; the signed distance smoothed with the clearances re-imposed after
+every pass; the volume the carving cost given back by a smooth outward offset towards the front and sides (never along
+the airway: the poles keep their levels); the isthmus and pyramidal lobe laid back on the larynx and trachea after the
+smoothing (a smooth warp of the signed distance); the surface extracted (surface nets) and Taubin-smoothed. A fold cannot form:
+the surface is the boundary of a voxel solid. (The surface push-outs used before pressed a lobe's medial sheet through
+its lateral sheet: 5-7 % of the surface folded; their embedded variant left lumpy, crenellated lobes.)
 Each parathyroid follows the same growth at its centre, is reshaped to an adult gland (a flattened oval PTH_EXT, about
-30 mm3, its flat side on the lobe, its long axis along the lobe) and slid onto the lobe's posterior surface.
+30 mm3, its flat side on the lobe, its long axis along the lobe) and laid on the lobe's posterior surface, at the point
+nearest its carried centre where it keeps clear of the carotid sheath, the oesophagus and the airway (organs_neck).
 """
 import os, json, pickle
 import numpy as np
@@ -27,7 +28,7 @@ from scipy.spatial import cKDTree
 
 from lib.mesh import sample_surface, dense_points, orient_outward, merge, load, signed_volume, compact
 from fit.organs_data import hra, field, log, cache_dir, FIT, has_hra
-from fit.organs_geom import Field, push_out, mesh_field, laplacian, smoothstep, vertex_normals, winding, is_closed
+from fit.organs_geom import Field, mesh_field, smoothstep, vertex_normals, winding, is_closed
 
 PYR_STRETCH = 1.2            # along-airway growth of the isthmus / pyramidal lobe band (the lobes take their own)
 THICKEN = 1.45               # growth of the gland's thickness about its airway bed
@@ -38,9 +39,6 @@ CLEAR = 0.0005               # clearance from the airway, cartilages, muscles an
 CLEAR_VESSEL = 0.0010        # from the carotid arteries and jugular veins (the carotid sheath)
 CLEAR_MUSCLE = 0.0008        # from the cricothyroid muscles (thin sheets: face samples come closer than vertices)
 PTH_EXT = (0.0056, 0.0038, 0.0024)   # parathyroid gland: length, width, thickness (m)
-SIGMA_3D = 0.0025            # embedded push-out: kernel width of the smooth 3D displacement field
-STEP_3D = 0.0003             # embedded push-out: largest move of any vertex per step
-SHEATH_W = 0.5               # weight of the carotid sheath's (and its vessels') pushes against the airway's
 PTH_VOL = 30e-9              # target volume (m3): adult glands are 25-40 mm3
 
 
@@ -170,8 +168,9 @@ class SheathField:
 
 def neck_neighbours(sex):
     """Fields of what the gland lies against besides the airway: cricothyroid muscles (HRA in the male body, the larynx
-    group's in the female one), the carotid arteries and jugular veins (vessels group, and the HRA carotid stumps that
-    the assembly keeps), and our oesophagus (stage cache), as [(name, Field, clearance)]."""
+    group's in the female one), the carotid arteries (common, internal, external) and internal jugular veins (vessels
+    group, and the HRA carotid stumps that the assembly keeps), and our oesophagus (stage cache), as
+    [(name, Field, clearance)]."""
     out = []
     mus = []
     for nm in ('cricothyroid_R', 'cricothyroid_L'):
@@ -190,7 +189,7 @@ def neck_neighbours(sex):
     vd = os.path.join(FIT, sex, 'vessels', 'manifest.json')
     if os.path.exists(vd):
         for o in json.load(open(vd)):
-            if 'common_carotid' in o['name'] or 'internal_jugular' in o['name'] or 'internal_carotid' in o['name']:
+            if any(k in o['name'] for k in ('common_carotid', 'internal_jugular', 'internal_carotid', 'external_carotid')):
                 ves.append((o['name'], load(os.path.join(FIT, sex, 'vessels', o['file']))))
     from fit.common import hra_mesh
     keep = ['brachiocephalic_artery_b', 'left_common_carotid_artery_a'] + (['left_common_carotid_artery_b'] if sex == 'female' else [])
@@ -273,118 +272,6 @@ def _avg(f, x):
     return acc / np.maximum(cnt, 1)[:, None]
 
 
-def taubin(v, f, iters=10, lam=0.5, mu=-0.53):
-    """Taubin (lambda|mu) smoothing of the whole surface: removes the creases the stretch and push-out leave without
-    shrinking the gland."""
-    v = v.copy()
-    for _ in range(iters):
-        for k in (lam, mu):
-            v = v + k * (_avg(f, v) - v)
-    return v
-
-
-def inflate(v, f, fields, target, iters=10):
-    """Give back the volume the push-out squeezed out (soft tissue pressed by its neighbours bulges where it is free):
-    the surface moves out along its normals, only where it is more than 0.5 mm clear of every neighbour (full speed
-    from 3 mm), by a smoothed uniform offset sized to the missing volume, never more than 80 % of its own gap."""
-    f = orient_outward(v, f); v = v.copy()
-    for _ in range(iters):
-        vol = abs(signed_volume(v, f))
-        if vol >= 0.995 * target: break
-        n = vertex_normals(v, f)
-        gap = np.full(len(v), 0.05)
-        for fl, c in fields:
-            sc = fl.coarse(v); near = sc < c + 0.006
-            if near.any(): gap[near] = np.minimum(gap[near], fl(v[near]) - c)
-        w = smoothstep(np.clip((gap - 0.0005) / 0.0025, 0, 1))
-        fa = 0.5 * np.linalg.norm(np.cross(v[f[:, 1]] - v[f[:, 0]], v[f[:, 2]] - v[f[:, 0]]), axis=1)
-        A = np.zeros(len(v)); np.add.at(A, f.ravel(), np.repeat(fa / 3, 3))
-        delta = min((target - vol) / max(float((w * A).sum()), 1e-12), 0.0015)
-        disp = (delta * w)[:, None] * n
-        for _ in range(6): disp = 0.5 * disp + 0.5 * _avg(f, disp)
-        L_ = np.linalg.norm(disp, axis=1); cap = np.maximum(0.8 * gap, 0.0)
-        disp *= np.minimum(1.0, cap / np.maximum(L_, 1e-12))[:, None]
-        v = v + disp
-    return v
-
-
-def field3d(X, P, D, sigma=SIGMA_3D, floor=1.0):
-    """Smooth 3D displacement at points X from displacements D wanted at points P: Gaussian kernel regression whose
-    weight sum is floored (it falls off away from the pushed points). Its gradient stays small (|D| capped per step,
-    sigma a few mm), so x -> x + field3d(x) is a diffeomorphism: an embedded surface stays embedded."""
-    from scipy import sparse
-    if not len(P): return np.zeros_like(X)
-    M = cKDTree(X).sparse_distance_matrix(cKDTree(P), 2.5 * sigma, output_type='coo_matrix')
-    K = sparse.csr_matrix((np.exp(-0.5 * (M.data / sigma) ** 2), (M.row, M.col)), shape=(len(X), len(P)))
-    # exact zero distances are dropped by sparse_distance_matrix: add the coincident points' own weight
-    d0, j0 = cKDTree(P).query(X)
-    co = d0 < 1e-12
-    num = np.asarray(K @ D); den = np.asarray(K.sum(1)).ravel()
-    num[co] += D[j0[co]]; den[co] += 1.0
-    return num / np.maximum(den, floor)[:, None]
-
-
-def embedded_push(v, f, fields, iters=60, bed=None, bed_iters=0, tol=0.00005, soft=(), log_=None):
-    """Push-out that keeps the surface embedded. fields: [(Field, clearance, weight)]; bed: callable v -> (idx, tgt)
-    attraction targets used in the first bed_iters steps; soft: indices into fields whose clearance may stay unmet
-    (convergence is judged on the others). Each step: the per-vertex pushes (weighted sum over fields; bed pulls where
-    nothing pushes) spread by field3d, capped at STEP_3D per vertex. Returns v, worst residual (m)."""
-    v = v.copy()
-    worst_hard = 0.0
-    for it in range(iters):
-        need = np.zeros_like(v); hit = np.zeros(len(v), bool); worst_hard = 0.0
-        for k, (fl, c, w) in enumerate(fields):
-            sc = fl.coarse(v); cand = np.flatnonzero(sc < c + 0.004)
-            if not len(cand): continue
-            sd = fl(v[cand]); m = sd < c
-            if not m.any(): continue
-            ii = cand[m]
-            nrm, q = fl.outward(v[ii])
-            dvec = v[ii] - q; dl = np.linalg.norm(dvec, axis=1)
-            use = (sd[m] > 0.3 * c) & (dl > 1e-6)
-            dirn = np.where(use[:, None], dvec / np.maximum(dl, 1e-12)[:, None], nrm)
-            np.add.at(need, ii, w * (c - sd[m])[:, None] * dirn); hit[ii] = True
-            if k not in soft: worst_hard = max(worst_hard, float((c - sd[m]).max()))
-        if bed is not None and it < bed_iters:
-            bi, bt = bed(v)
-            keep = ~hit[bi]
-            if keep.any():
-                bi, bt = bi[keep], bt[keep]
-                need[bi] += 0.5 * (bt - v[bi]); hit[bi] = True
-        if log_ and it % 10 == 0: log_(f'    embedded push {it}: {int(hit.sum())} vertices, worst (hard) {worst_hard * 1000:.2f} mm')
-        if worst_hard < tol and (bed is None or it >= bed_iters): break
-        idx = np.flatnonzero(hit)
-        if not len(idx): break
-        u = field3d(v, v[idx], need[idx])
-        L_ = np.linalg.norm(u, axis=1)
-        u *= np.minimum(1.0, STEP_3D / np.maximum(L_, 1e-12))[:, None]
-        v = v + u
-    return v, worst_hard
-
-
-def inflate_embedded(v, f, fields, target, iters=12):
-    """inflate()'s volume give-back through the smooth 3D field (field3d of the per-vertex offsets): close opposite
-    sheets cancel instead of growing into each other."""
-    f = orient_outward(v, f); v = v.copy()
-    for _ in range(iters):
-        vol = abs(signed_volume(v, f))
-        if vol >= 0.995 * target: break
-        n = vertex_normals(v, f)
-        gap = np.full(len(v), 0.05)
-        for fl, c in fields:
-            sc = fl.coarse(v); near = sc < c + 0.006
-            if near.any(): gap[near] = np.minimum(gap[near], fl(v[near]) - c)
-        w = smoothstep(np.clip((gap - 0.0005) / 0.0025, 0, 1))
-        fa = 0.5 * np.linalg.norm(np.cross(v[f[:, 1]] - v[f[:, 0]], v[f[:, 2]] - v[f[:, 0]]), axis=1)
-        A = np.zeros(len(v)); np.add.at(A, f.ravel(), np.repeat(fa / 3, 3))
-        delta = min((target - vol) / max(float((w * A).sum()), 1e-12), STEP_3D)
-        disp = field3d(v, v, (delta * w)[:, None] * n)
-        L_ = np.linalg.norm(disp, axis=1); cap = np.maximum(0.8 * gap, 0.0)
-        disp *= np.minimum(1.0, np.minimum(cap, STEP_3D) / np.maximum(L_, 1e-12))[:, None]
-        v = v + disp
-    return v
-
-
 def fold_faces(v, f, eps=5e-5):
     """Faces where the closed gland passes through itself: an exact ray-parity vote on every face (lib.mesh, as
     assemble.py measures facing) picks the candidates, the exact winding number confirms them (a point just outside
@@ -398,57 +285,34 @@ def fold_faces(v, f, eps=5e-5):
     return cand[(wo > 0.5) | (wi < 0.5)]
 
 
-def bed_targets(v, f, c0, a, beds, clear=CLEAR):
-    """Attraction targets that lay the gland on its bed: the posterior surface of the isthmus / pyramidal band (|x| < 6
-    mm, facing back, up to 12 mm off the bed) and the lobes' medial surfaces facing the airway (up to 4 mm off)."""
-    n = vertex_normals(v, f)
-    ap, lat = frame(a)
-    s, x, z = local(v, c0, a)
-    d = np.full(len(v), np.inf); q = v.copy()
-    for fl in beds:
-        dd = fl(v); m = dd < d
-        if m.any():
-            qq = fl.outward(v[m])[1]; d[m] = dd[m]; q[m] = qq
-    towards = np.einsum('ij,ij->i', n, q - v) / np.maximum(np.linalg.norm(q - v, axis=1), 1e-9)
-    mid = (np.abs(x) < 0.006) & (n @ ap < -0.3) & (d > clear) & (d < 0.012)
-    med = (np.abs(x) >= 0.006) & (towards > 0.5) & (d > clear) & (d < 0.004)
-    idx = np.flatnonzero(mid | med)
-    u = (q[idx] - v[idx]) / np.maximum(np.linalg.norm(q[idx] - v[idx], axis=1), 1e-9)[:, None]
-    tgt = v[idx] + (d[idx] - clear)[:, None] * u
-    return idx, tgt, dict(midline=int(mid.sum()), medial=int(med.sum()), midline_gap_max_mm=round(float(d[mid].max() * 1000), 2) if mid.any() else 0.0)
-
-
 def place_gland(sex, tv, tf, c0, a, hull, airway_fields, rep, extra_fields=()):
-    """Embedded push-out with bed seating (embedded_push), the squeezed volume given back (inflate_embedded), the last
-    word to the clearances: returns the final vertices and the neck neighbours."""
+    """The grown gland rebuilt as a solid (organs_thyroid_solid.solid_gland): its voxelised solid minus the airway hull
+    and cartilages, the cricothyroid muscles, the carotid sheath vessels (and the one-sided sheath walls) and the
+    oesophagus, each dilated by its clearance; laid on its bed, opened, its signed distance smoothed under the
+    clearance constraint, the carved volume given back towards the front and sides, extracted. airway_fields:
+    [(name, Field)]. Returns ((v, f), the neck neighbours)."""
+    from fit.organs_thyroid_solid import solid_gland, CLEAR_AIR, CLEAR_MUS
     nb = neck_neighbours(sex)
     rep['neighbours'] = [nm for nm, _, _ in nb]
-    beds = [hull] + [fl for nm, fl, _ in nb if nm == 'cricothyroid']
-    vessel = lambda nm: any(k in nm for k in ('carotid', 'jugular', 'brachiocephalic'))
-    fields = [(hull, CLEAR, 1.0)] + [(fl, CLEAR, 1.0) for fl in airway_fields] + \
-             [(fl, c, SHEATH_W if vessel(nm) else 1.0) for nm, fl, c in nb] + [(fl, CLEAR, 1.0) for fl in extra_fields]
-    soft = {i for i, (nm, _, _) in enumerate(nb, start=1 + len(airway_fields)) if vessel(nm)}
-    others = [(fl, c) for nm, fl, c in nb]                 # a target on the cartilage under a muscle is not free
-    seat = []
-
-    def bed(v):
-        idx, tgt, info = bed_targets(v, tf, c0, a, beds)
-        ok = np.ones(len(idx), bool)
-        for fl, c in others: ok &= fl(tgt) >= c
-        info['kept'] = int(ok.sum())
-        if len(seat) < 6: seat.append(info)
-        return idx[ok], tgt[ok]
-    v, w1 = embedded_push(tv, tf, fields, iters=90, bed=bed, bed_iters=40, soft=soft, log_=log)
-    target = abs(signed_volume(tv, tf))
-    rep['squeezed_volume_cm3'] = round(abs(signed_volume(v, tf)) * 1e6, 2)
-    v = inflate_embedded(v, tf, [(fl, c) for fl, c, _ in fields], target)
-    v, w2 = embedded_push(v, tf, fields, iters=40, soft=soft, log_=log)
-    rep['faired_vertices'] = 0
-    rep['placement'] = 'embedded push-out (smooth 3D displacement steps, the surface stays embedded); carotid sheath weight ' + str(SHEATH_W)
-    rep['residual_hard_clearance_mm'] = round(w2 * 1000, 3)
-    rep['seat_rounds'] = seat
-    rep['placed_max_move_mm'] = round(float(np.linalg.norm(v - tv, axis=1).max() * 1000), 2)
-    return v, nb
+    ap, lat = frame(a)
+    fields = [('airway hull', hull, CLEAR_AIR, False)] + [(nm, fl, CLEAR_AIR, True) for nm, fl in airway_fields] + \
+             [(nm, fl, CLEAR_MUS if nm == 'cricothyroid' else c, not isinstance(fl, SheathField)) for nm, fl, c in nb] + \
+             [(f'extra {i}', fl, CLEAR, True) for i, fl in enumerate(extra_fields)]
+    srep = {}
+    (v, f), _ = solid_gland(tv, tf, c0, a, ap, lat, fields, hull, rep=srep, log_=log)
+    rep['solid'] = srep
+    rep['placement'] = ('solid: the grown gland voxelised, its neighbours (dilated by their clearances) removed, laid on its bed, '
+                        'opened, signed distance smoothed under the clearance constraint, volume given back towards the front and '
+                        'sides, surface nets + Taubin (organs_thyroid_solid)')
+    # what each neighbour's exact field reads on the final surface (the clearance is met in the voxel phase)
+    P = sample_surface(v, f, 10000, seed=5)
+    res = {}
+    for nm, fl, c, exact in fields:
+        if isinstance(fl, SheathField) or not exact: continue
+        d = fl(P)
+        res[nm] = dict(min_gap_mm=round(float(d.min() * 1000), 2), clearance_mm=round(c * 1000, 2), inside_pct=round(float((d < 0).mean() * 100), 3))
+    rep['final_gaps'] = res
+    return (v, f), nb
 
 
 def pth_shape(v, f, centre, normal, along):

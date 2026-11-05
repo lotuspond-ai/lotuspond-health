@@ -3,9 +3,11 @@
 The thyroid wraps the larynx and upper trachea, so it follows them: the Z-Anatomy thyroid and cricoid cartilages and the
 trachea go through the trunk warp, each is aligned to its HRA counterpart on its own (similarity ICP, symmetric) and its
 samples are projected onto the HRA surface; a thin-plate spline through those pairs carries the warped thyroid into the
-HRA neck. What is still inside a cartilage or the trachea is pushed out with a smooth, shape-preserving displacement.
-Each parathyroid gland follows the same local warp, then slides rigidly along the thyroid's surface normal until it lies
-on the posterior surface of its lobe (0.3 mm off it): a gland keeps its shape and never enters the thyroid.
+HRA neck. The grown gland is then rebuilt as a solid (organs_thyroid_solid): its voxelised solid minus its neighbours
+dilated by their clearances, laid on its bed, smoothed under the clearance constraint and extracted.
+Each parathyroid gland follows the same local warp and the growth, then sits on the posterior surface of its lobe
+(0.3 mm off it) at the nearest point where the space behind the lobe holds it clear of the neck neighbours: a gland
+keeps its shape and never enters the thyroid.
 """
 import numpy as np
 from scipy.spatial import cKDTree
@@ -18,6 +20,7 @@ from fit.organs_geom import Field, push_out, mesh_field
 PTH = ['pth_sup_l', 'pth_sup_r', 'pth_inf_l', 'pth_inf_r']
 ISTHMUS_DEPTH = 0.014          # isthmus centre below the cricoid's lower border along the airway (rings 2-4)
 GAP_PTH = 0.0003
+PTH_CLEAR = 0.0006        # a parathyroid's clearance from the neck neighbours (carotid sheath vessels, oesophagus, airway)
 
 
 def neck_similarity(sex, W, rep):
@@ -141,7 +144,8 @@ def ring_profile(sex, c0, a):
 def fit_neck(sex, W, extra_fields=()):
     """The gland: cartilage similarity, slide so the isthmus lies over tracheal rings 2-4, growth to adult size about
     the isthmus (organs_thyroid: upper poles to the laminae's oblique lines, lower poles to ring 5, thickened about
-    its bed), push-out and seating on the airway; the parathyroids follow and are reshaped to adult glands."""
+    its bed), then rebuilt as a solid clear of its neighbours and laid on its bed (organs_thyroid_solid); the
+    parathyroids follow and are reshaped to adult glands."""
     from fit.organs_thyroid import isthmus_depth, grow_gland, place_gland, pth_shape, seat_pth, seat_pth_field, frame, PTH_EXT
     from lib.mesh import signed_volume
     from fit.organs_geom import vertex_normals
@@ -171,33 +175,39 @@ def fit_neck(sex, W, extra_fields=()):
     s_i = float((isthmus(tv, sex, (c0, a))[0] - c0) @ a)
     grown, pmap = grow_gland(sex, tv, tf, c0, a, s_i, below, hull, rep)
     rep['grown_volume_cm3'] = round(abs(signed_volume(grown, tf)) * 1e6, 2)
-    airway = [field(sex, k) for k in ('thyroid_cart', 'cricoid', 'trachea', 'trach_cart')]
-    tv2, nb = place_gland(sex, grown, tf, c0, a, hull, airway, rep, extra_fields)
-    tf = orient_outward(tv2, tf)
+    airway = [(k, field(sex, k)) for k in ('thyroid_cart', 'cricoid', 'trachea', 'trach_cart')]
+    (tv2, tf), nb = place_gland(sex, grown, tf, c0, a, hull, airway, rep, extra_fields)
     thy = (tv2, tf)
     rep['volume_cm3'] = round(abs(signed_volume(tv2, tf)) * 1e6, 2)
-    # parathyroids: their centres follow the gland's growth and placement; each is reshaped to an adult gland and laid
-    # on the posterior surface of its lobe (0.3 mm off it)
+    # parathyroids: their centres follow the gland's growth; each is reshaped to an adult gland and laid on the
+    # posterior surface of its lobe (0.3 mm off it), at the nearest point to its carried centre where the gland, laid
+    # there, keeps PTH_CLEAR off the neck neighbours (carotid sheath vessels, oesophagus, airway)
     tfl = mesh_field(tv2, tf, 0.0003, pad=0.01)
-    vn = vertex_normals(tv2, tf)
+    vn = vertex_normals(tv2, tf); vn = vn / np.maximum(np.linalg.norm(vn, axis=1, keepdims=True), 1e-12)
     rl = tv2 - c0; xl = rl @ lat
+    obst = [(nm, fl) for nm, fl, _ in nb if '(sheath)' not in nm] + [('airway hull', hull)]
     pth, prep = {}, {}
     for k in PTH:
         v, f = za_original(k)
         v = T(v) + shift * a - (gap - 0.0005) * ap
         c = pmap(v.mean(0)[None])[0]
-        _, j = cKDTree(grown).query(c, k=8)
-        c = c + (tv2[j] - grown[j]).mean(0)
         sg = 1 if k.endswith('_l') else -1
-        # the lobe's posterior surface (facing back) on the gland's own side: its point nearest the carried centre
+        # the lobe's posterior surface (facing back) on the gland's own side, nearest the carried centre first
         cand = np.flatnonzero((vn @ ap < -0.35) & (sg * xl > 0.004))
-        i = cand[int(np.argmin(np.linalg.norm(tv2[cand] - c, axis=1)))]
-        nrm = vn[i] / np.linalg.norm(vn[i])
-        centre = tv2[i] + nrm * (0.5 * PTH_EXT[2] + GAP_PTH)
-        w = pth_shape(v, f, centre, nrm, a)
+        cand = cand[np.argsort(np.linalg.norm(tv2[cand] - c, axis=1))]
+        best = None
+        for n_try, i in enumerate(cand[:400:4]):
+            centre = tv2[i] + vn[i] * (0.5 * PTH_EXT[2] + GAP_PTH)
+            w = pth_shape(v, f, centre, vn[i], a)
+            clr = min(float(fl.coarse(w).min()) for _, fl in obst)
+            if best is None or clr > best[0]: best = (clr, i, w)
+            if clr >= PTH_CLEAR: break
+        clr, i, w = best
         w = seat_pth(seat_pth_field(w, f, tfl, GAP_PTH), f, thy, GAP_PTH)
         pth[k] = (w, orient_outward(w, f))
-        prep[k] = dict(carried_to_seat_mm=round(float(np.linalg.norm(tv2[i] - c) * 1000), 2), seat=np.round(tv2[i], 4).tolist())
+        near = {nm: round(float(fl(w).min() * 1000), 2) for nm, fl in obst if float(fl.coarse(w).min()) < 0.003}
+        prep[k] = dict(carried_to_seat_mm=round(float(np.linalg.norm(tv2[i] - c) * 1000), 2), seat=np.round(tv2[i], 4).tolist(),
+                       neighbour_gap_mm=near, tried=n_try + 1)
     rep['parathyroids'] = prep
     rep['parathyroid_source'] = {k: ZA_NAMES.get(k) for k in PTH}
     return thy, pth, rep, tfl, (c0, a)
