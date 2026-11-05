@@ -231,8 +231,11 @@ function Bridge({ setAo }: { setAo: (on: boolean) => void }) {
           if (opts.id) { const { boxes, ...id } = idPass(...opts.id); out.id = id; out.boxes = boxes; }
         } else {
           const marks = landmarksOf(BODY_ID, view.organ);
+          // assemble.py marks the labels whose structure this close-up's camera cannot see at all (heart valves, deep
+          // brain structures): hidden even where the ray test passes, as when a valve lies just under the trunk's wall
+          const inner = new Set((RIGS[BODY_ID].landmarks[view.organ] ?? []).filter(l => (l as { hidden?: boolean }).hidden).map(l => l.name));
           const hidden = hiddenFlags(marks.map(l => l.at));
-          out.landmarks = marks.map((l, i) => [...project(l.at), hidden[i]] as P4); out.names = marks.map(l => l.name);
+          out.landmarks = marks.map((l, i) => [...project(l.at), inner.has(l.name) ? 1 : hidden[i]] as P4); out.names = marks.map(l => l.name);
         }
         return out;
       },

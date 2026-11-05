@@ -742,13 +742,18 @@ L, R = r'_L$', r'_R$'
 # organ -> [(landmark name, structure regex (on names without the VH_M_/VH_F_ prefix, or 'part:<id>'), rule)].
 # Rules: 'face' (surface point facing the organ's view near the structure's centre), or an extreme point along a
 # direction: 'top', 'bottom', 'left' (+x), 'right' (-x), 'front' (+z), 'back' (-z), or 'dir:x,y,z'; 'near:<src>' (the
-# point nearest another structure: where a vessel enters an organ); 'nearmark:<landmark>,...' (the point nearest
+# point nearest another structure: where a vessel enters an organ); 'nearc:<src>' (the point nearest the centre of
+# another structure: a vessel at the middle of its organ's hilum); 'nearmark:<landmark>,...' (the point nearest
 # landmarks placed before it in the same organ); 'quant:x,y,z:q' (the front-most point at quantile q along a direction:
 # part way along a duct); 'isthmus:<src>' and 'midtop:<src>' (thyroid: the isthmus and the tip of the pyramidal lobe, in
 # the midline band below <src>, the cricoid). A rule ending in ' apart:<landmark>,...' keeps 1 cm from those landmarks
 # (two vessels entering an organ side by side). Then each label of a close-up moves onto the nearest part of its
-# structure the close-up camera sees (CloseUpScene.snap), a few pixels inside its outline; structures with nothing in
-# view (the valves, the hypothalamus) keep their point and are marked hidden.
+# structure the close-up camera sees (CloseUpScene.snap), a few pixels inside its outline and clear of the other dots;
+# structures with nothing in view (the valves, the hypothalamus, the cervix behind the uterine body) keep their point and
+# are marked hidden. A sub-structure that is not a mesh of its own (the caudate lobe, the pancreas's head) is seen only
+# where the surface in view lies on it. Close-up options: ' at:<src>' (move only onto the part within 1 cm of <src>: a
+# vessel where it reaches its organ) and ' cover:<mm>' (a structure wrapped in a covering of its own part: the uterus in
+# its peritoneum, the broad ligament).
 CRICOID = r'^cricoid_cartilage$'
 LANDMARKS = {
     'brain': [('Frontal lobe', r'^Allen_(superior|middle)_frontal_gyrus_L$', 'face'), ('Motor cortex', r'^Allen_precentral_gyrus_L$', 'face'),
@@ -776,17 +781,19 @@ LANDMARKS = {
               ('Quadrate lobe', r'^quadrate_lobe(_of_liver)?$', 'bottom'), ('Falciform ligament', r'^falciform_ligament$', 'front'), ('Gallbladder', 'part:gallbladder', 'bottom'),
               ('Porta hepatis', r'^porta_hepatis$', 'bottom'), ('Hepatic artery', r'^proper_hepatic_artery$', 'front'), ('Hepatic veins', 'part:hepatic_veins', 'top'), ('Portal vein', r'^(hepatic_)?portal_vein$', 'front'),
               ('Common bile duct', r'^common_bile_duct$', 'front')],
+    # the pylorus where the stomach meets the duodenal bulb (its right-most point can be a fold of the antrum)
     'stomach': [('Fundus', 'part:stomach', 'top'), ('Body', 'part:stomach', 'face'), ('Greater curvature', 'part:stomach', 'dir:0.7,-0.6,0.3'),
-                ('Pylorus', 'part:stomach', 'right')],
+                ('Pylorus', 'part:stomach', 'near:^duodenum_superior$')],
     # the splenic artery and vein are labelled where they reach the spleen, the hilum on the spleen next to them
-    'spleen': [('Splenic artery', r'^splenic_artery$', 'near:part:spleen'), ('Splenic vein', r'^splenic_vein$', 'near:part:spleen apart:Splenic artery'),
-               ('Hilum', 'part:spleen', 'nearmark:Splenic artery,Splenic vein apart:Splenic artery,Splenic vein')],
+    'spleen': [('Splenic artery', r'^splenic_artery$', 'nearc:^hilum_of_spleen$ at:part:spleen'),
+               ('Splenic vein', r'^splenic_vein$', 'nearc:^hilum_of_spleen$ apart:Splenic artery at:part:spleen'),
+               ('Hilum', r'^hilum_of_spleen$', 'nearmark:Splenic artery,Splenic vein apart:Splenic artery,Splenic vein')],
     'pancreas': [('Head', r'^head_of_pancreas$', 'face'), ('Neck', r'^neck_of_pancreas$', 'face'), ('Body', r'^body_of_pancreas$', 'face'), ('Tail', r'^tail_of_pancreas$', 'left'),
                  ('Uncinate process', r'^(uncinate_process_of_the_pancreas|ucinate_process1)$', 'bottom'), ('Pancreatic duct', r'^ventral_pancreatic_duct$', 'quant:1,0,0:0.7')],
     # the left kidney's hilum carries the vessels, the pelvis is labelled where it leaves the sinus for the ureter (behind
     # the vessels, so the posterior view sees it), and the cortex on the right kidney
     'kidneys': [('Renal cortex', r'^kidneys_R$', 'face'), ('Medullary pyramids', r'^renal_pyramid_L_a$', 'face'), ('Renal pelvis', r'^renal_pelvis_L$', 'bottom'),
-                ('Ureter', r'^(ureter_L|left_ureter)$', 'face'), ('Adrenal gland', 'part:adrenals', 'top'), ('Renal artery', r'^left_renal_artery$', 'near:part:kidneys'),
+                ('Ureter', r'^(ureter_L|left_ureter)$', 'face'), ('Adrenal gland', 'part:adrenals', 'top'), ('Renal artery', r'^left_renal_artery$', 'near:part:kidneys at:part:kidneys'),
                 ('Renal vein', r'^(renal_vein_L|left_renal_vein)(_hilar_[a-z])?$', 'near:part:kidneys apart:Renal artery,Renal pelvis'), ('Bladder', 'part:bladder', 'face')],
     'intestine': [('Duodenum', r'^duodenum_descending$', 'face'), ('Duodenal papilla', r'^(hepatopancreatic_ampulla|sphincter_of_hep(at)?opancreatic_ampulla)$', 'face'), ('Jejunum', r'^je[jn][eu]num$', 'face'),
                   ('Ileum', r'^ileum$', 'face'), ('Terminal ileum', r'^ileum_terminal$', 'face')],
@@ -798,18 +805,27 @@ LANDMARKS = {
                ('Iliac crest', r'^ilium_compact_bone_L$', 'top'), ('Red marrow', r'^ilium_spongy_bone_L$', 'face'), ('Femur', r'^femur_L$', 'dir:0.3,1,0.4'), ('Thymus', 'part:thymus', 'front')],
     # the ovary and the uterine tube on opposite sides, so their labels do not sit on each other
     'reproductive': [('Prostate', r'^(peripheral_zone_of_prostate_[LR]|base_of_prostate)$', 'front'), ('Seminal vesicles', r'^seminal_vesicle$', 'back'), ('Vas deferens', r'^vas_deferens_L$', 'face'),
-                     ('Testes', r'^testis_[lr]$', 'front'), ('Uterus', r'^fundus_of_uterus$|^uterus$|^body_of_uterus$', 'top'), ('Cervix', r'^cervix$', 'face'),
+                     ('Testes', r'^testis_[lr]$', 'front'), ('Uterus', r'^fundus_of_uterus$|^uterus$|^body_of_uterus$', 'top cover:8'), ('Cervix', r'^cervix$', 'face'),
                      ('Ovaries', r'^left_ovary$', 'face'), ('Fallopian tubes', r'^(ampulla_of_uterine_tube|uterine_tube_infundibulum|fibria_of_uterine_tube)_R$', 'face'), ('Vagina', r'^vagina$', 'face')],
     'breast': [('Mammary lobes', r'^mammary_lobes_L$', 'face'), ('Lactiferous ducts', r'^main_lactiferous_ducts_R$', 'front')],
 }
 # Whole-body pins: on the organ where the front view sees it (the lungs on the side of the right upper lobe, clear of
-# the heart; the pancreas on its tail, clear of the stomach's pin; the thyroid on its isthmus).
+# the heart; the thyroid on its isthmus). The pancreas pin is on the lower front of its head, in the duodenal loop: of the
+# rules tried it keeps farthest from the other pins over the 16 turntable angles (at least 36 mm F / 19 mm M from any
+# pin, 52 / 74 mm from the stomach's), where its tail came within 13 mm of the stomach pin (F) and 14 mm of the spleen's (M).
 PIN = dict(brain=('part:brain', 'dir:0.2,0.6,0.8'), thyroid=('part:thyroid', 'isthmus:' + CRICOID), airway=('part:airway', 'face'), lungs=('part:lung_r_upper', 'dir:-1,0.2,0.6'),
            heart=(r'^(heart_)?left_ventricle$', 'face'), esophagus=('part:esophagus', 'face'), liver=('part:liver', 'dir:-0.6,0.1,0.8'), stomach=('part:stomach', 'face'),
-           spleen=('part:spleen', 'face'), pancreas=('part:pancreas', 'left'), kidneys=(r'^kidneys_R$', 'face'), intestine=(r'^je[jn][eu]num$', 'face'), colon=(r'^ascending_colon$', 'face'),
+           spleen=('part:spleen', 'face'), pancreas=('part:pancreas', 'dir:0,-1,0.4'), kidneys=(r'^kidneys_R$', 'face'), intestine=(r'^je[jn][eu]num$', 'face'), colon=(r'^ascending_colon$', 'face'),
            marrow=(r'^ilium_compact_bone_L$', 'top'), reproductive=(r'^(uterus|body_of_uterus|fundus_of_uterus|(peripheral|central|transition)_zone_+of_prostate_[LR])$', 'face'),
            breast=(r'^mammary_lobes_R$', 'face'), skin=('part:skin', 'front'))
 DIRS = dict(top=(0, 1, 0), bottom=(0, -1, 0), left=(1, 0, 0), right=(-1, 0, 0), front=(0, 0, 1), back=(0, 0, -1))
+
+
+def split_rule(rule):
+    """A rule without its close-up options, and the options: ' at:<src>' (the label moves only onto the part of its
+    structure within 1 cm of <src>: a vessel where it reaches its organ) and ' cover:<mm>' (a structure wrapped in a
+    covering of its own part, as the uterus is in its peritoneum: the covering within that distance of it shows it)."""
+    return re.sub(r' (at|cover):\S+', '', rule), dict(re.findall(r' (at|cover):(\S+)', rule))
 
 
 def place(v, rule, view, verts=None, marks=None):
@@ -829,11 +845,11 @@ def place(v, rule, view, verts=None, marks=None):
         if not m.any(): m = perp <= np.quantile(perp, 0.1)
         return v[m][np.argmax(along[m])]
     kind, _, arg = rule.partition(':')
-    if kind in ('near', 'nearmark'):
+    if kind in ('near', 'nearc', 'nearmark'):
         from scipy.spatial import cKDTree
-        other = verts(arg) if kind == 'near' else np.array([marks[n] for n in arg.split(',') if n in marks])
+        other = verts(arg) if kind != 'nearmark' else np.array([marks[n] for n in arg.split(',') if n in marks])
         if other is None or not len(other): return place(v, 'face', view)
-        if kind == 'nearmark': other = other.mean(0, keepdims=True)
+        if kind != 'near': other = other.mean(0, keepdims=True)  # nearest the centre of <src> (nearc) or of the marks
         return v[np.argmin(cKDTree(other).query(v)[0])]
     if kind == 'quant':
         dv, q = arg.rsplit(':', 1)
@@ -928,44 +944,90 @@ class CloseUpScene:
                 self.depth[pix[better]] = dv[better]; self.ident[pix[better]] = iv[better]
 
     def ids(self, src, p):
-        """Structure ids of a label's structure in the rasterised scene: by name, by part, or (a sub-structure that is
-        not a mesh of its own, such as the pancreas's head) the part whose surface it lies on. None when that is a part
-        the close-up does not draw solid (see-through lung lobes): nothing to move onto, only occluders to test."""
+        """(structure ids, exact) of a label's structure in the rasterised scene: by name or by part (exact), or for a
+        sub-structure that is not a mesh of its own (the pancreas's head, the liver's caudate lobe, the cervix) the part
+        whose surface it lies on (not exact: region() keeps to the pixels on the structure itself). None when that is a
+        part the close-up does not draw solid (see-through lung lobes): nothing to move onto, only occluders to test."""
         drawn = {q for q, _ in self.names}
-        if src.startswith('part:'): return [i for i, (q, _) in enumerate(self.names) if q == src[5:]] if src[5:] in drawn else None
+        if src.startswith('part:'): return ([i for i, (q, _) in enumerate(self.names) if q == src[5:]] if src[5:] in drawn else None), True
         rx = re.compile(src)
         out = [i for i, (_, n) in enumerate(self.names) if rx.search(n)]
-        if out: return out
+        if out: return out, True
         dist, q = min(((np.linalg.norm(v - p, axis=1).min(), q) for q, (v, *_) in self.parts.items()), default=(np.inf, None))
-        if dist > 0.012: return []
-        return [i for i, (r, _) in enumerate(self.names) if r == q] if q in drawn else None
+        if dist > 0.012: return [], True
+        return ([i for i, (r, _) in enumerate(self.names) if r == q] if q in drawn else None), False
 
-    def snap(self, src, p, tol=0.0025, taken=()):
-        """(point, seen, moved px): p when its structure is the front-most surface there, a few pixels inside its outline;
-        else the nearest such point of the structure when the camera sees any of it; else p, not seen (an inner
-        structure, or one turned away)."""
+    def near(self, mask, pts, reach):
+        """The pixels of mask whose front-most surface point lies within reach (m) of the points pts."""
+        from scipy.spatial import cKDTree
+        yy, xx = np.nonzero(mask)
+        out = np.zeros_like(mask)
+        if len(xx) and pts is not None and len(pts):
+            P = self.unproject(xx[:, None] + 0.5, yy[:, None] + 0.5, self.depth[yy, xx][:, None])
+            out[yy, xx] = cKDTree(pts).query(P, distance_upper_bound=reach)[0] <= reach
+        return out
+
+    def region(self, src, p, own=None, at=None, cover=0.0):
+        """(ids, mask): the pixels where the camera sees a label's structure. Its own mesh; for a sub-structure without one,
+        the pixels of its part whose surface lies on it (within 5 mm of its vertices, or 1.5 vertex spacings on a coarse
+        mesh); for a structure wrapped in a covering of its own part (cover > 0, metres), the covering within cover of it;
+        with `at` (vertices), only the pixels within 1 cm of them, where that leaves any."""
+        from scipy.spatial import cKDTree
+        ids, exact = self.ids(src, p)
+        if ids is None: return None, None
+        mask = np.isin(self.ident, ids)
+        if own is not None and len(own) > 1 and (not exact or (cover and mask.sum() < 12)):
+            if exact: part = {self.names[i][0] for i in ids}; mask = self.near(np.isin(self.ident, [i for i, (q, _) in enumerate(self.names) if q in part]), own, cover)
+            else: mask = self.near(mask, own, max(0.005, 1.5 * float(np.median(cKDTree(own).query(own, k=2)[0][:, 1]))))
+        if at is not None and len(at):
+            m = self.near(mask, at, 0.01)
+            if m.sum() >= 12: mask = m
+        return ids, mask
+
+    @staticmethod
+    def erode(mask, n=3):
+        """mask and up to n successive one-pixel erosions of it, while some pixels remain (the outermost first)."""
+        out = [mask]
+        for _ in range(n):
+            c = out[-1].copy(); c[1:] &= out[-1][:-1]; c[:-1] &= out[-1][1:]; c[:, 1:] &= out[-1][:, :-1]; c[:, :-1] &= out[-1][:, 1:]
+            if c.sum() < 3: break
+            out.append(c)
+        return out
+
+    def room(self, region):
+        """Pixels a label has to move within (its structure's visible core): labels with the least room go first."""
+        return -1 if region[0] is None else int(self.erode(region[1])[-1].sum())
+
+    def snap(self, p, region, tol=0.0025, taken=()):
+        """(point, seen, moved px): p when its structure is the front-most surface there, a few pixels inside its outline
+        and clear of the dots placed before it; else the nearest such point where the camera sees its structure; else p,
+        not seen (an inner structure, or one turned away)."""
         u, w, d = (a[0] for a in self.project(p))
         ix, iy = int(np.floor(u)), int(np.floor(w))
         inside = 0 <= ix < self.W and 0 <= iy < self.H
         front = inside and d <= self.depth[iy, ix] + max(tol, 3 * self.px)
-        ids = self.ids(src, p)
+        ids, mask = region
         if ids is None: return p, bool(front or not inside), 0.0
-        mask = np.isin(self.ident, ids)
         if mask.sum() < 12: return p, False, 0.0
-        core = mask
-        for _ in range(3):  # three pixels in from the outline: the dot stays on it from a slightly different camera
-            c = core.copy(); c[1:] &= core[:-1]; c[:-1] &= core[1:]; c[:, 1:] &= core[:, :-1]; c[:, :-1] &= core[:, 1:]
-            if c.sum() < 12: break
-            core = c
-        # clear of the dots placed before it (14 px of a 480 px tall frame), where its structure leaves room
-        clear = np.ones_like(core)
+        # Where its dot goes: the nearest pixel of its structure, preferring (by a cost in pixels of a 480 px tall frame)
+        # pixels up to three in from its outline (so the dot stays on it from a slightly different camera and on the
+        # simplified model), with no nearer surface within two pixels (that would hide it from the render page's ray
+        # test), and 14 px clear of the dots placed before it. The raw point stays when it already is such a pixel.
+        levels = self.erode(mask)
+        lvl = np.sum(levels[1:], axis=0) if len(levels) > 1 else np.zeros(mask.shape, int)
+        top = len(levels) - 1
+        dp = np.pad(np.where(np.isfinite(self.depth), self.depth, np.inf), 2, constant_values=np.inf)
+        nearest = np.min([dp[2 + dy:2 + dy + self.H, 2 + dx:2 + dx + self.W] for dy in range(-2, 3) for dx in range(-2, 3)], axis=0)
+        safe = nearest >= self.depth - max(tol, 3 * self.px)
+        clear = np.ones_like(mask)
         if len(taken):
             gy, gx = np.mgrid[0:self.H, 0:self.W]
             for tx, ty in taken: clear &= (gx + 0.5 - tx) ** 2 + (gy + 0.5 - ty) ** 2 >= (14 * self.H / 480) ** 2
-            if (core & clear).sum() >= 12: core = core & clear
-        if front and core[iy, ix]: return p, True, 0.0
-        yy, xx = np.nonzero(core)
-        k = np.argmin((xx + 0.5 - u) ** 2 + (yy + 0.5 - w) ** 2)
+        if front and mask[iy, ix] and lvl[iy, ix] >= min(1, top) and safe[iy, ix] and clear[iy, ix]: return p, True, 0.0
+        yy, xx = np.nonzero(mask)
+        unit = self.H / 480
+        cost = np.hypot(xx + 0.5 - u, yy + 0.5 - w) + unit * (6.0 * (top - lvl[yy, xx]) + 20.0 * ~safe[yy, xx] + 40.0 * ~clear[yy, xx])
+        k = np.argmin(cost)
         return self.unproject(xx[k] + 0.5, yy[k] + 0.5, self.depth[yy[k], xx[k]]), True, float(np.hypot(xx[k] + 0.5 - u, yy[k] + 0.5 - w))
 
 
@@ -980,26 +1042,30 @@ def landmarks(structs, parts_v, sex, scenes=True):
         return np.concatenate(vs) if vs else None
     out, pins, missing, report = {}, {}, [], {}
     for organ, items in LANDMARKS.items():
-        placed, srcs, seen = {}, {}, {}
+        placed, srcs, seen, opts = {}, {}, {}, {}
         for name, src, rule in items:
             v = verts(src)
             if v is None or not len(v): missing.append(f'{organ}/{name}'); continue
+            rule, opts[name] = split_rule(rule)
             placed[name] = place(v, rule, VIEW[organ], verts, placed); srcs[name] = src
         if not placed: continue
         if scenes:
-            # twice: the render page frames the close-up on the labels where they end up
+            # twice: the render page frames the close-up on the labels where they end up. The labels with the least room
+            # (the smallest visible part of their structure) are placed first, so that those with more move aside.
             raw, marks = dict(placed), list(placed.values())
             for _ in range(2):
                 sc, taken = CloseUpScene(sex, organ, marks), []
-                for name in placed:
-                    placed[name], seen[name], moved = sc.snap(srcs[name], raw[name], taken=taken)
+                regions = {n: sc.region(srcs[n], raw[n], verts(srcs[n]), verts(opts[n]['at']) if 'at' in opts[n] else None,
+                                        float(opts[n].get('cover', 0)) / 1000) for n in placed}
+                for name in sorted(placed, key=lambda n: sc.room(regions[n])):
+                    placed[name], seen[name], moved = sc.snap(raw[name], regions[name], taken=taken)
                     u, w, _ = sc.project(placed[name]); taken.append((u[0], w[0]))
-                    report[f'{organ}/{name}'] = dict(seen=seen[name], moved_px=round(moved * 480 / sc.W, 1))
+                    report[f'{organ}/{name}'] = dict(seen=seen[name], moved_px=round(moved * 480 / sc.H, 1))
                 marks = list(placed.values())
         out[organ] = [dict(name=n, at=[round(float(x), 4) for x in p], **({} if seen.get(n, True) else dict(hidden=True))) for n, p in placed.items()]
     for organ, (src, rule) in PIN.items():
         v = verts(src)
-        if v is not None and len(v): pins[organ] = [round(float(x), 4) for x in place(v, rule, VIEW[organ], verts, {})]
+        if v is not None and len(v): pins[organ] = [round(float(x), 4) for x in place(v, split_rule(rule)[0], VIEW[organ], verts, {})]
     if scenes:
         hidden = [k for k, x in report.items() if not x['seen']]
         moved = {k: x['moved_px'] for k, x in report.items() if x['moved_px']}

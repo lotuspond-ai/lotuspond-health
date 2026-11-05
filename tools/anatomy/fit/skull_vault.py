@@ -16,8 +16,10 @@ table towards the brain and the outer table towards the scalp, shared in proport
 brain gap above BRAIN_KEEP at the column's point nearest the brain, scalp cover above SCALP_KEEP). The brain clearance
 comes first: the inner table never moves beyond its room, and on the parietal bones it does not move at all (measured:
 pushing it doubled the brain samples within 1 mm of the skull in the male); where the brain side lacks the room, the
-outer table takes the rest (the bone may not pass through itself), into the scalp cover down to SKIN_HARD, and only
-where neither is possible does the column stay thin. The per-vertex amounts are spread over each table by a
+outer table takes the rest (the bone may not pass through itself) into the scalp cover, but no new thin scalp: where
+the cover before this fix is at least SCALP_KEEP (the vault soft-tissue criterion's 3 mm plus a 0.5 mm margin for its ray
+measure) it stops there, it does not move out where the cover is 2.5 to 3.5 mm, and only where the refinement already
+left the scalp under 2.5 mm may it go down to SKIN_HARD; where neither is possible the column stays thin. The per-vertex amounts are spread over each table by a
 max-preserving Gaussian envelope (no dents, no steps; never below what a vertex needs, never beyond its own side's room
 unless it needs it), a correction never exceeds DISP_MAX, and further passes take up what the smoothing left. The
 result is a displacement field of Z-Anatomy points that follows the tables: a point takes a convex, distance-weighted
@@ -38,9 +40,19 @@ VAULT = ['parietal_bone_l', 'parietal_bone_r', 'occipital_bone']
 AUDIT = ['frontal_bone', 'parietal_bone_l', 'parietal_bone_r', 'occipital_bone', 'temporal_bone_l', 'temporal_bone_r', 'sphenoid_bone']
 T_MIN = 0.0010        # minimum inner-to-outer table thickness (where the Z-Anatomy column is at least this thick)
 T_FLOOR = 0.0005      # where the source itself is thinner, at least its own thickness and never under this
-BRAIN_KEEP = 0.0016   # Allen brain gap the inner table keeps (the refinement's target: dura + leptomeninges)
-SCALP_KEEP = 0.0030   # scalp cover the outer table keeps (the vault soft-tissue criterion's lower bound)
-SKIN_HARD = 0.0010    # ... and never gives up, even for the bone's own thickness (the refinement's hard skin margin)
+BRAIN_KEEP = 0.0020   # Allen brain gap the inner table keeps where it moves: the refinement's 1.6 mm target (dura +
+                      # leptomeninges) plus 0.4 mm for the 1.5 mm spacing of the Allen hull samples the gap is measured on
+                      # (measured: at 1.6 mm the occipital push took the female brain samples within 1 mm from 26 to 47)
+SCALP_MIN = 0.0030    # the vault soft-tissue criterion's lower bound
+SCALP_THIN = 0.0025   # scalp already thinner than this before the fix (SCALP_MIN less the same 0.5 mm ray margin): the
+                      # refinement's hard margin SKIN_HARD applies there
+SCALP_KEEP = 0.0035   # scalp cover the outer table keeps: SCALP_MIN plus 0.5 mm, because the criterion marches rays from the
+                      # skin along its normal in 0.25 mm steps, which reads up to 0.5 mm under the closest-point cover used
+                      # here (measured: a 3.0 mm keep read 2.75 on 10 female occipital rays and moved the p5 from 3.0 to 2.8)
+SKIN_HARD = 0.0010    # ... and never gives up, even for the bone's own thickness (the refinement's hard skin margin), used
+                      # only where the refinement already left the scalp under SCALP_THIN; where the cover is SCALP_THIN to
+                      # SCALP_KEEP the outer table does not move out, and above it stops at SCALP_KEEP: no new thin scalp
+                      # (measured: a 3 mm floor everywhere left 1.79 cm2 of the male left parietal inside out; 1.41 with this)
 SIG_ENV = 0.0025      # envelope smoothing along a table
 SIG_INT = 0.0007      # interpolation kernel of the correction field (mesh edges are about 1.4 mm)
 FADE0, FADE1 = 0.0015, 0.0060   # the field is full up to 1.5 mm from a table and fades to zero at 6 mm
@@ -48,6 +60,8 @@ K_NB = 24
 CS_TABLE = 0.25      # table vertex: vertex normal within about 75 deg of the direction to (inner) or from (outer) the brain
 DISP_MAX = 0.0030     # largest correction of a table vertex
 INNER_MOVES = ['occipital_bone']   # bones whose inner table may move towards the brain (within its room)
+INNER_KEEP = {}       # per-bone brain gap the inner table keeps where it moves (default BRAIN_KEEP)
+SRC_MIN = 0.0003      # a column is targeted where its Z-Anatomy and warp-placed thicknesses both exceed this
 
 
 class VaultFix:
@@ -209,13 +223,15 @@ def fit(Z, P, Pw, zp, brain_p, brain_n, skin_signed, log=print, passes=8):
     # thickness is measured, and the tables pushed apart, along it
     _, qw, _, yw = tabs.thickness({b: Pw[b] for b in tabs.bones})
     cols = qw - yw; cols /= np.maximum(np.linalg.norm(cols, axis=1, keepdims=True), 1e-12)
-    valid = (t_src > 3e-4) & (np.einsum('ij,ij->i', qw - yw, cols) > 3e-4)
+    valid = (t_src > SRC_MIN) & (np.einsum('ij,ij->i', qw - yw, cols) > SRC_MIN)
+    keep_b = np.array([INNER_KEEP.get(b, BRAIN_KEEP) for b in tabs.bone])
     target = np.clip(t_src, T_FLOOR, T_MIN)
     S = {s: _smoother(tabs.xs[tabs.lab == s], SIG_ENV) for s in (0, 1)}
     disp = np.zeros_like(tabs.xs)
     VF = VaultFix(tabs.xs, tabs.lab, disp)
     hist = []
     t0 = None
+    floor = None
 
     def stats(t):
         u = valid & (t < target - 1e-5)
@@ -228,13 +244,16 @@ def fit(Z, P, Pw, zp, brain_p, brain_n, skin_signed, log=print, passes=8):
         gap_v, gap_q = brain_gap(yv), brain_gap(q)
         cov_v, cov_q = -skin_signed(yv), -skin_signed(q)
         inner = tabs.lab == 0
+        cov_c = np.where(inner, cov_q, cov_v)   # the column's scalp cover, at its outer-table end
+        if floor is None:   # no new thin scalp: SCALP_KEEP where the cover is at least that before this fix
+            floor = np.where(cov_c >= SCALP_KEEP, SCALP_KEEP, np.where(cov_c >= SCALP_THIN, cov_c, SKIN_HARD))
         # the column's brain room is measured from its point nearest the brain: where the tables cross that is the
         # crossed outer table, not the inner-table vertex behind it
-        room_b = np.maximum(np.minimum(gap_v, gap_q) - BRAIN_KEEP, 0)
+        room_b = np.maximum(np.minimum(gap_v, gap_q) - keep_b, 0)
         room_s = np.maximum(np.where(inner, cov_q, cov_v) - SCALP_KEEP, 0)
         need = np.where(valid, np.maximum(target - t, 0), 0)
         st = dict(pass_=it, **stats(t), need_max_mm=round(float(need.max() * 1000), 2),
-                  no_room_both_sides=int(((room_b + room_s) < need - 1e-5).sum()), unfixable=int((need > room_b + np.maximum(np.where(inner, cov_q, cov_v) - SKIN_HARD, 0) + 1e-5).sum()), max_disp_mm=round(float(np.linalg.norm(disp, axis=1).max() * 1000), 2))
+                  no_room_both_sides=int(((room_b + room_s) < need - 1e-5).sum()), unfixable=int((need > room_b + np.maximum(cov_c - floor, 0) + 1e-5).sum()), max_disp_mm=round(float(np.linalg.norm(disp, axis=1).max() * 1000), 2))
         hist.append(st); log('vault thickness', st)
         if it == passes or need.max() < 2e-5: break
         tot = room_b + room_s
@@ -244,7 +263,7 @@ def fit(Z, P, Pw, zp, brain_p, brain_n, skin_signed, log=print, passes=8):
         # priorities: the brain clearance first (the inner table never goes beyond its room), then the bone (it may
         # not pass through itself: where the brain side lacks the room the outer table takes the rest, into the scalp
         # cover down to SKIN_HARD), then the scalp cover
-        skin_room = np.maximum(np.where(inner, cov_q, cov_v) - SKIN_HARD, 0)
+        skin_room = np.maximum(cov_c - floor, 0)
         a_req = np.where(inner, np.minimum(a_req, room_b),
                          np.minimum(np.maximum(a_req, need - np.minimum(other, need)), np.maximum(skin_room, 0)))
         # bones whose inner table stays where the brain-clearance refinement put it (measured: on the parietals the
@@ -269,7 +288,7 @@ def fit(Z, P, Pw, zp, brain_p, brain_n, skin_signed, log=print, passes=8):
         disp *= np.minimum(1.0, DISP_MAX / np.maximum(nd, 1e-12))   # a column the push does not open is not pushed further
         VF = VaultFix(tabs.xs, tabs.lab, disp)
     info = dict(bones=tabs.bones, inner_table_moves_on=INNER_MOVES, t_min_mm=T_MIN * 1000, t_floor_mm=T_FLOOR * 1000, brain_keep_mm=BRAIN_KEEP * 1000, scalp_keep_mm=SCALP_KEEP * 1000,
-                n_table_vertices=int(len(tabs.xs)), passes=hist, thickness_before_mm=stats(t0), thickness_after_mm=stats(t),
+                n_table_vertices=int(len(tabs.xs)), n_columns_scalp_floor_hard=int((floor < SCALP_THIN).sum()), scalp_thin_mm=SCALP_THIN * 1000, passes=hist, thickness_before_mm=stats(t0), thickness_after_mm=stats(t),
                 source_thickness_mm=dict(p1=round(float(np.quantile(t_src[valid], 0.01) * 1000), 2), median=round(float(np.median(t_src[valid]) * 1000), 2)),
                 max_displacement_mm=round(float(np.linalg.norm(disp, axis=1).max() * 1000), 2),
                 n_vertices_moved_over_0p1mm=int((np.linalg.norm(disp, axis=1) > 1e-4).sum()))

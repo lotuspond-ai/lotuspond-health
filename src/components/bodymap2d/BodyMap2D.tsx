@@ -281,7 +281,10 @@ function CloseUp({ body, organ, density }: { body: Body; organ: OrganId; density
     };
     run();
     const ro = new ResizeObserver(run); ro.observe(el);
-    return () => ro.disconnect();
+    // the names are measured again once the web font has loaded (the fallback font sets other widths)
+    let alive = true;
+    document.fonts?.ready.then(() => { if (alive) run(); }).catch(() => {});
+    return () => { alive = false; ro.disconnect(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `key` names the labels; `shown` is rebuilt each render
   }, [key, ready, labels]);
   return (

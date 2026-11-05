@@ -680,7 +680,9 @@ def radial_pulse(sex, VES, skin, log=print):
 
 
 # neck and brain arteries: adult reference diameters (m), median over the vessel away from its end rings
-NECK_D = {'male': dict(CCA=0.0075, ICA=0.0050, ECA=0.0042, BAS=0.0034), 'female': dict(CCA=0.0066, ICA=0.0046, ECA=0.0038, BAS=0.0031)}
+# common carotid: adult outer diameter (Krejza et al. 2006, ultrasound: 6.5 +- 1.0 mm in men, 6.1 +- 0.8 mm in women);
+# fit/vessels_neck.py sweeps the common carotids round at this calibre after the push-out
+NECK_D = {'male': dict(CCA=0.0070, ICA=0.0050, ECA=0.0042, BAS=0.0034), 'female': dict(CCA=0.0064, ICA=0.0046, ECA=0.0038, BAS=0.0031)}
 
 
 def neck_calibres(sex, VES, log=print):

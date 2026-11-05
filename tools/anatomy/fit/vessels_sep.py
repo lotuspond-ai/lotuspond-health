@@ -24,7 +24,11 @@ costoclavicular space, and the venous junctions turned back onto their stubs aft
    (the female right brachiocephalic vein above the HRA superior vena cava, in the right lung's apical segment) is swept
    again as one round tube along a Hermite course from ring to ring, each vertex at its own Z-Anatomy arc length and
    angle and the Z-Anatomy calibre, its junction ring shaped to the HRA stub's obliquely cut outer rim, and re-routed
-   (route_dp) clear of bone, organ and lung with only its rings held.
+   (route_dp) clear of bone, organ and lung with only its rings held. The route moves whole sections, which shears a
+   short tube it bends by a centimetre, so the vein is swept round once more along the routed course (routed_course:
+   the Hermite course plus the routed centreline's smoothed deviation, faded out at both rings, which stay where the
+   first sweep put them), re-routed if that lost clearance, and the roundest candidate that keeps the route's
+   clearance (RESWEEP_TOL) and the junction's gap and angle is kept.
 """
 import os, sys, json
 import numpy as np
@@ -550,7 +554,26 @@ def criterion_aspect(x):
     return (float(np.quantile(a, 0.9)), float(max(a))) if a else (None, None)
 
 
-def smooth_sweep(VES, names, J, log=print, tag='sweep', lean=0.0):
+def routed_course(x, cA, cB, H, end=0.006, sigma=0.003):
+    """The course a re-route found for a swept vein, entering and leaving its rings like the first sweep's: the Hermite
+    course H plus the routed main-trunk centreline's deviation from it at the same normalised arc length (Gaussian-
+    smoothed along it, sigma), faded to zero (value and slope) over `end` at both rings."""
+    cl = RV.trunk(x['v'], x['f'], start=cA)
+    if cl is None: return None
+
+    def res(P):
+        Q, s = RV.polyline_resample(P, 0.0005)
+        if np.linalg.norm(Q[-1] - P[-1]) > 1e-6: s = np.r_[s, s[-1] + np.linalg.norm(Q[-1] - P[-1])]; Q = np.vstack([Q, P[-1]])
+        return Q, s
+    R_, sR = res(np.vstack([cA, cl['p'][1:-1], cB])); Hr, sH = res(np.asarray(H))
+    Ru = np.stack([np.interp(sH / sH[-1], sR / sR[-1], R_[:, a]) for a in range(3)], 1)
+    K = np.exp(-0.5 * ((sH[:, None] - sH[None]) / sigma) ** 2)
+    Dv = (K @ (Ru - Hr)) / K.sum(1)[:, None]
+    w = (1.0 - RV.raised(sH / end)) * (1.0 - RV.raised((sH[-1] - sH) / end))
+    return Hr + w[:, None] * Dv
+
+
+def smooth_sweep(VES, names, J, log=print, tag='sweep', lean=0.0, course=None):
     """Re-sweep a short two-ring vein as a round tube along a smooth course from ring to ring, keeping vertices and faces:
     the course is the cubic Hermite curve from its junction ring's centre (a chain junction's: along the HRA stub's
     axis) to its other ring's centre along that ring's axis (tangents SWEEP_TAN x the chord), so both ring centres and
@@ -571,6 +594,9 @@ def smooth_sweep(VES, names, J, log=print, tag='sweep', lean=0.0):
         a = min(range(2), key=lambda k: np.linalg.norm(L[k]['c'] - jj[0]['end']['c'])) if jj else int(np.argmin([l['c'][1] for l in L]))
         A, B = L[a], L[1 - a]
         cA, cB = v[A['idx']].mean(0), v[B['idx']].mean(0)
+        if course is not None and x.get('_sweep_c') is not None:
+            cA, cB = (np.array(c) for c in x['_sweep_c'])   # the first sweep's centres (its ring fit moved ring A's vertex mean)
+        else: x['_sweep_c'] = (cA.copy(), cB.copy())
         chord = cB - cA; D = float(np.linalg.norm(chord))
         nA = np.asarray(jj[0]['end']['n'], float) if jj else G.ring_frame(v[A['idx']])[1]
         nB = G.ring_frame(v[B['idx']])[1]
@@ -596,7 +622,11 @@ def smooth_sweep(VES, names, J, log=print, tag='sweep', lean=0.0):
         uk = (np.arange(nb) + 0.5) / nb; rb = np.interp(uk, uk[ok], rb[ok])
         K = np.exp(-0.5 * ((uk[:, None] - uk[None]) * sQz[-1] / 0.004) ** 2); rb = (K @ rb) / K.sum(1)
         # the new course and its frames
+        # `course(x, cA, cB, H)`: a course between the ring centres derived from the Hermite one H (routed_course)
         P = RV.hermite(cA, SWEEP_TAN * D * nA, cB, SWEEP_TAN * D * nB, step=0.0005)
+        if course is not None:
+            Pc = course(x, cA, cB, P)
+            if Pc is not None: P = Pc
         Pn, sn = RV.polyline_resample(P, 0.0005); Ln = float(sn[-1]); un = sn / Ln
         Tn = G.unit(np.gradient(Pn, axis=0)); Un, Wn = RV.rmf(Pn, Tn)
 
@@ -661,27 +691,53 @@ def sweep_veins(sex, VES, names, J, bones, organs, aorta=None, arteries=None, lo
         pin = 1 - RV.raised(np.where(np.isfinite(d), d, 1.0) / SWEEP_PIN)
         rt = route_veins(sex, VES, [n], bones, organs, {n: pin}, aorta=aorta, arteries=arteries, log=log)
         p90, mx = criterion_aspect(x)
-        out[n] = dict(sweep=sw[n], route=rt.get(n), p90_aspect_after=r2(p90, 2) if p90 is not None else None, max_aspect_after=r2(mx, 2) if mx is not None else None)
-        log(f'  vein sweep {n}: p90 / max section aspect {p90:.2f} / {mx:.2f}')
+        # the route moves whole sections, which shears a short tube that it bends by a centimetre or more (p90 aspect
+        # 2.8): the vein is swept round once more along the course the route found (routed_course), re-routed if that
+        # lost clearance, and the roundest candidate that keeps the route's clearance (within RESWEEP_TOL) is kept
+        dfn = deficit_fn([(bones, BONE_CLEAR), (organs, ORGAN_CLEAR), (aorta, AORTA_CLEAR), (arteries, ARTERY_CLEAR)])
+        from fit import vessels_measure as VM
+        Jn = [j for j in J if n in j['vessels']]
+
+        def cand(kind):
+            pa, ma = criterion_aspect(x)
+            jr = VM.junctions(Jn, VES) if Jn else []
+            g = max([r['gap_mm'] for r in jr] or [0.0]); a_ = max([r['angle_deg'] or 0.0 for r in jr] or [0.0])
+            return dict(kind=kind, p90=pa, mx=ma, deficit=tube_deficit(x, dfn), gap_mm=g, angle_deg=a_, v=x['v'].copy())
+        cands = [cand('routed')]
+        if p90 is not None and p90 > RESWEEP_P90:
+            for it in range(2):
+                v_prev = x['v'].copy()
+                smooth_sweep(VES, [n], J, log=log, tag='re-sweep along the routed course', lean=lean, course=routed_course)
+                # the end rings stay where the first sweep (and its fit to the HRA stub's rim) put them, as in the route
+                x['v'] = v_prev + pin[:, None] * (x['v'] - v_prev)
+                cands.append(cand(f're-swept {it + 1}'))
+                if cands[-1]['deficit'] <= cands[0]['deficit'] + RESWEEP_TOL: break
+                route_veins(sex, VES, [n], bones, organs, {n: pin}, aorta=aorta, arteries=arteries, log=log)
+                cands.append(cand(f're-swept and re-routed {it + 1}'))
+                c_ = cands[-1]
+                if c_['p90'] is not None and c_['p90'] <= RESWEEP_P90 and c_['deficit'] <= cands[0]['deficit'] + RESWEEP_TOL: break
+        c0 = cands[0]
+        ok = [c for c in cands if c['p90'] is not None and c['deficit'] <= c0['deficit'] + RESWEEP_TOL
+              and c['gap_mm'] <= max(VM.GAP_MAX * 1000, c0['gap_mm']) and c['angle_deg'] <= max(VM.ANGLE_MAX, c0['angle_deg'])]
+        best = min(ok, key=lambda c: (c['p90'] > RESWEEP_P90, c['p90'])) if ok else c0
+        x['v'] = best['v']
+        p90, mx = best['p90'], best['mx']
+        rows = [dict(kind=c['kind'], p90_aspect=r2(c['p90'], 2) if c['p90'] is not None else None, max_aspect=r2(c['mx'], 2) if c['mx'] is not None else None,
+                     deficit_mm=r2(c['deficit'] * 1000, 1), junction_gap_mm=r2(c['gap_mm'], 2), junction_angle_deg=r2(c['angle_deg'], 1)) for c in cands]
+        out[n] = dict(sweep=sw[n], route=rt.get(n), candidates=rows, kept=best['kind'],
+                      p90_aspect_after=r2(p90, 2) if p90 is not None else None, max_aspect_after=r2(mx, 2) if mx is not None else None)
+        log(f'  vein sweep {n}: kept {best["kind"]}; p90 / max section aspect {p90:.2f} / {mx:.2f}; candidates {rows}')
     return out
 
 
-def resweep_crushed(sex, VES, names, J, bones, organs, pins, aorta=None, arteries=None, log=print, aspect=2.0, lung_mm=0.3, lungs=None):
-    """After the push-out: a swept vein that came out crushed (criterion p90 section aspect above `aspect`) or in a lung
-    lobe (deeper than lung_mm) is swept again and re-routed (route_veins), the push-out's moves being undone for it."""
-    out = {}
-    for n in names:
-        x = VES.get(n)
-        if x is None or x.get('dropped') or not x['placed']: continue
-        p90, mx = criterion_aspect(x)
-        deep = float(max(0.0, -lungs.query(x['v'])[0].min())) if lungs is not None else 0.0
-        if p90 is not None and p90 <= aspect and deep * 1000 <= lung_mm:
-            out[n] = dict(kept=True, p90_aspect=r2(p90, 2), lung_depth_mm=r2(deep * 1000, 1))
-            log(f'  re-sweep {n}: kept (p90 aspect {p90:.2f}, lung depth {deep * 1000:.1f} mm)'); continue
-        sw = smooth_sweep(VES, [n], J, log=log, tag='re-sweep')
-        rt = route_veins(sex, VES, [n], bones, organs, pins, aorta=aorta, arteries=arteries, log=log)
-        p1, m1 = criterion_aspect(x)
-        d1 = float(max(0.0, -lungs.query(x['v'])[0].min())) if lungs is not None else 0.0
-        out[n] = dict(p90_aspect_before=r2(p90, 2) if p90 is not None else None, lung_depth_before_mm=r2(deep * 1000, 1),
-                      p90_aspect_after=r2(p1, 2) if p1 is not None else None, lung_depth_after_mm=r2(d1 * 1000, 1), sweep=sw.get(n), route=rt.get(n))
-    return out
+RESWEEP_P90 = 2.0       # a swept and routed vein above this p90 section aspect (the review threshold) is swept again
+RESWEEP_TOL = 0.0003    # ... and the re-sweep is kept if it loses at most this much of the route's clearance (m)
+
+
+def tube_deficit(x, deficit, step=RT_STEP):
+    """Largest missing clearance of a vessel's sections (vessel_tube balls, as route_dp measures it), m."""
+    P, R, cl = vessel_tube(x, step)
+    if P is None: return 0.0
+    sk = np.arange(0.5 * step, cl['s'][-1], step)
+    C = np.stack([np.interp(sk, cl['s'], cl['p'][:, a]) for a in range(3)], 1)
+    return float(deficit(C, np.interp(sk, cl['s'], R)).max()) if len(sk) else 0.0

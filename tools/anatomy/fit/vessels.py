@@ -58,7 +58,10 @@ Method (per body):
     apical segment) is swept again as one round tube (vessels_sep.smooth_sweep): along the Hermite curve from the vena
     cava's upper ring toward its upper ring, each vertex at its own Z-Anatomy arc length and angle and the Z-Anatomy
     calibre, the lower ring taking the shape of the vena cava's obliquely cut outer rim (faded over 8 mm), then
-    re-routed with only its rings held.
+    re-routed with only its rings held; the route shears a short tube it bends by a centimetre (p90 section aspect
+    2.8), so the vein is swept round once more along the routed course (the Hermite course plus the route's smoothed
+    deviation, faded out over 6 mm at the rings, which stay where the first sweep put them), re-routed if that lost
+    clearance, and the roundest candidate that keeps the route's clearance and the junction is kept.
  5. Push-out (fit/vessels_fix.py): out of every bone (HRA and placed) by 0.8 mm, out of the solid organs (with the
     assembled lung lobes and the female ureters and ovaries) by 0.3 mm, the veins out of the HRA aorta by 0.5 mm, out
     of the HRA inferior vena cava by 1.2 mm and out of the placed arteries by 0.5 mm, the arteries out of the HRA veins
@@ -74,7 +77,13 @@ Method (per body):
     degree moves the vessel against the bones the push-out cleared (snap's rigid stretch and decay, every other junction
     held; up to four rounds, since a turn is shared with a junction held beside it), crushed veins are re-rounded once
     more, and the vessels this moved are settled out of bone again with 2.2 cm from each ring held.
- 6. Measurements (fit/vessels_measure.py, fit/vessels_review.measure) -> report.json, QA renders, write_group().
+ 6. Neck tubes (fit/vessels_neck.py): the common carotids (both sexes), and any two-ring neck or thoracic-outlet vessel
+    left flatter than a section aspect of 2 (arteries) or 2.5 (veins) or with a calibre jump above 1.5x, are swept again as
+    round tubes along a smooth course routed through free space by whole cross-sections (bones 0.8 mm, organs and lungs
+    0.3 mm, companion vessels 0.5 mm), their junction stretch and both end rings held; the common carotid at the adult
+    calibre (vessels_review.NECK_D) widening into its bifurcation ring over 1.6 cm (the carotid bulb). A re-sweep is kept
+    when it is rounder, keeps its clearance and keeps its junctions passing.
+ 7. Measurements (fit/vessels_measure.py, fit/vessels_review.measure) -> report.json, QA renders, write_group().
 """
 import os, sys, json, time, re
 import numpy as np
@@ -946,6 +955,9 @@ def run(sex, stage='all', render=True):
     step('vein_route', SP.route_veins, sex, VES, RR, bones_ob, organs_ob, hold, aorta=aorta, arteries=AT, log=log)
     step('vein_sweep', SP.sweep_veins, sex, VES, SWEPT, J, bones_ob, organs_ob, aorta=aorta, arteries=AT, log=log)
     _dump(sex, 'pre_push', VES=VES, J=J, trees=trees, contacts=contacts, review=review, pel=pel, realigned=realigned, sheath=sheath)
+    # the swept veins' round layout (the push-out may fold them flat): the neck step re-sweeps them from it
+    for n in SWEPT:
+        if n in VES: VES[n]['layout_v'] = VES[n]['v'].copy()
     # the placed deep veins, as tubes where the separation and the re-routes left them, are obstacles for the arteries in
     # the push-out (as the HRA veins are): an artery pushed off a bone does not slide into its companion vein (the
     # female external iliac artery into its vein along the pelvic brim)
@@ -977,6 +989,11 @@ def run(sex, stage='all', render=True):
     step('settle_after_realign', settle, F, VES, v_b, trees, log=log, extra_v=extra_v, extra_a=extra_a)
     step('bridges', RV.bridges, sex, VES, log=log)
     if 'error' not in review['bridges']: step('bridges_push_out', RV.settle_bridges, F, VES, list(review['bridges']), log=log)
+    # the common carotids, and the neck / thoracic-outlet vessels the steps above left crushed or swollen, swept again as
+    # round tubes along a smooth course routed through free space: whole cross-sections move (fit/vessels_neck.py)
+    _dump(sex, 'pre_neck', VES=VES, J=J, review=review)
+    from fit import vessels_neck as NK
+    step('neck_tubes', NK.neck_tubes, sex, VES, J, F, aorta, HV, log=log)
     _dump(sex, 'post_push', VES=VES, J=J, trees=trees, contacts=contacts, review=review, pel=pel, realigned=realigned, sheath=sheath, hist=hist)
     # ---- measurements
     names = [n for n, x in VES.items() if x['placed'] and not x.get('dropped')]
