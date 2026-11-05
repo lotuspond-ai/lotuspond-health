@@ -8,9 +8,7 @@ Every structure starts from the cached trunk warp (fit.common.get_warp(sex, 'tru
 HRA neighbours it touches (see organs_neck, organs_adrenal, organs_diaphragm, organs_bed, organs_tube, organs_final,
 organs_settle):
   1. thyroid + parathyroids  similarity from the larynx cartilages, slide to tracheal rings 2-4, smooth push-out,
-                             the self-overlap it leaves where a lobe wraps the airway resolved (one closed sheet round
-                             the gland's own volume, organs_thyroid.unfold_union), glands slid onto the lobes'
-                             posterior surface
+                             glands slid onto the lobes' posterior surface
   2. adrenals                undistorted gland (the left one scaled to 1.1 times the right one's volume) laid on its
                              warped pose, free-space pose search, 2 mm off the kidney
   3. diaphragm               as-rigid-as-possible fit (openings follow the HRA IVC / aorta, domes under the lung bases
@@ -188,7 +186,7 @@ def measure(sex, out, aux):
         pairs[k] = {'stomach': pair(hra(sex, k), own['stomach'])}
     pairs['stomach']['adrenal_l'] = pair(st, own['adrenal_l'], listed=False, closed=cl['adrenal_l'])
     # oesophagus
-    pairs['esophagus'] = {k: pair(es, F(k)) for k in ('trachea', 'trach_cart', 'la', 'aorta', 'spine')}
+    pairs['esophagus'] = {k: pair(es, F(k)) for k in ('trachea', 'trach_cart', 'la', 'pulm_veins', 'aorta', 'spine')}
     pairs['esophagus']['diaphragm'] = pair(es, own['diaphragm'], closed=cl['diaphragm'])
     for k in ('heart', 'bronchi', 'cricoid', 'thyroid_cart', 'liver'):
         pairs['esophagus'][k] = pair(es, F(k), listed=False)
@@ -336,6 +334,22 @@ def measure(sex, out, aux):
     # the gland's size, extent, bed and neck contacts; the parathyroids' size and levels (organs_thyroid)
     from fit.organs_thyroid import thyroid_measures
     R.update(thyroid_measures(sex, out['thyroid'], {k: out[k] for k in PTH}, c0, av, aux.get('neck_neighbours')))
+    # the oesophagus's course: gentle curves (route bend per cm above its distal 3 cm turn into the cardia; and the
+    # bends between 8 mm horizontal slab centroids of the mesh, the way the anatomy review measured the female S-kink)
+    from fit.organs_tube import bend_per_cm, BEND_MAX, BEND_FREE_END, BEND_FREE_TOP
+    sC = np.concatenate([[0], np.cumsum(np.linalg.norm(np.diff(C, axis=0), axis=1))])
+    bC = bend_per_cm(C, sC); span = (sC > BEND_FREE_TOP) & (sC < sC[-1] - BEND_FREE_END)
+    yv = es[0][:, 1]; kk = np.floor((yv - yv.min()) / 0.008).astype(int)
+    Cs = np.array([es[0][kk == i].mean(0) for i in np.unique(kk) if (kk == i).sum() > 20])
+    Ds = np.diff(Cs, axis=0); Ds /= np.linalg.norm(Ds, axis=1, keepdims=True)
+    bs = np.degrees(np.arccos(np.clip(np.einsum('ij,ij->i', Ds[:-1], Ds[1:]), -1, 1)))
+    above = Cs[1:-1, 1] > cc[1] + 0.03                      # slab bends above the abdominal turn into the cardia
+    R['esophagus_bend_deg_per_cm'] = crit(round(float(bC[span].max()), 1), BEND_MAX, bC[span].max() <= BEND_MAX + 0.5,
+                                          unit='deg per cm along the route, below its top 2 cm and above its distal 3 cm', at_y=round(float(C[span][np.argmax(bC[span]), 1]), 4),
+                                          top_2cm_max_deg=round(float(bC[sC <= BEND_FREE_TOP].max()), 1),
+                                          slab_bends_max_deg=round(float(bs[above].max()), 1) if above.any() else None,
+                                          slab_bends_deg=[round(float(x), 1) for x in bs], slab_y=[round(float(x), 4) for x in Cs[1:-1, 1]],
+                                          method='slab bends: angle between consecutive chords of 8 mm horizontal slab centroids of the mesh')
     # level of the oesophagus's upper end
     top = es[0][es[0][:, 1] > es[0][:, 1].max() - 0.003].mean(0)
     R['esophagus_top'] = dict(level=level_name(level(sex, top[1])), above_cricoid_lower_border_mm=round(float((cv[:, 1].min() - top[1]) * -1000), 1),
@@ -378,7 +392,7 @@ def _stage(sex, name, frm, compute):
 def reseat_adrenals(sex, ad, dfl):
     """The diaphragm's crura may now touch the glands: re-seat each gland rigidly (shape kept) in the remaining free
     space next to its kidney, then a rigid refinement clears what the pose grid leaves (kidney gap kept near 2 mm)."""
-    from fit.organs_adrenal import search_pose, rigid_refine
+    from fit.organs_adrenal import search_pose, rigid_refine, free_space_seat, penetration_depth, FREE_SEAT_SIDES
     out = {}
     iv = hra(sex, 'ivc')[0]
 
@@ -395,6 +409,15 @@ def reseat_adrenals(sex, ad, dfl):
         ex = behind_ivc if s_ == 'r' else None
         v2 = search_pose(v_, kfl, oth, radius=0.0045, step=0.0009, angles=(0.0, 0.07), log_=log, extra=ex)
         v2 = rigid_refine(v2, kfl, oth, iters=60, log_=log)
+        # still more than 1 mm into the fitted sheet or a neighbour (no free pose within 4.5 mm): the wide free-space
+        # seat on the kidney (organs_adrenal.free_space_seat) with the fitted sheet as an obstacle, then the refinement
+        depth, _ = penetration_depth(v2, f_, oth)
+        if s_ in FREE_SEAT_SIDES and depth > 0.001:
+            v3, _r = free_space_seat(v2, f_, kfl, oth, v2.mean(0), rot_max=np.radians(30), radius=0.012, log_=log)
+            v3 = rigid_refine(v3, kfl, oth, iters=60, log_=log)
+            d3, _ = penetration_depth(v3, f_, oth)
+            log(f'    adrenal {s_} re-seat: {depth * 1000:.2f} mm deep after the local search, {d3 * 1000:.2f} mm after the free-space seat')
+            if d3 < depth and (ex is None or ex(v3) <= ex(v2) + 1e-12): v2 = v3
         out[s_] = (v2, orient_outward(v2, f_))
     return out
 
@@ -409,6 +432,9 @@ def fit(sex, render=True, frm=None):
     def neck():
         log(sex, 'neck')
         thy, pth, r, tfl, ax = fit_neck(sex, W)
+        from fit.organs_thyroid import fold_faces
+        tv_, tf_ = thy; bad = fold_faces(tv_, orient_outward(tv_, tf_))
+        log(sex, f'thyroid placed: {len(bad)} faces where the gland passes through itself, volume {r.get("volume_cm3")} cm3')
         return thy, pth, r, ax
     thy, pth, rep['thyroid'], ax = _stage(sex, 'neck', frm, neck)
     out['thyroid'] = thy; out.update(pth); aux['airway_axis'] = ax
@@ -495,6 +521,7 @@ def fit(sex, render=True, frm=None):
     rep['runtime_s'] = round(time.time() - t0, 1)
     if frm is not None: rep['stages_from_cache'] = list(STAGES[:STAGES.index(frm)])
     if REDO is not None: rep['stages_from_cache'] = [k for k in STAGES[:-1] if k not in REDO]
+    from fit.organs_geom import orient_manifold          # winding carried across manifold edges only (the stomach's surface nets)
     outputs = []
     src = lambda k: ZA_NAMES.get(k) or za_original(k) and ZA_NAMES.get(k)
     names = [('stomach', 'stomach', 'stomach'), ('esophagus', 'esophagus', 'esophagus'), ('diaphragm', 'diaphragm', 'diaphragm'),
@@ -503,7 +530,7 @@ def fit(sex, render=True, frm=None):
              ('pth_inf_l', 'parathyroid_inferior_l', 'parathyroids'), ('pth_inf_r', 'parathyroid_inferior_r', 'parathyroids')]
     for key, name, part in names:
         v, f = out[key]
-        outputs.append(dict(name=name, part=part, mesh=(v, orient_outward(v, f)), source=[src(key)]))
+        outputs.append(dict(name=name, part=part, mesh=(v, orient_manifold(v, f)), source=[src(key)]))
     write_group(sex, GROUP, outputs, json.loads(json.dumps(rep, default=_jsonable)))
     log(sex, 'written', od)
     if render: qa(sex, out, aux)

@@ -631,6 +631,47 @@ def is_closed(f):
     return bool((cnt == 2).all())
 
 
+def orient_manifold(v, f):
+    """lib.mesh.orient_outward with the winding carried only across manifold edges (shared by exactly two faces).
+    Surface nets leave a few non-manifold edges where two parts of a solid touch at an ambiguous cell (four faces on
+    one edge); a breadth-first walk that pairs those faces at random carries a wrong flip over whole patches of the
+    surface (7 % of the female stomach once). Each connected component then faces outward by the same rule as
+    orient_outward (closed: positive volume; open: normals away from its centroid on average). Identical to
+    orient_outward on an edge-manifold mesh."""
+    from lib.mesh import components, signed_volume, face_normals
+    f = np.asarray(f).copy()
+    if not len(f): return f
+    e = np.concatenate([f[:, [0, 1]], f[:, [1, 2]], f[:, [2, 0]]])
+    fid = np.tile(np.arange(len(f)), 3)
+    _, inv, cnt = np.unique(np.sort(e, axis=1), axis=0, return_inverse=True, return_counts=True)
+    inv = inv.ravel()
+    m = np.flatnonzero(cnt[inv] == 2)
+    m = m[np.argsort(inv[m], kind='stable')]
+    a, b = m[0::2], m[1::2]
+    same = np.all(e[a] == e[b], axis=1)                     # traversed the same way: one face flipped
+    adj = [[] for _ in range(len(f))]
+    for x, y, s in zip(fid[a].tolist(), fid[b].tolist(), same.tolist()):
+        adj[x].append((y, s)); adj[y].append((x, s))
+    flip = np.zeros(len(f), bool); seen = np.zeros(len(f), bool)
+    for start in range(len(f)):
+        if seen[start]: continue
+        seen[start] = True; stack = [start]
+        while stack:
+            x = stack.pop()
+            for y, s in adj[x]:
+                if seen[y]: continue
+                seen[y] = True; flip[y] = flip[x] ^ s; stack.append(y)
+    f[flip] = f[flip][:, ::-1]
+    for comp in components(v, f):
+        sub = f[comp]
+        if is_closed(sub):
+            if signed_volume(v, sub) < 0: f[comp] = sub[:, ::-1]
+        else:
+            c = v[np.unique(sub)].mean(0)
+            if np.einsum('ij,ij->i', face_normals(v, sub, unit=False), v[sub].mean(1) - c).sum() < 0: f[comp] = sub[:, ::-1]
+    return f
+
+
 def fair_folds(v, f, fixed=None, cos_max=0.5, rings=2, iters=30, lam=0.5, mu=-0.53):
     """Taubin (lambda|mu) fairing of the crumpled patches only: vertices of edges whose faces fold sharply (normals
     more than ~60 deg apart), grown by `rings` neighbour rings; every other vertex (and `fixed`) stays. Removes the

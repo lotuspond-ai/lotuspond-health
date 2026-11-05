@@ -21,8 +21,11 @@ free, so it carries their impressions (as a real stomach does), keeps its volume
      when it bulges into the bed: the HRA male's splenic flexure), the bridges are added, and the largest connected
      component is kept;
   5. its signed distance is smoothed (PASSES gaussian passes), each pass followed by the constraint that keeps the
-     field outside wherever a dilated neighbour is: the smoothed surface never re-enters a neighbour;
-  6. the zero level is extracted (surface nets, about H edges, even), Taubin-smoothed; each orifice is opened by
+     field outside wherever a dilated neighbour is, and in the pylorus's shadow from SH_HOLD behind the lip plane on:
+     the smoothed surface never re-enters a neighbour, nor rounds the bed's concave edges into the shadow;
+  6. the zero level is extracted (surface nets, about H edges, even; its winding made consistent across manifold edges
+     only, organs_geom.orient_manifold: the few non-manifold edges surface nets leave must not carry a flip), Taubin-
+     smoothed; each orifice is opened by
      cutting the bridge end at its ring plane, and its rim laid exactly onto its ring (the cardiac circle the
      oesophagus ends in, the ring on the bulb's lip) by a bi-Laplacian displacement with a smooth falloff;
   7. a final settle (organs_settle) clears what the voxel resolution leaves, both rims held.
@@ -31,9 +34,9 @@ import numpy as np
 from scipy import ndimage
 from scipy.spatial import cKDTree
 
-from lib.mesh import surface_nets, taubin, orient_outward, signed_volume, components, compact
+from lib.mesh import surface_nets, taubin, signed_volume, components, compact
 from fit.organs_data import hra, field, log, has_hra
-from fit.organs_geom import cap_loops, voxel_solid, boundary_loops, smoothstep
+from fit.organs_geom import cap_loops, voxel_solid, boundary_loops, smoothstep, orient_manifold
 
 H = 0.001            # voxel size (m)
 CLR = 0.0012         # neighbours dilated by this (m): the surface stays >= CLR - H/2 off them
@@ -44,6 +47,7 @@ BED_NB = ('liver', 'gallbladder', 'spleen', 'pancreas', 'colon', 'kidney_l', 'ki
           'splenic_a', 'splenic_v', 'lungs', 'heart')
 PYL_CONE = (np.radians(45.0), 0.035)    # the pylorus's shadow: half-angle about the bulb's axis, depth behind the lip plane
 LEAD = 0.006         # the pyloric canal leaves the bulb's lip along the bulb's axis for at least this long
+SH_HOLD = 0.003      # the smoothing keeps out of the pylorus's shadow from this far behind the lip plane on
 
 
 def loop_axis(P):
@@ -340,6 +344,16 @@ def fit_stomach_bed(sex, W, r_cardia, own=(), log_=log):
     sdf = ((ndimage.distance_transform_edt(~S) - ndimage.distance_transform_edt(S)) * H).astype(np.float32)
     sdf -= np.sign(sdf) * 0.5 * H
     cons = np.where(np.isfinite(D), CLR - D, -np.inf).astype(np.float32)
+    # the pylorus's shadow holds the field outside too (the gaussian passes would otherwise round the bed's concave
+    # edges into it: the HRA female's antrum, which lies beside the hanging bulb, grazed the cone 3.3 mm deep 21 mm
+    # behind the lip), from SH_HOLD behind the lip plane on: nearer the lip the canal's own end is cut and laid onto
+    # the ring below
+    idx = np.argwhere(SH)
+    held = idx[-((lo + H * idx - cr) @ nr) > SH_HOLD]
+    if len(held):
+        SHd = np.zeros(shape, bool); SHd[held[:, 0], held[:, 1], held[:, 2]] = True
+        cons = np.maximum(cons, (0.5 * H - ndimage.distance_transform_edt(~SHd) * H).astype(np.float32))
+    rep['pylorus_shadow']['held_from_mm'] = round(SH_HOLD * 1000, 1)
     for _ in range(PASSES):
         sdf = ndimage.gaussian_filter(sdf, SIGMA)
         np.maximum(sdf, cons, out=sdf)
@@ -347,7 +361,7 @@ def fit_stomach_bed(sex, W, r_cardia, own=(), log_=log):
     comps = components(sv, sf)
     sv, sf = compact(sv, sf[max(comps, key=len)])
     sv = taubin(sv, sf, iters=6)
-    sf = orient_outward(sv, sf)
+    sf = orient_manifold(sv, sf)
     rep['voxel_surface'] = dict(vertices=int(len(sv)), volume_cm3=round(abs(signed_volume(sv, sf)) * 1e6, 1))
     # orifices: cut the bridge ends at their ring planes, lay the rims onto their rings
     sv, sf, car, nc = open_orifice(sv, sf, cc, cn, r_cardia)
@@ -370,7 +384,7 @@ def fit_stomach_bed(sex, W, r_cardia, own=(), log_=log):
     sfields = [(name, fl, None, allow) if name == 'duodenum' else (name, fl, None) for name, fl in fields
                if name not in ('lungs', 'heart')]
     sv, rep['settle'] = settle(sv, sf, sfields, clear=0.0004, iters=4, fixed=rims, w=2.0, inward=False, log=log_, label='stomach settle')
-    sf = orient_outward(sv, sf)
+    sf = orient_manifold(sv, sf)
     vol = abs(signed_volume(sv, sf))
     rep['volume_cm3'] = dict(fitted=round(vol * 1e6, 1), warped_z_anatomy=round(vol_warped * 1e6, 1), share_of_warped=round(vol / vol_warped, 3),
                              note='the free part of the warped Z-Anatomy stomach\'s bed, smoothed (an adult stomach in situ holds '

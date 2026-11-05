@@ -149,6 +149,8 @@ HRA = {
     'cricoid': _rx('cricoid_cartilage'),
     'thyroid_cart': _rx('thyroid_cartilage'),
     'la': _rx('left_cardiac_atrium'),
+    # the four pulmonary veins entering the left atrium (the oesophagus passes behind the atrium, between them)
+    'pulm_veins': _rx('pulmonary_vein_[LR]_(?:sup|inf)'),
     'heart': _rx('left_cardiac_atrium', 'right_cardiac_atrium', 'heart_left_ventricle', 'left_ventricle', 'heart_right_ventricle', 'right_ventricle'),
     # the coronary arteries and cardiac veins on the heart's surface (the posterior interventricular vessels, the middle
     # and small cardiac veins and the coronary sinus stand proud of the chambers on its diaphragmatic surface): the
@@ -200,9 +202,9 @@ from fit.organs_geom import Field  # noqa: E402
 
 _FIELDS = {}
 FIELD_H = {'lungs': 0.001, 'ribs': 0.0008, 'trach_cart': 0.0005, 'cricoid': 0.0005, 'thyroid_cart': 0.0005, 'bronchi': 0.0006, 'celiac': 0.0006, 'trachea': 0.0006,
-           'heart_vessels': 0.0005, 'splenic_a': 0.0005, 'splenic_v': 0.0006, 'duo_bulb': 0.0005}
+           'heart_vessels': 0.0005, 'pulm_veins': 0.0006, 'splenic_a': 0.0005, 'splenic_v': 0.0006, 'duo_bulb': 0.0005}
 # open-ended tubes (and chambers with vessel openings): boundary loops are capped before filling
-FIELD_CAP = {'ivc', 'aorta', 'aorta_abd', 'duo_sup', 'duo_bulb', 'duodenum', 'colon', 'jejunum', 'trachea', 'bronchi', 'celiac', 'la', 'heart', 'heart_vessels',
+FIELD_CAP = {'pulm_veins', 'ivc', 'aorta', 'aorta_abd', 'duo_sup', 'duo_bulb', 'duodenum', 'colon', 'jejunum', 'trachea', 'bronchi', 'celiac', 'la', 'heart', 'heart_vessels',
              'splenic_a', 'splenic_v'}
 # hollow tubes whose wall is a closed double shell (the lumen stays open at the ends, so a flood fill leaves it out):
 # each horizontal cross-section is filled (its convex hull), so that the lumen counts as inside the organ

@@ -10,10 +10,15 @@ the route bends (about 7x the sharp folds of the Z-Anatomy mesh); here the tube 
     maps it onto the warped one) measured along its length, outer wall and lumen, semi-axes front-to-back and side to
     side (in a frame whose normal faces forward), smoothed along the length; the distal 12 mm blend into the cardiac
     ring (a circle of the end's mean radius), so the outer wall ends exactly on the stomach's rim;
-  * collisions (trachea and its cartilages, main bronchi, left atrium and heart, aorta, vertebrae, cricoid and
-    thyroid cartilages, liver, our thyroid gland and stomach; not the diaphragm: its hiatus gives way to the tube in
-    the final settle, organs_final): per-station pushes of the route perpendicular
-    to the tube, smoothed along it (a snake's internal energy keeps the route smooth); where a station is pressed
+  * collisions (trachea and its cartilages, main bronchi, left atrium, pulmonary veins and heart, aorta, vertebrae,
+    cricoid and thyroid cartilages, liver, our thyroid gland and stomach; not the diaphragm: its hiatus gives way to
+    the tube in the final settle, organs_final): per-station pushes of the route perpendicular to the tube; the
+    route's accumulated displacement is a smoothing spline (fair_route: second differences penalised, wavelengths
+    under FAIR_WAVE damped), so a push bends a few centimetres of the route, not one station (the earlier station-wise
+    Gaussian smoothing let the pushes from the left atrium in front and the aorta / spine behind carve an S-kink of
+    25-43 deg per cm into the female route); then a bending limit (limit_bends: BEND_MAX deg per cm, the stiffness
+    raised locally where the route bends more) and a second round of pushes under the raised stiffness, which clears
+    the tube again without re-bending it; where a station is pressed
     from in front and from behind at once (trachea or left atrium against aorta or spine) the cross-section flattens
     front-to-back (down to FLAT_MIN of its depth, changing gradually along the tube) instead of being shoved;
   * mesh: rings of M vertices on the outer wall and on the lumen, joined by annular end faces into one closed,
@@ -35,7 +40,12 @@ CLEAR = 0.0006
 TOP_ABOVE_CRICOID = 0.004
 END_BLEND = 0.012
 NBINS = 60
-ESO_NB = ('trachea', 'trach_cart', 'bronchi', 'la', 'heart', 'aorta', 'spine', 'cricoid', 'thyroid_cart', 'liver')
+ESO_NB = ('trachea', 'trach_cart', 'bronchi', 'la', 'pulm_veins', 'heart', 'aorta', 'spine', 'cricoid', 'thyroid_cart', 'liver')
+FAIR_WAVE = 0.045       # route fairing: displacement wavelengths shorter than this are damped (m)
+BEND_MAX = 10.0         # route bending limit (deg per cm) above the abdominal oesophagus's turn into the cardia
+BEND_FREE_END = 0.03    # the distal 3 cm (the turn into the cardiac ring's axis) are exempt from the limit
+BEND_FREE_TOP = 0.02    # and the top 2 cm (the pharyngo-oesophageal junction behind the cricoid, held at its top)
+BEND_SHIFT_MAX = 0.008  # the limit may move the route at most this far (else that round's stiffening is undone)
 
 
 def frames(C, t_end=None, k_end=6):
@@ -49,6 +59,50 @@ def frames(C, t_end=None, k_end=6):
     z = np.array([0.0, 0.0, 1.0])
     N = z - (T @ z)[:, None] * T; N /= np.linalg.norm(N, axis=1, keepdims=True)
     return T, N, np.cross(T, N)
+
+
+def fair_route(X, fixed, lam):
+    """Smoothing spline through the stations X (n, 3): argmin sum |C - X|^2 + sum lam_i |C_(i-1) - 2 C_i + C_(i+1)|^2,
+    the `fixed` stations held. lam: scalar or per-station stiffness."""
+    import scipy.sparse as sp
+    from scipy.sparse.linalg import splu
+    n = len(X)
+    D = sp.diags([np.ones(n - 2), -2 * np.ones(n - 2), np.ones(n - 2)], [0, 1, 2], shape=(n - 2, n))
+    lam = np.broadcast_to(np.asarray(lam, float), (n,))
+    w = np.where(fixed, 1e9, 1.0)
+    A = (sp.diags(w) + D.T @ sp.diags(lam[1:-1]) @ D).tocsc()
+    lu = splu(A)
+    return np.column_stack([lu.solve(w * X[:, k]) for k in range(3)])
+
+
+def stiffness(wave, step=None):
+    """Spline stiffness whose response halves at displacement wavelength `wave` (m)."""
+    return (wave / (step or STEP) / (2 * np.pi)) ** 4
+
+
+def bend_per_cm(C, s, span=0.01):
+    """Turning angle of the route (deg) between its tangents span/2 before and after each station."""
+    T = np.gradient(C, s, axis=0); T /= np.maximum(np.linalg.norm(T, axis=1, keepdims=True), 1e-12)
+    i0 = np.clip(np.searchsorted(s, s - span / 2), 0, len(s) - 1); i1 = np.clip(np.searchsorted(s, s + span / 2), 0, len(s) - 1)
+    return np.degrees(np.arccos(np.clip(np.einsum('ij,ij->i', T[i0], T[i1]), -1, 1)))
+
+
+def limit_bends(C, s, fixed, lam, span_ok, limit=BEND_MAX, rounds=14):
+    """Raise the spline's stiffness locally (x2.5 per round, spread over +-15 mm) where the route bends more than
+    `limit` deg per cm within span_ok, re-fairing the route each round. Returns C, per-station stiffness, bends."""
+    lam = np.broadcast_to(np.asarray(lam, float), (len(C),)).copy()
+    X = C.copy()
+    b = bend_per_cm(C, s)
+    for _ in range(rounds):
+        bad = (b > limit) & span_ok
+        if not bad.any(): break
+        grow = ndimage.gaussian_filter1d(bad.astype(float), 0.015 / STEP / 2, mode='nearest') > 0.02
+        lam2 = lam.copy(); lam2[grow] *= 2.5
+        C2 = fair_route(X, fixed, lam2)
+        if np.linalg.norm(C2 - X, axis=1).max() > BEND_SHIFT_MAX: break      # a bend the limit cannot take out locally
+        lam, C = lam2, C2
+        b = bend_per_cm(C, s)
+    return C, lam, b
 
 
 def profile(W):
@@ -173,9 +227,27 @@ def fit_esophagus_sweep(sex, W, stomach, car, own=(), iters=45, prof=None):
     rep['length_mm'] = round(float(Ls * 1000), 1)
     fields = [(k, field(sex, k)) for k in ESO_NB if has_hra(sex, k)] + list(own)
     free = (s > 0.006) & (s < Ls - 0.006)
+    span_ok = free & (s > BEND_FREE_TOP) & (s < Ls - BEND_FREE_END)
+    fixed = ~free
     scl = np.ones(n)
     worst = {}
-    for it in range(iters):
+    rep['bend_deg_per_cm_route_start'] = round(float(bend_per_cm(C, s)[span_ok].max()), 1)
+    C_init = C.copy(); U = np.zeros_like(C)
+    lam = np.full(n, stiffness(FAIR_WAVE))
+    phase = 0; it_ph = 0
+    for it in range(iters + 15):
+        if phase == 0 and it_ph >= iters:
+            phase, it_ph = 1, 0
+        if phase == 1 and it_ph == 0:
+            # bending limit on the whole route, then a second round of pushes from the limited route under the raised
+            # stiffness (clears the tube again without re-bending it)
+            b0 = bend_per_cm(C, s)
+            C, lam, b = limit_bends(C, s, fixed, lam, span_ok)
+            C_init = C.copy(); U = np.zeros_like(C)
+            rep['bend_limit'] = dict(max_deg_per_cm_after_pushes=round(float(b0[span_ok].max()), 1),
+                                     max_deg_per_cm_limited=round(float(b[span_ok].max()), 1),
+                                     stiffened_stations=int((lam > stiffness(FAIR_WAVE) * 1.01).sum()))
+        it_ph += 1
         T, N, B = frames(C, -cn)
         o, lu = ring_axes(prof, s, Ls, r_end, scl)
         R = rings(C, T, N, B, o)                               # (n, M, 3)
@@ -190,7 +262,9 @@ def fit_esophagus_sweep(sex, W, stomach, car, own=(), iters=45, prof=None):
             ii = cand[m]; on, _ = fl.outward(V[ii])
             push[ii] += (CLEAR - sd[m])[:, None] * on
             worst[name] = round(float(-sd[m].min() * 1000), 2)
-        if not worst: break
+        if not worst:
+            if phase == 0: it_ph = iters; continue           # clear: on to the bending limit
+            break
         L_ = np.linalg.norm(push, axis=1); hit = L_ > 0
         P = np.zeros((n, 3)); cnt = np.zeros(n); mx = np.zeros(n)
         np.add.at(P, st[hit], push[hit]); np.add.at(cnt, st[hit], 1); np.maximum.at(mx, st[hit], L_[hit])
@@ -206,11 +280,14 @@ def fit_esophagus_sweep(sex, W, stomach, car, own=(), iters=45, prof=None):
         np.maximum.at(fwd, st[hit], np.maximum(a, 0)); np.maximum.at(bwd, st[hit], np.maximum(-a, 0))
         red = ndimage.gaussian_filter1d(np.where(np.minimum(fwd, bwd) > 0, (fwd + bwd) / (2 * np.maximum(o[:, 0], 1e-3)), 0), 1.5, mode='nearest')
         scl = np.maximum(FLAT_MIN, ndimage.gaussian_filter1d(np.maximum(FLAT_MIN, scl - 0.5 * red), 3.0, mode='nearest'))
-        C = C + P
-        Cs = ndimage.gaussian_filter1d(C, 1.5, axis=0, mode='nearest')
-        C = np.where(free[:, None], Cs, C)
+        # the accumulated displacement is a smoothing spline: a push bends centimetres of the route, not a station
+        U = fair_route(U + P, fixed, lam)
+        C = C_init + U
         if it % 5 == 0: log(f'    oesophagus sweep iter {it}: worst {worst}')
     rep['route_worst_mm'] = worst
+    b = bend_per_cm(C, s)
+    rep['bend_deg_per_cm'] = dict(max=round(float(b[span_ok].max()), 1), at_y=round(float(C[span_ok][np.argmax(b[span_ok]), 1]), 4),
+                                  limit=BEND_MAX, distal_turn_max=round(float(b[free & ~span_ok].max()), 1) if (free & ~span_ok).any() else None)
     rep['flattening_min'] = round(float(scl.min()), 2)
     T, N, B = frames(C, -cn)
     o, lu = ring_axes(prof, s, Ls, r_end, scl)
