@@ -1,7 +1,7 @@
 // The default body map: images of the anatomy rendered at build time (tools/render-bodymap.mjs), turned by dragging
 // or with the arrows. Hover, click, highlights and result pins work from per-angle ID maps, so nothing here needs
 // WebGL and any device can use it. Opening an organ shows its pre-rendered close-up with landmarks.
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent, type RefObject } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent, type RefObject } from 'react';
 import { ORGAN_BY_ID, organOrNull } from '../../anatomy/organs';
 import { organSummary, useHealth } from '../../lib/store';
 import type { Body } from '../../lib/body';
@@ -206,6 +206,47 @@ function Turntable({ body, angle, setAngle, density }: { body: Body; angle: numb
   );
 }
 
+/** Whether the close-up camera cannot see a landmark: the render page's flag (something solid lies in front of the
+ *  point), or for manifests rendered before it, the point lying well behind the view centre. */
+const isHidden = (p: readonly number[]) => (p.length > 3 ? p[3] === 1 : p[2] < -0.03);
+
+/** Name box of a close-up label: on the left of its dot (`flip`) and moved up or down by `dy` pixels. */
+interface NamePlace { flip: boolean; dy: number }
+type Rect = [number, number, number, number];
+/** The name starts this far (px) to the right of the dot's centre, or ends this far to its left when flipped. */
+const NAME_GAP = 9;
+
+/** Places the close-up names so that none covers another name or another label's dot or runs off the frame: each name
+ *  takes the first free spot, in order, beside its dot (on the left near the right edge), then on the other side,
+ *  then a line or more above or below (drawn with a leader line back to its dot). Visible labels go first, so the
+ *  labels of structures in view keep their plain places. `size` is [0, 0] for names the CSS hides (small screens show
+ *  dots only); those only flip by position, for when a tap shows them. */
+function placeNames(width: number, height: number, dots: [number, number][], size: [number, number][], order: number[]): NamePlace[] {
+  const out: NamePlace[] = dots.map(([x]) => ({ flip: x > 0.68 * width, dy: 0 }));
+  const taken: Rect[] = [];
+  const dotRect = ([x, y]: [number, number]): Rect => [x - 7, y - 7, x + 7, y + 7];
+  const area = (a: Rect, b: Rect) => Math.max(0, Math.min(a[2], b[2]) - Math.max(a[0], b[0])) * Math.max(0, Math.min(a[3], b[3]) - Math.max(a[1], b[1]));
+  for (const i of order) {
+    const [x, y] = dots[i], [w, h] = size[i];
+    if (!w || !h) continue;
+    const sides = x + NAME_GAP + w > width - 2 || x > 0.68 * width ? [true, false] : [false, true];
+    let best: { flip: boolean; dy: number; r: Rect } | null = null, bestCost = Infinity;
+    for (const step of [0, -1, 1, -2, 2, -3, 3]) {
+      for (const flip of sides) {
+        const dy = step * (h + 3), x0 = flip ? x - NAME_GAP - w : x + NAME_GAP, y0 = y - h / 2 + dy;
+        const r: Rect = [x0 - 2, y0 - 2, x0 + w + 2, y0 + h + 2];
+        let cost = (Math.max(0, -r[0]) + Math.max(0, r[2] - width) + Math.max(0, -r[1]) + Math.max(0, r[3] - height)) * h * 4;
+        for (const t of taken) cost += 2 * area(r, t);
+        dots.forEach((d, j) => { if (j !== i) cost += area(r, dotRect(d)); });
+        cost += Math.abs(step) * 40 + (flip === sides[0] ? 0 : 20);
+        if (cost < bestCost) { bestCost = cost; best = { flip, dy, r }; }
+      }
+    }
+    if (best) { out[i] = { flip: best.flip, dy: best.dy }; taken.push(best.r); }
+  }
+  return out;
+}
+
 function CloseUp({ body, organ, density }: { body: Body; organ: OrganId; density: Density }) {
   const c = MANIFESTS[body].closeups[organ]!;
   const o = ORGAN_BY_ID[organ];
@@ -220,20 +261,52 @@ function CloseUp({ body, organ, density }: { body: Body; organ: OrganId; density
     img.decode().catch(() => {}).then(() => { if (alive) setReady(src); });
     return () => { alive = false; };
   }, [src]);
+  // the labels this body has a note for, in the manifest's order
+  const shown = c.names.flatMap((name, i) => (c.landmarks[i] && notes.has(name) ? [{ name, p: c.landmarks[i] as readonly number[] }] : []));
+  // Lay the names out once they are on screen (their sizes depend on the font and the CSS breakpoint), and again
+  // whenever the frame changes size.
+  const marks = useRef<HTMLDivElement>(null);
+  const [layout, setLayout] = useState<{ w: number; h: number; at: NamePlace[] } | null>(null);
+  const key = shown.map(m => m.name).join('|');
+  useLayoutEffect(() => {
+    const el = marks.current;
+    if (!el) return;
+    const run = () => {
+      const w = el.clientWidth, h = el.clientHeight;
+      const names = [...el.querySelectorAll<HTMLElement>('.landmark__name')];
+      const dots = shown.map(m => [m.p[0] * w, m.p[1] * h] as [number, number]);
+      const size = shown.map((_, i) => [names[i]?.offsetWidth ?? 0, names[i]?.offsetHeight ?? 0] as [number, number]);
+      const order = shown.map((_, i) => i).sort((a, b) => Number(isHidden(shown[a].p)) - Number(isHidden(shown[b].p)));
+      setLayout({ w, h, at: placeNames(w, h, dots, size, order) });
+    };
+    run();
+    const ro = new ResizeObserver(run); ro.observe(el);
+    return () => ro.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `key` names the labels; `shown` is rebuilt each render
+  }, [key, ready, labels]);
   return (
     <div className="bm2d__frame bm2d__frame--close" role="group" tabIndex={0} aria-label={`${o.name}, close-up. Escape returns to the whole body.`}
       onKeyDown={e => { if (e.key === 'Escape') selectOrgan(null); }}>
       {ready ? <img className="bm2d__img bm2d__img--in" src={ready} alt="" draggable={false} /> : <div className="stage-loading bm2d__wait">Opening {o.short}…</div>}
       {labels && ready && (
-        <div className="bm2d__marks">
-          {c.names.map((name, i) => {
-            const p = c.landmarks[i];
-            if (!p || !notes.has(name)) return null;
+        <div ref={marks} className="bm2d__marks">
+          {layout && (
+            <svg className="bm2d__leaders" width={layout.w} height={layout.h} aria-hidden>
+              {shown.map(({ name, p }, i) => {
+                const at = layout.at[i];
+                if (!at?.dy) return null;
+                const x = p[0] * layout.w, y = p[1] * layout.h;
+                return <line key={name} className={isHidden(p) ? 'is-back' : undefined} x1={x} y1={y} x2={x + (at.flip ? -NAME_GAP : NAME_GAP)} y2={y + at.dy} />;
+              })}
+            </svg>
+          )}
+          {shown.map(({ name, p }, i) => {
+            const at = layout?.at[i] ?? { flip: p[0] > 0.68, dy: 0 };
             return (
-              <div key={name} className={`bm2d__mark${p[2] < -0.03 ? ' is-back' : ''}`} style={{ left: `${p[0] * 100}%`, top: `${p[1] * 100}%` }}>
-                <div className="landmark" tabIndex={0}>
+              <div key={name} className={`bm2d__mark${isHidden(p) ? ' is-back' : ''}`} style={{ left: `${p[0] * 100}%`, top: `${p[1] * 100}%` }}>
+                <div className={`landmark${at.flip ? ' is-flip' : ''}`} tabIndex={0}>
                   <span className="landmark__dot" />
-                  <span className="landmark__name">{name}</span>
+                  <span className="landmark__name" style={at.dy ? { transform: `translateY(${at.dy}px)` } : undefined}>{name}</span>
                   <span className="landmark__note">{notes.get(name)}</span>
                 </div>
               </div>

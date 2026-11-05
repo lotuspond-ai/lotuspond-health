@@ -8,7 +8,9 @@ Every structure starts from the cached trunk warp (fit.common.get_warp(sex, 'tru
 HRA neighbours it touches (see organs_neck, organs_adrenal, organs_diaphragm, organs_bed, organs_tube, organs_final,
 organs_settle):
   1. thyroid + parathyroids  similarity from the larynx cartilages, slide to tracheal rings 2-4, smooth push-out,
-                             glands slid onto the lobes' posterior surface
+                             the self-overlap it leaves where a lobe wraps the airway resolved (one closed sheet round
+                             the gland's own volume, organs_thyroid.unfold_union), glands slid onto the lobes'
+                             posterior surface
   2. adrenals                undistorted gland (the left one scaled to 1.1 times the right one's volume) laid on its
                              warped pose, free-space pose search, 2 mm off the kidney
   3. diaphragm               as-rigid-as-possible fit (openings follow the HRA IVC / aorta, domes under the lung bases

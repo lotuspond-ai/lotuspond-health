@@ -50,15 +50,19 @@ Method (per body):
     out of the HRA veins; sibling arteries apart beyond one radius of their common origin; where a vein is held near
     its junction, the artery beside it yields); the azygos and hemi-azygos veins re-routed out of the HRA inferior vena
     cava (its marched outer wall, 1.2 mm clearance) behind it, on the right side of the vertebral bodies; and the
-    subclavian (female: also the right brachiocephalic) veins re-routed clear of the first rib and the clavicle. A
-    re-route is a smooth shortest path of whole sections through free space: dynamic programming over 3 mm centreline
-    bins, each choosing an offset in its section plane that trades the squared offset against the squared missing
-    clearance (bones 0.8 mm, organs 0.3 mm, HRA aorta and placed arteries 0.5 mm) and the squared change between
-    neighbouring bins.
+    subclavian veins re-routed clear of the first rib and the clavicle. A re-route is a smooth shortest path of whole
+    sections through free space: dynamic programming over 3 mm centreline bins, each choosing an offset in its section
+    plane that trades the squared offset against the squared missing clearance (bones 0.8 mm, organs 0.3 mm, HRA aorta
+    and placed arteries 0.5 mm) and the squared change between neighbouring bins. The female right brachiocephalic vein
+    (3 cm from the venous angle to the HRA superior vena cava, whose snapped lower ring left an S-bend in the lung's
+    apical segment) is swept again as one round tube (vessels_sep.smooth_sweep): along the Hermite curve from the vena
+    cava's upper ring toward its upper ring, each vertex at its own Z-Anatomy arc length and angle and the Z-Anatomy
+    calibre, the lower ring taking the shape of the vena cava's obliquely cut outer rim (faded over 8 mm), then
+    re-routed with only its rings held.
  5. Push-out (fit/vessels_fix.py): out of every bone (HRA and placed) by 0.8 mm, out of the solid organs (with the
     assembled lung lobes and the female ureters and ovaries) by 0.3 mm, the veins out of the HRA aorta by 0.5 mm, out
     of the HRA inferior vena cava by 1.2 mm and out of the placed arteries by 0.5 mm, the arteries out of the HRA veins
-    by 0.5 mm, and 1.5 mm inside the skin, with a Gaussian-spread displacement that moves a tube as a whole, shared across Z-Anatomy
+    and the placed deep veins (tubes as the second review left them) by 0.5 mm, and 1.5 mm inside the skin, with a Gaussian-spread displacement that moves a tube as a whole, shared across Z-Anatomy
     junctions (connected vessels form one group), faded in over 1.5 cm from the junction rings (2.5 cm from a chain
     junction's ring: past the stretch its end axis is measured on); vertices first, then probes inside the faces near a
     bone. Inside tests are ray parity with a majority of three rays, five when the first three disagree
@@ -68,8 +72,8 @@ Method (per body):
     venous junction angles are measured again: chains and branches (Kabsch rotation of the rigid stretch) above 19
     degrees (failing, or within 1 degree of failing) are turned back to 15 about their rings, the least turn since each
     degree moves the vessel against the bones the push-out cleared (snap's rigid stretch and decay, every other junction
-    held; up to four rounds, since a turn is shared with a junction held beside it), and the vessels this moved are
-    settled out of bone again with 2.2 cm from each ring held.
+    held; up to four rounds, since a turn is shared with a junction held beside it), crushed veins are re-rounded once
+    more, and the vessels this moved are settled out of bone again with 2.2 cm from each ring held.
  6. Measurements (fit/vessels_measure.py, fit/vessels_review.measure) -> report.json, QA renders, write_group().
 """
 import os, sys, json, time, re
@@ -908,7 +912,10 @@ def run(sex, stage='all', render=True):
     step('neck_calibres', RV.neck_calibres, sex, VES, log=log)
     step('radius_blend', RV.junction_radius_blend, VES, J, log=log)
     step('pelvic_calibres', RV.pelvic_calibres, sex, VES, J, aorta, log=log)
-    step('reround', RV.reround, VES, REROUND.get(sex, ()), J, log=log)
+    from fit import vessels_sep as SP
+    SWEPT = SP.SWEEP.get(sex, ())   # short veins swept again from ring to ring (vessels_sep.sweep_veins) instead
+    RR = tuple(n for n in REROUND.get(sex, ()) if n not in SWEPT)
+    step('reround', RV.reround, VES, RR, J, log=log)
     step('superficial', RV.superficial_layer, sex, VES, SK, log=log)
     step('radial_pulse', RV.radial_pulse, sex, VES, SK, log=log)
     step('internal_thoracic', RV.internal_thoracic, sex, VES, log=log)
@@ -936,14 +943,19 @@ def run(sex, stage='all', render=True):
     step('separation', _separate)
     AT, HV = tubes.get('arteries'), tubes.get('hra_veins')
     step('azygos_route', SP.route_azygos, sex, VES, ivc, aorta, bones_ob, organs_ob, hold, contacts=contacts, log=log, arteries=AT)
-    step('vein_route', SP.route_veins, sex, VES, REROUND.get(sex, ()), bones_ob, organs_ob, hold, aorta=aorta, arteries=AT, log=log)
+    step('vein_route', SP.route_veins, sex, VES, RR, bones_ob, organs_ob, hold, aorta=aorta, arteries=AT, log=log)
+    step('vein_sweep', SP.sweep_veins, sex, VES, SWEPT, J, bones_ob, organs_ob, aorta=aorta, arteries=AT, log=log)
     _dump(sex, 'pre_push', VES=VES, J=J, trees=trees, contacts=contacts, review=review, pel=pel, realigned=realigned, sheath=sheath)
-    extra_v = [(aorta, AORTA_CLEAR), (ivc, SP.IVC_CLEAR), (AT, SP.SEP_CLEAR)]; extra_a = [(HV, SP.SEP_CLEAR)]
+    # the placed deep veins, as tubes where the separation and the re-routes left them, are obstacles for the arteries in
+    # the push-out (as the HRA veins are): an artery pushed off a bone does not slide into its companion vein (the
+    # female external iliac artery into its vein along the pelvic brim)
+    VT = SP.vein_tubes(VES, now)
+    extra_v = [(aorta, AORTA_CLEAR), (ivc, SP.IVC_CLEAR), (AT, SP.SEP_CLEAR)]; extra_a = [(HV, SP.SEP_CLEAR), (VT, SP.SEP_CLEAR)]
     F, hist = push_out(sex, VES, trees, contacts, J, aorta_obstacles=extra_v, artery_obstacles=extra_a, artery_hold=hold)
     log(sex, 'pushed out', f'{time.time() - t0:.0f}s')
     # the push-out squeezes a vein that has no room between the clavicle, the first rib and the lung apex into a flat
     # sheet: those veins are re-rounded about the pushed centreline (their residual contacts are reported)
-    step('reround_after_push', RV.reround, VES, REROUND.get(sex, ()), J, log=log, only_crushed=(REVIEW_ASPECT, 1.5 * REVIEW_ASPECT))
+    step('reround_after_push', RV.reround, VES, RR, J, log=log, only_crushed=(REVIEW_ASPECT, 1.5 * REVIEW_ASPECT))
     # junction angles the push-out bent (it fades in over 1.5-2.5 cm from the rings) are turned back, then the moved
     # vessels are settled out of bone again with the measured stretch held
     v_b = {n: VES[n]['v'].copy() for n in now if n in VES}; snap_mm = {n: VES[n].get('snap_mm', 0.0) for n in now if n in VES}
@@ -958,6 +970,9 @@ def run(sex, stage='all', render=True):
             if not c and not b: break
         return out
     step('realign_after_push', _realign_after)
+    # a large turn (the male left venous angle: 28 degrees) shears the sections in its decay zone flat: crushed veins are
+    # re-rounded once more about the turned centreline (a vein left round is not touched)
+    step('reround_after_realign', RV.reround, VES, RR, J, log=log, only_crushed=(REVIEW_ASPECT, 1.5 * REVIEW_ASPECT))
     for n, k in snap_mm.items(): VES[n]['snap_mm'] = k
     step('settle_after_realign', settle, F, VES, v_b, trees, log=log, extra_v=extra_v, extra_a=extra_a)
     step('bridges', RV.bridges, sex, VES, log=log)

@@ -19,7 +19,12 @@ costoclavicular space, and the venous junctions turned back onto their stubs aft
    sections (vessels_review.clear_obstacle style: per centreline bin, the deepest vertex's missing clearance along the
    obstacle's outward direction, Gaussian-spread along the vessel), faded to zero at the junction rings, then the
    general push-out (fit/vessels_fix.Fixer) runs again with these tubes as extra obstacles so nothing is pushed back into
-   bone, organ or skin.
+   bone, organ or skin (the arteries also keep out of the placed deep veins' tubes there: vein_tubes).
+ - Smooth re-sweep (smooth_sweep, sweep_veins; SWEEP): a short two-ring vein whose snapped junction ring left an S-bend
+   (the female right brachiocephalic vein above the HRA superior vena cava, in the right lung's apical segment) is swept
+   again as one round tube along a Hermite course from ring to ring, each vertex at its own Z-Anatomy arc length and
+   angle and the Z-Anatomy calibre, its junction ring shaped to the HRA stub's obliquely cut outer rim, and re-routed
+   (route_dp) clear of bone, organ and lung with only its rings held.
 """
 import os, sys, json
 import numpy as np
@@ -370,6 +375,17 @@ def _tube_need(obst, clear):
     return need
 
 
+def vein_tubes(VES, names):
+    """MultiTube of the placed deep veins (not the superficial layer) as they lie now, or None."""
+    vt = []
+    for n in names:
+        x = VES.get(n)
+        if x is None or x['part'] != 'veins' or n.startswith(SUPERFICIAL) or x.get('dropped') or not x['placed']: continue
+        P, R, cl = vessel_tube(x)
+        if P is not None: vt.append((n, P, R))
+    return MultiTube(vt) if vt else None
+
+
 def separate(sex, VES, pins, log=print, clear=SEP_CLEAR, hra_tubes=None):
     """Companion separation by whole cross-sections (section_push, tube against tube: a section of radius r centred at
     c yields until r + clear <= its centre's distance to the other vessel's wall), in this order:
@@ -510,3 +526,162 @@ def separate(sex, VES, pins, log=print, clear=SEP_CLEAR, hra_tubes=None):
         if info[k]: log(f'  separation {k}: ' + ', '.join(f'{a} {b.get("depth_before_mm", b.get("overlap_before_mm"))}->{b.get("depth_after_mm", b.get("overlap_after_mm"))} mm' for a, b in info[k].items()))
     AT = MultiTube([(n, *vessel_tube(VES[n])[:2]) for n in arts])
     return info, AT, HV
+
+
+# ------------------------------------------------------------------------------------------------ smooth re-sweep
+# The female right brachiocephalic vein is short (3-4 cm) and wide: the snap sets its lower ring 14 mm behind where the
+# trunk warp puts it (onto the HRA superior vena cava's upper ring), and pushing its body out of the right lung's
+# apical segment leaves an S-bend just above that ring, whose sections are crushed (p90 aspect 6) and whose lateral wall
+# stays in the lung. It is swept again as one round tube from ring to ring instead.
+SWEEP = {'female': ('Right_brachiocephalic_vein',)}
+SWEEP_BLEND = 0.012     # the end rings' radii blend into the Z-Anatomy calibre over this length (m)
+SWEEP_TAN = 1.0         # Hermite tangent length at the end rings (x the chord)
+SWEEP_RING = 0.008      # the junction ring's shape (the HRA stub's rim) fades into the round section over this length (m)
+SWEEP_LEAN = 1.0        # the course leaves the junction ring toward the other ring (1) rather than along the stub's axis (0)
+SWEEP_PIN = 0.004       # the re-route of a swept vein holds only its end rings, released over this length (m)
+
+
+def criterion_aspect(x):
+    """(p90, max) section aspect 1 cm in from the end rings, along the trunk from the highest ring: what the review
+    criterion measures (vessels_review.measure)."""
+    cl = RV.trunk(x['v'], x['f'])
+    if cl is None: return None, None
+    a = [p['aspect'] for p in RV.calibre_profile(x['v'], x['f'], cl) if 0.01 < p['s'] < cl['s'][-1] - 0.01]
+    return (float(np.quantile(a, 0.9)), float(max(a))) if a else (None, None)
+
+
+def smooth_sweep(VES, names, J, log=print, tag='sweep', lean=0.0):
+    """Re-sweep a short two-ring vein as a round tube along a smooth course from ring to ring, keeping vertices and faces:
+    the course is the cubic Hermite curve from its junction ring's centre (a chain junction's: along the HRA stub's
+    axis) to its other ring's centre along that ring's axis (tangents SWEEP_TAN x the chord), so both ring centres and
+    axes are kept and the S-bend goes. Every vertex keeps its own place in the Z-Anatomy vein (normalised arc length
+    along the Z-Anatomy trunk and angle about it, rotation-minimising frames; the angle offset between the two layouts
+    is read off each end ring and interpolated along the vessel), at the Z-Anatomy calibre for that arc length, blended
+    over SWEEP_BLEND into each end ring's mean radius. Run before the vein route, which then moves the swept tube clear
+    of bone, organ and lung with its rings held."""
+    out = {}
+    for n in names:
+        x = VES.get(n)
+        if x is None or x.get('dropped') or not x['placed']: continue
+        v, f = x['v'], x['f']
+        L = RV.end_loops(v, f)
+        if len(L) != 2 or x.get('orig_index') is not None:
+            out[n] = dict(skipped=f"{len(L)} end rings{' (cut)' if x.get('orig_index') is not None else ''}"); continue
+        jj = [j for j in J if n in j['vessels'] and j['kind'] == 'chain']
+        a = min(range(2), key=lambda k: np.linalg.norm(L[k]['c'] - jj[0]['end']['c'])) if jj else int(np.argmin([l['c'][1] for l in L]))
+        A, B = L[a], L[1 - a]
+        cA, cB = v[A['idx']].mean(0), v[B['idx']].mean(0)
+        chord = cB - cA; D = float(np.linalg.norm(chord))
+        nA = np.asarray(jj[0]['end']['n'], float) if jj else G.ring_frame(v[A['idx']])[1]
+        nB = G.ring_frame(v[B['idx']])[1]
+        nA = G.unit(nA if nA @ chord > 0 else -nA); nB = G.unit(nB if nB @ chord > 0 else -nB)
+        # `lean`: the course leaves the junction ring this far turned from the stub's axis toward the chord (0: along it)
+        nA = G.unit((1 - lean) * nA + lean * G.unit(chord))
+        rA = float(np.linalg.norm(v[A['idx']] - cA, axis=1).mean()); rB = float(np.linalg.norm(v[B['idx']] - cB, axis=1).mean())
+        if jj: rA = float(jj[0]['end']['r'])   # a chain junction's ring takes the HRA stub's end radius
+        # the Z-Anatomy layout (the vessel is uncut: its vertices are the Z-Anatomy vertices)
+        zv, zf = x['za_v'], x['za_f']
+        zcl = RV.trunk(zv, zf, start=zv[A['idx']].mean(0))
+        if zcl is None: out[n] = dict(skipped='no Z-Anatomy trunk'); continue
+        sz, qz, iz, Qz, sQz = RV.param(dict(v=zv), zcl)
+        u = np.clip(sz / sQz[-1], 0.0, 1.0)
+        Tz = G.unit(np.gradient(Qz, axis=0)); Uz, Wz = RV.rmf(Qz, Tz)
+        oz = zv - qz; oz = oz - np.einsum('ij,ij->i', oz, Tz[iz])[:, None] * Tz[iz]
+        az = np.arctan2(np.einsum('ij,ij->i', oz, Wz[iz]), np.einsum('ij,ij->i', oz, Uz[iz]))
+        rz = np.linalg.norm(oz, axis=1)
+        nb = max(8, int(sQz[-1] / 0.003)); b = np.minimum((u * nb).astype(int), nb - 1)
+        rb = np.array([np.median(rz[b == k]) if (b == k).sum() >= 3 else np.nan for k in range(nb)])
+        ok = np.isfinite(rb)
+        if ok.sum() < 2: out[n] = dict(skipped='no Z-Anatomy calibre'); continue
+        uk = (np.arange(nb) + 0.5) / nb; rb = np.interp(uk, uk[ok], rb[ok])
+        K = np.exp(-0.5 * ((uk[:, None] - uk[None]) * sQz[-1] / 0.004) ** 2); rb = (K @ rb) / K.sum(1)
+        # the new course and its frames
+        P = RV.hermite(cA, SWEEP_TAN * D * nA, cB, SWEEP_TAN * D * nB, step=0.0005)
+        Pn, sn = RV.polyline_resample(P, 0.0005); Ln = float(sn[-1]); un = sn / Ln
+        Tn = G.unit(np.gradient(Pn, axis=0)); Un, Wn = RV.rmf(Pn, Tn)
+
+        def ring_offset(R, k, signs=(1.0, -1.0)):
+            # angle offset (and orientation) between the Z-Anatomy layout and the ring as placed now, at course point k
+            o = v[R['idx']] - Pn[k]
+            ac = np.arctan2(o @ Wn[k], o @ Un[k]); a0 = az[R['idx']]
+            best = None
+            for sg_ in signs:
+                d = np.angle(np.exp(1j * (ac - sg_ * a0))); phi = float(np.angle(np.exp(1j * d).mean()))
+                res = float(np.abs(np.angle(np.exp(1j * (d - phi)))).mean())
+                if best is None or res < best[2]: best = (sg_, phi, res)
+            return best
+        sg, phA, resA = ring_offset(A, 0)
+        _, phB, resB = ring_offset(B, len(Pn) - 1, signs=(sg,))
+        dphi = float(np.angle(np.exp(1j * (phB - phA))))
+        r_u = np.interp(u, uk, rb)
+        r_u = r_u + (rA - np.interp(0.0, uk, rb)) * RV.raised(u * Ln / SWEEP_BLEND) + (rB - np.interp(1.0, uk, rb)) * RV.raised((1 - u) * Ln / SWEEP_BLEND)
+        k = np.clip(np.searchsorted(un, u), 0, len(un) - 1)
+        th = sg * az + phA + dphi * u
+        v_old = v.copy()
+        x['v'] = Pn[k] + r_u[:, None] * (np.cos(th)[:, None] * Un[k] + np.sin(th)[:, None] * Wn[k])
+        ring_fit = None
+        if jj and jj[0].get('hra_mesh') is not None:
+            # the junction ring takes the shape of the HRA stub's open end (the superior vena cava's upper ring is cut
+            # obliquely, lower on the lateral side, where the lung's apical segment lies over it): per angle about the
+            # course's start, the offset from the round section to the stub's outer rim, faded out over SWEEP_RING
+            hv, hf = jj[0]['hra_mesh']
+            HL = [l for l in RV.end_loops(hv, hf) if np.linalg.norm(l['c'] - cA) < 0.015]
+            if HL:
+                hl = max(HL, key=lambda l: l['r']); R0 = hv[hl['idx']] - cA
+                ha = np.arctan2(R0 @ Wn[0], R0 @ Un[0]); o_ = np.argsort(ha); ha = ha[o_]; R0 = R0[o_]
+                ha = np.r_[ha - 2 * np.pi, ha, ha + 2 * np.pi]; R0 = np.r_[R0, R0, R0]
+                tgt = np.stack([np.interp(np.angle(np.exp(1j * th)), ha, R0[:, a_]) for a_ in range(3)], 1) + cA
+                circ = cA + rA * (np.cos(th)[:, None] * Un[0] + np.sin(th)[:, None] * Wn[0])
+                gd = G.geodesic(G.graph(x['v'], f), A['idx'].tolist(), limit=0.03)
+                w = RV.raised(np.where(np.isfinite(gd), gd, 1.0) / SWEEP_RING)
+                x['v'] = x['v'] + w[:, None] * (tgt - circ)
+                ring_fit = dict(hra_rim_radius_mm=r2(hl['r'] * 1000, 1), rim_offset_max_mm=r2(np.linalg.norm(tgt - circ, axis=1)[A['idx']].max() * 1000, 1))
+        out[n] = dict(course_mm=r2(Ln * 1000, 1), chord_mm=r2(D * 1000, 1), ring_radii_mm=[r2(rA * 1000, 1), r2(rB * 1000, 1)],
+                      za_radius_mm=[r2(rb.min() * 1000, 1), r2(np.median(rb) * 1000, 1), r2(rb.max() * 1000, 1)],
+                      ring_angle_residual_deg=[r2(np.degrees(resA), 1), r2(np.degrees(resB), 1)], twist_deg=r2(np.degrees(dphi), 1),
+                      ring_shift_mm=[r2(np.linalg.norm(x['v'][R['idx']] - v_old[R['idx']], axis=1).max() * 1000, 1) for R in (A, B)],
+                      max_shift_mm=r2(np.linalg.norm(x['v'] - v_old, axis=1).max() * 1000, 1), ring_fit=ring_fit)
+        log(f'  {tag} {n}: {out[n]}')
+    return out
+
+
+def sweep_veins(sex, VES, names, J, bones, organs, aorta=None, arteries=None, log=print, lean=SWEEP_LEAN):
+    """smooth_sweep, then the vein route (route_veins: bone 0.8 mm, organs and lung lobes 0.3 mm, the HRA aorta and the
+    placed arteries 0.5 mm) with only the end rings held (released over SWEEP_PIN): the swept course is new, so the
+    junction stretch the push-out otherwise holds is free to move off the lung's apical segment."""
+    out = {}
+    sw = smooth_sweep(VES, names, J, log=log, lean=lean)
+    for n in names:
+        if n not in sw or 'skipped' in sw[n]:
+            if n in sw: out[n] = sw[n]
+            continue
+        x = VES[n]
+        L = RV.end_loops(x['v'], x['f']); Gr = G.graph(x['v'], x['f'])
+        d = np.min([G.geodesic(Gr, l['idx'].tolist(), limit=0.03) for l in L], axis=0)
+        pin = 1 - RV.raised(np.where(np.isfinite(d), d, 1.0) / SWEEP_PIN)
+        rt = route_veins(sex, VES, [n], bones, organs, {n: pin}, aorta=aorta, arteries=arteries, log=log)
+        p90, mx = criterion_aspect(x)
+        out[n] = dict(sweep=sw[n], route=rt.get(n), p90_aspect_after=r2(p90, 2) if p90 is not None else None, max_aspect_after=r2(mx, 2) if mx is not None else None)
+        log(f'  vein sweep {n}: p90 / max section aspect {p90:.2f} / {mx:.2f}')
+    return out
+
+
+def resweep_crushed(sex, VES, names, J, bones, organs, pins, aorta=None, arteries=None, log=print, aspect=2.0, lung_mm=0.3, lungs=None):
+    """After the push-out: a swept vein that came out crushed (criterion p90 section aspect above `aspect`) or in a lung
+    lobe (deeper than lung_mm) is swept again and re-routed (route_veins), the push-out's moves being undone for it."""
+    out = {}
+    for n in names:
+        x = VES.get(n)
+        if x is None or x.get('dropped') or not x['placed']: continue
+        p90, mx = criterion_aspect(x)
+        deep = float(max(0.0, -lungs.query(x['v'])[0].min())) if lungs is not None else 0.0
+        if p90 is not None and p90 <= aspect and deep * 1000 <= lung_mm:
+            out[n] = dict(kept=True, p90_aspect=r2(p90, 2), lung_depth_mm=r2(deep * 1000, 1))
+            log(f'  re-sweep {n}: kept (p90 aspect {p90:.2f}, lung depth {deep * 1000:.1f} mm)'); continue
+        sw = smooth_sweep(VES, [n], J, log=log, tag='re-sweep')
+        rt = route_veins(sex, VES, [n], bones, organs, pins, aorta=aorta, arteries=arteries, log=log)
+        p1, m1 = criterion_aspect(x)
+        d1 = float(max(0.0, -lungs.query(x['v'])[0].min())) if lungs is not None else 0.0
+        out[n] = dict(p90_aspect_before=r2(p90, 2) if p90 is not None else None, lung_depth_before_mm=r2(deep * 1000, 1),
+                      p90_aspect_after=r2(p1, 2) if p1 is not None else None, lung_depth_after_mm=r2(d1 * 1000, 1), sweep=sw.get(n), route=rt.get(n))
+    return out

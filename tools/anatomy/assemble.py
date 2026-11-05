@@ -724,31 +724,50 @@ def assemble(sex):
 
 # ------------------------------------------------------------------------------------------------ landmarks and pins
 # Camera direction each organ is viewed from (same vectors as src/anatomy/organs.ts `view`), used to put each label on
-# the surface that faces the viewer.
-VIEW = dict(brain=(0.55, 0.25, 0.8), thyroid=(0.25, 0.1, 1), airway=(0.3, 0.1, 1), lungs=(0.2, 0.15, 1), heart=(0.35, 0.12, 1), esophagus=(0.8, 0.1, 0.6),
-            liver=(-0.45, 0.1, 1), stomach=(0.5, 0.1, 1), spleen=(1, 0.15, -0.3), pancreas=(0.1, 0.4, 1), kidneys=(-0.15, 0.1, -1), intestine=(0.1, 0.2, 1),
+# the surface that faces the viewer. The brain is seen from its left side (every lobe, the cerebellum and the medulla
+# show); the spleen from in front and medially, onto its hilum and the vessels that enter it.
+VIEW = dict(brain=(1, 0.25, 0.2), thyroid=(0.25, 0.1, 1), airway=(0.3, 0.1, 1), lungs=(0.2, 0.15, 1), heart=(0.35, 0.12, 1), esophagus=(0.8, 0.1, 0.6),
+            liver=(-0.45, 0.1, 1), stomach=(0.5, 0.1, 1), spleen=(-0.5, 0.15, 0.85), pancreas=(0.1, 0.4, 1), kidneys=(-0.15, 0.1, -1), intestine=(0.1, 0.2, 1),
             colon=(0, 0.15, 1), marrow=(0.3, 0.1, 1), reproductive=(0.2, 0.1, 1), breast=(0.25, 0.1, 1), skin=(0, 0, 1))
+# Parts each close-up frames (organs.ts `focus`) and the parts of other organs it draws solid (organs.ts `context`: the
+# vessels, cartilages and ducts its labels name). Every other organ is a faint ghost in a close-up, and see-through
+# tissue (the lungs and the diaphragm, organs.ts TISSUE opacity) hides no label.
+FOCUS = dict(brain=('brain',), thyroid=('thyroid', 'parathyroids'), airway=('airway',), lungs=('lung_r_upper', 'lung_r_middle', 'lung_r_lower', 'lung_l_upper', 'lung_l_lower'),
+             heart=('heart', 'valves', 'coronary'), esophagus=('esophagus',), liver=('liver', 'gallbladder'), stomach=('stomach',), spleen=('spleen',), pancreas=('pancreas',),
+             kidneys=('kidneys',), intestine=('small_int',), colon=('colon',), reproductive=('reproductive',), breast=('breasts',),
+             marrow=('skel_spine', 'skel_pelvis', 'skel_thorax'), skin=('skin',))
+CONTEXT = dict(thyroid=('airway',), spleen=('arteries', 'portal_vein'), pancreas=('bile_ducts',), kidneys=('arteries', 'veins'), intestine=('bile_ducts',))
+SEE_THROUGH = ('lung', 'diaphragm')
 L, R = r'_L$', r'_R$'
 # organ -> [(landmark name, structure regex (on names without the VH_M_/VH_F_ prefix, or 'part:<id>'), rule)].
 # Rules: 'face' (surface point facing the organ's view near the structure's centre), or an extreme point along a
-# direction: 'top', 'bottom', 'left' (+x), 'right' (-x), 'front' (+z), 'back' (-z), or 'dir:x,y,z'.
+# direction: 'top', 'bottom', 'left' (+x), 'right' (-x), 'front' (+z), 'back' (-z), or 'dir:x,y,z'; 'near:<src>' (the
+# point nearest another structure: where a vessel enters an organ); 'nearmark:<landmark>,...' (the point nearest
+# landmarks placed before it in the same organ); 'quant:x,y,z:q' (the front-most point at quantile q along a direction:
+# part way along a duct); 'isthmus:<src>' and 'midtop:<src>' (thyroid: the isthmus and the tip of the pyramidal lobe, in
+# the midline band below <src>, the cricoid). A rule ending in ' apart:<landmark>,...' keeps 1 cm from those landmarks
+# (two vessels entering an organ side by side). Then each label of a close-up moves onto the nearest part of its
+# structure the close-up camera sees (CloseUpScene.snap), a few pixels inside its outline; structures with nothing in
+# view (the valves, the hypothalamus) keep their point and are marked hidden.
+CRICOID = r'^cricoid_cartilage$'
 LANDMARKS = {
     'brain': [('Frontal lobe', r'^Allen_(superior|middle)_frontal_gyrus_L$', 'face'), ('Motor cortex', r'^Allen_precentral_gyrus_L$', 'face'),
               ('Sensory cortex', r'^Allen_postcentral_gyrus_L$', 'face'), ('Temporal lobe', r'^Allen_(middle|inferior)_temporal_gyrus_L$', 'face'),
-              ('Occipital lobe', r'^Allen_(superior_occipital_gyrus|inferior_occipital_gyrus|occipital_pole)_L$', 'back'),
-              ('Cerebellum', r'^Allen_lateral_hemisphere_of_cerebellum_L$', 'dir:0.4,-0.3,-0.8'), ('Brainstem', r'^Allen_(basilar_part_of_pons|pyramidal_part_of_medulla_oblongata)_[LR]$', 'front'),
+              ('Occipital lobe', r'^Allen_(superior_occipital_gyrus|inferior_occipital_gyrus|occipital_pole)_L$', 'face'),
+              ('Cerebellum', r'^Allen_lateral_hemisphere_of_cerebellum_L$', 'face'), ('Brainstem', r'^Allen_pyramidal_part_of_medulla_oblongata_[LR]$', 'bottom'),
               ('Hypothalamus', r'^Allen_(hypothalamus|tuberal_region_of_HTH)_L$', 'bottom'), ('Pituitary gland', 'part:pituitary', 'front'),
-              ('Lateral ventricles', r'^Allen_body_of_lateral_ventricle_L$', 'top'), ('Corpus callosum', r'^Allen_corpus_callosum', 'top')],
-    'thyroid': [('Right lobe', 'part:thyroid', 'dir:-1,0,0.6'), ('Left lobe', 'part:thyroid', 'dir:1,0,0.6'), ('Isthmus', 'part:thyroid', 'front'),
-                ('Parathyroid glands', 'part:parathyroids', 'back'), ('Thyroid cartilage', r'^thyroid_cartilage$', 'front')],
+              ('Lateral ventricles', r'^Allen_body_of_lateral_ventricle_L$', 'back'), ('Corpus callosum', r'^Allen_corpus_callosum', 'top')],
+    'thyroid': [('Right lobe', 'part:thyroid', 'dir:-1,0,0.6'), ('Left lobe', 'part:thyroid', 'dir:1,0,0.6'), ('Isthmus', 'part:thyroid', 'isthmus:' + CRICOID),
+                ('Pyramidal lobe', 'part:thyroid', 'midtop:' + CRICOID), ('Parathyroid glands', 'part:parathyroids', 'dir:-1,1,0'),
+                ('Thyroid cartilage', r'^thyroid_cartilage$', 'front')],
     'airway': [('Epiglottis', r'^epiglott?ic_cartilage$', 'top'), ('Thyroid cartilage', r'^thyroid_cartilage$', 'front'), ('Cricoid cartilage', r'^cricoid_cartilage$', 'front'),
-               ('Trachea', r'^trachea$', 'face'), ('Carina', r'^carina$', 'bottom'), ('Right main bronchus', r'^right_main_bronchus$', 'right'),
+               ('Trachea', r'^trachea(l_cartilage)?$', 'face'), ('Carina', r'^carina$', 'front'), ('Right main bronchus', r'^right_main_bronchus$', 'right'),
                ('Left main bronchus', r'^left_main_bronchus$', 'left')],
     'lungs': [('Right upper lobe', 'part:lung_r_upper', 'face'), ('Right middle lobe', 'part:lung_r_middle', 'front'), ('Right lower lobe', 'part:lung_r_lower', 'dir:-0.6,-0.4,0.4'),
               ('Left upper lobe', 'part:lung_l_upper', 'face'), ('Lingula', r'^(left_)?lingula_(superior|inferior)_bronchopulmonary_segment$', 'front'),
               ('Left lower lobe', 'part:lung_l_lower', 'dir:0.6,-0.4,0.4'), ('Bronchial tree', 'part:bronchi', 'face'), ('Diaphragm', 'part:diaphragm', 'top')],
     'heart': [('Left ventricle', r'^(heart_)?left_ventricle$', 'face'), ('Right ventricle', r'^(heart_)?right_ventricle$', 'face'), ('Right atrium', r'^right_cardiac_atrium$', 'right'),
-              ('Left atrium', r'^left_cardiac_atrium$', 'back'), ('Interventricular septum', r'^interventricular_septum$', 'face'), ('Mitral valve', r'^mitral_valve$', 'face'),
+              ('Left atrium', r'^left_cardiac_atrium$', 'back'), ('Interventricular septum', r'^interventricular_septum$', 'bottom'), ('Mitral valve', r'^mitral_valve$', 'face'),
               ('Tricuspid valve', r'^tricuspid_valve$', 'face'), ('Aortic valve', r'^aortic_valve$', 'face'), ('Pulmonary valve', r'^pulmonary_valve$', 'face'),
               ('Aortic arch', r'^aortic_arch$', 'top'), ('Pulmonary trunk', r'^pulmonary_trunk$', 'front'), ('Superior vena cava', r'^superior_vena_cava$', 'right'),
               ('Coronary arteries', r'^left_anterior_descending_artery$', 'face'), ('Apex', r'^(heart_)?left_ventricle$', 'dir:0.55,-0.6,0.55')],
@@ -759,36 +778,48 @@ LANDMARKS = {
               ('Common bile duct', r'^common_bile_duct$', 'front')],
     'stomach': [('Fundus', 'part:stomach', 'top'), ('Body', 'part:stomach', 'face'), ('Greater curvature', 'part:stomach', 'dir:0.7,-0.6,0.3'),
                 ('Pylorus', 'part:stomach', 'right')],
-    # the splenic artery runs along the upper border of the pancreas, the vein behind it: the artery is labelled at its
-    # highest point, the vein where it faces the view (the female's two 'face' points were 1.5 mm apart, 'top' and 'back'
-    # 5.7 mm; these are 65 mm (female) and 79 mm (male) apart)
-    'spleen': [('Hilum', r'^hilum_of_spleen$', 'face'), ('Splenic artery', r'^splenic_artery$', 'top'), ('Splenic vein', r'^splenic_vein$', 'face')],
+    # the splenic artery and vein are labelled where they reach the spleen, the hilum on the spleen next to them
+    'spleen': [('Splenic artery', r'^splenic_artery$', 'near:part:spleen'), ('Splenic vein', r'^splenic_vein$', 'near:part:spleen apart:Splenic artery'),
+               ('Hilum', 'part:spleen', 'nearmark:Splenic artery,Splenic vein apart:Splenic artery,Splenic vein')],
     'pancreas': [('Head', r'^head_of_pancreas$', 'face'), ('Neck', r'^neck_of_pancreas$', 'face'), ('Body', r'^body_of_pancreas$', 'face'), ('Tail', r'^tail_of_pancreas$', 'left'),
-                 ('Uncinate process', r'^(uncinate_process_of_the_pancreas|ucinate_process1)$', 'bottom'), ('Pancreatic duct', r'^ventral_pancreatic_duct$', 'face')],
-    'kidneys': [('Renal cortex', 'part:kidneys', 'face'), ('Medullary pyramids', r'^renal_pyramid_L_a$', 'face'), ('Renal pelvis', r'^renal_pelvis_L$', 'face'),
-                ('Ureter', r'^(ureter_L|left_ureter)$', 'face'), ('Adrenal gland', 'part:adrenals', 'top'), ('Renal artery', r'^left_renal_artery$', 'face'), ('Renal vein', r'^(renal_vein_L|left_renal_vein)$', 'face'),
-                ('Bladder', 'part:bladder', 'face')],
+                 ('Uncinate process', r'^(uncinate_process_of_the_pancreas|ucinate_process1)$', 'bottom'), ('Pancreatic duct', r'^ventral_pancreatic_duct$', 'quant:1,0,0:0.7')],
+    # the left kidney's hilum carries the vessels, the pelvis is labelled where it leaves the sinus for the ureter (behind
+    # the vessels, so the posterior view sees it), and the cortex on the right kidney
+    'kidneys': [('Renal cortex', r'^kidneys_R$', 'face'), ('Medullary pyramids', r'^renal_pyramid_L_a$', 'face'), ('Renal pelvis', r'^renal_pelvis_L$', 'bottom'),
+                ('Ureter', r'^(ureter_L|left_ureter)$', 'face'), ('Adrenal gland', 'part:adrenals', 'top'), ('Renal artery', r'^left_renal_artery$', 'near:part:kidneys'),
+                ('Renal vein', r'^(renal_vein_L|left_renal_vein)(_hilar_[a-z])?$', 'near:part:kidneys apart:Renal artery,Renal pelvis'), ('Bladder', 'part:bladder', 'face')],
     'intestine': [('Duodenum', r'^duodenum_descending$', 'face'), ('Duodenal papilla', r'^(hepatopancreatic_ampulla|sphincter_of_hep(at)?opancreatic_ampulla)$', 'face'), ('Jejunum', r'^je[jn][eu]num$', 'face'),
                   ('Ileum', r'^ileum$', 'face'), ('Terminal ileum', r'^ileum_terminal$', 'face')],
     'colon': [('Caecum', r'^caecum$', 'face'), ('Appendix', r'^vermiform_appendix$', 'face'), ('Ascending colon', r'^ascending_colon$', 'face'), ('Hepatic flexure', r'^hepatic_flexure_of_colon$', 'face'),
               ('Transverse colon', r'^transverse_colon$', 'face'), ('Splenic flexure', r'^splenic_flexure_of_colon$', 'face'), ('Descending colon', r'^descending_colon$', 'face'),
               ('Sigmoid colon', r'^sigmoid_colon$', 'face'), ('Rectum', r'^rectum$', 'face')],
-    'marrow': [('Skull', 'part:skel_skull', 'dir:0.3,1,0.2'), ('Sternum', 'part:skel_thorax', 'front'), ('Vertebral column', r'^thoracic_vertebra_8$', 'back'), ('Ribs', 'part:skel_thorax', 'dir:1,0,0.3'),
-               ('Iliac crest', r'^ilium_compact_bone_L$', 'top'), ('Red marrow', r'^ilium_spongy_bone_L$', 'face'), ('Femur', r'^femur_L$', 'face'), ('Thymus', 'part:thymus', 'front')],
+    # red marrow in adults: the vertebral bodies (L3's, between the iliac crests), the flat bones and the upper femur
+    'marrow': [('Skull', 'part:skel_skull', 'dir:0.3,1,0.2'), ('Sternum', 'part:skel_thorax', 'front'), ('Vertebral column', r'^lumbar_vertebra_3$', 'front'), ('Ribs', 'part:skel_thorax', 'dir:1,0,0.3'),
+               ('Iliac crest', r'^ilium_compact_bone_L$', 'top'), ('Red marrow', r'^ilium_spongy_bone_L$', 'face'), ('Femur', r'^femur_L$', 'dir:0.3,1,0.4'), ('Thymus', 'part:thymus', 'front')],
+    # the ovary and the uterine tube on opposite sides, so their labels do not sit on each other
     'reproductive': [('Prostate', r'^(peripheral_zone_of_prostate_[LR]|base_of_prostate)$', 'front'), ('Seminal vesicles', r'^seminal_vesicle$', 'back'), ('Vas deferens', r'^vas_deferens_L$', 'face'),
                      ('Testes', r'^testis_[lr]$', 'front'), ('Uterus', r'^fundus_of_uterus$|^uterus$|^body_of_uterus$', 'top'), ('Cervix', r'^cervix$', 'face'),
-                     ('Ovaries', r'^left_ovary$', 'face'), ('Fallopian tubes', r'^ampulla_of_uterine_tube_L$', 'face'), ('Vagina', r'^vagina$', 'face')],
+                     ('Ovaries', r'^left_ovary$', 'face'), ('Fallopian tubes', r'^(ampulla_of_uterine_tube|uterine_tube_infundibulum|fibria_of_uterine_tube)_R$', 'face'), ('Vagina', r'^vagina$', 'face')],
     'breast': [('Mammary lobes', r'^mammary_lobes_L$', 'face'), ('Lactiferous ducts', r'^main_lactiferous_ducts_R$', 'front')],
 }
-PIN = dict(brain=('part:brain', 'dir:0.2,0.6,0.8'), thyroid=('part:thyroid', 'front'), airway=('part:airway', 'face'), lungs=('part:lung_r_upper', 'face'), heart=(r'^(heart_)?left_ventricle$', 'face'),
-           esophagus=('part:esophagus', 'face'), liver=('part:liver', 'dir:-0.6,0.1,0.8'), stomach=('part:stomach', 'face'), spleen=('part:spleen', 'face'), pancreas=('part:pancreas', 'face'),
-           kidneys=(r'^kidneys_R$', 'face'), intestine=(r'^je[jn][eu]num$', 'face'), colon=(r'^ascending_colon$', 'face'), marrow=(r'^ilium_compact_bone_L$', 'top'),
-           reproductive=(r'^(uterus|body_of_uterus|fundus_of_uterus|(peripheral|central|transition)_zone_+of_prostate_[LR])$', 'face'), breast=(r'^mammary_lobes_R$', 'face'), skin=('part:skin', 'front'))
+# Whole-body pins: on the organ where the front view sees it (the lungs on the side of the right upper lobe, clear of
+# the heart; the pancreas on its tail, clear of the stomach's pin; the thyroid on its isthmus).
+PIN = dict(brain=('part:brain', 'dir:0.2,0.6,0.8'), thyroid=('part:thyroid', 'isthmus:' + CRICOID), airway=('part:airway', 'face'), lungs=('part:lung_r_upper', 'dir:-1,0.2,0.6'),
+           heart=(r'^(heart_)?left_ventricle$', 'face'), esophagus=('part:esophagus', 'face'), liver=('part:liver', 'dir:-0.6,0.1,0.8'), stomach=('part:stomach', 'face'),
+           spleen=('part:spleen', 'face'), pancreas=('part:pancreas', 'left'), kidneys=(r'^kidneys_R$', 'face'), intestine=(r'^je[jn][eu]num$', 'face'), colon=(r'^ascending_colon$', 'face'),
+           marrow=(r'^ilium_compact_bone_L$', 'top'), reproductive=(r'^(uterus|body_of_uterus|fundus_of_uterus|(peripheral|central|transition)_zone_+of_prostate_[LR])$', 'face'),
+           breast=(r'^mammary_lobes_R$', 'face'), skin=('part:skin', 'front'))
 DIRS = dict(top=(0, 1, 0), bottom=(0, -1, 0), left=(1, 0, 0), right=(-1, 0, 0), front=(0, 0, 1), back=(0, 0, -1))
 
 
-def place(v, rule, view):
-    """A surface point of vertices v for a placement rule."""
+def place(v, rule, view, verts=None, marks=None):
+    """A surface point of vertices v for a placement rule (verts: structure lookup, marks: points placed so far)."""
+    if ' apart:' in rule:
+        rule, _, names = rule.partition(' apart:')
+        near = np.array([marks[n] for n in names.split(',') if n in marks])
+        if len(near):
+            far = v[np.min(np.linalg.norm(v[:, None] - near[None], axis=2), axis=1) >= 0.01]
+            if len(far): v = far
     c = v.mean(0)
     if rule == 'face':
         d = np.asarray(view, float); d /= np.linalg.norm(d)
@@ -797,28 +828,183 @@ def place(v, rule, view):
         m = perp <= 0.35 * r
         if not m.any(): m = perp <= np.quantile(perp, 0.1)
         return v[m][np.argmax(along[m])]
-    d = np.asarray([float(x) for x in rule[4:].split(',')] if rule.startswith('dir:') else DIRS[rule], float); d /= np.linalg.norm(d)
+    kind, _, arg = rule.partition(':')
+    if kind in ('near', 'nearmark'):
+        from scipy.spatial import cKDTree
+        other = verts(arg) if kind == 'near' else np.array([marks[n] for n in arg.split(',') if n in marks])
+        if other is None or not len(other): return place(v, 'face', view)
+        if kind == 'nearmark': other = other.mean(0, keepdims=True)
+        return v[np.argmin(cKDTree(other).query(v)[0])]
+    if kind == 'quant':
+        dv, q = arg.rsplit(':', 1)
+        d = np.asarray([float(x) for x in dv.split(',')], float); d /= np.linalg.norm(d)
+        t = v @ d; sl = v[np.abs(t - np.quantile(t, float(q))) <= 0.002]
+        return sl[np.argmax(sl @ (np.asarray(view, float) / np.linalg.norm(view)))]
+    if kind in ('isthmus', 'midtop'):
+        # the thyroid's midline band (|x - midline| < 6 mm) below the cricoid: the isthmus is its full-width part, at the
+        # band's median height (its front surface there); a pyramidal lobe rises from it in front of the cricoid
+        cr = verts(arg)
+        x0 = np.median(cr[:, 0]) if cr is not None and len(cr) else np.median(v[:, 0])
+        band = v[np.abs(v[:, 0] - x0) < 0.006]
+        if kind == 'midtop': return band[np.argmax(band[:, 1])] if len(band) else v[np.argmax(v[:, 2])]
+        low = band[band[:, 1] < cr[:, 1].min()] if cr is not None and len(cr) else band
+        if len(low) < 10: low = band if len(band) else v
+        yc = np.median(low[:, 1])
+        sl = low[np.abs(low[:, 1] - yc) <= 0.0025]
+        return sl[np.argmax(sl[:, 2])]
+    d = np.asarray([float(x) for x in arg.split(',')] if kind == 'dir' else DIRS[rule], float); d /= np.linalg.norm(d)
     return v[np.argmax((v - c) @ d)]
 
 
-def landmarks(structs, parts_v, sex):
-    """structs: {structure name without sex prefix: vertices (app frame)}; parts_v: {part: vertices}."""
+class CloseUpScene:
+    """An organ's close-up as the render page draws it: framed on its focus parts and labels (RenderPage.tsx place()),
+    its parts and its context parts solid, rasterised (depth and structure id per pixel) to find what the camera sees."""
+    FOV, ASPECT, W, H = 30.0, 2 / 3, 320, 480
+
+    def __init__(self, sex, organ, marks):
+        d = os.path.join(OUT, sex)
+        names = json.load(open(os.path.join(d, 'structures.json')))
+        own = [p for p in FOCUS.get(organ, ()) if p in names and SPEC[p]['organ'] == organ] or [p for p in names if SPEC.get(p, {}).get('organ') == organ]
+        solid = [p for p in names if p in SPEC and (SPEC[p]['organ'] == organ or p in CONTEXT.get(organ, ())) and SPEC[p]['tissue'] not in SEE_THROUGH]
+        self.parts, lo, hi = {}, np.full(3, np.inf), np.full(3, -np.inf)
+        for p in set(own) | set(solid):
+            v, f = load(os.path.join(d, p + '.npz'))
+            seg = list(np.fromfile(os.path.join(d, p + '.seg'), np.uint32).astype(np.int64)) + [len(f)]
+            self.parts[p] = (v, f, seg, [re.sub(r'^VH_[MF]_', '', s['name'].split('/')[-1]) for s in names[p]])
+            if p in own: lo, hi = np.minimum(lo, v.min(0)), np.maximum(hi, v.max(0))
+        for m in marks: lo, hi = np.minimum(lo, m), np.maximum(hi, m)
+        tgt = (lo + hi) / 2; radius = (hi - lo).max() * 0.62
+        vf = np.radians(self.FOV / 2); self.tv = np.tan(vf); self.th = self.tv * self.ASPECT
+        self.dist = max(0.2, radius / np.sin(min(vf, np.arctan(self.th))) * 1.3)
+        z = np.asarray(VIEW[organ], float); z /= np.linalg.norm(z)
+        self.pos = tgt + z * self.dist
+        x = np.cross((0, 1.0, 0), z); x /= np.linalg.norm(x)
+        self.x, self.y, self.z = x, np.cross(z, x), z
+        self.names, self.depth, self.ident = [], np.full(self.W * self.H, np.inf), np.full(self.W * self.H, -1, np.int64)
+        for p in solid:
+            v, f, seg, sn = self.parts[p]
+            fid = np.empty(len(f), np.int64)
+            for i, n in enumerate(sn): fid[seg[i]:seg[i + 1]] = len(self.names) + i
+            self.names += [(p, n) for n in sn]
+            self._raster(v, f, fid)
+        self.depth = self.depth.reshape(self.H, self.W); self.ident = self.ident.reshape(self.H, self.W)
+        self.px = 2 * self.dist * self.tv / self.H  # pixel size (m) at the view centre
+
+    def project(self, p):
+        r = np.atleast_2d(p) - self.pos; d = -(r @ self.z)
+        return (r @ self.x / (d * self.th) + 1) / 2 * self.W, (1 - r @ self.y / (d * self.tv)) / 2 * self.H, d
+
+    def unproject(self, px, py, d):
+        ray = -self.z + (2 * px / self.W - 1) * self.th * self.x + (1 - 2 * py / self.H) * self.tv * self.y
+        return self.pos + ray * d
+
+    def _raster(self, v, f, fid):
+        W, H = self.W, self.H
+        u, w, d = self.project(v)
+        X, Y, D = u[f], w[f], d[f]
+        x0, x1 = np.floor(X.min(1)).astype(int), np.ceil(X.max(1)).astype(int)
+        y0, y1 = np.floor(Y.min(1)).astype(int), np.ceil(Y.max(1)).astype(int)
+        size = np.maximum(x1 - x0, y1 - y0)
+        ok = (x1 >= 0) & (x0 < W) & (y1 >= 0) & (y0 < H) & (D.min(1) > 0)
+        lo = -1
+        for s in (1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 64, 128, 256, 1024):
+            sel = np.where(ok & (size > lo) & (size <= s))[0]; lo = s
+            gi, gj = np.meshgrid(np.arange(s + 1), np.arange(s + 1), indexing='ij'); gi, gj = gi.ravel(), gj.ravel()
+            for c0 in range(0, len(sel), max(1, int(1e6 // (s + 1) ** 2))):
+                t = sel[c0:c0 + max(1, int(1e6 // (s + 1) ** 2))]
+                cx, cy = x0[t][:, None] + gi[None] + 0.5, y0[t][:, None] + gj[None] + 0.5
+                ax, ay, bx, by, qx, qy = X[t, 0, None], Y[t, 0, None], X[t, 1, None], Y[t, 1, None], X[t, 2, None], Y[t, 2, None]
+                den = (by - qy) * (ax - qx) + (qx - bx) * (ay - qy); den = np.where(np.abs(den) < 1e-12, 1e-12, den)
+                l0 = ((by - qy) * (cx - qx) + (qx - bx) * (cy - qy)) / den
+                l1 = ((qy - ay) * (cx - qx) + (ax - qx) * (cy - qy)) / den
+                l2 = 1 - l0 - l1
+                ii, jj = np.nonzero((l0 >= -1e-6) & (l1 >= -1e-6) & (l2 >= -1e-6) & (cx >= 0) & (cx < W) & (cy >= 0) & (cy < H))
+                if not len(ii): continue
+                pix = cy[ii, jj].astype(int) * W + cx[ii, jj].astype(int)
+                dv = (l0 * D[t, 0, None] + l1 * D[t, 1, None] + l2 * D[t, 2, None])[ii, jj]
+                o = np.lexsort((dv, pix)); pix, dv, iv = pix[o], dv[o], fid[t][ii][o]
+                first = np.r_[True, pix[1:] != pix[:-1]]; pix, dv, iv = pix[first], dv[first], iv[first]
+                better = dv < self.depth[pix]
+                self.depth[pix[better]] = dv[better]; self.ident[pix[better]] = iv[better]
+
+    def ids(self, src, p):
+        """Structure ids of a label's structure in the rasterised scene: by name, by part, or (a sub-structure that is
+        not a mesh of its own, such as the pancreas's head) the part whose surface it lies on. None when that is a part
+        the close-up does not draw solid (see-through lung lobes): nothing to move onto, only occluders to test."""
+        drawn = {q for q, _ in self.names}
+        if src.startswith('part:'): return [i for i, (q, _) in enumerate(self.names) if q == src[5:]] if src[5:] in drawn else None
+        rx = re.compile(src)
+        out = [i for i, (_, n) in enumerate(self.names) if rx.search(n)]
+        if out: return out
+        dist, q = min(((np.linalg.norm(v - p, axis=1).min(), q) for q, (v, *_) in self.parts.items()), default=(np.inf, None))
+        if dist > 0.012: return []
+        return [i for i, (r, _) in enumerate(self.names) if r == q] if q in drawn else None
+
+    def snap(self, src, p, tol=0.0025, taken=()):
+        """(point, seen, moved px): p when its structure is the front-most surface there, a few pixels inside its outline;
+        else the nearest such point of the structure when the camera sees any of it; else p, not seen (an inner
+        structure, or one turned away)."""
+        u, w, d = (a[0] for a in self.project(p))
+        ix, iy = int(np.floor(u)), int(np.floor(w))
+        inside = 0 <= ix < self.W and 0 <= iy < self.H
+        front = inside and d <= self.depth[iy, ix] + max(tol, 3 * self.px)
+        ids = self.ids(src, p)
+        if ids is None: return p, bool(front or not inside), 0.0
+        mask = np.isin(self.ident, ids)
+        if mask.sum() < 12: return p, False, 0.0
+        core = mask
+        for _ in range(3):  # three pixels in from the outline: the dot stays on it from a slightly different camera
+            c = core.copy(); c[1:] &= core[:-1]; c[:-1] &= core[1:]; c[:, 1:] &= core[:, :-1]; c[:, :-1] &= core[:, 1:]
+            if c.sum() < 12: break
+            core = c
+        # clear of the dots placed before it (14 px of a 480 px tall frame), where its structure leaves room
+        clear = np.ones_like(core)
+        if len(taken):
+            gy, gx = np.mgrid[0:self.H, 0:self.W]
+            for tx, ty in taken: clear &= (gx + 0.5 - tx) ** 2 + (gy + 0.5 - ty) ** 2 >= (14 * self.H / 480) ** 2
+            if (core & clear).sum() >= 12: core = core & clear
+        if front and core[iy, ix]: return p, True, 0.0
+        yy, xx = np.nonzero(core)
+        k = np.argmin((xx + 0.5 - u) ** 2 + (yy + 0.5 - w) ** 2)
+        return self.unproject(xx[k] + 0.5, yy[k] + 0.5, self.depth[yy[k], xx[k]]), True, float(np.hypot(xx[k] + 0.5 - u, yy[k] + 0.5 - w))
+
+
+def landmarks(structs, parts_v, sex, scenes=True):
+    """structs: {structure name without sex prefix: vertices (app frame)}; parts_v: {part: vertices}. With `scenes`,
+    each close-up's labels are moved onto what its camera sees (reads the parts assemble() has just written); a label
+    whose structure the close-up camera cannot see gets hidden=True (the render page draws it faded)."""
     def verts(src):
         if src.startswith('part:'): return parts_v.get(src[5:])
         rx = re.compile(src)
         vs = [v for n, v in structs.items() if rx.search(n)]
         return np.concatenate(vs) if vs else None
-    out, pins, missing = {}, {}, []
+    out, pins, missing, report = {}, {}, [], {}
     for organ, items in LANDMARKS.items():
+        placed, srcs, seen = {}, {}, {}
         for name, src, rule in items:
             v = verts(src)
             if v is None or not len(v): missing.append(f'{organ}/{name}'); continue
-            out.setdefault(organ, []).append(dict(name=name, at=[round(float(x), 4) for x in place(v, rule, VIEW[organ])]))
+            placed[name] = place(v, rule, VIEW[organ], verts, placed); srcs[name] = src
+        if not placed: continue
+        if scenes:
+            # twice: the render page frames the close-up on the labels where they end up
+            raw, marks = dict(placed), list(placed.values())
+            for _ in range(2):
+                sc, taken = CloseUpScene(sex, organ, marks), []
+                for name in placed:
+                    placed[name], seen[name], moved = sc.snap(srcs[name], raw[name], taken=taken)
+                    u, w, _ = sc.project(placed[name]); taken.append((u[0], w[0]))
+                    report[f'{organ}/{name}'] = dict(seen=seen[name], moved_px=round(moved * 480 / sc.W, 1))
+                marks = list(placed.values())
+        out[organ] = [dict(name=n, at=[round(float(x), 4) for x in p], **({} if seen.get(n, True) else dict(hidden=True))) for n, p in placed.items()]
     for organ, (src, rule) in PIN.items():
         v = verts(src)
-        if v is not None and len(v): pins[organ] = [round(float(x), 4) for x in place(v, rule, VIEW[organ])]
+        if v is not None and len(v): pins[organ] = [round(float(x), 4) for x in place(v, rule, VIEW[organ], verts, {})]
+    if scenes:
+        hidden = [k for k, x in report.items() if not x['seen']]
+        moved = {k: x['moved_px'] for k, x in report.items() if x['moved_px']}
+        print(f'  landmarks: {len(report)} placed, {len(hidden)} with nothing in view (hidden: {", ".join(hidden)}); moved into view (px of 480): {moved}')
     return out, pins, missing
-
 
 if __name__ == '__main__':
     which = sys.argv[1] if len(sys.argv) > 1 else 'all'

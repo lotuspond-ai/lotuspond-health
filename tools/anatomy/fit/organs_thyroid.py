@@ -10,7 +10,11 @@ about its isthmus to the landmarks that bound it in life:
     the larynx / trachea, so the surfaces on the airway stay on it and the gland gets THICKEN times thicker;
 then pushed out of the airway, the cricothyroid muscles, the carotid sheaths' vessels and the oesophagus with a smooth
 (bi-Laplacian) displacement, and laid back onto its bed (isthmus and pyramidal lobe on the cricoid arch and trachea,
-lobes' medial surfaces on the airway) with soft attraction targets solved together with the push-out.
+lobes' medial surfaces on the airway) with soft attraction targets solved together with the push-out. That
+displacement is smooth over the surface but blind to the gland's own thickness: where a lobe wraps the airway it
+presses one sheet through another (5-7 % of the surface passing through the gland itself), so the gland is then
+rebuilt as one closed sheet round the volume it encloses (unfold_union: the union of the overlapping parts, snapped
+back onto the original surface) and pushed out of its neighbours once more.
 Each parathyroid follows the same growth at its centre, is reshaped to an adult gland (a flattened oval PTH_EXT, about
 30 mm3, its flat side on the lobe, its long axis along the lobe) and slid onto the lobe's posterior surface.
 """
@@ -32,6 +36,8 @@ CLEAR_VESSEL = 0.0010        # from the carotid arteries and jugular veins (the 
 CLEAR_MUSCLE = 0.0008        # from the cricothyroid muscles (thin sheets: face samples come closer than vertices)
 PTH_EXT = (0.0056, 0.0038, 0.0024)   # parathyroid gland: length, width, thickness (m)
 PTH_VOL = 30e-9              # target volume (m3): adult glands are 25-40 mm3
+UNION_H = 0.0007             # grid of the union remesh that resolves the gland's self-overlap (unfold_union)
+FOLD_MAX = 0.1               # % of the surface allowed to pass through the gland itself
 
 
 def frame(a):
@@ -309,6 +315,40 @@ def fold_faces(v, f, eps=5e-5):
     c = v[f[cand]].mean(1); n = face_normals(v, f[cand])
     wo = winding(c + eps * n, v, f); wi = winding(c - eps * n, v, f)
     return cand[(wo > 0.5) | (wi < 0.5)]
+
+
+def fold_pct(v, f):
+    """(% of the surface where the closed gland passes through itself, faces): fold_faces by area."""
+    f = orient_outward(v, f)
+    bad = fold_faces(v, f)
+    ar = 0.5 * np.linalg.norm(np.cross(v[f[:, 1]] - v[f[:, 0]], v[f[:, 2]] - v[f[:, 0]]), axis=1)
+    return float(ar[bad].sum() / ar.sum() * 100), int(len(bad))
+
+
+def unfold_union(v, f, fields, h=UNION_H, smooth=4):
+    """Resolve the gland's self-overlap. The placement's push-out (a smooth displacement over the surface, which knows
+    nothing of the gland's own thickness) presses one sheet of a lobe through another where the lobe wraps the airway
+    (its medial border and folded pole: a quarter of the surface mid-placement, 5-7 % at the end). The gland's tissue
+    is the volume its surface encloses: rasterise the surface, fill the enclosed volume (the union of every overlapping
+    part, nothing removed), extract the zero level of its smoothed signed distance on a grid about as fine as the
+    gland's own edges (one closed sheet that cannot pass through itself) and snap it back onto the original surface
+    wherever that surface lies on the union's boundary (never onto a sheet buried inside it); then the clearances again.
+    Returns ((v, f), report); the measure (organs.py) counts what is left with fold_faces."""
+    from lib.mesh import voxel_solid, _extract, _lattice_box, components
+    vol0 = abs(signed_volume(v, f))
+    lo, n = _lattice_box(v, h, 6, v.min(0))
+    solid = voxel_solid([(v, f)], lo, n, h, close=1, opening=0, specks=0.02)
+    rv, rf = _extract(solid, lo, h, smooth, src=(v, f), deep=1.5 * h)
+    comps = components(rv, rf)
+    rv, rf = compact(rv, rf[max(comps, key=len)])
+    rf = orient_outward(rv, rf)
+    rv = push_out(rv, rf, fields, clearance=CLEAR, iters=12, log=None)
+    rf = orient_outward(rv, rf)
+    rep = dict(method='union remesh (voxel fill of the enclosed volume, surface nets, snapped back onto the surface)', grid_mm=round(h * 1000, 2),
+               components_dropped=int(len(comps) - 1), closed=bool(is_closed(rf)),
+               volume_cm3=dict(before=round(vol0 * 1e6, 2), after=round(abs(signed_volume(rv, rf)) * 1e6, 2)),
+               vertices=dict(before=int(len(v)), after=int(len(rv))), off_original_surface_max_mm=round(float(cKDTree(v).query(rv)[0].max() * 1000), 2))
+    return (rv, rf), rep
 
 
 def bed_targets(v, f, c0, a, beds, clear=CLEAR):

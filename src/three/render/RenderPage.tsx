@@ -45,6 +45,9 @@ type View = { kind: 'body'; deg: number } | { kind: 'organ'; organ: OrganId };
 /** sizes: [width, height, WebP quality] per output image; id: size of the ID map (body views only). */
 interface ShotOptions { sizes: [number, number, number][]; id?: [number, number] }
 type P3 = [number, number, number];
+/** A close-up landmark: x, y, depth as P3, then 1 when the camera cannot see the labelled point (something solid lies in
+ *  front of it: an inner structure such as a heart valve, or the far side of an organ), else 0. */
+type P4 = [number, number, number, 0 | 1];
 interface Shot {
   images: string[];
   /** Colour of the empty background after tone mapping (the 2D stage is painted with it so the image edge disappears). */
@@ -52,7 +55,7 @@ interface Shot {
   id?: { width: number; height: number; data: string };
   boxes?: Record<string, [number, number, number, number]>;
   pins?: Record<string, P3>;
-  landmarks?: P3[];
+  landmarks?: P4[];
   /** Names of the landmarks, in the same order. */
   names?: string[];
   camera: { position: P3; target: P3 };
@@ -125,6 +128,25 @@ function Bridge({ setAo }: { setAo: (on: boolean) => void }) {
       const depth = -v.clone().applyMatrix4(cam.matrixWorldInverse).z;
       const ndc = v.project(cam);
       return [r4((ndc.x + 1) / 2), r4((1 - ndc.y) / 2), r4(cam.position.distanceTo(target) - depth)];
+    }
+
+    /** Whether something drawn solid hides a landmark: the first hit of the ray from the camera through the point, on any
+     *  opaque mesh shown in this view (the organ's parts and its context parts; ghosts and see-through tissue hide
+     *  nothing), lies in front of it by more than the simplification error and a few pixels. Landmarks sit on the
+     *  surface of their structure (assemble.py moves each onto what this camera sees when any of it is in view), so a
+     *  hit in front means the structure is inner or turned away from the camera. */
+    const raycaster = new THREE.Raycaster();
+    function hiddenFlags(points: Vec3[]): (0 | 1)[] {
+      const shown = (o: THREE.Object3D | null) => { for (; o; o = o.parent) if (!o.visible) return false; return true; };
+      const solid = [...meshRegistry.values()].filter(m => shown(m) && !(m.material as THREE.Material).transparent);
+      const pixel = (2 * Math.tan(THREE.MathUtils.degToRad(FOV / 2))) / 480; // one pixel of a 480 px tall close-up, per metre of distance
+      return points.map(p => {
+        const at = new THREE.Vector3(...p), dir = at.clone().sub(cam.position);
+        const dist = dir.length();
+        raycaster.set(cam.position, dir.normalize()); raycaster.near = 0; raycaster.far = dist;
+        const hit = raycaster.intersectObjects(solid, false)[0];
+        return hit && hit.distance < dist - Math.max(0.0035, 3 * pixel * dist) ? 1 : 0;
+      });
     }
 
     function background(): [number, number, number] {
@@ -209,7 +231,8 @@ function Bridge({ setAo }: { setAo: (on: boolean) => void }) {
           if (opts.id) { const { boxes, ...id } = idPass(...opts.id); out.id = id; out.boxes = boxes; }
         } else {
           const marks = landmarksOf(BODY_ID, view.organ);
-          out.landmarks = marks.map(l => project(l.at)); out.names = marks.map(l => l.name);
+          const hidden = hiddenFlags(marks.map(l => l.at));
+          out.landmarks = marks.map((l, i) => [...project(l.at), hidden[i]] as P4); out.names = marks.map(l => l.name);
         }
         return out;
       },

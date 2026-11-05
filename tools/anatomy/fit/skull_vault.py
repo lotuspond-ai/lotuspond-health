@@ -20,8 +20,11 @@ outer table takes the rest (the bone may not pass through itself), into the scal
 where neither is possible does the column stay thin. The per-vertex amounts are spread over each table by a
 max-preserving Gaussian envelope (no dents, no steps; never below what a vertex needs, never beyond its own side's room
 unless it needs it), a correction never exceeds DISP_MAX, and further passes take up what the smoothing left. The
-result is a displacement field of Z-Anatomy points that follows the tables: a point takes the Gaussian-weighted
-displacement of the table its nearest table vertex belongs to, faded to zero 1.5-6 mm away from the vault. fit/skull.py
+result is a displacement field of Z-Anatomy points that follows the tables: a point takes a convex, distance-weighted
+average of the corrections of the table its nearest table vertex belongs to (exact at the table vertices, never beyond
+the corrections around it: an exact Gaussian-kernel solve overshot to 8-11 mm between the interleaved vertices of the
+parietal and occipital bones at the lambdoid suture and pushed bone through the scalp), faded to zero 1.5-6 mm away
+from the vault. fit/skull.py
 adds it after the refinement field for every structure placed with the head map, and head_map() applies the same field, so the head map stays exact for the bones."""
 import os
 import numpy as np
@@ -49,28 +52,20 @@ INNER_MOVES = ['occipital_bone']   # bones whose inner table may move towards th
 
 class VaultFix:
     """Displacement field of Z-Anatomy points (metres): the vault-table correction. lab 0 = inner, 1 = outer table.
-    A point takes the Gaussian-weighted (sig) interpolation of the table its nearest table vertex belongs to (node
-    coefficients solved so that it is exact at the table vertices), scaled by a fade that is 1 up to FADE0 from that
-    table and 0 beyond FADE1 (smoothstep)."""
+    A point takes the weighted average of the corrections of the table its nearest table vertex belongs to, with
+    weights exp(-d^2 / 2 sig^2) / (d^2 + eps^2) over its K_NB nearest vertices of that table: a convex combination, so
+    the field is exact at the table vertices (eps = 1 micrometre) and never exceeds the corrections around a point
+    (no overshoot between close vertices that carry different corrections, e.g. the interleaved parietal and occipital
+    vertices along the lambdoid suture); scaled by a fade that is 1 up to FADE0 from that table and 0 beyond FADE1
+    (smoothstep)."""
+    EPS = 1e-6
 
     def __init__(self, xs, lab, disp, sig=SIG_INT, fade=(FADE0, FADE1), coef=None):
         self.xs = np.asarray(xs, float); self.lab = np.asarray(lab, np.int64); self.disp = np.asarray(disp, float)
         self.sig = float(sig); self.fade = (float(fade[0]), float(fade[1]))
         self.tree = cKDTree(self.xs) if len(self.xs) else None
         self.sub = {s: (np.flatnonzero(self.lab == s), cKDTree(self.xs[self.lab == s])) for s in (0, 1) if (self.lab == s).any()}
-        # node coefficients such that the field reproduces `disp` exactly at the table vertices (the Gaussian average
-        # alone would drag a vertex that has no room along with its neighbours)
-        self.coef = self.disp.copy() if coef is None else np.asarray(coef, float)
-        if coef is None and len(self.xs) and np.abs(self.disp).max() > 0:
-            from scipy.sparse.linalg import spsolve
-            for s, (idx, tr) in self.sub.items():
-                dd, jj = tr.query(self.xs[idx], k=min(K_NB, len(idx)), distance_upper_bound=self.fade[1] + 4 * self.sig)
-                ok = np.isfinite(dd)
-                w = np.where(ok, np.exp(-0.5 * np.where(ok, dd, 0) ** 2 / self.sig ** 2), 0.0)
-                w /= w.sum(1, keepdims=True)
-                rows = np.repeat(np.arange(len(idx)), jj.shape[1])[ok.ravel()]
-                Mx = sparse.csr_matrix((w.ravel()[ok.ravel()], (rows, jj.ravel()[ok.ravel()])), shape=(len(idx), len(idx)))
-                self.coef[idx] = np.stack([spsolve(Mx.tocsc(), self.disp[idx][:, a]) for a in range(3)], 1)
+        self.coef = self.disp   # kept in the saved file for compatibility; the convex weights need no solve
 
     def __call__(self, x):
         x = np.asarray(x, float)
@@ -81,15 +76,17 @@ class VaultFix:
         near = np.isfinite(d)
         if not near.any(): return out
         side = np.full(len(x), -1); side[near] = self.lab[j[near]]
+        e2 = self.EPS ** 2
         for s, (idx, tr) in self.sub.items():
             m = np.flatnonzero(side == s)
             if not len(m): continue
             dd, jj = tr.query(x[m], k=min(K_NB, len(idx)), distance_upper_bound=f1 + 4 * self.sig)
             ok = np.isfinite(dd)
-            d0 = dd[:, :1]
-            w = np.where(ok, np.exp(-0.5 * (np.where(ok, dd, 0) ** 2 - d0 ** 2) / self.sig ** 2), 0.0)
+            dd = np.where(ok, dd, 0); d0 = dd[:, :1]
+            # relative to the nearest vertex (no underflow): Gaussian ratio times the inverse-square-distance ratio
+            w = np.where(ok, np.exp(-0.5 * (dd ** 2 - d0 ** 2) / self.sig ** 2) * (d0 ** 2 + e2) / (dd ** 2 + e2), 0.0)
             jj = np.where(ok, jj, 0)
-            val = np.einsum('ik,ikj->ij', w, self.coef[idx][jj]) / np.maximum(w.sum(1), 1e-12)[:, None]
+            val = np.einsum('ik,ikj->ij', w, self.disp[idx][jj]) / np.maximum(w.sum(1), 1e-12)[:, None]
             u = np.clip((d0[:, 0] - f0) / (f1 - f0), 0, 1)
             out[m] = val * (1 - u * u * (3 - 2 * u))[:, None]
         return out

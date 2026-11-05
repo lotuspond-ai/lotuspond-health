@@ -110,6 +110,8 @@ export function Anatomy({ body, tier = 'physical', depth = true }: AnatomyProps)
     // an organ id this version does not know (a scan saved by a newer app) shows the whole body, as the panels do
     const focus = selected && selected !== 'skin' && organOrNull(selected) ? selected : null;
     const bonesSolid = focus === 'marrow' || (!focus && activeSystem === 'blood');
+    // parts of other organs the open organ's labels name (its vessels, cartilages, ducts) stay solid in its close-up
+    const context = new Set(focus ? organOrNull(focus)?.context ?? [] : []);
     let box: THREE.Box3 | null = null;
     if (focus) {
       box = new THREE.Box3();
@@ -121,7 +123,7 @@ export function Anatomy({ body, tier = 'physical', depth = true }: AnatomyProps)
       const isBone = p.organ === 'marrow';
       p.mesh.visible = !(isBone && (!layers.skeleton || (focus && focus !== 'marrow')));
       let mat: THREE.Material = p.solid;
-      if (focus && !isFocus) mat = isBone ? boneGhost : contextGhost;
+      if (focus && !isFocus && !context.has(p.mesh.name)) mat = isBone ? boneGhost : contextGhost;
       else if (isBone && !bonesSolid) mat = boneGhost;
       else if (isFocus && xray && p.spec.shell) mat = p.glass;
       p.mesh.material = mat;

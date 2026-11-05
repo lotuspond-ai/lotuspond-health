@@ -18,6 +18,9 @@ export interface OrganSpec {
   short: string;
   /** Parts (node names in models/anatomy-<body>.glb) used to frame the camera when the organ is opened. */
   focus: string[];
+  /** Parts of other organs drawn solid (not as ghosts) in this organ's close-up: the vessels, cartilages and ducts its
+   *  landmarks name (tools/anatomy/assemble.py CONTEXT keeps the same lists). */
+  context?: string[];
   /** Camera direction to view from when opened (unit-ish vector from target toward camera). */
   view: Vec3;
   systems: SystemId[];
@@ -70,7 +73,7 @@ export const TISSUE: Record<Tissue, { color: string; rough: number; clear: numbe
 
 export const ORGANS: OrganSpec[] = [
   {
-    id: 'brain', name: 'Brain', short: 'Brain', focus: ['brain'], view: [0.55, 0.25, 0.8],
+    id: 'brain', name: 'Brain', short: 'Brain', focus: ['brain'], view: [1, 0.25, 0.2],
     systems: [], summary: 'Two cerebral hemispheres, the cerebellum and the brainstem, with the pituitary gland hanging beneath. The pituitary makes TSH and the hormones that control the adrenal glands, ovaries and testes. Routine blood tests do not measure brain structure.',
     facts: [{ label: 'Weight', value: 'about 1.3–1.4 kg' }, { label: 'Blood flow', value: 'about 15% of cardiac output' }],
     landmarks: [
@@ -83,32 +86,33 @@ export const ORGANS: OrganSpec[] = [
       { name: 'Brainstem', note: 'Midbrain, pons and medulla: connect the brain to the spinal cord and control breathing and heart rate.' },
       { name: 'Hypothalamus', note: 'Controls hunger, thirst and temperature, and tells the pituitary gland what to release.' },
       { name: 'Pituitary gland', note: 'Makes TSH, which sets how hard the thyroid works, and the hormones that steer the adrenal glands, ovaries and testes.' },
-      { name: 'Lateral ventricles', note: 'Fluid-filled spaces; visible in cross-section.' },
-      { name: 'Corpus callosum', note: 'The band of nerve fibres linking the two hemispheres.' },
+      { name: 'Lateral ventricles', note: 'Fluid-filled spaces deep in each hemisphere; visible in cross-section.' },
+      { name: 'Corpus callosum', note: 'The band of nerve fibres linking the two hemispheres, deep between them.' },
     ],
   },
   {
-    id: 'thyroid', name: 'Thyroid gland', short: 'Thyroid', focus: ['thyroid', 'parathyroids'], view: [0.25, 0.1, 1],
+    id: 'thyroid', name: 'Thyroid gland', short: 'Thyroid', focus: ['thyroid', 'parathyroids'], context: ['airway'], view: [0.25, 0.1, 1],
     systems: ['thyroid'], summary: 'A butterfly-shaped gland wrapped around the front of the windpipe. TSH, T3 and T4 reflect how its hormone output is regulated. The four parathyroid glands behind it control calcium.',
-    facts: [{ label: 'Weight', value: 'about 15–25 g' }, { label: 'Hormones', value: 'T4, T3, calcitonin' }],
+    facts: [{ label: 'Weight', value: 'about 10–20 g' }, { label: 'Hormones', value: 'T4, T3, calcitonin' }],
     landmarks: [
       { name: 'Right lobe', note: 'Each lobe sits beside the larynx and trachea.' },
       { name: 'Left lobe', note: 'Each lobe sits beside the larynx and trachea.' },
-      { name: 'Isthmus', note: 'Bridge of tissue crossing in front of the trachea.' },
+      { name: 'Isthmus', note: 'Bridge of tissue crossing in front of the trachea, just below the cricoid cartilage.' },
+      { name: 'Pyramidal lobe', note: 'A thin strip of thyroid rising from the isthmus in front of the larynx, found in about half of people: what remains of the duct the gland descended along.' },
       { name: 'Parathyroid glands', note: 'Four rice-sized glands behind the thyroid that control calcium.' },
       { name: 'Thyroid cartilage', note: 'Front of the voice box (the Adam’s apple), just above the gland.' },
     ],
   },
   {
     id: 'airway', name: 'Larynx & trachea', short: 'Airway', focus: ['airway'], view: [0.3, 0.1, 1],
-    systems: [], summary: 'The airway from the voice box down to the two main bronchi.', facts: [{ label: 'Trachea length', value: 'about 10–12 cm' }],
+    systems: [], summary: 'The airway from the voice box down to the two main bronchi.', facts: [{ label: 'Trachea length', value: 'about 8–12 cm (shorter in women)' }],
     landmarks: [
       { name: 'Epiglottis', note: 'Flap that closes over the larynx when you swallow.' },
       { name: 'Thyroid cartilage', note: 'The largest cartilage of the voice box (the Adam’s apple).' },
       { name: 'Cricoid cartilage', note: 'Ring of cartilage at the bottom of the larynx, where the trachea begins.' },
       { name: 'Trachea', note: 'The windpipe, held open by C-shaped rings of cartilage.' },
       { name: 'Carina', note: 'Where the trachea splits into left and right bronchi.' },
-      { name: 'Right main bronchus', note: 'Shorter, wider and steeper than the left, so inhaled objects tend to go right.' },
+      { name: 'Right main bronchus', note: 'Steeper than the left, and usually shorter and wider, so inhaled objects tend to go right.' },
       { name: 'Left main bronchus', note: 'Longer and more horizontal, passing under the aortic arch.' },
     ],
   },
@@ -136,7 +140,7 @@ export const ORGANS: OrganSpec[] = [
       { name: 'Right ventricle', note: 'Pumps blood to the lungs.' },
       { name: 'Right atrium', note: 'Receives blood from the body via the venae cavae.' },
       { name: 'Left atrium', note: 'Receives oxygenated blood from the lungs.' },
-      { name: 'Interventricular septum', note: 'The muscular wall between the two ventricles.' },
+      { name: 'Interventricular septum', note: 'The muscular wall between the two ventricles, inside the heart.' },
       { name: 'Mitral valve', note: 'Two leaflets between the left atrium and left ventricle.' },
       { name: 'Tricuspid valve', note: 'Three leaflets between the right atrium and right ventricle.' },
       { name: 'Aortic valve', note: 'Opens to let the left ventricle push blood into the aorta.' },
@@ -159,7 +163,7 @@ export const ORGANS: OrganSpec[] = [
   {
     id: 'liver', name: 'Liver & gallbladder', short: 'Liver', focus: ['liver', 'gallbladder'], view: [-0.45, 0.1, 1],
     systems: ['liver'], summary: 'The largest internal organ, under the right ribs. ALT, AST, ALP, GGT, bilirubin and blood proteins relate to how it is working.',
-    facts: [{ label: 'Weight', value: 'about 1.5 kg' }, { label: 'Blood supply', value: '75% portal vein, 25% hepatic artery' }],
+    facts: [{ label: 'Weight', value: 'about 1.2–2.2 kg' }, { label: 'Blood supply', value: '75% portal vein, 25% hepatic artery' }],
     landmarks: [
       { name: 'Right lobe', note: 'Much the larger lobe.' },
       { name: 'Left lobe', note: 'Thinner lobe extending across the midline over the stomach.' },
@@ -186,9 +190,9 @@ export const ORGANS: OrganSpec[] = [
     ],
   },
   {
-    id: 'spleen', name: 'Spleen', short: 'Spleen', focus: ['spleen'], view: [1, 0.15, -0.3],
+    id: 'spleen', name: 'Spleen', short: 'Spleen', focus: ['spleen'], context: ['arteries', 'portal_vein'], view: [-0.5, 0.15, 0.85],
     systems: ['blood'], summary: 'Filters ageing red blood cells and stores platelets, tucked behind the stomach on the left.',
-    facts: [{ label: 'Length', value: 'about 11–12 cm' }],
+    facts: [{ label: 'Length', value: 'about 10–14 cm' }],
     landmarks: [
       { name: 'Hilum', note: 'Where its artery and vein enter.' },
       { name: 'Splenic artery', note: 'Winds along the top of the pancreas from the coeliac trunk.' },
@@ -196,20 +200,20 @@ export const ORGANS: OrganSpec[] = [
     ],
   },
   {
-    id: 'pancreas', name: 'Pancreas', short: 'Pancreas', focus: ['pancreas'], view: [0.1, 0.4, 1],
+    id: 'pancreas', name: 'Pancreas', short: 'Pancreas', focus: ['pancreas'], context: ['bile_ducts'], view: [0.1, 0.4, 1],
     systems: ['metabolic'], summary: 'Lies behind the stomach. It makes insulin and digestive enzymes; fasting glucose and HbA1c reflect blood-sugar control.',
-    facts: [{ label: 'Length', value: 'about 15 cm' }],
+    facts: [{ label: 'Length', value: 'about 12–20 cm' }],
     landmarks: [
       { name: 'Head', note: 'Sits inside the C-shaped loop of the duodenum.' },
       { name: 'Neck', note: 'Narrow part in front of the portal vein.' },
       { name: 'Body', note: 'Crosses in front of the aorta.' },
       { name: 'Tail', note: 'Reaches toward the spleen.' },
       { name: 'Uncinate process', note: 'Hook of the head that tucks behind the superior mesenteric vessels.' },
-      { name: 'Pancreatic duct', note: 'Carries digestive enzymes to the duodenum, joining the bile duct.' },
+      { name: 'Pancreatic duct', note: 'Runs inside the gland from tail to head, carrying digestive enzymes to the duodenum, where it joins the bile duct.' },
     ],
   },
   {
-    id: 'kidneys', name: 'Kidneys & urinary tract', short: 'Kidneys', focus: ['kidneys'], view: [-0.15, 0.1, -1],
+    id: 'kidneys', name: 'Kidneys & urinary tract', short: 'Kidneys', focus: ['kidneys'], context: ['arteries', 'veins'], view: [-0.15, 0.1, -1],
     systems: ['kidney', 'urine'], summary: 'Two bean-shaped filters against the back wall of the abdomen, each capped by an adrenal gland. Creatinine, eGFR, urea, electrolytes and urine tests relate to the kidneys; cortisol comes from the adrenal glands.',
     facts: [{ label: 'Length', value: 'about 10–12 cm each' }, { label: 'Filtration', value: 'about 180 L of plasma a day' }],
     landmarks: [
@@ -224,12 +228,12 @@ export const ORGANS: OrganSpec[] = [
     ],
   },
   {
-    id: 'intestine', name: 'Small intestine', short: 'Small intestine', focus: ['small_int'], view: [0.1, 0.2, 1],
+    id: 'intestine', name: 'Small intestine', short: 'Small intestine', focus: ['small_int'], context: ['bile_ducts'], view: [0.1, 0.2, 1],
     systems: ['nutrition'], summary: 'Coiled tube where most nutrients are absorbed, including vitamin B12 in its last section.',
     facts: [{ label: 'Length', value: 'about 6 m' }],
     landmarks: [
       { name: 'Duodenum', note: 'First C-shaped part, wrapping the head of the pancreas.' },
-      { name: 'Duodenal papilla', note: 'Where bile and pancreatic juice enter the intestine.' },
+      { name: 'Duodenal papilla', note: 'Inside the duodenum: where bile and pancreatic juice enter the intestine.' },
       { name: 'Jejunum', note: 'Upper coils, where most nutrients are absorbed.' },
       { name: 'Ileum', note: 'Lower coils; absorbs vitamin B12 and bile salts.' },
       { name: 'Terminal ileum', note: 'Last part, joining the colon at the ileocaecal valve.' },
@@ -284,7 +288,7 @@ export const ORGANS: OrganSpec[] = [
       { name: 'Skull', note: 'Protects the brain; its flat bones hold red marrow.' },
       { name: 'Sternum', note: 'A key site of red marrow.' },
       { name: 'Ribs', note: 'Twelve pairs; red marrow fills their spongy bone.' },
-      { name: 'Vertebral column', note: 'Vertebral bodies contain red marrow.' },
+      { name: 'Vertebral column', note: 'Vertebral bodies, like this lumbar one, contain red marrow.' },
       { name: 'Iliac crest', note: 'Common site for marrow samples.' },
       { name: 'Red marrow', note: 'Spongy bone of the pelvis, where blood cells are made; see cross-section.' },
       { name: 'Femur', note: 'Upper end holds red marrow in adults.' },

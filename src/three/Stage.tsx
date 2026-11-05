@@ -9,6 +9,7 @@ import { Anatomy } from './Anatomy';
 import { AdaptiveQuality } from './AdaptiveQuality';
 import { organOrNull } from '../anatomy/organs';
 import { RIGS, focusOf, homeFraming, landmarksOf, pinOf } from '../anatomy/bodies';
+import { meshRegistry } from './registry';
 import type { Body } from '../lib/body';
 import { useUI } from '../state/ui';
 import { useHealth, organSummary } from '../lib/store';
@@ -152,20 +153,57 @@ function Pins({ portal, body }: { portal: Portal; body: Body }) {
   );
 }
 
-/** Landmark labels of the open organ only (all of them mounted at once cost a projection each per frame). */
+/** Shown on screen: the object and every parent. */
+const labelRay = new THREE.Raycaster();
+const shownOnScreen = (o: THREE.Object3D | null) => { for (; o; o = o.parent) if (!o.visible) return false; return true; };
+
+/** For each landmark, whether something solid hides it from the camera (the first hit of the ray from the camera
+ *  through it, on an opaque mesh on stage, lies more than the model's simplification error and a pixel or two in
+ *  front of it), and whether its name should go on the left of its dot (near the right edge of the canvas). Checked
+ *  at most five times a second, and only after the camera moves. */
+function useLabelStates(points: { name: string; at: [number, number, number] }[]) {
+  const { camera, size } = useThree();
+  const [states, setStates] = useState<Record<string, { hidden: boolean; flip: boolean }>>({});
+  const last = useRef({ t: -1, key: '' });
+  const key = points.map(p => p.name).join('|');
+  useFrame(({ clock }) => {
+    const t = clock.getElapsedTime();
+    if (!points.length || t - last.current.t < 0.2) return;
+    const cam = camera.matrixWorld.elements.map(v => v.toFixed(4)).join(',') + `|${size.width}x${size.height}|${key}`;
+    if (cam === last.current.key) return;
+    last.current = { t, key: cam };
+    const solid = [...meshRegistry.values()].filter(m => shownOnScreen(m) && !(m.material as THREE.Material).transparent);
+    const pixel = (2 * Math.tan(THREE.MathUtils.degToRad((camera as THREE.PerspectiveCamera).fov / 2))) / Math.max(size.height, 1);
+    const next: Record<string, { hidden: boolean; flip: boolean }> = {};
+    for (const p of points) {
+      const at = new THREE.Vector3(...p.at), dir = at.clone().sub(camera.position), dist = dir.length();
+      labelRay.set(camera.position, dir.normalize()); labelRay.near = 0; labelRay.far = dist;
+      const hit = labelRay.intersectObjects(solid, false)[0];
+      const x = (at.clone().project(camera).x + 1) / 2;
+      next[p.name] = { hidden: !!hit && hit.distance < dist - Math.max(0.0025, 2 * pixel * dist), flip: x > 0.68 };
+    }
+    setStates(prev => (Object.keys(next).every(k => prev[k]?.hidden === next[k].hidden && prev[k]?.flip === next[k].flip) && Object.keys(prev).length === Object.keys(next).length ? prev : next));
+  });
+  return states;
+}
+
+/** Landmark labels of the open organ only (all of them mounted at once cost a projection each per frame). Labels the
+ *  camera cannot see (an inner structure, the far side of the organ) are drawn faded. */
 function Landmarks({ portal, body }: { portal: Portal; body: Body }) {
   const selected = useHealth(s => s.selectedOrgan);
   const labels = useUI(s => s.layers.labels);
   // Notes open on hover / keyboard focus, and on tap for touch screens (no hover there).
   const [open, setOpen] = useState<string | null>(null);
   const o = organOrNull(selected);
+  const marks = useMemo(() => (o && labels ? landmarksOf(body, o.id) : []), [o, labels, body]);
+  const states = useLabelStates(marks);
   if (!o || !labels) return null;
   const toggle = (key: string) => setOpen(v => (v === key ? null : key));
   return (
     <>
-      {landmarksOf(body, o.id).map(l => (
-        <Html key={o.id + l.name} portal={portal} position={l.at} zIndexRange={[20, 0]} className="lm-wrap">
-          <div className={`landmark${open === o.id + l.name ? ' is-open' : ''}`} tabIndex={0} role="button" aria-expanded={open === o.id + l.name}
+      {marks.map(l => (
+        <Html key={o.id + l.name} portal={portal} position={l.at} zIndexRange={[20, 0]} className={`lm-wrap${states[l.name]?.hidden ? ' is-back' : ''}`}>
+          <div className={`landmark${open === o.id + l.name ? ' is-open' : ''}${states[l.name]?.flip ? ' is-flip' : ''}`} tabIndex={0} role="button" aria-expanded={open === o.id + l.name}
             onClick={() => toggle(o.id + l.name)} onKeyDown={e => e.key === 'Enter' && toggle(o.id + l.name)}>
             <span className="landmark__dot" />
             <span className="landmark__name">{l.name}</span>

@@ -142,7 +142,7 @@ def fit_neck(sex, W, extra_fields=()):
     """The gland: cartilage similarity, slide so the isthmus lies over tracheal rings 2-4, growth to adult size about
     the isthmus (organs_thyroid: upper poles to the laminae's oblique lines, lower poles to ring 5, thickened about
     its bed), push-out and seating on the airway; the parathyroids follow and are reshaped to adult glands."""
-    from fit.organs_thyroid import isthmus_depth, grow_gland, place_gland, pth_shape, seat_pth, seat_pth_field, frame, PTH_EXT
+    from fit.organs_thyroid import isthmus_depth, grow_gland, place_gland, pth_shape, seat_pth, seat_pth_field, frame, PTH_EXT, unfold_union, CLEAR
     from lib.mesh import signed_volume
     from fit.organs_geom import vertex_normals
     rep = {}
@@ -174,6 +174,11 @@ def fit_neck(sex, W, extra_fields=()):
     airway = [field(sex, k) for k in ('thyroid_cart', 'cricoid', 'trachea', 'trach_cart')]
     tv2, nb = place_gland(sex, grown, tf, c0, a, hull, airway, rep, extra_fields)
     tf = orient_outward(tv2, tf)
+    placed = tv2                                            # vertex for vertex with `grown`: carries the parathyroids
+    # the placement presses one sheet of a lobe through another where the lobe wraps the airway: one closed sheet round
+    # the gland's own volume instead (organs_thyroid.unfold_union), the clearances kept
+    fields = [(hull, CLEAR)] + [(fl, CLEAR) for fl in airway] + [(fl, c) for _, fl, c in nb] + [(fl, CLEAR) for fl in extra_fields]
+    (tv2, tf), rep['unfold'] = unfold_union(tv2, tf, fields)
     thy = (tv2, tf)
     rep['volume_cm3'] = round(abs(signed_volume(tv2, tf)) * 1e6, 2)
     # parathyroids: their centres follow the gland's growth and placement; each is reshaped to an adult gland and laid
@@ -187,7 +192,7 @@ def fit_neck(sex, W, extra_fields=()):
         v = T(v) + shift * a - (gap - 0.0005) * ap
         c = pmap(v.mean(0)[None])[0]
         _, j = cKDTree(grown).query(c, k=8)
-        c = c + (tv2[j] - grown[j]).mean(0)
+        c = c + (placed[j] - grown[j]).mean(0)
         sg = 1 if k.endswith('_l') else -1
         # the lobe's posterior surface (facing back) on the gland's own side: its point nearest the carried centre
         cand = np.flatnonzero((vn @ ap < -0.35) & (sg * xl > 0.004))
