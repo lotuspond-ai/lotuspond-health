@@ -51,7 +51,7 @@ from scipy.spatial import cKDTree
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, HERE)
-from lib.mesh import source, sample_surface, dense_points, Surface, merge, compact, orient_outward, area, save, load  # noqa: E402
+from lib.mesh import source, sample_surface, dense_points, Surface, merge, compact, orient_outward, orient_exact, area, save, load  # noqa: E402
 from lib.register import Sim, umeyama, icp, Warp, rotation_between  # noqa: E402
 from fit.common import FIT, hra_mesh, hra_select, skin, skin_solid, anchor_meshes, anchor_controls, get_warp, write_group, Solid  # noqa: E402
 from fit import skull_geom as G  # noqa: E402
@@ -705,7 +705,8 @@ def load_field(sex):
 
 def head_map(sex, mandible=False):
     """Callable mapping Z-Anatomy points (metres, (n, 3)) to this body's head exactly as the skull was placed: the head
-    warp followed by the skull's collision-refinement field (falls back to the warp alone when no field is cached).
+    warp followed by the skull's collision-refinement field (falls back to the warp alone when no field is cached) and
+    the vault-table correction (minimum vault thickness, not applied with mandible=True: zero there).
     For structures that must follow the fitted skull (vessels through the skull-base foramina and canals, cranial
     nerves, facial muscles, meninges). mandible=True also applies the rigid seating of the mandible and lower teeth in
     the mandibular fossae (work/mandible_seat.json): use it for structures carried by the mandible (inferior alveolar
@@ -713,6 +714,13 @@ def head_map(sex, mandible=False):
     W, _ = build_head_warp(sex)
     D = load_field(sex)
     f = W if D is None else (lambda x: (lambda y: y + D(y))(W(np.asarray(x, float))))
+    # the vault-table correction (fit/skull_vault.py, work/vault_fix.npz): a displacement of Z-Anatomy points that
+    # follows the inner and outer tables of the parietal and occipital bones (zero more than 6 mm from them)
+    from fit.skull_vault import VaultFix
+    VF = VaultFix.load(os.path.join(work_dir(sex), 'vault_fix.npz'))
+    if VF is not None:
+        f0 = f
+        f = lambda x: f0(x) + VF(np.asarray(x, float))
     if not mandible: return f
     sp = os.path.join(work_dir(sex), 'mandible_seat.json')
     if not os.path.exists(sp): return f
@@ -730,10 +738,14 @@ def place_all(Z, Wfull):
 
 
 def outputs_for(P, Z):
+    """Output meshes. Bones get the exact (ray-parity) outward winding: the per-component volume rule of
+    orient_outward turns cavity shells (mandibular canal, ethmoid air cells) and a patch of the occipital bone whose
+    Z-Anatomy winding is inconsistent inside out (faces pointing into their own bone)."""
     out = []
     for n in P:
         v, f, part = P[n]
-        out.append(dict(name=n, part=part, mesh=(v, orient_outward(v, f)), source=[Z[n][3]]))
+        fo = orient_exact(v, f) if part == 'skel_skull' else orient_outward(v, f)
+        out.append(dict(name=n, part=part, mesh=(v, fo), source=[Z[n][3]]))
     return out
 
 
@@ -763,10 +775,22 @@ def run(sex, argv, L, zsk):
         D, hist = refine(sex, W, Z, T, L, M, zsk, pre=pre)
         np.savez(fpath, n=len(D.fields), hist=np.array(hist, dtype=object), **{f'c{k}': f_.c for k, f_ in enumerate(D.fields)},
                  **{f's{k}': f_.sigma for k, f_ in enumerate(D.fields)}, **{f'w{k}': f_.w for k, f_ in enumerate(D.fields)})
-    Wfull = lambda x, W=W, D=D: (lambda y: y + D(y))(W(x))
     P = {}
     for n, (v, f, part, _) in Z.items():
         y = pre(n, W(v)); P[n] = (y + D(y), f, part)
+    # 1b. minimum vault thickness (fit/skull_vault.py): where the field folded the thin parietal / occipital vault
+    #     through itself, the tables are pushed apart along the bone column into the room the brain and scalp leave;
+    #     the correction is a field of Z-Anatomy points applied to every structure placed with the head map
+    from fit import skull_vault as VT
+    P_field = {n: P[n] for n in VT.AUDIT}
+    VF, vtabs, vault_info = VT.fit(Z, P, {b: W(Z[b][0]) for b in VT.VAULT}, zp, T.brain_p, T.brain_n, T.skin_signed,
+                                   log=lambda *a: log(sex, *a))
+    VF.save(os.path.join(work_dir(sex), 'vault_fix.npz'))
+    for n, (v, f, part, _) in Z.items():
+        if n in jaw: continue
+        c = VF(v)
+        if np.abs(c).max() > 0: P[n] = (P[n][0] + c, f, part)
+    Wfull = lambda x, W=W, D=D, VF=VF: (lambda y: y + D(y))(W(x)) + VF(x)
     # 2. teeth: each arch moves rigidly with its jaw (Z-Anatomy tooth shapes kept exactly), the upper lateral incisors
     #    stepped up along their axes; then the mandible (with the lower arch) is seated in centric occlusion with the
     #    condyles in the fossae (this replaces the post-refinement joint-space-only re-seating)
@@ -811,6 +835,8 @@ def run(sex, argv, L, zsk):
         crits.append(M.crit('hyoid clear of the superior horns of the thyroid cartilage (thyrohyoid space)', hmin, '>= 3 mm', hmin >= 3.0, unit='mm',
                             min_dist_to_thyroid_cartilage_mm=hyoid_info['min_dist_to_thyroid_cartilage_after_mm'],
                             male_hra_reference_mm='6.6-7.0 to the horn tips, 5.7 to the cartilage'))
+    vc, det['vault_thickness'] = VT.criteria(P, P_field, vtabs, vault_info)
+    crits += vc
     det['hyoid_method_check'] = hyoid_check(sex, Wfull, T)
     det['soft_tissue_vault_feasibility'] = vault_feasibility(sex, P, T, aux)
     det['inventory'] = dict(cranial_and_facial_bones=sum(1 for n in Z if Z[n][2] == 'skel_skull' and not re.match(r'(malleus|incus|stapes|hyoid|mandible)', n)),

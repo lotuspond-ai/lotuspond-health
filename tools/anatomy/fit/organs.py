@@ -9,7 +9,8 @@ HRA neighbours it touches (see organs_neck, organs_adrenal, organs_diaphragm, or
 organs_settle):
   1. thyroid + parathyroids  similarity from the larynx cartilages, slide to tracheal rings 2-4, smooth push-out,
                              glands slid onto the lobes' posterior surface
-  2. adrenals                undistorted gland laid on its warped pose, free-space pose search, 2 mm off the kidney
+  2. adrenals                undistorted gland (the left one scaled to 1.1 times the right one's volume) laid on its
+                             warped pose, free-space pose search, 2 mm off the kidney
   3. diaphragm               as-rigid-as-possible fit (openings follow the HRA IVC / aorta, domes under the lung bases
                              and heart, collision push-out, local thinning); fitted against the liver as assembled
                              (the heart chambers, coronary arteries and cardiac veins plus 4 mm carved out of its dome),
@@ -17,8 +18,10 @@ organs_settle):
                              central tendon lies in the carved space; the glands then re-seated in the remaining
                              free space (the right one behind the IVC) and the crura made to give way to them
   4. stomach                 the smooth boundary of the free part of its bed (organs_bed): the warped Z-Anatomy
-                             stomach voxelised, its neighbours subtracted, bridges to the cardiac ring and the HRA
-                             duodenal opening, signed distance smoothed under the no-overlap constraint, surface
+                             stomach voxelised, its neighbours (the splenic artery and vein included) subtracted,
+                             bridges to the cardiac ring and to the free lipped end of the HRA duodenal bulb (the
+                             pyloric canal along the corridor of greatest clearance), nothing behind the bulb's lip
+                             plane around the bulb, signed distance smoothed under the no-overlap constraint, surface
                              extracted, orifice rims laid onto their rings
   5. oesophagus              a smooth tube swept along a smoothed route (organs_tube) with Z-Anatomy's own
                              cross-sections, flattened front-to-back where squeezed, ending in the cardiac ring
@@ -176,6 +179,11 @@ def measure(sex, out, aux):
     pairs['stomach']['diaphragm'] = pair(st, own['diaphragm'], closed=cl['diaphragm'])
     pairs['stomach']['gallbladder'] = pair(st, F('gallbladder'), listed=False)
     pairs['stomach']['duodenum (beyond the pylorus)'] = pair(st, F('duodenum'), exclude=near_pylorus, listed=False)
+    # the splenic artery and vein run behind the stomach's posterior wall, along the pancreas's upper border; measured
+    # both ways (the share of the stomach's surface inside the vessel, and of the vessel's inside the stomach)
+    for k in ('splenic_a', 'splenic_v'):
+        pairs['stomach'][k] = pair(st, F(k))
+        pairs[k] = {'stomach': pair(hra(sex, k), own['stomach'])}
     pairs['stomach']['adrenal_l'] = pair(st, own['adrenal_l'], listed=False, closed=cl['adrenal_l'])
     # oesophagus
     pairs['esophagus'] = {k: pair(es, F(k)) for k in ('trachea', 'trach_cart', 'la', 'aorta', 'spine')}
@@ -217,7 +225,33 @@ def measure(sex, out, aux):
     R['cardia_join_gap_mm'] = crit(round(float(d.max() * 1000), 2), 2.0, d.max() <= 0.002, mean=round(float(d.mean() * 1000), 2))
     seg = np.concatenate([np.linspace(ring[i], ring[(i + 1) % len(ring)], 8, endpoint=False) for i in range(len(ring))])
     d2, _ = cKDTree(seg).query(st[0][pyl])
-    R['pylorus_join_gap_mm'] = crit(round(float(d2.max() * 1000), 2), 2.0, d2.max() <= 0.002, mean=round(float(d2.mean() * 1000), 2))
+    R['pylorus_join_gap_mm'] = crit(round(float(d2.max() * 1000), 2), 2.0, d2.max() <= 0.002, mean=round(float(d2.mean() * 1000), 2),
+                                    ring='the outer wall of the HRA duodenal bulb (ampulla) 1 mm behind the crest of its free lipped end')
+    # the pylorus opens into the bulb's free lipped end: the stomach's pyloric rim centred on the lip, and no gastric
+    # tissue behind the lip plane around the bulb (a blind antrum carrying on past the pylorus, or a stomach wrapped
+    # round the bulb's side)
+    from fit.organs_gi import bulb_opening
+    from fit.organs_bed import PYL_CONE
+    _, bc, bn, br, binfo = bulb_opening(sex)
+    crest = np.array(binfo['crest_centre'])
+    off = float(np.linalg.norm(pc - bc) * 1000)
+    x = st[0] - bc; ax_ = -(x @ bn); rad = np.linalg.norm(x + np.outer(ax_, bn), axis=1)
+    ang, depth = PYL_CONE
+    behind = (ax_ > 0.001) & (np.linalg.norm(x, axis=1) < depth)
+    rc = br + 0.002 + np.tan(ang) * ax_
+    # depth into the pylorus's shadow (the cone the bed leaves free behind the lip plane, about the bulb's axis): the
+    # smoothed surface may graze its boundary by the smoothing's reach
+    into = np.where(behind, (rc - rad) * np.cos(ang), -np.inf)
+    deep_in = float(max(0.0, into.max()) * 1000) if behind.any() else 0.0
+    near_bulb = behind & (rad < rc + 0.01)
+    gap_b = round(float(F('duo_bulb')(st[0][near_bulb]).min() * 1000), 2) if near_bulb.any() else None
+    R['pylorus_on_bulb_lip'] = crit(round(off, 2), '<= 2 mm from the lip ring centre; <= 2 mm into the pylorus shadow (behind the lip plane, '
+                                    f'{np.degrees(ang):.0f} deg about the bulb axis from the ring radius + 2 mm)',
+                                    off <= 2.0 and deep_in <= 2.0, unit='mm (pyloric rim centre to the bulb ring centre)',
+                                    shadow_depth_mm=round(deep_in, 2), bulb_gap_behind_lip_plane_mm=gap_b,
+                                    stomach_behind_lip_plane_within_cone_max_mm=round(float(ax_[behind & (rad < rc)].max() * 1000), 2) if (behind & (rad < rc)).any() else 0.0,
+                                    bulb_axis=binfo['axis'], crest_centre=binfo['crest_centre'], crest_radius_mm=binfo['crest_radius_mm'],
+                                    ring_radius_mm=binfo['ring_radius_mm'], rim_to_crest_plane_mm=round(float((crest - pc) @ bn * 1000), 2))
     # levels
     R['ge_junction_level'] = level_crit(sex, cc[1], 'T10', 'T12')
     C = aux['esophagus_centreline']
@@ -252,6 +286,9 @@ def measure(sex, out, aux):
         a = out[f'adrenal_{s}']; p = sample_surface(*a, 6000, seed=1)
         g = float(F(f'kidney_{s}')(p).min() * 1000)
         R[f'adrenal_{s}_kidney_gap_mm'] = crit(round(g, 2), '1-5', 1.0 <= g <= 5.0)
+    va = {s: abs(signed_volume(*out[f'adrenal_{s}'])) * 1e6 for s in 'lr'}
+    R['adrenal_volumes_cm3'] = crit(dict(l=round(va['l'], 2), r=round(va['r'], 2)), 'each 3-7 cm3 (adult glands weigh about 4-6 g), left / right 0.8-1.4',
+                                    all(3.0 <= x <= 7.0 for x in va.values()) and 0.8 <= va['l'] / va['r'] <= 1.4, ratio=round(va['l'] / va['r'], 2))
     # right adrenal behind the IVC: where they overlap side to side, the IVC lies in front
     a = out['adrenal_r'][0]; iv = hra(sex, 'ivc')[0]
     band = iv[(iv[:, 1] > a[:, 1].min()) & (iv[:, 1] < a[:, 1].max())]
@@ -286,6 +323,14 @@ def measure(sex, out, aux):
         R[f'{k}_to_thyroid'] = crit(round(float(d.min() * 1000), 2), '0-1 mm, none inside', (d.min() <= 0.001) and (d >= 0).all(),
                                     inside_pct=round(float((d < 0).mean() * 100), 2), centre=np.round(out[k][0].mean(0), 4).tolist(),
                                     method='exact distance to the thyroid mesh, inside by its winding number')
+    # the gland does not pass through itself (exact test: lib.mesh ray-parity votes on every face, confirmed by the
+    # winding number; the facing assemble.py measures)
+    from fit.organs_thyroid import fold_faces
+    tv_, tf_ = out['thyroid']; tf_ = orient_outward(tv_, tf_)
+    bad = fold_faces(tv_, tf_)
+    ar_ = 0.5 * np.linalg.norm(np.cross(tv_[tf_[:, 1]] - tv_[tf_[:, 0]], tv_[tf_[:, 2]] - tv_[tf_[:, 0]]), axis=1)
+    R['thyroid_self_overlap_pct'] = crit(round(float(ar_[bad].sum() / ar_.sum() * 100), 3), 0.1, ar_[bad].sum() / ar_.sum() * 100 <= 0.1,
+                                         unit='% of the surface where the gland passes through itself', faces=int(len(bad)))
     # the gland's size, extent, bed and neck contacts; the parathyroids' size and levels (organs_thyroid)
     from fit.organs_thyroid import thyroid_measures
     R.update(thyroid_measures(sex, out['thyroid'], {k: out[k] for k in PTH}, c0, av, aux.get('neck_neighbours')))

@@ -45,14 +45,31 @@ Method (per body):
     Z-Anatomy's depth under the skin, the internal thoracic vessels 1.25 cm lateral to the placed sternum behind the
     costal cartilages, the internal jugular veins lateral to their carotids; then the lung lobes (all vessels) and the
     HRA thoracic aorta (veins; pushed toward the vertebral bodies along the descending aorta) cleared by whole sections.
+    Second review (fit/vessels_sep.py), with the stretch each junction's angle is measured on held (hold_weights): the
+    companions apart by whole sections (Z-Anatomy veins out of their arteries, the superficial veins excepted; arteries
+    out of the HRA veins; sibling arteries apart beyond one radius of their common origin; where a vein is held near
+    its junction, the artery beside it yields); the azygos and hemi-azygos veins re-routed out of the HRA inferior vena
+    cava (its marched outer wall, 1.2 mm clearance) behind it, on the right side of the vertebral bodies; and the
+    subclavian (female: also the right brachiocephalic) veins re-routed clear of the first rib and the clavicle. A
+    re-route is a smooth shortest path of whole sections through free space: dynamic programming over 3 mm centreline
+    bins, each choosing an offset in its section plane that trades the squared offset against the squared missing
+    clearance (bones 0.8 mm, organs 0.3 mm, HRA aorta and placed arteries 0.5 mm) and the squared change between
+    neighbouring bins.
  5. Push-out (fit/vessels_fix.py): out of every bone (HRA and placed) by 0.8 mm, out of the solid organs (with the
-    assembled lung lobes and the female ureters and ovaries) by 0.3 mm, the veins out of the HRA aorta by 0.5 mm, and
-    1.5 mm inside the skin, with a Gaussian-spread displacement that moves a tube as a whole, shared across Z-Anatomy
+    assembled lung lobes and the female ureters and ovaries) by 0.3 mm, the veins out of the HRA aorta by 0.5 mm, out
+    of the HRA inferior vena cava by 1.2 mm and out of the placed arteries by 0.5 mm, the arteries out of the HRA veins
+    by 0.5 mm, and 1.5 mm inside the skin, with a Gaussian-spread displacement that moves a tube as a whole, shared across Z-Anatomy
     junctions (connected vessels form one group), faded in over 1.5 cm from the junction rings (2.5 cm from a chain
     junction's ring: past the stretch its end axis is measured on); vertices first, then probes inside the faces near a
     bone. Inside tests are ray parity with a majority of three rays, five when the first three disagree
     (fit/vessels_geom.TriSet). Female: swept-tube bridges join the HRA uterine arteries to the internal iliac arteries
     and the HRA uterine veins to the internal iliac veins, then are pushed out of bone with their ends pinned.
+    After the push-out (which fades in over 1.5-2.5 cm from the rings, so it can bend a junction's measured stretch) the
+    venous junction angles are measured again: chains and branches (Kabsch rotation of the rigid stretch) above 19
+    degrees (failing, or within 1 degree of failing) are turned back to 15 about their rings, the least turn since each
+    degree moves the vessel against the bones the push-out cleared (snap's rigid stretch and decay, every other junction
+    held; up to four rounds, since a turn is shared with a junction held beside it), and the vessels this moved are
+    settled out of bone again with 2.2 cm from each ring held.
  6. Measurements (fit/vessels_measure.py, fit/vessels_review.measure) -> report.json, QA renders, write_group().
 """
 import os, sys, json, time, re
@@ -612,9 +629,10 @@ ASSEMBLY_EXCLUDE = {'male': ['VH_M_left_common_carotid_artery_a', 'VH_M_left_com
 REVIEW_MAX_MM, REVIEW_ASPECT, REVIEW_SUP_MM, REVIEW_PULSE_MM = 1.0, 2.0, 6.0, 5.0   # review criteria thresholds
 REALIGN_ABOVE = CHAIN_TOL + 2.0   # chain junctions whose measured end angle (vessels_measure) exceeds this are turned again (the push-out adds a few degrees)
 PIN_CHAIN = 0.025                 # push-out fade-in from a chain junction ring: covers the stretch its axis is measured on
+POST_ABOVE, POST_TARGET = 19.0, 15.0   # after the push-out, venous junctions failing (or within 1 deg of failing) are turned back to POST_TARGET (deg)
 
 
-def realign(VES, J, log=log):
+def realign(VES, J, log=log, above=None, target=CHAIN_TOL):
     """Second turn of the chain junctions, with the end axis exactly as the report measures it (vessels_measure.
     start_frame: the main-trunk centerline from one radius to one radius + 15 mm, after the snap): the first turn is
     computed from the cut mesh's axis from half a radius, and the decay beyond S_RIGID gives back a few degrees, so a
@@ -628,13 +646,13 @@ def realign(VES, J, log=log):
         x = VES[j['vessels'][0]]
         c, r, t = VM.start_frame(x['v'], x['f'], j['end']['c'])
         th = G.rotvec_between(t, j['end']['n']); ang = float(np.degrees(np.linalg.norm(th)))
-        if ang <= REALIGN_ABOVE: continue
-        theta = th * (ang - CHAIN_TOL) / ang
+        if ang <= (REALIGN_ABOVE if above is None else above): continue
+        theta = th * (ang - target) / ang
         J2.append(dict(key=j['key'], part=j['part'], p=c, c=c, theta=theta, seeds=j['seeds'], vessels=j['vessels'], l_snap=j.get('l_snap', L_SNAP),
                        realign=True))
-        j['info']['realign_deg'] = round(ang - CHAIN_TOL, 1)
-        j['info']['rotation_deg'] = round(j['info'].get('rotation_deg', 0.0) + ang - CHAIN_TOL, 1)
-        log(f'  realign {j["key"]}: measured end angle {ang:.1f} deg, turned {ang - CHAIN_TOL:.1f} more')
+        j['info']['realign_deg'] = round(j['info'].get('realign_deg', 0.0) + ang - target, 1)
+        j['info']['rotation_deg'] = round(j['info'].get('rotation_deg', 0.0) + ang - target, 1)
+        log(f'  realign {j["key"]}: measured end angle {ang:.1f} deg, turned {ang - target:.1f} more')
     if J2:
         keys = {j['key'] for j in J2}; parts = {j['part'] for j in J2}
         for j in J:
@@ -643,6 +661,60 @@ def realign(VES, J, log=log):
             J2.append(dict(key=j['key'] + ':hold', part=j['part'], p=c0, c=c0, theta=np.zeros(3), seeds=j['seeds'], vessels=j['vessels'], realign=True))
         snap(VES, J2, log=log)
     return sorted(keys) if J2 else []
+
+
+def realign_branches(VES, J, log=log, above=None, target=FORK_TOL, part=None):
+    """Branch junctions (a child leaving the side of an HRA stub: the subclavian veins at the venous angles) after the
+    push-out: the angle the report measures (the rotation the child's rigid stretch underwent since before the snap,
+    Kabsch, carried onto the Z-Anatomy parent axis, against the stub's axis) is brought back to `target` where it exceeds
+    `above` (default ANGLE_MAX - 2), by turning the child about its start ring with the snap's rigid stretch and decay;
+    every other junction of the part is held (null motion)."""
+    from fit import vessels_measure as VM
+    above = VM.ANGLE_MAX - 2.0 if above is None else above
+    J2 = []
+    for j in J:
+        if j['kind'] != 'branch' or not j.get('rigid') or (part and j['part'] != part): continue
+        Pp = np.concatenate([pre for loc, pre in j['rigid'].values()]); Qq = np.concatenate([VES[nm]['v'][loc] for nm, (loc, pre) in j['rigid'].items()])
+        if len(Pp) < 4: continue
+        R = VM.kabsch_points(Pp, Qq)
+        a = R @ j['za_dir']; ang = G.angle_deg(a, j['end']['n'])
+        if ang <= above: continue
+        th = G.rotvec_between(a, j['end']['n']); theta = th * (ang - target) / ang
+        nm = j['vessels'][0]; c = VES[nm]['v'][np.asarray(j['seeds'][nm])].mean(0)
+        J2.append(dict(key=j['key'], part=j['part'], p=c, c=c, theta=theta, seeds=j['seeds'], vessels=j['vessels'], realign=True))
+        j['info']['realign_after_push_deg'] = round(ang - target, 1)
+        log(f'  realign (branch) {j["key"]}: measured {ang:.1f} deg after the push-out, turned {ang - target:.1f} back')
+    if J2:
+        keys = {j['key'] for j in J2}; parts = {j['part'] for j in J2}
+        for j in J:
+            if j['key'] in keys or j['part'] not in parts: continue
+            c0 = np.asarray(j['c'], float)
+            J2.append(dict(key=j['key'] + ':hold', part=j['part'], p=c0, c=c0, theta=np.zeros(3), seeds=j['seeds'], vessels=j['vessels'], realign=True))
+        snap(VES, J2, log=log)
+    return sorted(keys) if J2 else []
+
+
+SETTLE_HOLD, SETTLE_FADE = 0.022, 0.015   # after a re-alignment, the settle push-out leaves this stretch from each junction ring alone, fading in over
+
+
+def settle(F, VES, v_before, trees, log=log, extra_v=(), extra_a=()):
+    """Vessels moved by a post-push re-alignment are pushed out of bones, organs and skin again by the group's Fixer, with
+    the stretch the junction angles are measured on (SETTLE_HOLD of geodesic distance from each junction ring) held."""
+    moved = [n for n, v0 in v_before.items() if np.linalg.norm(VES[n]['v'] - v0, axis=1).max() > 1e-4]
+    if not moved: return None
+    geo = {}
+    for part, (S, dmin) in trees.items():
+        for nm, x in S.split(dmin).items(): geo[nm] = x
+    X = np.concatenate([VES[k]['v'] for k in moved]); off = np.cumsum([0] + [len(VES[k]['v']) for k in moved])
+    Fc = np.concatenate([VES[k]['f'] + o for k, o in zip(moved, off[:-1])])
+    groups = np.concatenate([np.full(len(VES[k]['v']), i) for i, k in enumerate(moved)])
+    pin = np.concatenate([G.smoothstep((np.where(np.isfinite(geo.get(k, np.full(len(VES[k]['v']), np.inf))), geo.get(k, 0), 1.0) - SETTLE_HOLD) / SETTLE_FADE)
+                          for k in moved])
+    veins = np.concatenate([np.full(len(VES[k]['v']), VES[k]['part'] == V) for k in moved])
+    extra = [(ob, veins, clr) for ob, clr in extra_v if ob is not None] + [(ob, ~veins, clr) for ob, clr in extra_a if ob is not None]
+    X2, hist = F.run(X, groups, pin, log=log, faces=Fc, iters=20, probe_iters=10, extra=extra)
+    for i, k in enumerate(moved): VES[k]['v'] = X2[off[i]:off[i + 1]]
+    return dict(vessels=moved, last=hist[-1] if hist else None)
 
 
 SHEATH_SIGMA, SHEATH_NEAR, SHEATH_FAR = 0.012, 0.015, 0.040
@@ -687,6 +759,24 @@ def sheath_companion(sex, VES, J, v_pre, log=log):
     return out
 
 
+HOLD_CHAIN, HOLD_BRANCH, HOLD_FADE = 0.022, 0.010, 0.015   # the review moves leave this much of each junction alone (m)
+
+
+def hold_weights(VES, trees, J):
+    """Vertex weights for the second review's whole-section moves (fit/vessels_sep.py): 0 over the stretch each junction's
+    angle is measured on (a chain's: one radius + 1.5 cm of centreline, HOLD_CHAIN; a branch's rigid stretch, HOLD_BRANCH),
+    fading in over HOLD_FADE of geodesic distance."""
+    out = {}
+    for part, (S, dmin) in trees.items():
+        w = np.ones(len(S.v))
+        for j in J:
+            if j['part'] != part or len(j.get('geo', ())) != len(w): continue
+            g = np.where(np.isfinite(j['geo']), j['geo'], 1.0)
+            w = np.minimum(w, G.smoothstep((g - (HOLD_CHAIN if j['kind'] == 'chain' else HOLD_BRANCH)) / HOLD_FADE))
+        for nm, x in S.split(w).items(): out[nm] = x
+    return out
+
+
 def pin_weights(VES, trees, J=()):
     """0 at the junction rings, 1 beyond PIN of geodesic distance (the push-out leaves the snapped junctions alone);
     from a chain junction's ring the fade-in runs over PIN_CHAIN, past the stretch its end axis is measured on."""
@@ -701,10 +791,12 @@ def pin_weights(VES, trees, J=()):
     return out
 
 
-def push_out(sex, VES, trees, contacts, J=(), log=log, aorta_obstacles=None):
+def push_out(sex, VES, trees, contacts, J=(), log=log, aorta_obstacles=None, artery_obstacles=None, artery_hold=None):
     """Bones and skin push-out (fit/vessels_fix.py). Vessels that meet at an end ring in Z-Anatomy (`contacts`) form one
     group, so a push spreads across their junction and the tree stays connected; arteries and veins never share a
-    group. `aorta_obstacles` [(obstacle, clearance)] apply to the veins only (the HRA thoracic aorta as a capped tube)."""
+    group. `aorta_obstacles` [(obstacle, clearance)] apply to the veins only (the HRA thoracic aorta and inferior vena
+    cava, the placed arteries as tubes), `artery_obstacles` to the arteries only (the HRA veins as tubes), and there
+    only where `artery_hold` (hold_weights) is 1: not on the stretch a fork's angle is measured on."""
     from fit.vessels_fix import Fixer
     from scipy.sparse.csgraph import connected_components
     from scipy import sparse
@@ -721,7 +813,11 @@ def push_out(sex, VES, trees, contacts, J=(), log=log, aorta_obstacles=None):
     pin = np.concatenate([pins.get(n, np.ones(len(VES[n]['v']))) for n in names])
     F = Fixer(sex, X, log=log)
     veins = np.concatenate([np.full(len(VES[n]['v']), VES[n]['part'] == V) for n in names])
-    extra = [(ob, veins, clr) for ob, clr in (aorta_obstacles or [])]
+    extra = [(ob, veins, clr) for ob, clr in (aorta_obstacles or []) if ob is not None]
+    amask = ~veins
+    if artery_hold is not None:
+        amask = amask & np.concatenate([artery_hold.get(n, np.ones(len(VES[n]['v']))) >= 0.999 for n in names])
+    extra += [(ob, amask, clr) for ob, clr in (artery_obstacles or []) if ob is not None]
     X2, hist = F.run(X, groups, pin, log=log, faces=Fc, extra=extra)
     o = 0
     for n in names:
@@ -823,12 +919,47 @@ def run(sex, stage='all', render=True):
     now = [n for n, x in VES.items() if x['placed'] and not x.get('dropped')]
     step('lung_clearance', RV.clear_obstacle, VES, now, lungs, pins, log=log, label='lung')
     step('aorta_clearance', RV.clear_obstacle, VES, [n for n in now if VES[n]['part'] == V], aorta, pins, clear=AORTA_CLEAR, log=log, label='aorta')
+    # ---- second review (fit/vessels_sep.py): companions apart, the azygos out of the HRA inferior vena cava, the
+    # subclavian veins re-routed clear of the first rib and the clavicle
+    from fit import vessels_sep as SP
+    from fit.vessels_fix import bone_meshes, organ_meshes, near_obstacles
+    ivc, review['ivc_tube'] = SP.hra_ivc_tube(sex)
+    pts = np.concatenate([VES[n]['v'] for n in now])
+    bones_ob = G.Obstacles(near_obstacles(bone_meshes(sex), pts)); organs_ob = G.Obstacles(near_obstacles(organ_meshes(sex), pts))
+    tubes = {}
+
+    hold = hold_weights(VES, trees, J)
+
+    def _separate():
+        info, tubes['arteries'], tubes['hra_veins'] = SP.separate(sex, VES, hold, log=log)
+        return info
+    step('separation', _separate)
+    AT, HV = tubes.get('arteries'), tubes.get('hra_veins')
+    step('azygos_route', SP.route_azygos, sex, VES, ivc, aorta, bones_ob, organs_ob, hold, contacts=contacts, log=log, arteries=AT)
+    step('vein_route', SP.route_veins, sex, VES, REROUND.get(sex, ()), bones_ob, organs_ob, hold, aorta=aorta, arteries=AT, log=log)
     _dump(sex, 'pre_push', VES=VES, J=J, trees=trees, contacts=contacts, review=review, pel=pel, realigned=realigned, sheath=sheath)
-    F, hist = push_out(sex, VES, trees, contacts, J, aorta_obstacles=[(aorta, AORTA_CLEAR)])
+    extra_v = [(aorta, AORTA_CLEAR), (ivc, SP.IVC_CLEAR), (AT, SP.SEP_CLEAR)]; extra_a = [(HV, SP.SEP_CLEAR)]
+    F, hist = push_out(sex, VES, trees, contacts, J, aorta_obstacles=extra_v, artery_obstacles=extra_a, artery_hold=hold)
     log(sex, 'pushed out', f'{time.time() - t0:.0f}s')
     # the push-out squeezes a vein that has no room between the clavicle, the first rib and the lung apex into a flat
     # sheet: those veins are re-rounded about the pushed centreline (their residual contacts are reported)
-    step('reround_after_push', RV.reround, VES, REROUND.get(sex, ()), J, log=log)
+    step('reround_after_push', RV.reround, VES, REROUND.get(sex, ()), J, log=log, only_crushed=(REVIEW_ASPECT, 1.5 * REVIEW_ASPECT))
+    # junction angles the push-out bent (it fades in over 1.5-2.5 cm from the rings) are turned back, then the moved
+    # vessels are settled out of bone again with the measured stretch held
+    v_b = {n: VES[n]['v'].copy() for n in now if n in VES}; snap_mm = {n: VES[n].get('snap_mm', 0.0) for n in now if n in VES}
+    def _realign_after():
+        # a turn is shared with the junctions held beside it (the venous angle's two children leave one stub): repeated
+        # until every venous chain and branch is within REALIGN_ABOVE
+        out = dict(chains=[], branches=[])
+        for _ in range(4):
+            c = realign(VES, [j for j in J if j['part'] == V], above=POST_ABOVE, target=POST_TARGET)
+            b = realign_branches(VES, J, part=V, above=POST_ABOVE, target=POST_TARGET)
+            out['chains'] += c; out['branches'] += b
+            if not c and not b: break
+        return out
+    step('realign_after_push', _realign_after)
+    for n, k in snap_mm.items(): VES[n]['snap_mm'] = k
+    step('settle_after_realign', settle, F, VES, v_b, trees, log=log, extra_v=extra_v, extra_a=extra_a)
     step('bridges', RV.bridges, sex, VES, log=log)
     if 'error' not in review['bridges']: step('bridges_push_out', RV.settle_bridges, F, VES, list(review['bridges']), log=log)
     _dump(sex, 'post_push', VES=VES, J=J, trees=trees, contacts=contacts, review=review, pel=pel, realigned=realigned, sheath=sheath, hist=hist)

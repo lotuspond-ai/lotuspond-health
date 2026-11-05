@@ -30,6 +30,7 @@ sys.path.insert(0, HERE)
 from lib.mesh import source  # noqa: E402
 from fit import vessels_geom as G  # noqa: E402
 from fit import vessels_review as RV  # noqa: E402
+from fit.vessels_review import SUPERFICIAL  # noqa: E402
 
 IVC_CLEAR = 0.0012        # veins kept this far outside the HRA inferior vena cava's outer wall (m; the review asks >= 1 mm)
 
@@ -128,7 +129,7 @@ class MultiTube:
 
 def vessel_tube(x, step=0.004):
     """(P, R, cl) of a placed vessel: its main-trunk centreline (vessels_review.trunk) and the radius along it (median
-    vertex distance per bin, Gaussian-smoothed)."""
+    vertex distance per bin, Gaussian-smoothed, at most 1.5 x the widest end ring's)."""
     cl = RV.trunk(x['v'], x['f'])
     if cl is None: return None, None, None
     s, q, idx, Q, sQ = RV.param(x, cl)
@@ -143,6 +144,10 @@ def vessel_tube(x, step=0.004):
     sk = (np.arange(nb) + 0.5) * step
     rb = np.interp(sk, sk[ok], rb[ok])
     K = np.exp(-0.5 * ((sk[:, None] - sk[None]) / 0.006) ** 2); rb = (K @ rb) / K.sum(1)
+    # a bin whose vertices include a side branch's (or a trunk that misses a curled vessel's lumen: the cerebral
+    # arteries) reads far too wide: the radius never exceeds 1.5 x the vessel's widest end ring
+    rings = RV.end_loops(x['v'], x['f'])
+    if rings: rb = np.minimum(rb, 1.5 * max(l['r'] for l in rings))
     return cl['p'], np.interp(cl['s'], sk, rb), cl
 
 
@@ -197,94 +202,158 @@ def section_push(x, need_fn, pins, step=0.004, sigma=0.008, iters=6, extra_w=Non
     return moved
 
 
-# ------------------------------------------------------------------------------------------------ azygos route
-AZ_STEP = 0.003
-AZ_GRID = np.arange(-0.030, 0.03001, 0.0015)   # horizontal search window around a section centre (m)
-BONE_CLEAR, ORGAN_CLEAR, AORTA_CLEAR = 0.0008, 0.0003, 0.0005
+# ------------------------------------------------------------------------------------------------ smooth re-route
+RT_STEP = 0.003         # centreline bins of a re-route (m)
+RT_SMOOTH = 10.0        # weight of the squared offset change between neighbouring bins (the route bends over about 1 cm)
+RT_HARD = 1.0e4         # weight of the squared missing clearance against the squared offset (both in mm)
+RT_WINDOW = 0.040       # bins this far beyond the first / last one lacking clearance are re-routed too (m)
+BONE_CLEAR, ORGAN_CLEAR, AORTA_CLEAR, ARTERY_CLEAR = 0.0008, 0.0003, 0.0005, 0.0005
 
 
-def route_azygos(sex, VES, ivc, aorta, bones, organs, pins, contacts=(), log=print, names=('Azygos_vein',)):
-    """Sections of the azygos (and hemi-azygos) veins that lie inside the HRA inferior vena cava (with IVC_CLEAR) are
-    moved, in their horizontal plane, to the nearest position where the whole section is clear of the vena cava, the
-    HRA aorta, every bone (0.8 mm) and the solid organs (0.3 mm), preferring positions behind the vena cava's centre
-    (anterior to it lies the liver; the azygos runs on the right side of the vertebral bodies, behind the right crus):
-    a 1.5 mm grid search over +-3 cm, chosen from the top down with a continuity cost (the shift of the section above).
-    The chosen shifts are spread along the vein like the other whole-section moves (Gaussian 8 mm, so the stretch
-    above and below follows smoothly), faded at the junction rings; a vein that a moved one drains (Z-Anatomy end-ring
-    contact) follows at its contact ring, decaying over 3 cm."""
+def deficit_fn(obs, band=0.012):
+    """deficit(C (n, 3), r (n,)) -> missing clearance (n,) of the balls of radius r about C: max over [(obstacle,
+    clearance)] of r + clearance - (signed distance of C to the obstacle), floored at 0."""
+    def deficit(C, r):
+        out = np.zeros(len(C))
+        for ob, clr in obs:
+            if ob is None: continue
+            m = np.all((C >= ob.lo - band) & (C <= ob.hi + band), axis=1) if hasattr(ob, 'lo') else np.ones(len(C), bool)
+            if not m.any(): continue
+            sd = ob.query(C[m], band=band)[0] if isinstance(ob, G.Obstacles) else ob.query(C[m])[0]
+            out[m] = np.maximum(out[m], np.where(np.isfinite(sd), r[m] + clr - sd, 0.0))
+        return np.maximum(out, 0.0)
+    return deficit
+
+
+def route_dp(x, name, pins, deficit, grid, step=RT_STEP, plane='normal', prefer=None, window=RT_WINDOW, iters=2, pad=0.0004, log=print, trigger=None):
+    """Whole-section re-route of one vessel through free space (a smooth shortest path): over the centreline bins from
+    RT_WINDOW before the first to RT_WINDOW after the last bin whose section lacks clearance, every bin picks an offset
+    in its section plane (`grid` x `grid`; 'normal': the rotation-minimising frame, 'horizontal': x and z) minimising
+        sum_k |o_k|^2 + RT_HARD deficit_k(o_k)^2 (+ prefer) + RT_SMOOTH sum_k |o_k - o_k-1|^2      (mm^2)
+    by dynamic programming, where deficit is the missing clearance of the whole section (`pad` added to its radius);
+    the window's inner ends are held at 0 (continuity with the rest) and pinned bins (junction rings) strongly prefer 0.
+    The chosen offsets are smoothed over one bin and applied to the vertices by centreline parameter, times the pin
+    weights; `iters` passes. `trigger` (default: deficit) picks the bins that start a window. Returns dict(deficit before / after (mm), largest shift (mm), routed length (mm))."""
+    pv = pins.get(name, np.ones(len(x['v'])))
+    g1, g2 = np.meshgrid(grid, grid); g1 = g1.ravel(); g2 = g2.ravel(); M = len(g1)
+    out = dict(deficit_before_mm=None, deficit_after_mm=None, max_shift_mm=0.0, routed_mm=0.0)
+    v_start = x['v'].copy()
+    for it in range(iters + 1):
+        P, R, cl = vessel_tube(x, step)
+        if P is None: break
+        s, q, _, _, _ = RV.param(x, cl)
+        nb = int(np.floor(s.max() / step)) + 1
+        sk = (np.arange(nb) + 0.5) * step
+        C = np.stack([np.interp(sk, cl['s'], cl['p'][:, a]) for a in range(3)], 1)
+        Rk = np.interp(sk, cl['s'], R)
+        b = np.minimum(np.floor(s / step).astype(int), nb - 1)
+        pk = np.ones(nb); np.minimum.at(pk, b, pv)
+        d0 = deficit(C, Rk)
+        if out['deficit_before_mm'] is None: out['deficit_before_mm'] = r2(d0.max() * 1000, 1)
+        out['deficit_after_mm'] = r2(d0.max() * 1000, 1)
+        bad = np.flatnonzero((d0 if trigger is None else trigger(C, Rk)) > 2e-4)
+        if it == iters or not len(bad): break
+        wk = int(round(window / step))
+        lo = max(0, bad.min() - wk); hi = min(nb, bad.max() + wk + 1); ks = np.arange(lo, hi); nk = len(ks)
+        if plane == 'horizontal':
+            U = np.tile([1.0, 0, 0], (nb, 1)); Wv = np.tile([0, 0, 1.0], (nb, 1))
+        else:
+            U, Wv = RV.rmf(C, G.unit(np.gradient(C, axis=0)))
+        OFF = g1[None, :, None] * U[ks][:, None, :] + g2[None, :, None] * Wv[ks][:, None, :]
+        dfc = deficit((C[ks][:, None, :] + OFF).reshape(-1, 3), np.repeat(Rk[ks] + pad, M)).reshape(nk, M)
+        o2 = (np.linalg.norm(OFF, axis=2) * 1000) ** 2
+        un = o2 * (1.0 + 100.0 * (1.0 - pk[ks]))[:, None] + RT_HARD * (dfc * 1000) ** 2
+        if prefer is not None: un = un + prefer(C[ks], OFF)
+        if lo > 0: un[0] += 100.0 * o2[0]
+        if hi < nb: un[-1] += 100.0 * o2[-1]
+        cost = un[0].copy(); back = np.zeros((nk, M), int)
+        for k in range(1, nk):
+            D2 = (((OFF[k][:, None, :] - OFF[k - 1][None, :, :]) * 1000) ** 2).sum(-1)
+            tot = cost[None, :] + RT_SMOOTH * D2
+            j = np.argmin(tot, axis=1); back[k] = j
+            cost = un[k] + tot[np.arange(M), j]
+        sel = np.zeros(nk, int); sel[-1] = int(np.argmin(cost))
+        for k in range(nk - 1, 0, -1): sel[k - 1] = back[k, sel[k]]
+        vec = np.zeros((nb, 3)); vec[ks] = OFF[np.arange(nk), sel]
+        Kb = np.exp(-0.5 * ((sk[:, None] - sk[None]) / step) ** 2); vec = (Kb @ vec) / Kb.sum(1)[:, None]
+        dv = np.stack([np.interp(s, sk, vec[:, a]) for a in range(3)], 1) * pv[:, None]
+        x['v'] = x['v'] + dv
+        out['routed_mm'] = max(out['routed_mm'], r2((hi - lo) * step * 1000, 0))
+    out['max_shift_mm'] = r2(np.linalg.norm(x['v'] - v_start, axis=1).max() * 1000, 1)
+    return out
+
+
+def follow_partners(VES, n, v0, contacts, pins, skip=(), log=print):
+    """Veins draining into vessel n at a Z-Anatomy end-ring contact follow its displacement at the contact ring,
+    decaying along them over 3 cm (geodesic). Returns {partner: shift at the ring (mm)}."""
+    x = VES[n]; dv = x['v'] - v0
+    follow = {}
+    tv = cKDTree(v0)
+    for a, ia, b_, ib in contacts:
+        if b_ != n or a not in VES or a in skip or not VES[a]['placed'] or VES[a].get('dropped'): continue
+        y = VES[a]; ring = np.asarray(ia)
+        if y.get('orig_index') is not None:
+            inv = -np.ones(int(max(y['orig_index'].max(), ring.max())) + 1, int); ok_ = y['orig_index'] >= 0
+            inv[y['orig_index'][ok_]] = np.flatnonzero(ok_); ring = inv[ring]; ring = ring[ring >= 0]
+        if not len(ring): continue
+        dd, ii = tv.query(y['v'][ring])
+        if dd.min() > 0.004: continue
+        sh = dv[ii].mean(0)
+        if np.linalg.norm(sh) < 2e-4: continue
+        gdist = G.geodesic(G.graph(y['v'], y['f']), ring.tolist(), limit=0.04)
+        w = RV.raised(np.where(np.isfinite(gdist), gdist, 1.0) / 0.030) * pins.get(a, np.ones(len(y['v'])))
+        y['v'] = y['v'] + w[:, None] * sh
+        follow[a] = r2(np.linalg.norm(sh) * 1000, 1)
+    return follow
+
+
+AZ_GRID = np.arange(-0.027, 0.02701, 0.0018)   # azygos offsets in the horizontal plane (m)
+
+
+def route_azygos(sex, VES, ivc, aorta, bones, organs, pins, contacts=(), log=print, names=('Azygos_vein', 'Hemi-azygos_vein'), arteries=None):
+    """The azygos (and hemi-azygos) veins re-routed out of the HRA inferior vena cava (IVC_CLEAR), the HRA aorta (0.5 mm),
+    the bones (0.8 mm), the solid organs (0.3 mm) and the placed arteries (0.5 mm) by route_dp in the horizontal plane,
+    with a penalty on lying in front of the vena cava's centre at the same height (anterior to it lie the liver and the
+    caudate lobe; the azygos ascends behind it, on the right side of the vertebral bodies, behind the right crus). A vein
+    that a moved one drains (Z-Anatomy end-ring contact) follows at its contact ring, decaying over 3 cm."""
     out = {}
     if ivc is None: return out
-    g = AZ_GRID; DX, DZ = np.meshgrid(g, g)
-    OFF = np.stack([DX.ravel(), np.zeros(DX.size), DZ.ravel()], 1)
+    order = np.argsort(ivc.P[:, 1]); iy, iz = ivc.P[order, 1], ivc.P[order, 2]
+    deficit = deficit_fn([(ivc, IVC_CLEAR), (aorta, AORTA_CLEAR), (bones, BONE_CLEAR), (organs, ORGAN_CLEAR), (arteries, ARTERY_CLEAR)])
+
+    def prefer(C, OFF):
+        z = np.interp(C[:, 1], iy, iz)
+        front = np.maximum(0.0, (C[:, None, 2] + OFF[:, :, 2]) - z[:, None]) * 1000
+        near = np.interp(C[:, 1], iy, np.ones(len(iy)), left=0.0, right=0.0)   # only alongside the vena cava
+        return (2.0 * front) ** 2 * near[:, None]
     for n in names:
         x = VES.get(n)
         if x is None or not x['placed'] or x.get('dropped'): continue
-        x['_name'] = n
-        P, R, cl = vessel_tube(x, step=AZ_STEP)
-        if P is None: continue
-        s, q, _, _, _ = RV.param(x, cl)
-        nb = int(np.floor(s.max() / AZ_STEP)) + 1
-        sk = (np.arange(nb) + 0.5) * AZ_STEP
-        C = np.stack([np.interp(sk, cl['s'], cl['p'][:, a]) for a in range(3)], 1)
-        Rk = np.interp(sk, cl['s'], R)
-        sdc, _, _ = ivc.query(C)
-        need = Rk + IVC_CLEAR - sdc
-        bad = np.flatnonzero(need > 1e-4)
         d0 = float(max(0.0, -(np.min(ivc.query(x['v'])[0]))))
-        if not len(bad):
-            out[n] = dict(depth_before_mm=r2(d0 * 1000, 1), moved_mm=0.0); continue
-        # IVC centre z at each section's height (prefer behind it)
-        iz = np.interp(C[bad, 1], ivc.P[np.argsort(ivc.P[:, 1]), 1], ivc.P[np.argsort(ivc.P[:, 1]), 2])
-        cand = (C[bad][:, None, :] + OFF[None]).reshape(-1, 3)
-        r_ = np.repeat(Rk[bad], len(OFF))
-        ok = ivc.query(cand)[0] >= r_ + IVC_CLEAR
-        ok &= aorta.query(cand)[0] >= r_ + AORTA_CLEAR
-        sb = np.full(len(cand), np.inf); m = ok.copy()
-        sb[m] = bones.query(cand[m])[0]; ok &= sb >= r_ + BONE_CLEAR + 0.0002
-        if organs is not None:
-            so = np.full(len(cand), np.inf); m = ok.copy()
-            so[m] = organs.query(cand[m])[0]; ok &= so >= r_ + ORGAN_CLEAR + 0.0002
-        ok = ok.reshape(len(bad), len(OFF))
-        vec = np.zeros((nb, 3)); prev = None; unresolved = 0
-        for kk in np.argsort(-C[bad, 1]):           # from the top down
-            k = bad[kk]
-            if not ok[kk].any(): unresolved += 1; continue
-            front = np.maximum(0.0, (C[k, 2] + OFF[:, 2]) - iz[kk])
-            cost = np.linalg.norm(OFF, axis=1) + 2.0 * front + (0.7 * np.linalg.norm(OFF - prev, axis=1) if prev is not None else 0.0)
-            cost[~ok[kk]] = np.inf
-            b = int(np.argmin(cost)); vec[k] = OFF[b]; prev = OFF[b]
-        mag = np.linalg.norm(vec, axis=1)
-        K = np.exp(-0.5 * ((sk[:, None] - sk[None]) / 0.008) ** 2)
-        W = K * mag[None]; den = W.sum(1); kmax = (K * (mag[None] > 1e-6)).max(1)
-        fld = np.where((den > 0)[:, None], kmax[:, None] * (W @ vec) / np.maximum(den, 1e-12)[:, None], 0.0)
         v0 = x['v'].copy()
-        dv = np.stack([np.interp(s, sk, fld[:, a]) for a in range(3)], 1) * pins.get(n, np.ones(len(x['v'])))[:, None]
-        x['v'] = x['v'] + dv
-        # partners draining into it at an end-ring contact follow at the contact, decaying along them over 3 cm
-        follow = {}
-        tv = cKDTree(v0)
-        for a, ia, b_, ib in contacts:
-            # (child, child's ring (original indices), partner, ...): a vein whose end ring lies on this one
-            if b_ != n or a not in VES or a in names or not VES[a]['placed'] or VES[a].get('dropped'): continue
-            other = a; y = VES[other]
-            ring = np.asarray(ia)
-            if y.get('orig_index') is not None:
-                inv = -np.ones(int(max(y['orig_index'].max(), ring.max())) + 1, int); ok_ = y['orig_index'] >= 0
-                inv[y['orig_index'][ok_]] = np.flatnonzero(ok_); ring = inv[ring]; ring = ring[ring >= 0]
-            if not len(ring): continue
-            if True:
-                dd, ii = tv.query(y['v'][ring])
-                if dd.min() > 0.004: continue
-                sh = dv[ii].mean(0)
-                if np.linalg.norm(sh) < 2e-4: continue
-                gdist = G.geodesic(G.graph(y['v'], y['f']), ring.tolist(), limit=0.04)
-                w = RV.raised(np.where(np.isfinite(gdist), gdist, 1.0) / 0.030) * pins.get(other, np.ones(len(y['v'])))
-                y['v'] = y['v'] + w[:, None] * sh
-                follow[other] = r2(np.linalg.norm(sh) * 1000, 1)
+        r = route_dp(x, n, pins, deficit, AZ_GRID, plane='horizontal', prefer=prefer, iters=3, log=log, trigger=deficit_fn([(ivc, IVC_CLEAR)]))
+        fol = follow_partners(VES, n, v0, contacts, pins, skip=names, log=log)
         d1 = float(max(0.0, -(np.min(ivc.query(x['v'])[0]))))
-        out[n] = dict(depth_before_mm=r2(d0 * 1000, 1), depth_after_mm=r2(d1 * 1000, 1), sections_moved=int(len(bad)), unresolved_sections=unresolved,
-                      max_shift_mm=r2(np.linalg.norm(dv, axis=1).max() * 1000, 1), y_range=[r2(C[bad, 1].min(), 3), r2(C[bad, 1].max(), 3)], partners_followed_mm=follow)
+        out[n] = dict(depth_in_ivc_before_mm=r2(d0 * 1000, 1), depth_in_ivc_after_mm=r2(d1 * 1000, 1), partners_followed_mm=fol, **r)
         log(f'  azygos route {n}: {out[n]}')
+    return out
+
+
+VEIN_GRID = np.arange(-0.015, 0.01501, 0.001)   # section offsets of a re-routed neck vein (m)
+
+
+def route_veins(sex, VES, names, bones, organs, pins, aorta=None, arteries=None, log=print):
+    """Veins whose course the deformation lays through a bone (the subclavian vein through the first rib, under the
+    clavicle) are re-routed by whole sections (route_dp in each section's plane) to the nearest smooth course clear of
+    the bones (0.8 mm), the solid organs and lung lobes (0.3 mm), the HRA aorta and the placed arteries (0.5 mm), so
+    the push-out does not have to split the tube around the bone into a flat sheet."""
+    out = {}
+    deficit = deficit_fn([(bones, BONE_CLEAR), (organs, ORGAN_CLEAR), (aorta, AORTA_CLEAR), (arteries, ARTERY_CLEAR)])
+    for n in names:
+        x = VES.get(n)
+        if x is None or not x['placed'] or x.get('dropped'): continue
+        out[n] = route_dp(x, n, pins, deficit, VEIN_GRID, plane='normal', iters=2, log=log)
+        log(f'  vein route {n}: {out[n]}')
     return out
 
 
@@ -304,12 +373,17 @@ def _tube_need(obst, clear):
 def separate(sex, VES, pins, log=print, clear=SEP_CLEAR, hra_tubes=None):
     """Companion separation by whole cross-sections (section_push, tube against tube: a section of radius r centred at
     c yields until r + clear <= its centre's distance to the other vessel's wall), in this order:
-     1. sibling arteries that leave a common origin (end rings within SIB_NEAR of each other: external / internal carotid,
-        external / internal iliac, a branch from its parent's side): the smaller yields to the larger beyond one radius
+     1. sibling arteries that leave a common origin (end rings within SIB_NEAR of each other and leaving them on the same
+        side, i.e. not a continuation: external / internal carotid, external / internal iliac, a branch from its
+        parent's side): the smaller yields to the larger beyond one radius
         of the larger from its origin ring (weight 0 up to that, raised-cosine ramp over one more radius); equal ones
         (radii within 15 %) both yield, half each;
      2. Z-Anatomy arteries yield to the HRA veins (marched outer-wall tubes, hra_vein_tubes);
-     3. Z-Anatomy veins yield to the Z-Anatomy arteries (their tubes after 1-2).
+     3. Z-Anatomy veins yield to the Z-Anatomy arteries (their tubes after 1-2), the superficial veins excepted (they are
+        placed by their depth under the skin);
+     4. where a vein is held (`pins` < 1 near its junction ring: the stretch its junction angle is measured on), the
+        artery beside it yields to it instead.
+    `pins`: per-vessel vertex weights of the moves (0 where a vessel must not move).
     Returns (info, artery MultiTube, HRA vein MultiTube) for the push-out's extra obstacles."""
     names = [n for n, x in VES.items() if x['placed'] and not x.get('dropped')]
     for n in names: VES[n]['_name'] = n
@@ -341,6 +415,12 @@ def separate(sex, VES, pins, log=print, clear=SEP_CLEAR, hra_tubes=None):
                         sd, _, _ = tob[other].query(l['c'][None])
                         if sd[0] < 0.5 * l['r'] and (best is None or sd[0] < best[0]):
                             best = (float(sd[0]), l if me == a else None, l if me == b else None)
+            if best is not None and best[1] is not None and best[2] is not None:
+                # a continuation (one's distal ring on the other's proximal ring: the subclavian into the axillary
+                # artery) is not a common origin: the two leave the shared ring in opposite directions
+                ua = G.unit(VES[a]['v'][np.linalg.norm(VES[a]['v'] - best[1]['c'], axis=1) < 0.015].mean(0) - best[1]['c'])
+                ub = G.unit(VES[b]['v'][np.linalg.norm(VES[b]['v'] - best[2]['c'], axis=1) < 0.015].mean(0) - best[2]['c'])
+                if float(ua @ ub) < 0.0: continue
             if best is not None: pairs.append((a, b, best[1], best[2]))
     for a, b, la, lb in pairs:
         ra = float(np.median(tubes[a][1])); rb = float(np.median(tubes[b][1]))
@@ -384,6 +464,7 @@ def separate(sex, VES, pins, log=print, clear=SEP_CLEAR, hra_tubes=None):
     # ---- 3. veins out of the arteries
     AT = MultiTube([(n, P, R) for n, (P, R, cl) in tubes.items() if P is not None])
     for n in veins:
+        if n.startswith(SUPERFICIAL): continue      # placed by depth under the skin (vessels_review.superficial_layer)
         x = VES[n]
         P, R, cl = vessel_tube(x)
         if P is None: continue
@@ -396,6 +477,35 @@ def separate(sex, VES, pins, log=print, clear=SEP_CLEAR, hra_tubes=None):
         d1 = float(max(0.0, (R1 + clear - AT.query(P1)[0]).max() - clear)) if P1 is not None else None
         info['veins_from_arteries'][n] = dict(overlap_before_mm=r2(d0 * 1000, 1), overlap_after_mm=r2(d1 * 1000, 1) if d1 is not None else None,
                                               max_shift_mm=r2(mv * 1000, 1))
+    # ---- 4. where a vein is held near its junction ring (weight < 1: the stretch its junction angle is measured on) the
+    # artery beside it yields instead (the femoral artery at the femoral vein's junction with the HRA external iliac vein)
+    held = []
+    for n in veins:
+        if n.startswith(SUPERFICIAL): continue
+        w = pins.get(n)
+        if w is None or w.min() > 0.99: continue
+        P, R, cl = vessel_tube(VES[n])
+        if P is None: continue
+        keep = w[cKDTree(VES[n]['v']).query(P)[1]] < 0.99
+        cut = np.flatnonzero(np.diff(keep.astype(int))) + 1
+        for run in np.split(np.arange(len(P)), cut):
+            if keep[run[0]] and len(run) >= 2: held.append((n, P[run], R[run]))
+    info['arteries_from_held_veins'] = {}
+    if held:
+        VT = MultiTube(held)
+        for n in arts:
+            x = VES[n]
+            if not np.any(np.all((x['v'] >= VT.lo) & (x['v'] <= VT.hi), axis=1)): continue
+            P, R, cl = vessel_tube(x)
+            if P is None: continue
+            sd = VT.query(P)[0]
+            if (R + clear - sd).max() <= 1e-4: continue
+            d0 = float(max(0.0, (R + clear - sd).max() - clear))
+            mv = section_push(x, _tube_need(VT, clear), pins)
+            P1, R1, _ = vessel_tube(x)
+            d1 = float(max(0.0, (R1 + clear - VT.query(P1)[0]).max() - clear)) if P1 is not None else None
+            info['arteries_from_held_veins'][n] = dict(overlap_before_mm=r2(d0 * 1000, 1), overlap_after_mm=r2(d1 * 1000, 1) if d1 is not None else None,
+                                                       max_shift_mm=r2(mv * 1000, 1))
     for k in info:
         if info[k]: log(f'  separation {k}: ' + ', '.join(f'{a} {b.get("depth_before_mm", b.get("overlap_before_mm"))}->{b.get("depth_after_mm", b.get("overlap_after_mm"))} mm' for a, b in info[k].items()))
     AT = MultiTube([(n, *vessel_tube(VES[n])[:2]) for n in arts])

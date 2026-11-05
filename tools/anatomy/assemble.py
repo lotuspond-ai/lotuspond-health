@@ -112,8 +112,13 @@ INFLATE = {
 TRIM = [('colon', r'_hepatic_flexure_of_colon$', r'_(ascending|transverse)_colon$', 0.0003),
         ('colon', r'_splenic_flexure_of_colon$', r'_(transverse|descending)_colon$', 0.0003),
         ('heart', r'^VH_F_interventricular_septum$', r'^VH_F_(left|right)_ventricle$', 0.00005)]
-# renal veins whose HRA mesh stops short of the hilum (open stumps 21-31 mm medial to the female left kidney)
-RENAL_VEIN_EXTEND = {'female': [('VH_F_left_renal_vein', 'kidneys_L')]}
+# renal vessels whose HRA mesh stops short of the hilum, in open lateral stumps: the female left renal vein 21-31 mm
+# medial to the kidney, the male left renal vein 10-12 mm and right 2-6 mm, the male artery of the left kidney (HRA
+# 'right', renamed by SIDE_SWAP) 0.8-3.3 mm. (part, structure, radius the tube ends at, None: the stump's own); the
+# kidney is the nearer one.
+RENAL_EXTEND = {'female': [('veins', 'VH_F_left_renal_vein', 0.00475)],
+                'male': [('veins', 'VH_M_renal_vein_L', None), ('veins', 'VH_M_renal_vein_R', None), ('arteries', 'VH_M_right_renal_artery', None),
+                         ('arteries', 'VH_M_left_renal_artery', None)]}
 
 
 def frame_offset(sex):
@@ -193,17 +198,74 @@ def inflate_tube(v, f, size, fade=None, length=0.0, step=0.002):
     return v2, r0, r0 * k
 
 
+JOIN_FALLOFF = 0.012  # m: length over which a junction's snap fades into each vessel
+
+
+def inflation(sex, s):
+    """The INFLATE vessels inflated, with their junctions kept closed: the HRA vessels and ducts share rings of vertices
+    where they join (the aorta's pieces, a branch's origin on its trunk's wall), and every vertex of a shared ring takes
+    one displacement, the mean of the inflated structures' displacements there weighted by their cross-sections (the two
+    pieces of the aorta meet half-way, an inflated trunk carries the root of a branch, inflated or not, outwards with its
+    wall), blended into each structure that shares the ring with a smoothstep over
+    JOIN_FALLOFF of its distance to the ring. Returns {name: ((v, f), r0, r1)} for the inflated vessels and the neighbours
+    moved, and {name: max junction mismatch (mm) before the snap}."""
+    from scipy.spatial import cKDTree
+    key = ('_all', sex)
+    if key in _INFL: return _INFL[key]
+    spec = INFLATE.get(sex, {})
+    idx = {o['name']: o for o in s.index}
+    raw = {n: s.load_entry(idx[n]) for n in spec if n in idx}
+    new = {}
+    for n, m in raw.items():
+        v2, r0, r1 = inflate_tube(m[0], m[1], *spec[n]); new[n] = (v2, r0, r1)
+    # neighbours sharing raw vertices with an inflated vessel (vessels and ducts only)
+    cand = [o for o in s.index if o['name'] not in raw and re.search(r'(blood_vasculature|duct|biliary|bile|ampulla)', o['path'])]
+    trees = {n: cKDTree(m[0]) for n, m in raw.items()}
+    base = list(raw)
+    for o in cand:
+        v = None
+        for n in base:
+            m = raw[n]; lo, hi = m[0].min(0) - 0.002, m[0].max(0) + 0.002
+            if v is None: v = s.load_entry(o)[0]
+            if not np.any(np.all((v > lo) & (v < hi), axis=1)): continue
+            if np.any(trees[n].query(v, distance_upper_bound=1e-6)[0] < 1e-6):
+                raw[o['name']] = s.load_entry(o); new[o['name']] = (raw[o['name']][0].copy(), None, None); break
+    # consensus displacement of every shared position
+    names = list(raw); disp = {n: new[n][0] - raw[n][0] for n in names}
+    allv = np.concatenate([raw[n][0] for n in names]); own = np.concatenate([np.full(len(raw[n][0]), i) for i, n in enumerate(names)])
+    D = np.concatenate([disp[n] for n in names]); infl = np.array([(new[n][2] or 0.0) ** 2 if n in spec else 0.0 for n in names])[own]
+    from scipy import sparse
+    from scipy.sparse.csgraph import connected_components
+    pr = cKDTree(allv).query_pairs(1e-6, output_type='ndarray')  # positions within 1 um are one vertex of a shared ring
+    _, grp = connected_components(sparse.coo_matrix((np.ones(len(pr)), (pr[:, 0], pr[:, 1])), shape=(len(allv), len(allv))), directed=False)
+    nstr = np.zeros(grp.max() + 1, int); np.add.at(nstr, grp, 1)
+    shared = nstr[grp] > 1
+    wsum = np.zeros(grp.max() + 1); np.add.at(wsum, grp, infl)
+    dsum = np.zeros((grp.max() + 1, 3)); np.add.at(dsum, grp, D * infl[:, None])
+    cons = dsum / np.maximum(wsum, 1e-30)[:, None]
+    mism = {}
+    o0 = 0
+    for i, n in enumerate(names):
+        k = len(raw[n][0]); sl = slice(o0, o0 + k); o0 += k
+        sh = np.flatnonzero(shared[sl])
+        if not len(sh): continue
+        corr = cons[grp[sl][sh]] - disp[n][sh]
+        mism[n] = round(float(np.linalg.norm(corr, axis=1).max()) * 1000, 2)
+        d, j = cKDTree(raw[n][0][sh]).query(raw[n][0])
+        w = 1 - _smooth01(d / JOIN_FALLOFF)
+        new[n] = (new[n][0] + w[:, None] * corr[j], new[n][1], new[n][2])
+    out = {n: ((new[n][0], raw[n][1]), new[n][1], new[n][2]) for n in names}
+    _INFL[key] = (out, mism)
+    return _INFL[key]
+
+
 _INFL = {}
 def load_hra(sex, s, o):
-    """An HRA mesh as stored, or inflated (INFLATE)."""
-    m = s.load_entry(o)
-    spec = INFLATE.get(sex, {}).get(o['name'])
-    if spec is None: return m
-    key = (sex, o['name'])
-    if key not in _INFL:
-        v2, r0, r1 = inflate_tube(m[0], m[1], *spec)
-        _INFL[key] = ((v2, m[1]), r0, r1)
-    return _INFL[key][0]
+    """An HRA mesh as stored, or inflated (INFLATE) or moved with an inflated vessel's junction (inflation)."""
+    if not INFLATE.get(sex): return s.load_entry(o)
+    out, _ = inflation(sex, s)
+    if o['name'] in out: return out[o['name']][0]
+    return s.load_entry(o)
 
 
 SOLIDS = {}  # (sex, structure) -> mean thickness 2 V / A (m) and the membrane closing of each rebuilt solid
@@ -451,18 +513,21 @@ def sweep_tube(c0, a0, r0, c1, a1, r1, K=32, J=16):
     return V, orient_exact(V, F)
 
 
-def renal_vein_extension(vein, kidney):
-    """Swept tubes continuing a renal vein's open lateral stumps into the kidney's hilum. A stump is a border loop (or the
-    inner and outer wall loops of a double-walled one) whose centre lies 5-40 mm from the kidney; each tube starts 3 mm
-    back inside the vein along its axis, just inside the stump's outer wall, follows the vein's axis and turns into the
-    kidney at the nearest point of the hilum's surface, tapering to 9.5 mm across, and ends 4 mm inside the kidney.
-    Returns [(v, f)] and per stump the gap closed (mm)."""
+def renal_vein_extension(vein, kidney, end_r=0.00475, lo=0.0015, hi=0.04):
+    """Swept tubes continuing a renal vessel's open lateral stumps into the kidney's hilum. A stump is a border loop (or
+    the inner and outer wall loops of a double-walled one) whose centre lies lo-hi from the kidney and within 15 mm of
+    the vessel's nearest approach to it (its lateral end, not a tributary's opening), outside the kidney; each tube starts 3 mm back inside
+    the vessel along its axis, just inside the stump's outer wall, follows the vessel's axis and turns into the kidney at
+    the nearest point of the hilum's surface, tapering to end_r (None: the stump's own radius), and ends 4 mm inside the
+    kidney. Returns [(v, f)] and per stump the gap closed (mm)."""
     v, f = vein; kv, kf = kidney
     loops = [(v[L].mean(0), float(np.linalg.norm(v[L] - v[L].mean(0), axis=1).mean()), L) for L in border_loops(f)]
     _, dk = closest_on_mesh(kv, kf, np.array([c for c, _, _ in loops]), k=16) if loops else (None, [])
+    _, dv = closest_on_mesh(kv, kf, v[::max(1, len(v) // 4000)], k=16)
+    inside = RayParity(kv, kf).inside(np.array([c for c, _, _ in loops])) if loops else []
     stumps = []
-    for (c, r, L), d in zip(loops, dk):
-        if not (0.005 < d < 0.04) or r < 0.002: continue
+    for (c, r, L), d, ins in zip(loops, dk, inside):
+        if ins or not (lo < d < hi) or r < 0.0008 or d > dv.min() + 0.015: continue
         for st in stumps:
             if np.linalg.norm(st['c'] - c) < 0.003:
                 if r > st['r']: st.update(c=c, r=r)
@@ -478,7 +543,7 @@ def renal_vein_extension(vein, kidney):
         a1 = (q - c) / np.linalg.norm(q - c)
         a1 = a1 + 0.5 * a0; a1 /= np.linalg.norm(a1)
         c0 = c - 0.003 * a0; c1 = q + 0.004 * a1
-        out.append(sweep_tube(c0, a0, r - 0.00025, c1, a1, 0.00475))
+        out.append(sweep_tube(c0, a0, r - 0.00025, c1, a1, end_r if end_r else r - 0.00025))
         gaps.append(round(float(dq[0]) * 1000, 1))
     return out, gaps
 
@@ -501,8 +566,11 @@ LANDMARK_V = {}  # (sex, structure) -> vertices of a trimmed structure before tr
 def repairs(sex, acc, off, log):
     """Fixes between structures of different parts, in the HRA frame (before the floor shift)."""
     # vessels and ducts inflated when loaded (load_hra)
-    for (sx, n), (_, r0, r1) in _INFL.items():
-        if sx == sex and r0 is not None: log.setdefault('inflated_radius_mm', {})[n] = dict(before=round(r0 * 1000, 2), after=round(r1 * 1000, 2))
+    if ('_all', sex) in _INFL:
+        out, mism = _INFL[('_all', sex)]
+        for n, (_, r0, r1) in out.items():
+            if r0 is not None: log.setdefault('inflated_radius_mm', {})[n] = dict(before=round(r0 * 1000, 2), after=round(r1 * 1000, 2))
+        log['inflation_junctions_snapped_mm'] = mism  # largest mismatch an independent inflation left at each shared ring
     # faces that repeat a neighbour's wall
     for part, rx, nrx, dist in TRIM:
         items = acc.get(part, [])
@@ -515,15 +583,17 @@ def repairs(sex, acc, off, log):
             items[i] = (src, n, m2, dbl, paths)  # a structure trimmed away entirely is dropped below (its landmark stays)
             log.setdefault('trimmed_coincident', {})[n] = dict(area_dropped=round(frac, 3), within_mm=dist * 1000, faces_left=int(len(m2[1])), faces_before=int(len(m[1])))
         acc[part] = [it for it in items if len(it[2][1]) >= 10] if part in acc else items
-    # renal veins that stop short of the hilum
-    for vname, kname in RENAL_VEIN_EXTEND.get(sex, []):
-        vi = [(i, m) for i, (_, n, m, _, _) in enumerate(acc.get('veins', [])) if n == vname]
-        km = [m for _, n, m, _, _ in acc.get('kidneys', []) if n == kname]
-        if not vi or not km: continue
-        tubes, gaps = renal_vein_extension(vi[0][1], km[0])
+    # renal vessels that stop short of the hilum
+    kid = {n: m for _, n, m, _, _ in acc.get('kidneys', [])}
+    for part, vname, end_r in RENAL_EXTEND.get(sex, []):
+        vi = [m for _, n, m, _, _ in acc.get(part, []) if n == vname]
+        if not vi or not kid: continue
+        kname = min(kid, key=lambda k: float(closest_on_mesh(*kid[k], vi[0][0][::max(1, len(vi[0][0]) // 2000)], k=16)[1].min()))
+        tubes, gaps = renal_vein_extension(vi[0], kid[kname], end_r=end_r)
+        base = vname if part == 'veins' else f'VH_{sex[0].upper()}_renal_artery_{kname[-1]}'  # the artery's L/R name is swapped later
         for j, t in enumerate(tubes):
-            acc['veins'].append(('HRA', f'{vname}_hilar_{"ab"[j] if j < 2 else j}', t, False, [f'derived:{vname} stump {j} swept to the hilum']))
-        log.setdefault('renal_vein_extended', {})[vname] = dict(stumps=len(tubes), gap_closed_mm=gaps)
+            acc[part].append(('HRA', f'{base}_hilar_{"abcd"[j] if j < 4 else j}', t, False, [f'derived:{vname} stump {j} swept to the hilum of {kname}']))
+        log.setdefault('renal_vessel_extended', {})[vname] = dict(kidney=kname, stumps=len(tubes), gap_closed_mm=gaps)
     # spinal cord to medulla
     cord = {n: m for _, n, m, _, _ in acc.get('spinal_cord', [])}
     med = [m for _, n, m, _, _ in acc.get('brain', []) if re.search(r'^Allen_(tegmentum|pyramidal_part)_of_medulla_oblongata_[LR]$', n)]
@@ -689,9 +759,10 @@ LANDMARKS = {
               ('Common bile duct', r'^common_bile_duct$', 'front')],
     'stomach': [('Fundus', 'part:stomach', 'top'), ('Body', 'part:stomach', 'face'), ('Greater curvature', 'part:stomach', 'dir:0.7,-0.6,0.3'),
                 ('Pylorus', 'part:stomach', 'right')],
-    # the splenic artery runs along the upper border of the pancreas, the vein behind it: different rules keep the two
-    # labels apart (the female's 'face' points were 1.5 mm apart)
-    'spleen': [('Hilum', r'^hilum_of_spleen$', 'face'), ('Splenic artery', r'^splenic_artery$', 'top'), ('Splenic vein', r'^splenic_vein$', 'back')],
+    # the splenic artery runs along the upper border of the pancreas, the vein behind it: the artery is labelled at its
+    # highest point, the vein where it faces the view (the female's two 'face' points were 1.5 mm apart, 'top' and 'back'
+    # 5.7 mm; these are 65 mm (female) and 79 mm (male) apart)
+    'spleen': [('Hilum', r'^hilum_of_spleen$', 'face'), ('Splenic artery', r'^splenic_artery$', 'top'), ('Splenic vein', r'^splenic_vein$', 'face')],
     'pancreas': [('Head', r'^head_of_pancreas$', 'face'), ('Neck', r'^neck_of_pancreas$', 'face'), ('Body', r'^body_of_pancreas$', 'face'), ('Tail', r'^tail_of_pancreas$', 'left'),
                  ('Uncinate process', r'^(uncinate_process_of_the_pancreas|ucinate_process1)$', 'bottom'), ('Pancreatic duct', r'^ventral_pancreatic_duct$', 'face')],
     'kidneys': [('Renal cortex', 'part:kidneys', 'face'), ('Medullary pyramids', r'^renal_pyramid_L_a$', 'face'), ('Renal pelvis', r'^renal_pelvis_L$', 'face'),

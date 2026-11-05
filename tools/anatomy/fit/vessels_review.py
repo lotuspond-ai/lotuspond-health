@@ -417,12 +417,14 @@ def pelvic_calibres(sex, VES, J, aorta_tube=None, log=print):
 RR_END = 0.020     # re-round: falloff of an end ring's re-snap (m)
 
 
-def reround(VES, names, J, log=print, smooth_iters=12):
+def reround(VES, names, J, log=print, smooth_iters=12, only_crushed=None):
     """Re-sweep crushed veins as round tubes about their main-trunk centrelines, keeping vertices and faces: each vertex
     goes to the circle of the Z-Anatomy radius at its centreline parameter (the Z-Anatomy vertex's distance to the
     Z-Anatomy centreline, binned and smoothed along the vessel), at its own angle about the centreline (rotation-
     minimising frame); the angles are then evened out by a few rounds of neighbour averaging on the circle. The end ring
-    at a junction keeps its centre (the centreline starts there)."""
+    at a junction keeps its centre (the centreline starts there). A re-sweep is kept only where it makes the sections
+    rounder (p90 and max aspect 1 cm in from the ends, as measured); `only_crushed` (p90, max) re-sweeps only veins
+    whose sections exceed either (after the push-out: a vein the re-route kept round is left as it is)."""
     out = {}
     for n in names:
         x = VES.get(n)
@@ -470,6 +472,14 @@ def reround(VES, names, J, log=print, smooth_iters=12):
             e = e + 0.5 * ((A_ @ e) / deg[:, None] - e)
             e = G.unit(e - np.einsum('ij,ij->i', e, T[idx])[:, None] * T[idx])
         before = calibre_profile(x['v'], x['f'], cl)
+
+        def p90max(rows):
+            a = [p['aspect'] for p in rows if 0.01 < p['s'] < cl['s'][-1] - 0.01]
+            return (float(np.quantile(a, 0.9)), float(max(a))) if a else (None, None)
+        pb, mb = p90max(before)
+        if only_crushed is not None and pb is not None and pb <= only_crushed[0] and mb <= only_crushed[1]:
+            out[n] = dict(skipped='round already', p90_aspect=r2(pb, 2), max_aspect=r2(mb, 2))
+            log(f'  re-round {n}: round already (p90 / max section aspect {pb:.2f} / {mb:.2f})'); continue
         v_old = x['v'].copy()
         x['v'] = q + r_v[:, None] * e
         # the end rings keep their centres (continuity with what they join; a chain junction's ring goes back onto the
@@ -485,6 +495,14 @@ def reround(VES, names, J, log=print, smooth_iters=12):
             x['v'] = x['v'] + raised(np.abs(s - s_l) / RR_END)[:, None] * dc
             snapped.append(r2(np.linalg.norm(dc) * 1000, 1))
         after = calibre_profile(x['v'], x['f'], cl)
+        # kept only where it makes the sections rounder (1 cm in from the ends, as measured): a short vein whose upper
+        # end is a confluence (the female right brachiocephalic) is not a single tube there
+        pa, ma = p90max(after)
+        if pb is not None and pa is not None and (pa > pb or ma > 1.1 * max(mb, 2.0)):
+            x['v'] = v_old
+            out[n] = dict(reverted=True, p90_max_aspect_before=[r2(pb, 2), r2(mb, 2)], p90_max_aspect_would_be=[r2(pa, 2), r2(ma, 2)])
+            log(f'  re-round {n}: not kept (p90 / max section aspect {pb:.2f} / {mb:.2f} -> {pa:.2f} / {ma:.2f})')
+            continue
         out[n] = dict(max_aspect_before=r2(max(p['aspect'] for p in before), 2) if before else None,
                       max_aspect_after=r2(max(p['aspect'] for p in after), 2) if after else None,
                       max_width_before_mm=r2(max(p['width'] for p in before) * 1000, 1) if before else None,
@@ -786,6 +804,7 @@ def settle_bridges(F, VES, keys, log=print):
 IT_OFFSET = 0.0125     # centre this far lateral to the sternum's lateral border (m)
 IT_BEHIND = 0.0015     # wall this far behind the costal cartilages' posterior surface (m)
 IT_NAMES = ('Internal_thoracic_artery', 'Internal_thoracic_veins')
+IT_GAP = 0.0005        # the vein runs medial to its artery, wall to wall this far apart (m)
 
 
 def internal_thoracic(sex, VES, log=print, step=0.004):
@@ -793,7 +812,10 @@ def internal_thoracic(sex, VES, log=print, step=0.004):
     (they hugged its edges or lay behind it): at each level of the placed sternum (rib cage group: manubrium and body)
     the section centre is moved to IT_OFFSET lateral to the sternum's border there and, where a costal cartilage or
     rib lies in front of that point, to IT_BEHIND behind its posterior surface; the shifts are smoothed along the vessel
-    (sigma 1 cm) and faded in over 3 cm from the upper end (its origin / its end on the brachiocephalic vein)."""
+    (sigma 1 cm) and faded in over 3 cm from the upper end (its origin / its end on the brachiocephalic vein).
+    The vein (Z-Anatomy models the venae comitantes as one vessel, the single vein they form above the third cartilage)
+    runs beside its artery on the medial side: its target offset is the artery's less both radii and IT_GAP (both at
+    the same offset laid the artery inside the vein over 8-9 cm)."""
     rc = os.path.join(FIT, sex, 'ribcage')
     try:
         SV = np.concatenate([load(os.path.join(rc, n + '.npz'))[0] for n in ('manubrium', 'sternum_body')])
@@ -806,6 +828,7 @@ def internal_thoracic(sex, VES, log=print, step=0.004):
     out = {}
     for side in 'lr':
         sgn = 1.0 if side == 'l' else -1.0
+        r_art = None
         for base in IT_NAMES:
             n = base + side; x = VES.get(n)
             if x is None or x.get('dropped') or not x['placed']: continue
@@ -815,6 +838,8 @@ def internal_thoracic(sex, VES, log=print, step=0.004):
             b = np.floor(s / step).astype(int); nb = b.max() + 1
             want = np.zeros((nb, 3)); wx = np.zeros(nb); wz = np.zeros(nb); off0 = []
             r_v = np.median(np.linalg.norm(x['v'] - q, axis=1))
+            if base.endswith('artery'): r_art = r_v; offset = IT_OFFSET
+            else: offset = IT_OFFSET - ((r_art or 0.0012) + r_v + IT_GAP)
             for k in np.unique(b):
                 c = x['v'][b == k].mean(0)
                 if not (ylo + 0.004 < c[1] < yhi - 0.004): continue
@@ -822,8 +847,8 @@ def internal_thoracic(sex, VES, log=print, step=0.004):
                 if not band.any(): continue
                 edge = SV[band, 0].max() if side == 'l' else SV[band, 0].min()
                 off0.append((c[0] - edge) * sgn)
-                want[k, 0] = edge + sgn * IT_OFFSET - c[0]; wx[k] = 1
-                nb_ = np.asarray(ctree.query_ball_point([edge + sgn * IT_OFFSET, c[1]], 0.004), int)
+                want[k, 0] = edge + sgn * offset - c[0]; wx[k] = 1
+                nb_ = np.asarray(ctree.query_ball_point([edge + sgn * offset, c[1]], 0.004), int)
                 nb_ = nb_[(CV[nb_, 2] > c[2] - 0.015) & (CV[nb_, 2] < c[2] + 0.030)] if len(nb_) else nb_   # the anterior wall only
                 if len(nb_):
                     zp = CV[nb_, 2].min()                      # posterior surface of the cartilage / rib in front
@@ -835,7 +860,7 @@ def internal_thoracic(sex, VES, log=print, step=0.004):
             vec = (vx + vz) * G.smoothstep(sk / 0.030)[:, None]
             dv = np.stack([np.interp(s, sk, vec[:, a]) for a in range(3)], 1)
             x['v'] = x['v'] + dv
-            out[n] = dict(levels=int(wx.sum()), lateral_offset_before_mm=[r2(np.min(off0) * 1000, 1), r2(np.median(off0) * 1000, 1)] if off0 else None,
+            out[n] = dict(levels=int(wx.sum()), target_offset_mm=r2(offset * 1000, 1), lateral_offset_before_mm=[r2(np.min(off0) * 1000, 1), r2(np.median(off0) * 1000, 1)] if off0 else None,
                           max_shift_mm=r2(np.linalg.norm(dv, axis=1).max() * 1000, 1))
             log(f'  internal thoracic {n}: {out[n]}')
     return out

@@ -298,6 +298,19 @@ def inflate(v, f, fields, target, iters=10):
     return v
 
 
+def fold_faces(v, f, eps=5e-5):
+    """Faces where the closed gland passes through itself: an exact ray-parity vote on every face (lib.mesh, as
+    assemble.py measures facing) picks the candidates, the exact winding number confirms them (a point just outside
+    the face inside the gland, or just inside it outside: an overlap or an inverted sliver)."""
+    from lib.mesh import RayParity, _face_votes, face_normals
+    vote = _face_votes(v, f, np.arange(len(f)), None, RayParity(v, f), 2e-4)
+    cand = np.flatnonzero(vote <= 0)
+    if not len(cand): return cand
+    c = v[f[cand]].mean(1); n = face_normals(v, f[cand])
+    wo = winding(c + eps * n, v, f); wi = winding(c - eps * n, v, f)
+    return cand[(wo > 0.5) | (wi < 0.5)]
+
+
 def bed_targets(v, f, c0, a, beds, clear=CLEAR):
     """Attraction targets that lay the gland on its bed: the posterior surface of the isthmus / pyramidal band (|x| < 6
     mm, facing back, up to 12 mm off the bed) and the lobes' medial surfaces facing the airway (up to 4 mm off)."""

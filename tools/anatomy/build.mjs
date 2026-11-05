@@ -8,7 +8,12 @@
 // each structure's true (Hausdorff) error is bounded: the simplifier's quadric error lets thin double-layer shells (the
 // eyelid conjunctivae) fold into a crumpled sheet, so the result is checked by sampled distances both ways (at most
 // 0.5 % of the probes beyond the structure's tolerance, none beyond twice it) and the structure gets more triangles
-// until it is within tolerance; each connected piece is simplified on its own so that small pieces cannot vanish. The
+// until it is within tolerance; each connected piece is simplified on its own so that small pieces cannot vanish. Where
+// the simplifier folds faces over (an output face whose normal opposes the source's vertex normals at all three of its
+// corners: every output vertex is a source vertex), the source vertices under the folded faces are locked and the
+// structure is simplified again, so it keeps the source's triangles there (the brain's white matter, the thin bronchial
+// cartilages); vertices whose position another structure of the part also uses (two structures sharing a rim) are
+// locked like borders. The
 // measured errors of every structure go to .cache/parts/<sex>/simplify.json. One node per part, named by its id, with its organ, tissue
 // and flags in the node's extras; no materials. Refuses to build when assemble.py found a part facing inward.
 import fs from 'node:fs';
@@ -42,15 +47,85 @@ const concat = arrs => { const all = new Uint32Array(arrs.reduce((a, c) => a + c
 /** Simplify one structure (a triangle range) towards `target` triangles, never past `tol` of quadric error. Each
  * connected piece is simplified on its own with its share of the target and at least 8 triangles, so a small piece
  * (a cartilage ring, a fragment of a parcel) is reduced instead of collapsing to nothing. */
-function simplifyRange(P, I, target, tol) {
+function simplifyRange(P, I, target, tol, lock) {
   const n = I.length / 3;
   if (target >= n) return I;
-  const out = [];
+  const out = [], flags = ['LockBorder', 'ErrorAbsolute', 'Sparse'];
   for (const c of pieces(I)) {
     const nc = c.length / 3, tc = Math.min(nc, Math.max(8, Math.round((target * nc) / n)));
-    out.push(tc >= nc ? c : MeshoptSimplifier.simplify(c, P, 3, Math.max(3, tc * 3), tol, ['LockBorder', 'ErrorAbsolute', 'Sparse'])[0]);
+    let locked = false; if (lock) for (const x of c) if (lock[x]) { locked = true; break; }
+    out.push(tc >= nc ? c : locked
+      ? MeshoptSimplifier.simplifyWithAttributes(c, P, 3, zeros(P.length / 3), 1, [0], lock, Math.max(3, tc * 3), tol, flags)[0]
+      : MeshoptSimplifier.simplify(c, P, 3, Math.max(3, tc * 3), tol, flags)[0]);
   }
   return concat(out);
+}
+
+/** Vertices whose position (exact) is also used by a vertex of another structure of the part (seg: structure ranges):
+ * two structures sharing a rim or a wall. Locked like borders, so that the shared vertices stay in both. Returns a
+ * vertex lock array (with a zero attribute array for simplifyWithAttributes) and the count, or null when none. */
+function sharedLock(P, I, seg) {
+  const nv = P.length / 3, sv = new Int32Array(nv).fill(-1), U = new Uint32Array(P.buffer, P.byteOffset, P.length);
+  for (let s = 0; s + 1 < seg.length; s++) for (let i = seg[s] * 3; i < seg[s + 1] * 3; i++) sv[I[i]] = s;
+  const key = v => `${U[v * 3]},${U[v * 3 + 1]},${U[v * 3 + 2]}`, owner = new Map();
+  for (let v = 0; v < nv; v++) {
+    if (sv[v] < 0) continue;
+    const k = key(v), o = owner.get(k);
+    if (o === undefined) owner.set(k, sv[v]); else if (o !== sv[v]) owner.set(k, -2);
+  }
+  const lock = new Uint8Array(nv); let count = 0;
+  for (let v = 0; v < nv; v++) if (sv[v] >= 0 && owner.get(key(v)) === -2) { lock[v] = 1; count++; }
+  if (!count) return null;
+  lock.count = count;
+  return lock;
+}
+
+let ZERO = new Float32Array(0);
+const zeros = nv => (ZERO.length === nv ? ZERO : (ZERO = new Float32Array(nv)));  // the (weightless) attribute of simplifyWithAttributes
+
+/** The lock array `lock` (or none) plus the source vertices of the structure I lying under the folded output faces
+ * `bad` (offsets into `out`): those within 1.25 times the face's circumradius-like reach of its centroid. */
+function lockUnder(P, I, out, bad, lock) {
+  const nv = P.length / 3, lk = new Uint8Array(nv); if (lock) lk.set(lock);
+  const vs = [...new Set(I)];
+  for (const t of bad) {
+    const a = out[t] * 3, b = out[t + 1] * 3, c = out[t + 2] * 3;
+    const g = [0, 1, 2].map(k => (P[a + k] + P[b + k] + P[c + k]) / 3);
+    let r2 = 0; for (const v of [a, b, c]) r2 = Math.max(r2, (P[v] - g[0]) ** 2 + (P[v + 1] - g[1]) ** 2 + (P[v + 2] - g[2]) ** 2);
+    r2 *= 1.5625;
+    for (const v of vs) { const dx = P[v * 3] - g[0]; if (dx * dx > r2) continue; if (dx * dx + (P[v * 3 + 1] - g[1]) ** 2 + (P[v * 3 + 2] - g[2]) ** 2 <= r2) lk[v] = 1; }
+  }
+  return lk;
+}
+
+/** Unit area-weighted vertex normals of the source (zero where undefined: a vertex between opposite faces). */
+function sourceNormals(P, I) {
+  const N = new Float32Array(P.length);
+  for (let t = 0; t < I.length; t += 3) {
+    const a = I[t] * 3, b = I[t + 1] * 3, c = I[t + 2] * 3;
+    const ux = P[b] - P[a], uy = P[b + 1] - P[a + 1], uz = P[b + 2] - P[a + 2], wx = P[c] - P[a], wy = P[c + 1] - P[a + 1], wz = P[c + 2] - P[a + 2];
+    const nx = uy * wz - uz * wy, ny = uz * wx - ux * wz, nz = ux * wy - uy * wx;
+    for (const v of [a, b, c]) { N[v] += nx; N[v + 1] += ny; N[v + 2] += nz; }
+  }
+  for (let i = 0; i < N.length; i += 3) {
+    const l = Math.hypot(N[i], N[i + 1], N[i + 2]);
+    if (l > 1e-14) { N[i] /= l; N[i + 1] /= l; N[i + 2] /= l; } else N[i] = N[i + 1] = N[i + 2] = 0;
+  }
+  return N;
+}
+
+/** [folded area, total area] of a triangle list: a face is folded over when its normal opposes the source vertex
+ * normals N at all three corners (the simplifier keeps a subset of the source vertices, so N is defined at every corner). */
+function folds(P, N, I, bad = null) {
+  let fa = 0, ta = 0;
+  for (let t = 0; t < I.length; t += 3) {
+    const a = I[t] * 3, b = I[t + 1] * 3, c = I[t + 2] * 3;
+    const ux = P[b] - P[a], uy = P[b + 1] - P[a + 1], uz = P[b + 2] - P[a + 2], wx = P[c] - P[a], wy = P[c + 1] - P[a + 1], wz = P[c + 2] - P[a + 2];
+    const nx = uy * wz - uz * wy, ny = uz * wx - ux * wz, nz = ux * wy - uy * wx, ar = Math.hypot(nx, ny, nz) / 2;
+    ta += ar;
+    if (N[a] * nx + N[a + 1] * ny + N[a + 2] * nz < 0 && N[b] * nx + N[b + 1] * ny + N[b + 2] * nz < 0 && N[c] * nx + N[c + 1] * ny + N[c + 2] * nz < 0) { fa += ar; if (bad) bad.push(t); }
+  }
+  return [fa, ta];
 }
 
 /** Uniform grid over triangles (flat index array I into positions P) for "is any triangle within r" queries. */
@@ -145,17 +220,34 @@ function outside(P, A, B, tol, m = 3000) {
 // a simplified structure is within tolerance when, both ways, at most FAR of its probes lie beyond its tolerance and
 // none beyond twice it (the true error is bounded; a single probe a hair past the tolerance does not cost full detail)
 const FAR = 0.005;
-const within = e => Math.max(e[0], e[2]) <= FAR && e[1] === 0 && e[3] === 0;
+// and when the area it folds over (beyond the source's own) is at most FOLD of its area, or a sliver under FOLD_MM2
+const FOLD = 1e-3, FOLD_MM2 = 1.0;
+const within = e => Math.max(e[0], e[2]) <= FAR && e[1] === 0 && e[3] === 0 && (e[4] ?? 0) <= Math.max(FOLD, FOLD_MM2 / Math.max(e[5] ?? 1, 1e-9));
 
-/** Simplify towards target, doubling the target until both directions are within tolerance. err = [orig->new beyond
- * tol, beyond 2 tol, new->orig beyond tol, beyond 2 tol] (fractions of probes) of the result. */
-function simplifyBounded(P, I, target) {
+/** Simplify towards target until both directions are within tolerance and no more than FOLD of the area is folded
+ * over: folds are mended by locking the source vertices under them (up to 3 rounds, when the ~2 triangles per locked
+ * vertex cost less than doubling the target), else by one doubling of the target; distance errors by doubling it. err = [orig->new beyond tol, beyond 2 tol, new->orig beyond tol, beyond 2 tol] (fractions of probes), folded
+ * area beyond the source's own (fraction), area (mm2) of the result. */
+function simplifyBounded(P, I, target, N, lock) {
   const n = I.length / 3, tol = tolerance(P, I);
-  for (let t = target, tries = 0; ; tries++, t = Math.min(n, t * 2)) {
-    const out = t >= n ? I : simplifyRange(P, I, t, tol);
-    if (out.length >= I.length) return { out: I, tol, raised: tries, target, err: [0, 0, 0, 0] };
-    const err = [...outside(P, I, out, tol), ...outside(P, out, I, tol)];
-    if (within(err) || tries === 7) return { out, tol, raised: tries, target, err };
+  const [f0, a0] = folds(P, N, I), own = f0 / Math.max(a0, 1e-30);
+  let lk = lock, mended = 0, foldDoubled = 0;
+  for (let t = target, tries = 0; ;) {
+    const out = t >= n ? I : simplifyRange(P, I, t, tol, lk);
+    if (out.length >= I.length) return { out: I, tol, raised: tries, mended, target, err: [0, 0, 0, 0, 0, a0 * 1e6], own };
+    const bad = [], [fa, ta] = folds(P, N, out, bad);
+    const err = [...outside(P, I, out, tol), ...outside(P, out, I, tol), Math.max(0, fa / Math.max(ta, 1e-30) - own), ta * 1e6];
+    if (within(err) || tries === 7) return { out, tol, raised: tries, mended, target, err, own };
+    if (within(err.slice(0, 4)) && mended < 3) {  // only folds: mend them when that costs less than doubling the target
+      const lk2 = lockUnder(P, I, out, bad, lk); let added = 0;
+      for (let v = 0; v < lk2.length; v++) if (lk2[v] && !(lk && lk[v])) added++;
+      if (2 * added < t) { lk = lk2; mended++; continue; }
+    }
+    if (within(err.slice(0, 4))) {  // folds left: at most one doubling for them (the budget), then the result stands
+      if (foldDoubled) return { out, tol, raised: tries, mended, target, err, own };
+      foldDoubled++;
+    }
+    tries++; t = Math.min(n, t * 2);
   }
 }
 
@@ -201,7 +293,8 @@ async function build(sex) {
   if (rig.inward_failing && Object.keys(rig.inward_failing).length)
     throw new Error(`${sex}: parts with more than ${rig.inward_max * 100} % of their area facing inward: ${JSON.stringify(rig.inward_failing)} (assemble.py)`);
   const names = JSON.parse(fs.readFileSync(path.join(dir, 'structures.json'), 'utf8'));
-  const raised = [], errors = [], failing = [];
+  const raised = [], errors = [], failing = [], foldLimited = [], lockedVerts = {};
+  let foldedMm2 = 0;
   const doc = new Document();
   const buffer = doc.createBuffer();
   const scene = doc.createScene('anatomy');
@@ -214,15 +307,17 @@ async function build(sex) {
     // share the budget across structures: larger ones are reduced more, small ones keep enough to read
     const sizes = []; for (let s = 0; s + 1 < seg.length; s++) sizes.push(seg[s + 1] - seg[s]);
     const w = sizes.map(n => Math.pow(n, 0.7)); const W = w.reduce((a, b) => a + b, 0) || 1;
-    const chunks = [];
+    const chunks = [], N = sourceNormals(P, I), lock = sharedLock(P, I, seg);
+    if (lock) lockedVerts[pid] = lock.count;
     sizes.forEach((n, s) => {
       if (!n) return;
       const target = Math.min(n, Math.max(Math.min(n, 60), Math.round((part.budget * w[s]) / W)));
-      const r = simplifyBounded(P, I.subarray(seg[s] * 3, seg[s + 1] * 3), target);
+      const r = simplifyBounded(P, I.subarray(seg[s] * 3, seg[s + 1] * 3), target, N, lock);
       const name = `${pid}/${names[pid]?.[s]?.name ?? s}`;
-      if (r.raised) raised.push(`${name} ${n}->${target}->${r.out.length / 3} (tol ${(r.tol * 1000).toFixed(2)} mm)`);
-      errors.push({ name, tris: n, target, out: r.out.length / 3, tol_mm: +(r.tol * 1000).toFixed(2), err: r.err.map(x => +x.toFixed(4)) });
-      if (!within(r.err)) failing.push(name);
+      if (r.raised || r.mended) raised.push(`${name} ${n}->${target}->${r.out.length / 3} (tol ${(r.tol * 1000).toFixed(2)} mm${r.mended ? `, ${r.mended} fold mends` : ''})`);
+      errors.push({ name, tris: n, target, out: r.out.length / 3, tol_mm: +(r.tol * 1000).toFixed(2), err: r.err.map(x => +x.toFixed(5)), src_folded: +r.own.toFixed(5) });
+      foldedMm2 += r.err[4] * r.err[5];
+      if (!within(r.err.slice(0, 4))) failing.push(name); else if (!within(r.err)) foldLimited.push(name);
       chunks.push(r.out);
     });
     const all = concat(chunks);
@@ -254,10 +349,12 @@ async function build(sex) {
   fs.mkdirSync(bodies, { recursive: true });
   fs.writeFileSync(path.join(bodies, `${sex}.json`), JSON.stringify({ ...out, triangles: total, license: sources.outputLicense.spdx }, null, 1) + '\n');
   // every structure's sampled error both ways: [orig->GLB beyond tol, beyond 2 tol, GLB->orig beyond tol, beyond 2 tol]
-  fs.writeFileSync(path.join(dir, 'simplify.json'), JSON.stringify({ rule: `at most ${FAR * 100} % of probes beyond tol, none beyond 2 tol, both ways`, raised, failing, structures: errors }, null, 0));
+  fs.writeFileSync(path.join(dir, 'simplify.json'), JSON.stringify({ rule: `at most ${FAR * 100} % of probes beyond tol, none beyond 2 tol, both ways; folded area beyond the source's own at most ${FOLD * 100} % (or ${FOLD_MM2} mm2)`,
+    raised, failing, fold_limited: foldLimited, folded_mm2: +foldedMm2.toFixed(2), locked_shared_vertices: lockedVerts, structures: errors }, null, 0));
   const worst = errors.filter(e => e.out < e.tris).sort((a, b) => Math.max(b.err[0], b.err[2]) - Math.max(a.err[0], a.err[2]))[0];
   console.log(`${sex}: ${Object.keys(out.parts).length} parts, ${total} triangles, ${(fs.statSync(glb).size / 1e6).toFixed(2)} MB, ${raised.length} structures given more triangles to stay within tolerance, `
-    + `${failing.length} outside it${failing.length ? ' ' + JSON.stringify(failing) : ''}; worst ${worst?.name} ${JSON.stringify(worst?.err)} at ${worst?.tol_mm} mm (${((Date.now() - t0) / 1000).toFixed(0)} s)`);
+    + `${failing.length} outside it${failing.length ? ' ' + JSON.stringify(failing) : ''}; worst ${worst?.name} ${JSON.stringify(worst?.err)} at ${worst?.tol_mm} mm; `
+    + `folded ${foldedMm2.toFixed(1)} mm2 (${foldLimited.length} structures left with folds after one doubling ${JSON.stringify(foldLimited)}); shared vertices locked ${JSON.stringify(lockedVerts)} (${((Date.now() - t0) / 1000).toFixed(0)} s)`);
 }
 
 const which = process.argv[2] ?? 'all';

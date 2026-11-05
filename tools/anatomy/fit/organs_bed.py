@@ -10,10 +10,13 @@ free, so it carries their impressions (as a real stomach does), keeps its volume
      left suprarenal gland), dilated by CLR, is subtracted; so is the pylorus's shadow: behind the plane of the bulb's
      lip, within PYL_CONE of the bulb's axis (the duodenum continues there; gastric tissue in it would wrap the bulb);
   3. two bridges join the orifices to their partners along their axes: a cylinder from the cardiac ring (centre and
-     axis of the warped cardia, radius of the oesophagus's distal end) into the stomach, and a tapered tube (cubic
-     Hermite path) from the pyloric ring (the outer wall of the HRA duodenal bulb just behind the crest of its free
-     lipped end, organs_gi.bulb_opening), leaving along the bulb's axis, to the nearest deep point of the antrum; the
-     bridges obey the same neighbour constraint;
+     axis of the warped cardia, radius of the oesophagus's distal end) into the stomach, and the pyloric canal from the
+     pyloric ring (the outer wall of the HRA duodenal bulb just behind the crest of its free lipped end,
+     organs_gi.bulb_opening): it leaves along the bulb's axis (LEAD), then follows the corridor of greatest clearance
+     between the neighbours to the deep part of the bed (corridor_path: Dijkstra on a 2 mm lattice of the free space,
+     edges weighted by (wanted radius / clearance) ** 2), widening from the ring's radius towards the antrum's as the
+     corridor allows (the HRA female's bulb hangs with its lip facing down and forwards, below the bed: the canal
+     comes round under the bulb into it); the bridges obey the same neighbour constraint;
   4. a morphological opening (OPEN_R ball) drops free space too thin to hold a stomach (the shells a neighbour leaves
      when it bulges into the bed: the HRA male's splenic flexure), the bridges are added, and the largest connected
      component is kept;
@@ -40,6 +43,7 @@ OPEN_R = 5            # opening radius (voxels): free space thinner than 1 cm ho
 BED_NB = ('liver', 'gallbladder', 'spleen', 'pancreas', 'colon', 'kidney_l', 'kidney_r', 'duodenum', 'jejunum', 'aorta', 'ivc',
           'splenic_a', 'splenic_v', 'lungs', 'heart')
 PYL_CONE = (np.radians(45.0), 0.035)    # the pylorus's shadow: half-angle about the bulb's axis, depth behind the lip plane
+LEAD = 0.006         # the pyloric canal leaves the bulb's lip along the bulb's axis for at least this long
 
 
 def loop_axis(P):
@@ -117,6 +121,55 @@ def shadow_voxels(lo, h, shape, c, n, r0, ang, depth):
     g = g[(ax > 0) & (np.linalg.norm(x, axis=1) < depth) & (rad < r0 + np.tan(ang) * ax)]
     out = np.zeros(shape, bool); out[g[:, 0], g[:, 1], g[:, 2]] = True
     return out
+
+
+def corridor_path(D, FREE, lo, h, p0, targets, r_min, r_want, box=0.075, step=2):
+    """The pyloric canal's course: the path of greatest clearance through free space from p0 (just in front of the
+    bulb's lip) to the nearest of the `targets` voxels (the deep part of the stomach's bed). Dijkstra on a lattice of
+    `step` voxels within `box` of p0, over FREE voxels whose clearance (D, the distance to the nearest neighbour,
+    less CLR) is at least r_min; an edge costs its length times (r_want / clearance) ** 2 (clearance capped at r_want),
+    so the canal keeps to the middle of the corridor between its neighbours. Returns the polyline (from p0) or None."""
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import dijkstra
+    shp = np.array(D.shape)
+    i0 = np.clip(np.floor((p0 - box - lo) / h).astype(int), 0, shp - 1)
+    i1 = np.clip(np.ceil((p0 + box - lo) / h).astype(int), 0, shp - 1)
+    sl = tuple(slice(i0[a], i1[a] + 1, step) for a in range(3))
+    C = (D[sl] - CLR).astype(np.float64)
+    ok = FREE[sl] & (C >= r_min)
+    tg = targets[sl] & ok
+    if not tg.any(): return None
+    idx = -np.ones(ok.shape, np.int64); nodes = np.argwhere(ok); idx[ok] = np.arange(len(nodes))
+    rows, cols, wts = [], [], []
+    for d in [(a, b, c) for a in (-1, 0, 1) for b in (-1, 0, 1) for c in (-1, 0, 1) if (a, b, c) > (0, 0, 0)]:
+        q = nodes + np.array(d)
+        inb = ((q >= 0) & (q < np.array(ok.shape))).all(1)
+        a_, q = np.flatnonzero(inb), q[inb]
+        j = idx[q[:, 0], q[:, 1], q[:, 2]]; m = j >= 0
+        a_, j = a_[m], j[m]
+        cm = np.minimum(0.5 * (C[tuple(nodes[a_].T)] + C[tuple(nodes[j].T)]), r_want)
+        rows.append(a_); cols.append(j); wts.append(step * h * np.linalg.norm(d) * (r_want / cm) ** 2)
+    G = coo_matrix((np.concatenate(wts), (np.concatenate(rows), np.concatenate(cols))), shape=(len(nodes), len(nodes))).tocsr()
+    pos = lo + h * (np.array([s_.start for s_ in sl]) + step * nodes)
+    src = int(np.argmin(np.linalg.norm(pos - p0, axis=1)))
+    dist, pred = dijkstra(G, directed=False, indices=src, return_predecessors=True)
+    t = np.flatnonzero(tg[ok])
+    t = t[np.isfinite(dist[t])]
+    if not len(t): return None
+    k = int(t[np.argmin(dist[t])])
+    path = [k]
+    while path[-1] != src and pred[path[-1]] >= 0: path.append(int(pred[path[-1]]))
+    return np.vstack([p0, pos[path[::-1]][1:]])
+
+
+def smooth_path(P, step=0.001, passes=30, hold=0):
+    """Resample a polyline every `step` and smooth it (Laplacian passes; the first `hold` + 1 points and the last held)."""
+    s = np.concatenate([[0], np.cumsum(np.linalg.norm(np.diff(P, axis=0), axis=1))])
+    t = np.arange(0, s[-1] + 1e-12, step)
+    Q = np.column_stack([np.interp(t, s, P[:, a]) for a in range(3)])
+    for _ in range(passes):
+        Q[hold + 1:-1] = 0.5 * Q[hold + 1:-1] + 0.25 * (Q[hold:-2] + Q[hold + 2:])
+    return Q
 
 
 def open_orifice(v, f, c, n_out, r):
@@ -243,16 +296,34 @@ def fit_stomach_bed(sex, W, r_cardia, own=(), log_=log):
     bed = ndimage.distance_transform_edt(~core) <= OPEN_R
     rep['bed']['after_opening_cm3'] = round(float(bed.sum() * H ** 3 * 1e6), 1)
     din = ndimage.distance_transform_edt(bed) * H
-    deep = np.argwhere(din > max(0.006, 0.7 * rr))
-    Xd = lo + H * deep
-    j = int(np.argmin(np.linalg.norm(Xd - cr, axis=1)))
-    pa = Xd[j]; ra = float(din[tuple(deep[j])])
-    L = float(np.linalg.norm(pa - cr))
-    P = hermite(cr - 0.004 * nr, nr * L, pa, (pa - cr), n=80)
-    t = np.linspace(0, 1, len(P))
-    R = rr + (min(ra, 1.6 * rr) - rr) * smoothstep((t - 0.15) / 0.85)
+    deepm = din > max(0.006, 0.7 * rr)
+    # the pyloric canal leaves the bulb's lip along the bulb's axis (LEAD), then keeps to the corridor of greatest
+    # clearance between its neighbours to the deep part of the bed (organs_bed.corridor_path); the HRA female's bulb
+    # hangs with its lip facing down and forwards, below the bed, so the canal comes round under the bulb into it
+    lead = max(LEAD, rr)
+    p0 = cr + lead * nr
+    C = corridor_path(D, FREE, lo, H, p0, deepm, max(0.6 * rr, 0.003), rr + 0.002)
+    if C is not None:
+        P = smooth_path(np.vstack([cr - 0.004 * nr, cr + np.linspace(0, lead, 6)[1:, None] * nr, C[1:]]), hold=int(round((lead + 0.004) / 0.001)))
+        ii = np.round((P[-1] - lo) / H).astype(int); ra = float(din[tuple(np.clip(ii, 0, np.array(shape) - 1))])
+        how = 'corridor'
+    else:
+        deep = np.argwhere(deepm); Xd = lo + H * deep
+        j = int(np.argmin(np.linalg.norm(Xd - cr, axis=1)))
+        pa = Xd[j]; ra = float(din[tuple(deep[j])])
+        P = hermite(cr - 0.004 * nr, nr * float(np.linalg.norm(pa - cr)), pa, (pa - cr), n=80)
+        how = 'hermite (no corridor found)'
+    sP = np.concatenate([[0], np.cumsum(np.linalg.norm(np.diff(P, axis=0), axis=1))]); L = float(sP[-1])
+    t = np.clip((sP - 0.004 - lead) / max(L - 0.004 - lead, 1e-3), 0, 1)
+    # outer radius: the lip ring's up to the end of the lead, then widening to the antrum's, never wider than the
+    # corridor's clearance (the tube is also clipped to the free space)
+    clr_P = np.array([float(D[tuple(np.clip(np.round((p - lo) / H).astype(int), 0, np.array(shape) - 1))]) for p in P]) - CLR
+    R = rr + (max(ra, 1.6 * rr) - rr) * smoothstep(t)
+    R = np.where(sP > 0.004 + lead, np.minimum(R, np.maximum(clr_P, 0.6 * rr)), R)
     Bp = tube_voxels(lo, H, shape, P, R)
-    rep['pyloric_bridge'] = dict(length_mm=round(L * 1000, 1), antrum_point=np.round(pa, 4).tolist(), antrum_radius_mm=round(ra * 1000, 1))
+    rep['pyloric_bridge'] = dict(method=how, length_mm=round(L * 1000, 1), lead_mm=round(lead * 1000, 1), antrum_point=np.round(P[-1], 4).tolist(),
+                                 antrum_radius_mm=round(ra * 1000, 1), min_radius_mm=round(float(R.min() * 1000), 1),
+                                 min_clearance_mm=round(float(clr_P[sP > 0.004 + lead].min() * 1000), 1) if (sP > 0.004 + lead).any() else None)
     # free space too thin to hold a stomach (wall and collapsed lumen: under 2 * OPEN_R) is not stomach: the shells a
     # neighbour leaves when it bulges into the bed (the HRA male's splenic flexure) are opened away; then the bridges,
     # and beyond each ring plane the partner's own space (the oesophagus going up, the duodenum going on) is removed

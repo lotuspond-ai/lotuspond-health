@@ -1,11 +1,12 @@
 """Organs fit, part 4: suprarenal (adrenal) glands.
 
 The trunk warp distorts the small glands (it bends strongly between the HRA kidneys, liver and spleen: the left gland
-comes out 1.5-2.5 times its volume), so each gland is placed with a similarity instead: the one that aligns the
-Z-Anatomy kidney of that side with the HRA kidney (ICP, started from the warp's best similarity at the kidney). The gland
-keeps its shape, size relative to the kidney, and its seat on the kidney's superomedial pole. A rigid refinement then
-sets the gland-to-kidney gap (1-5 mm, aiming at 2 mm) and moves it off its other neighbours; a final smooth push-out
-removes what a rigid motion cannot.
+comes out 1.5-2.5 times its volume), so each gland is placed with a similarity instead: the undistorted Z-Anatomy gland,
+scaled, laid rigidly onto the warped one, then a pose search next to its kidney, a seat 2 mm off the kidney and a smooth
+push-out off the other neighbours. The right gland takes the body's overall scale (the trunk warp's global similarity);
+Z-Anatomy's left gland is 1.75 times the volume of its right one, which at body scale is 9-10 cm3, above the adult range
+(each gland 4-6 cm3, the left usually slightly the larger): the left gland takes the uniform scale that makes it
+LEFT_RIGHT times the right gland's volume. The rigid refinements later keep the gland-to-kidney gap at 1-5 mm.
 """
 import numpy as np
 from scipy.spatial import cKDTree
@@ -17,6 +18,11 @@ from fit.organs_geom import push_out
 
 GAP_TARGET = 0.002
 CLEAR = 0.0006
+LEFT_RIGHT = 1.1     # left gland volume / right gland volume (adult glands: the left usually slightly the larger)
+
+
+def _volume(v, f):
+    return abs(float(np.einsum('ij,ij->i', v[f[:, 0]], np.cross(v[f[:, 1]], v[f[:, 2]])).sum() / 6))
 
 
 def kidney_similarity(sex, side, W):
@@ -137,10 +143,14 @@ def fit_adrenals(sex, W, extra=()):
     from fit.common import FIT
     sg = float(np.load(os.path.join(FIT, sex, 'warp-trunk.npz'))['s'])
     out, rep = {}, {}
+    zvol = {s_: _volume(*za_original(f'adrenal_{s_}')) for s_ in 'lr'}
+    # the right gland at the body's scale; the left one LEFT_RIGHT times the right one's volume (a uniform scale of
+    # Z-Anatomy's left gland, which is 1.75 times its right one)
+    scale = {'r': sg, 'l': sg * (LEFT_RIGHT * zvol['r'] / zvol['l']) ** (1.0 / 3.0)}
     for side in 'lr':
         zv, zf = za_original(f'adrenal_{side}')
         wv = W[f'adrenal_{side}'][0]
-        c = zv.mean(0); zs = c + sg * (zv - c)
+        c = zv.mean(0); zs = c + scale[side] * (zv - c)
         R = umeyama(zs, wv, scale=False)
         v = R(zs)
         kfl = field(sex, f'kidney_{side}')
@@ -154,9 +164,9 @@ def fit_adrenals(sex, W, extra=()):
         fields = [(kfl, 0.0012)] + [(fl, CLEAR) for fl in others]
         v2 = push_out(v, zf, fields, clearance=CLEAR, iters=12, log=log)
         out[side] = (v2, orient_outward(v2, zf))
-        wvol = abs(float(np.einsum('ij,ij->i', wv[zf[:, 0]], np.cross(wv[zf[:, 1]], wv[zf[:, 2]])).sum() / 6))
-        zvol = abs(float(np.einsum('ij,ij->i', zv[zf[:, 0]], np.cross(zv[zf[:, 1]], zv[zf[:, 2]])).sum() / 6))
-        rep[side] = dict(scale=round(sg, 4), warp_volume_ratio=round(wvol / zvol, 2), seat_shift_mm=round(seat * 1000, 2),
-                         pushout_max_mm=round(float(np.linalg.norm(v2 - v, axis=1).max() * 1000), 2))
+        wvol = _volume(wv, zf)
+        rep[side] = dict(scale=round(scale[side], 4), body_scale=round(sg, 4), warp_volume_ratio=round(wvol / zvol[side], 2),
+                         za_volume_cm3=round(zvol[side] * 1e6, 2), volume_cm3=round(_volume(v2, zf) * 1e6, 2),
+                         seat_shift_mm=round(seat * 1000, 2), pushout_max_mm=round(float(np.linalg.norm(v2 - v, axis=1).max() * 1000), 2))
         log(f'  adrenal {side}: {rep[side]}')
     return out, rep
