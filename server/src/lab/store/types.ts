@@ -19,6 +19,8 @@ export interface OrderRecord {
   partner: PartnerId;
   /** Null until the partner has accepted the booking. */
   partnerRef: string | null;
+  /** The partner's per-order token, for partners whose API wants it on later calls (partners/types.ts PartnerBooking). */
+  partnerToken: string | null;
   status: OrderStatus;
   /** The partner's own last status name and when it says that status began (ms); guards against out-of-date reads. */
   partnerStatus: string | null;
@@ -60,7 +62,7 @@ export interface OrderRecord {
 /** A record with defaults for everything not given; for the booking service, tests and the dev server. */
 export function newOrderRecord(fields: Pick<OrderRecord, 'id' | 'userId' | 'profileId' | 'partner' | 'status' | 'createdAt'> & Partial<OrderRecord>): OrderRecord {
   return {
-    partnerRef: null, partnerStatus: null, partnerStatusAt: null, lastSyncedAt: null,
+    partnerRef: null, partnerToken: null, partnerStatus: null, partnerStatusAt: null, lastSyncedAt: null,
     items: [], slotStart: null, slotEnd: null, pricePaise: 0, payer: 'partner',
     contactCt: null, piiPurgedAt: null, consentVersion: null, consentedAt: null, idempotencyKey: null, requestHash: null,
     placementAttempts: 0, nextPlacementAt: null, failureReason: null,

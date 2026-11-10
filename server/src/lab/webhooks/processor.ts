@@ -9,7 +9,7 @@ import type { PartnerId } from '../../../../shared/lab-bundle.ts';
 import type { Sealer } from '../sealer.ts';
 import { inboxContext } from './receiver.ts';
 import { syncOrder, type SyncDeps } from '../orders/sync.ts';
-import { PartnerError, type PartnerConfig, type WebhookInfo } from '../partners/types.ts';
+import { PartnerError, type PartnerBooking, type PartnerConfig, type WebhookInfo } from '../partners/types.ts';
 import type { InboxItem, OrderRecord, WebhookInbox } from '../store/types.ts';
 
 export interface ProcessorDeps extends SyncDeps {
@@ -116,7 +116,7 @@ export class WebhookProcessor {
     const byId = await orders.get(info.clientRef);
     if (!byId || byId.partner !== partner || byId.partnerRef) return null;
 
-    let confirmed: { partnerRef: string } | null;
+    let confirmed: PartnerBooking | null;
     try {
       confirmed = await cfg.adapter.findOrderByClientRef(byId.id);
     } catch (e) {
@@ -126,7 +126,7 @@ export class WebhookProcessor {
     if (confirmed?.partnerRef !== info.partnerRef) return null;
 
     const linked = await orders.apply(byId.id, cur => cur.partnerRef ? null : {
-      next: { ...cur, partnerRef: info.partnerRef, updatedAt: now() },
+      next: { ...cur, partnerRef: info.partnerRef, partnerToken: confirmed.token ?? null, updatedAt: now() },
       events: [{
         orderId: cur.id, status: cur.status, partnerStatus: null, source: 'webhook', occurredAt: null, receivedAt: now(),
         note: `linked to partner order ${info.partnerRef}`,

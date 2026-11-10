@@ -234,7 +234,7 @@ How the endpoints behave:
 In `server/src/lab/partners/types.ts`. Each configured partner also has a data region (`PartnerConfig.region`) and a webhook path secret.
 
 ```ts
-export type PartnerId = 'fake' | 'tata1mg' | 'thyrocare' | 'labsadvisor';
+export type PartnerId = 'fake' | 'orange' | 'tata1mg' | 'thyrocare' | 'labsadvisor';
 
 export interface LabPartner {
   id: PartnerId;

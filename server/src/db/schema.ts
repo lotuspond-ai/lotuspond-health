@@ -196,6 +196,8 @@ export const labOrders = pgTable('lab_orders', {
   partner: text('partner').notNull(),
   /** The partner's order number, once it has accepted the booking. */
   partnerRef: text('partner_ref'),
+  /** The partner's per-order token, when its API needs one on later calls (Orange Health). Useless without our API key. */
+  partnerToken: text('partner_token'),
   status: text('status').$type<OrderStatus>().notNull(),
   /** The partner's own last status and when it says it began: guards against out-of-date reads. */
   partnerStatus: text('partner_status'),

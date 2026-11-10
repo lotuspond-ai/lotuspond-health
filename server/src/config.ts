@@ -52,6 +52,20 @@ const Env = z.object({
   /** Lab partners for home sample collection, comma-separated. Only 'fake' (the simulated lab) exists so far. */
   LAB_PARTNERS: z.string().optional(),
   LAB_FAKE_STEP_MS: z.coerce.number().int().min(100).max(3_600_000).default(10_000),
+  /* Orange Health Labs (lab/partners/orange.ts), with LAB_PARTNERS=orange. */
+  /** The partner API key Orange Health issues (integrations@orangehealth.in). */
+  ORANGE_API_KEY: z.string().trim().min(8).optional(),
+  /** The secret set with Orange Health for signing webhooks. */
+  ORANGE_WEBHOOK_SECRET: z.string().trim().min(16, 'Use at least 16 characters, e.g. from `openssl rand -hex 32`.').optional(),
+  /** Our webhook path secret: Orange Health posts to PUBLIC_URL/hooks/orange/<this>. */
+  ORANGE_HOOK_SECRET: z.string().trim().regex(/^[\w-]{24,128}$/, 'Use 24-128 letters, digits, - or _, e.g. from `openssl rand -hex 32`.').optional(),
+  /** JSON file with the tests and packages Orange Health offers us, with prices (see docs/lab-partners.md). */
+  ORANGE_CATALOG_FILE: z.string().trim().optional(),
+  ORANGE_API_URL: z.string().url().default('https://sandbox-partner-api.orangehealth.dev'),
+  /** Who collects payment, as named on Orange Health orders. */
+  ORANGE_PAYMENT_TYPE: z.string().trim().min(1).default('paid_by_group'),
+  /** Optional comma-separated addresses Orange Health sends webhooks from. */
+  ORANGE_WEBHOOK_IPS: z.string().default(''),
   OVERPASS_URL: z.string().url().default('https://overpass-api.de/api/interpreter'),
   GEOCODER_URL: z.string().url().default('https://nominatim.openstreetmap.org'),
   /** Contact address sent to OpenStreetMap services (Nominatim usage policy asks for one). */
@@ -100,6 +114,16 @@ export interface MapConfig {
   tilesDir: string | undefined;
 }
 
+export interface OrangeConfig {
+  apiKey: string;
+  webhookSecret: string;
+  hookSecret: string;
+  catalogFile: string;
+  apiUrl: string;
+  paymentType: string;
+  webhookIps: string[];
+}
+
 export interface CellConfig {
   region: DataRegion;
   /** Own PostgreSQL database. */
@@ -128,7 +152,7 @@ export interface Config {
   maxUploadBytes: number;
   facilities: FacilityConfig;
   /** Lab partners switched on (docs/lab-booking-backend.md). */
-  labs: { partners: string[]; fakeStepMs: number };
+  labs: { partners: string[]; fakeStepMs: number; orange?: OrangeConfig };
   map: MapConfig;
   servedRegions: DataRegion[];
   /** Settings for each served region. A region with neither databaseUrl nor dataDir is kept in the default cell. */
@@ -186,8 +210,20 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   }
   // The simulated lab is on by default in development, so booking can be tried without a partner.
   const labPartners = list(e.LAB_PARTNERS ?? (e.NODE_ENV === 'development' ? 'fake' : ''));
-  const unknownLab = labPartners.filter(p => p !== 'fake');
-  if (unknownLab.length) throw new Error(`Invalid configuration: LAB_PARTNERS: unknown partner ${unknownLab.join(', ')} (only fake exists so far)`);
+  const unknownLab = labPartners.filter(p => p !== 'fake' && p !== 'orange');
+  if (unknownLab.length) throw new Error(`Invalid configuration: LAB_PARTNERS: unknown partner ${unknownLab.join(', ')} (use fake or orange)`);
+  let orange: OrangeConfig | undefined;
+  if (labPartners.includes('orange')) {
+    const missing = (['ORANGE_API_KEY', 'ORANGE_WEBHOOK_SECRET', 'ORANGE_HOOK_SECRET', 'ORANGE_CATALOG_FILE'] as const).filter(k => !e[k]);
+    if (missing.length) throw new Error(`Invalid configuration: LAB_PARTNERS=orange needs ${missing.join(', ')} (see docs/lab-partners.md)`);
+    orange = {
+      apiKey: e.ORANGE_API_KEY!, webhookSecret: e.ORANGE_WEBHOOK_SECRET!, hookSecret: e.ORANGE_HOOK_SECRET!, catalogFile: e.ORANGE_CATALOG_FILE!,
+      apiUrl: e.ORANGE_API_URL.replace(/\/$/, ''), paymentType: e.ORANGE_PAYMENT_TYPE, webhookIps: list(e.ORANGE_WEBHOOK_IPS),
+    };
+    if (e.NODE_ENV === 'production' && /sandbox|\.dev(\/|$)/.test(orange.apiUrl)) {
+      console.warn('[config] ORANGE_API_URL is the Orange Health sandbox; bookings will not reach a real lab.');
+    }
+  }
   if (labPartners.includes('fake') && e.NODE_ENV === 'production') {
     throw new Error('Invalid configuration: LAB_PARTNERS=fake is the simulated lab, for development and tests only.');
   }
@@ -247,7 +283,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       contactEmail: e.GEO_CONTACT_EMAIL,
       timeoutMs: e.GEO_TIMEOUT_MS,
     },
-    labs: { partners: labPartners, fakeStepMs: e.LAB_FAKE_STEP_MS },
+    labs: { partners: labPartners, fakeStepMs: e.LAB_FAKE_STEP_MS, ...(orange ? { orange } : {}) },
     map: {
       pmtilesUrl: e.MAP_PMTILES_URL || undefined,
       styleUrl: e.MAP_STYLE_URL,
