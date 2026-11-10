@@ -47,6 +47,9 @@ const Env = z.object({
   FACILITY_SEARCH: z.enum(['on', 'off', 'true', 'false', '1', '0']).default('on'),
   /** 'fixture' answers from recorded responses in server/data/fixtures (development and tests only). */
   FACILITY_PROVIDER: z.enum(['http', 'fixture']).default('http'),
+  /** Lab partners for home sample collection, comma-separated. Only 'fake' (the simulated lab) exists so far. */
+  LAB_PARTNERS: z.string().optional(),
+  LAB_FAKE_STEP_MS: z.coerce.number().int().min(100).max(3_600_000).default(10_000),
   OVERPASS_URL: z.string().url().default('https://overpass-api.de/api/interpreter'),
   GEOCODER_URL: z.string().url().default('https://nominatim.openstreetmap.org'),
   /** Contact address sent to OpenStreetMap services (Nominatim usage policy asks for one). */
@@ -120,6 +123,8 @@ export interface Config {
   sessionTtlMs: number;
   maxUploadBytes: number;
   facilities: FacilityConfig;
+  /** Lab partners switched on (docs/lab-booking-backend.md). */
+  labs: { partners: string[]; fakeStepMs: number };
   map: MapConfig;
   servedRegions: DataRegion[];
   /** Settings for each served region. A region with neither databaseUrl nor dataDir is kept in the default cell. */
@@ -174,6 +179,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const e = parsed.data;
   if (e.FACILITY_PROVIDER === 'fixture' && e.NODE_ENV === 'production') {
     throw new Error('Invalid configuration: FACILITY_PROVIDER=fixture is for development only.');
+  }
+  // The simulated lab is on by default in development, so booking can be tried without a partner.
+  const labPartners = list(e.LAB_PARTNERS ?? (e.NODE_ENV === 'development' ? 'fake' : ''));
+  const unknownLab = labPartners.filter(p => p !== 'fake');
+  if (unknownLab.length) throw new Error(`Invalid configuration: LAB_PARTNERS: unknown partner ${unknownLab.join(', ')} (only fake exists so far)`);
+  if (labPartners.includes('fake') && e.NODE_ENV === 'production') {
+    throw new Error('Invalid configuration: LAB_PARTNERS=fake is the simulated lab, for development and tests only.');
   }
   const cellVar = (r: DataRegion, name: string) => (e as unknown as Record<string, string | undefined>)[`CELL_${r.toUpperCase()}_${name}`];
   const servedRegions = parseRegions(e.SERVED_REGIONS);
@@ -230,6 +242,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       contactEmail: e.GEO_CONTACT_EMAIL,
       timeoutMs: e.GEO_TIMEOUT_MS,
     },
+    labs: { partners: labPartners, fakeStepMs: e.LAB_FAKE_STEP_MS },
     map: {
       pmtilesUrl: e.MAP_PMTILES_URL || undefined,
       styleUrl: e.MAP_STYLE_URL,

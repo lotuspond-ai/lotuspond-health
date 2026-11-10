@@ -12,6 +12,8 @@ import { purgeOldEvents } from './compliance/audit.ts';
 import { EncryptedFileStore } from './lib/files-encrypted.ts';
 import { purgeExpiredSessions } from './auth/sessions.ts';
 import { createApp } from './app.ts';
+import { createLabs, fakePartner, type Labs } from './lab/runtime.ts';
+import type { PartnerConfig } from './lab/partners/types.ts';
 
 // This file runs from server/src (tsx) or server/dist (bundle); both are one level below server/.
 const serverRoot = fileURLToPath(new URL('..', import.meta.url));
@@ -63,7 +65,31 @@ if (config.env === 'production' && registry.serves('in') && !config.grievanceCon
   console.warn('[api] GRIEVANCE_CONTACT is not set. India\'s DPDP Act requires a published grievance contact for accounts in India.');
 }
 
-const app = createApp({ db: opened.defaultDatabase.db, files: registry.defaultCell.files, config, cells: registry, secrets });
+// Lab booking (docs/lab-booking-backend.md). The simulated lab runs in this process and posts its webhooks here over HTTP.
+let labs: Labs | undefined;
+let stopFakeLab: (() => void) | undefined;
+if (config.labs.partners.length) {
+  const partners: PartnerConfig[] = [];
+  if (config.labs.partners.includes('fake')) {
+    const fake = fakePartner({
+      stepMs: config.labs.fakeStepMs,
+      deliver: async (hookPath, req) => {
+        const res = await fetch(`http://127.0.0.1:${config.port}${hookPath}`, { method: 'POST', headers: req.headers, body: req.rawBody });
+        if (!res.ok) throw new Error(`webhook receiver replied ${res.status}`);
+      },
+    });
+    stopFakeLab = fake.lab.start(1000);
+    partners.push(fake.config);
+  }
+  try {
+    labs = createLabs({ cells: registry, secrets, partners });
+  } catch (e) {
+    fail(e);
+  }
+}
+
+const app = createApp({ db: opened.defaultDatabase.db, files: registry.defaultCell.files, config, cells: registry, secrets, labs });
+const stopLabs = labs?.start();
 const server = serve({ fetch: app.fetch, port: config.port, hostname: config.host }, info => {
   const where = (d: (typeof opened.databases)[number]) => (d.database.kind === 'pglite' ? `PGlite in ${path.dirname(d.filesRoot)}` : 'PostgreSQL');
   console.log(`[api] LotusPond Health API on http://localhost:${info.port} (${where(opened.databases[0])})`);
@@ -73,6 +99,7 @@ const server = serve({ fetch: app.fetch, port: config.port, hostname: config.hos
     console.log(`[api]   ${cell.id} cell: ${regions.length ? regions.join(', ') : 'no regions (directory and shared data)'}; ${where(db)}; files in ${db.filesRoot}${config.fileEncryption ? ', encrypted' : ', NOT encrypted'}`);
   }
   if (config.staticDir) console.log(`[api] serving the app from ${config.staticDir}`);
+  if (labs) console.log(`[api] lab booking: ${[...labs.partners.keys()].join(', ')}${labs.partners.has('fake') ? ` (the simulated lab; orders move a step every ${config.labs.fakeStepMs / 1000} s)` : ''}`);
 });
 
 const timer = setInterval(() => void sweep().catch(() => {}), 6 * 60 * 60 * 1000);
@@ -83,6 +110,8 @@ async function stop(signal: string) {
   if (stopping) return;
   stopping = true;
   console.log(`[api] ${signal}: shutting down`);
+  stopLabs?.();
+  stopFakeLab?.();
   server.close();
   await opened.close();
   process.exit(0);

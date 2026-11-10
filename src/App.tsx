@@ -8,6 +8,10 @@ import ProfilePage from './pages/Profile';
 import AccountPage from './pages/Account';
 import Labs from './pages/Labs';
 import { MarkerDrawer, ScanViewer, UploadDialog } from './components/Overlays';
+import { BookingDialog } from './components/labs/BookingDialog';
+import { ResultReview } from './components/labs/ResultReview';
+import { useLabFollow } from './components/labs/useLabFollow';
+import { useLab } from './state/lab';
 import { AuthScreen, Offline, Splash } from './components/Auth';
 import { Onboarding } from './components/Onboarding';
 import { AddProfileDialog, ProfileMenu, Toasts } from './components/ProfileMenu';
@@ -62,6 +66,10 @@ export default function App() {
 
 function Shell({ hidden }: { hidden: boolean }) {
   const { view, setView, setUploadOpen } = useUI();
+  useLabFollow(!hidden);
+  // Lab results waiting to be checked: a count on Find a lab.
+  const ready = useLab(s => s.results.filter(r => r.status === 'pending').length);
+  const badge = (id: View) => (id === 'labs' && ready > 0 ? <span className="nav__badge" aria-label={`, ${ready} lab result${ready === 1 ? '' : 's'} to check`}>{ready}</span> : null);
   useEffect(() => {
     if (hidden) return;
     const fromHash = () => { const h = location.hash.slice(1) as View; if (VIEWS.includes(h)) setView(h); };
@@ -69,14 +77,14 @@ function Shell({ hidden }: { hidden: boolean }) {
   }, [setView, hidden]);
   const tab = (t: (typeof TABS)[number]) => {
     const current = view === t.id || !!t.also?.includes(view);
-    return <button key={t.id} aria-current={current ? 'page' : undefined} onClick={() => setView(t.id)}>{t.icon}<span>{t.label}</span></button>;
+    return <button key={t.id} aria-current={current ? 'page' : undefined} onClick={() => setView(t.id)}>{t.icon}<span>{t.label}</span>{badge(t.id)}</button>;
   };
   return (
     <div className="app" hidden={hidden}>
       <header className="topbar">
         <a className="brand" href="#body" onClick={() => setView('body')}><Logo /><b>LotusPond <span>Health</span></b></a>
         <nav className="nav" aria-label="Main">
-          {NAV.map(n => <button key={n.id} aria-current={view === n.id ? 'page' : undefined} onClick={() => setView(n.id)}>{n.label}</button>)}
+          {NAV.map(n => <button key={n.id} aria-current={view === n.id ? 'page' : undefined} onClick={() => setView(n.id)}>{n.label}{badge(n.id)}</button>)}
         </nav>
         <div className="topbar__end">
           {isPreview && <span className="privacy" title="This preview has no server. Your account and records are saved in this browser only.">{Icon.lock} Preview · saved in this browser</span>}
@@ -97,6 +105,8 @@ function Shell({ hidden }: { hidden: boolean }) {
         <UploadDialog />
         <ScanViewer />
         <AddProfileDialog />
+        <BookingDialog />
+        <ResultReview />
       </>}
       <nav className="tabbar" aria-label="Main">
         {TABS.slice(0, 2).map(tab)}

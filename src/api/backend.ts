@@ -5,6 +5,7 @@ import type {
   RegisterInput, ScanInput, ScanItem, ServiceInfo, SessionInfo, StoredDocument,
   FacilityQuery, FacilitySearchResult, GeoCandidate, GeoReverse, PublicConfig,
 } from '../types';
+import type { LabBookingInput, LabCatalog, LabOrderView, LabResultSaved, LabResultView, LabSlot } from '../../shared/lab-bundle';
 
 export class ApiError extends Error {
   readonly status: number;
@@ -76,6 +77,35 @@ export interface Backend {
   searchPlaces(q: string): Promise<GeoCandidate[]>;
   /** The area around a point (sent rounded to about 1 km). */
   reversePlace(lat: number, lon: number): Promise<GeoReverse>;
+
+  /* Lab booking: home sample collection and its results (docs/lab-booking-backend.md). Needs the LotusPond server. */
+  /** Packages from the partners serving the account's region at this pincode. */
+  labCatalog(pincode: string): Promise<LabCatalog>;
+  labSlots(q: { partner: string; pincode: string; date: string; items: string[] }): Promise<LabSlot[]>;
+  /** A profile's bookings, newest first. */
+  labOrders(profileId: string): Promise<LabOrderView[]>;
+  /** One booking with its status timeline. */
+  labOrder(profileId: string, id: string): Promise<LabOrderView>;
+  /**
+   * Book. Retrying the same booking (after a network error) must reuse the same idempotency key, so the lab is never
+   * asked twice. An order still `placing` is being confirmed with the lab. A refused booking throws an ApiError whose
+   * detail carries the failed `order`.
+   */
+  bookLab(profileId: string, input: LabBookingInput, idempotencyKey: string): Promise<LabOrderView>;
+  cancelLabOrder(profileId: string, id: string, reason?: string): Promise<LabOrderView>;
+  /** Slots for moving a booking's visit (the server knows its address). */
+  labOrderSlots(profileId: string, id: string, date: string): Promise<LabSlot[]>;
+  rescheduleLabOrder(profileId: string, id: string, slot: LabSlot): Promise<LabOrderView>;
+  /** Results waiting for review. */
+  labResults(profileId: string): Promise<LabResultView[]>;
+  /** The report PDF of a result. */
+  labReport(profileId: string, resultId: string): Promise<Blob>;
+  /** A link that opens the report PDF in the browser, or null in the apps (which fetch it with labReport). */
+  labReportUrl(profileId: string, resultId: string): string | null;
+  /** Save reviewed values (and the report PDF) as the profile's records. */
+  saveLabResult(profileId: string, resultId: string, measurements: MeasurementInput[]): Promise<LabResultSaved>;
+  /** Drop a result without saving anything. */
+  dismissLabResult(profileId: string, resultId: string): Promise<LabResultView>;
 }
 
 /** A message suitable for showing to the person. */

@@ -1,11 +1,14 @@
-// Find a lab: partner labs and public labs, imaging centres, hospitals and clinics near a chosen area,
-// on a map and as cards with one-tap directions, calls and booking.
+// Find a lab. Two halves where a partner lab serves the account's region: Home collection (book a visit, follow it,
+// check the results) and Near you: partner labs and public labs, imaging centres, hospitals and clinics near a
+// chosen area, on a map and as cards with one-tap directions, calls and booking.
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import type { Facility, FacilityKind, FacilitySearchResult } from '../types';
 import { ApiError, errorMessage, isPreview } from '../api';
 import { FACILITY_KINDS, RADIUS_OPTIONS_KM } from '../../shared/facilities';
 import { firstName, useActiveProfile, useSession } from '../state/session';
+import { labBookingAvailable, useLab } from '../state/lab';
 import { FacilityCard } from '../components/labs/FacilityCard';
+import { HomeTests } from '../components/labs/HomeTests';
 import { EmptyState } from '../components/labs/Illustration';
 import { LabIcon } from '../components/labs/LabIcon';
 import { LocationPicker, RememberArea } from '../components/labs/LocationPicker';
@@ -19,6 +22,27 @@ const FacilityMap = import.meta.env.VITE_BACKEND === 'browser' ? null : lazy(() 
 const SOURCE_LABEL: Record<SearchPoint['source'], string> = { device: 'Your location', search: 'Searched area', saved: 'Home area' };
 
 export default function Labs() {
+  useSession(s => s.account?.region); // re-render when the account (and so its region) changes
+  const available = labBookingAvailable();
+  const tab = useLab(s => s.tab), setTab = useLab(s => s.setTab);
+  const ready = useLab(s => s.results.filter(r => r.status === 'pending').length);
+  const mode = available ? tab : 'near';
+  return (
+    <main className="page labs">
+      {available && (
+        <div className="seg labs__mode" role="group" aria-label="Find a lab">
+          <button type="button" aria-pressed={mode === 'home'} onClick={() => setTab('home')}>
+            <LabIcon name="home" />Home collection{ready > 0 && <span className="labs__count" aria-label={`${ready} to check`}>{ready}</span>}
+          </button>
+          <button type="button" aria-pressed={mode === 'near'} onClick={() => setTab('near')}><LabIcon name="pin" />Near you</button>
+        </div>
+      )}
+      {mode === 'home' ? <HomeTests /> : <NearbyLabs />}
+    </main>
+  );
+}
+
+function NearbyLabs() {
   const profile = useActiveProfile();
   const account = useSession(s => s.account);
   const { picked, radiusKm, filter, selectedId, pick, setRadius, setFilter, select } = useLabs();
@@ -53,7 +77,7 @@ export default function Labs() {
   const who = profile ? (profile.relationship === 'self' ? 'you' : firstName(profile)) : 'you';
 
   return (
-    <main className="page labs">
+    <>
       <header className="labs__head">
         <div>
           <h1>Find a lab</h1>
@@ -124,7 +148,7 @@ export default function Labs() {
           </div>
         </>
       )}
-    </main>
+    </>
   );
 }
 
