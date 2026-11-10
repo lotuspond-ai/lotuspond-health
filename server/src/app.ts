@@ -16,6 +16,10 @@ import { facilityRoutes } from './routes/facilities.ts';
 import { geoRoutes } from './routes/geo.ts';
 import { configRoutes, mapFileRoutes } from './routes/config.ts';
 import { addCspSources, mapCspSources } from './facilities/index.ts';
+import { hookRoutes, labOrderRoutes, labResultRoutes, labRoutes } from './lab/routes.ts';
+import { agentRoutes } from './agents/routes.ts';
+import { mcpRoutes } from './agents/mcp.ts';
+import { oauthRoutes, type OAuthOptions } from './agents/oauth.ts';
 
 const UNSAFE = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
@@ -52,7 +56,7 @@ const IMMUTABLE = 'public, max-age=31536000, immutable';
 /** Files whose names change with their content: built assets, and the pre-rendered body-map images (name.<hash>.webp/png). */
 const HASHED = /[\\/]assets[\\/]|[\\/]bodymap[\\/][^\\/]+\.[0-9a-f]{10}\.(webp|png)$/;
 
-export function createApp(input: DepsInput): Hono<AppEnv> {
+export function createApp(input: DepsInput, opts: { oauth?: OAuthOptions } = {}): Hono<AppEnv> {
   const deps = completeDeps(input); // one default cell unless index.ts opened several
   const { config } = deps;
   const app = new Hono<AppEnv>();
@@ -76,14 +80,15 @@ export function createApp(input: DepsInput): Hono<AppEnv> {
         'Access-Control-Allow-Origin': origin,
         'Access-Control-Allow-Methods': 'GET, POST, PATCH, PUT, DELETE',
         // Range: map tiles (.pmtiles) are read in byte ranges; some web views preflight it.
-        'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-LotusPond-Client, Range',
+        // Idempotency-Key: lab bookings (lab/routes.ts) need one, so a retried booking can't book twice.
+        'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-LotusPond-Client, Range, Idempotency-Key',
         'Access-Control-Max-Age': '600',
         Vary: 'Origin',
       });
     }
     await next();
     c.res.headers.set('Access-Control-Allow-Origin', origin);
-    c.res.headers.set('Access-Control-Expose-Headers', 'Content-Disposition, Content-Range, ETag');
+    c.res.headers.set('Access-Control-Expose-Headers', 'Content-Disposition, Content-Range, ETag, Idempotent-Replayed');
     c.res.headers.append('Vary', 'Origin');
   });
 
@@ -115,6 +120,13 @@ export function createApp(input: DepsInput): Hono<AppEnv> {
 
   app.get('/api/health', c => c.json({ ok: true }));
   app.route('/api/auth', authRoutes(deps));
+  if (deps.labs) {
+    // Before /api/profiles, so lab-order requests are answered here (with the same session and profile checks).
+    app.route('/api/lab', labRoutes(deps, deps.labs));
+    app.route('/api/profiles/:pid/lab-orders', labOrderRoutes(deps, deps.labs));
+    app.route('/api/profiles/:pid/lab-results', labResultRoutes(deps, deps.labs));
+  }
+  app.route('/api/agents', agentRoutes(deps));
   app.route('/api/profiles', profileRoutes(deps));
   app.route('/api/facilities', facilityRoutes(deps));
   app.route('/api/geo', geoRoutes(deps));
@@ -127,6 +139,30 @@ export function createApp(input: DepsInput): Hono<AppEnv> {
     console.error('[api] unhandled error', err);
     return c.json({ error: { code: 'server_error', message: 'Something went wrong on the server. Try again.' } }, 500);
   });
+
+  // Agents (Claude, ChatGPT, …): the MCP endpoint and the OAuth sign-in it points to. Bearer tokens only, never
+  // cookies (except the consent page), so these sit outside /api and its browser checks. CORS is open, without credentials.
+  app.use('/mcp', async (c, next) => {
+    if (c.req.method === 'OPTIONS') {
+      return c.body(null, 204, {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'POST, GET, DELETE',
+        'Access-Control-Allow-Headers': 'Authorization, Content-Type, Accept, MCP-Protocol-Version, Mcp-Session-Id, Last-Event-ID',
+        'Access-Control-Max-Age': '600',
+      });
+    }
+    await next();
+    c.res.headers.set('Access-Control-Allow-Origin', '*');
+    c.res.headers.set('Access-Control-Expose-Headers', 'WWW-Authenticate, Mcp-Session-Id');
+    c.res.headers.set('Cache-Control', 'no-store');
+  });
+  app.use('/mcp', bodyLimit({ maxSize: 1024 * 1024, onError: c => c.json({ jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Request too large.' } }, 413) }));
+  app.route('/mcp', mcpRoutes(deps));
+  app.use('/oauth/*', bodyLimit({ maxSize: 64 * 1024, onError: c => c.json({ error: 'invalid_request', error_description: 'Request too large.' }, 413) }));
+  app.route('/', oauthRoutes(deps, opts.oauth));
+
+  // Lab partner webhooks: server to server, so outside /api (no browser checks, no CORS).
+  if (deps.labs) app.route('/hooks', hookRoutes(deps, deps.labs));
 
   if (config.staticDir && fs.existsSync(path.join(config.staticDir, 'index.html'))) serveSite(app, config.staticDir, appCsp);
 

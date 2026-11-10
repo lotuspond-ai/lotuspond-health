@@ -2,12 +2,12 @@
 // Every route below /:pid first checks that the profile belongs to the signed-in account.
 // All of it is personal data, so every query goes to the account's cell (c.var.cell), never to deps.db.
 import { createHash } from 'node:crypto';
-import { Hono } from 'hono';
+import { Hono, type MiddlewareHandler } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { and, asc, count, desc, eq, inArray } from 'drizzle-orm';
 import { LIMITS } from '../../../shared/constants.ts';
 import type { Db } from '../db/client.ts';
-import { documents, measurements, profiles, scans, type ProfileRow } from '../db/schema.ts';
+import { documents, labResults, measurements, profiles, scans, type ProfileRow } from '../db/schema.ts';
 import { eventContext, recentActivity, recordEvent } from '../compliance/audit.ts';
 import { listConsents } from '../compliance/consents.ts';
 import { badRequest, conflict, HttpError, notFound } from '../lib/errors.ts';
@@ -35,9 +35,22 @@ function cleanFileName(name: string): string {
   return cleaned || 'file';
 }
 
-function contentDisposition(kind: 'inline' | 'attachment', fileName: string): string {
+export function contentDisposition(kind: 'inline' | 'attachment', fileName: string): string {
   const ascii = fileName.replace(/[^\x20-\x7e]/g, '_').replace(/[\\"]/g, '_');
   return `${kind}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(fileName)}`;
+}
+
+/** After requireAuth: load the :pid profile if it belongs to the signed-in account (else 404) into c.var.profile. */
+export function requireProfile(): MiddlewareHandler<AppEnv> {
+  return async (c, next) => {
+    const pid = c.req.param('pid');
+    if (!pid || !UUID.test(pid)) throw notFound('That profile');
+    const { db } = c.var.cell;
+    const [row] = await db.select().from(profiles).where(and(eq(profiles.id, pid), eq(profiles.userId, c.var.user.id))).limit(1);
+    if (!row) throw notFound('That profile');
+    c.set('profile', row);
+    await next();
+  };
 }
 
 export function profileRoutes(deps: Deps) {
@@ -66,15 +79,7 @@ export function profileRoutes(deps: Deps) {
   /* ---------- one profile (ownership check) ---------- */
 
   // Matches '/:pid' as well as everything below it.
-  app.use('/:pid/*', async (c, next) => {
-    const pid = c.req.param('pid');
-    if (!pid || !UUID.test(pid)) throw notFound('That profile');
-    const { db } = c.var.cell;
-    const [row] = await db.select().from(profiles).where(and(eq(profiles.id, pid), eq(profiles.userId, c.var.user.id))).limit(1);
-    if (!row) throw notFound('That profile');
-    c.set('profile', row);
-    await next();
-  });
+  app.use('/:pid/*', requireProfile());
   app.get('/:pid', c => c.json(toProfile(c.var.profile)));
 
   app.patch('/:pid', async c => {
@@ -116,6 +121,7 @@ export function profileRoutes(deps: Deps) {
     const pid = c.var.profile.id;
     await db.transaction(async tx => {
       await tx.delete(measurements).where(eq(measurements.profileId, pid));
+      await tx.delete(labResults).where(eq(labResults.profileId, pid)); // their PDFs are under the profile's files, deleted below
       await tx.delete(documents).where(eq(documents.profileId, pid)); // cascades to scans
     });
     await files.deletePrefix(pid);

@@ -1,0 +1,21 @@
+/* Account, Connected agents (src/components/AgentConnections.tsx). */
+.btn--small { padding: 5px 10px; font-size: 13px; }
+.agents__url { display: grid; gap: 4px; margin: 4px 0 12px; }
+.agents__copy { display: flex; gap: 8px; align-items: center; min-width: 0; }
+.agents__copy code { flex: 1; min-width: 0; overflow-wrap: anywhere; background: var(--mist); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; font-size: 13px; }
+.agents__how { margin: 4px 0 14px; }
+.agents__how summary { cursor: pointer; font-weight: 600; }
+.agents__how ul { margin: 8px 0; padding-left: 18px; display: grid; gap: 6px; }
+.agents__list { list-style: none; margin: 0 0 12px; padding: 0; }
+.agents__list li { display: flex; gap: 12px; justify-content: space-between; align-items: flex-start; padding: 10px 0; border-top: 1px solid var(--line); }
+.agents__list li > div { display: grid; gap: 2px; min-width: 0; }
+.agents__list small, .agents__choices small { display: block; color: var(--ink-2); overflow-wrap: anywhere; }
+.agents__form, .agents__made { border-top: 1px solid var(--line); padding-top: 12px; margin-top: 4px; }
+.agents__form h3, .agents__made h3 { font-size: 15px; margin: 0 0 8px; }
+.agents__choices { border: 0; padding: 0; margin: 12px 0; display: grid; gap: 6px; }
+.agents__choices legend { font-weight: 600; margin-bottom: 4px; }
+.agents__choices label { display: flex; gap: 8px; align-items: flex-start; }
+.agents__choices input { margin-top: 3px; }
+.agents__pre { background: var(--mist); border: 1px solid var(--line); border-radius: 8px; padding: 10px; font-size: 12.5px; overflow-x: auto; max-width: 100%; white-space: pre; }
+.agent-proposal { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; border: 1px solid var(--line); background: var(--paper); border-radius: 12px; padding: 12px 14px; margin-bottom: 14px; }
+.agent-proposal p { margin: 0; }

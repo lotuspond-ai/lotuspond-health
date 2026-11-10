@@ -9,6 +9,7 @@ import { countryInSentence, countryName, countryPolicy, storageSentence, type Un
 import type { ActivityEvent, AuditKind, ConsentKind, ConsentRecord, Profile } from '../types';
 import { ConfirmButton, Field } from '../components/forms';
 import { AppLockSettings } from '../components/AppLock';
+import { AgentConnectionsPanel } from '../components/AgentConnections';
 import '../styles/compliance.css';
 
 const focusDeletePassword = () => document.querySelector<HTMLInputElement>('#delete-account input[type=password]')?.focus();
@@ -33,6 +34,7 @@ export default function AccountPage() {
         </section>
         <AppLockSettings />
         <ResidencyPanel />
+        {!isPreview && <AgentConnectionsPanel />}
         <UnitsPanel onChange={reload} />
         <ConsentsPanel consents={consents} failed={failed} onChange={reload} />
         <ActivityPanel activity={activity} failed={failed} profiles={profiles} />
@@ -255,6 +257,13 @@ const ACTIVITY_LABEL: Record<AuditKind, string> = {
   account_deleted: 'Account deleted',
   consent_changed: 'Consent changed',
   preferences_changed: 'Units changed',
+  lab_order_created: 'Lab test booked',
+  lab_order_cancelled: 'Lab test booking cancelled',
+  lab_results_saved: 'Lab results added',
+  agent_connected: 'Agent connected',
+  agent_disconnected: 'Agent disconnected',
+  agent_access: 'Agent read records',
+  agent_wrote: 'Agent added to records',
 };
 
 function describe(e: ActivityEvent, profiles: Profile[]): string | null {

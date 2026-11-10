@@ -6,6 +6,7 @@ import { BIOMARKERS, SYSTEM_LABELS } from '../lib/catalog';
 import { ORGAN_BY_ID } from '../anatomy/organs';
 import { buildSeries, formatDate } from '../lib/derive';
 import { useUI } from '../state/ui';
+import { useEscape } from './useEscape';
 import { Icon, RangeBar, StatusChip, TrendChart } from './ui';
 import { ArrowIcon, ModalityBadge, SystemIcon, UiIcon } from './icons';
 import { rangeText } from './context/summary';
@@ -41,16 +42,6 @@ const takeFiles = (input: HTMLInputElement): File[] => {
   return files;
 };
 
-/** Close on Escape. Subscribes once and always calls the latest `close`, so there is no gap while effects re-run. */
-function useEscape(close: () => void) {
-  const latest = useRef(close);
-  useLayoutEffect(() => { latest.current = close; });
-  useLayoutEffect(() => {
-    const k = (e: KeyboardEvent) => { if (e.key === 'Escape') latest.current(); };
-    window.addEventListener('keydown', k);
-    return () => window.removeEventListener('keydown', k);
-  }, []);
-}
 
 /* ---------- marker detail ---------- */
 function Delta({ points }: { points: Measurement[] }) {
@@ -141,6 +132,38 @@ export function MarkerDrawer() {
 }
 
 /* ---------- upload + review ---------- */
+/** The review table: every value read from a file (or from a lab's report), editable before it is saved. */
+export function ReviewTable({ measurements, onPatch, onDrop }: {
+  measurements: Measurement[];
+  onPatch: (id: string, p: Partial<Measurement>) => void;
+  onDrop: (id: string) => void;
+}) {
+  const unitSystem = useUnitSystem();
+  return (
+    <div className="table-wrap review-wrap"><table className="table review">
+      <thead><tr><th>Marker</th><th>Value</th><th>Unit</th><th>Range</th><th>Date</th><th>Read as</th><th /></tr></thead>
+      <tbody>
+        {measurements.map(m => (
+          <tr key={m.id}>
+            <td><select value={m.markerId ?? ''} onChange={e => onPatch(m.id, { markerId: e.target.value || null })} aria-label="Marker">
+              <option value="">{m.rawName} (unmatched)</option>
+              {BIOMARKERS.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+            </select></td>
+            <td><input value={m.valueText} aria-label="Value" onChange={e => { const v = parseFloat(e.target.value.replace(/,/g, '')); onPatch(m.id, { valueText: e.target.value, value: Number.isFinite(v) ? v : null }); }} />
+              {(() => { const d = displayMeasurement(m, unitSystem); return d.converted && <small className="review__alt" title="How this value is shown in your unit setting">Shown as {d.text} {d.unit}</small>; })()}</td>
+            <td><input value={m.unit} aria-label="Unit" onChange={e => onPatch(m.id, { unit: e.target.value })} /></td>
+            <td className="muted">{m.range?.text ?? 'None'}
+              {(() => { const d = displayMeasurement(m, unitSystem); return d.converted && d.range && <small className="review__alt">Shown as {rangeText(d.range)} {d.unit}</small>; })()}</td>
+            <td><input type="date" value={m.date ?? ''} aria-label="Date" onChange={e => onPatch(m.id, { date: e.target.value || null })} /></td>
+            <td><span className={`conf${m.confidence === 'low' ? ' conf--low' : ''}`}>{m.confidence === 'high' ? 'Clear' : m.confidence === 'medium' ? 'Check unit' : 'Check'}</span></td>
+            <td><button className="btn btn--quiet" onClick={() => onDrop(m.id)} aria-label={`Remove ${m.rawName}`}>{Icon.close}</button></td>
+          </tr>
+        ))}
+      </tbody>
+    </table></div>
+  );
+}
+
 export function UploadDialog() {
   const open = useUI(s => s.uploadOpen);
   // Mounted only while open, so closing from anywhere (Escape, Android back) starts the next upload fresh.
@@ -151,7 +174,6 @@ function UploadPanel() {
   const setOpen = useUI(s => s.setUploadOpen);
   const addResult = useHealth(s => s.addResult);
   const profile = useActiveProfile();
-  const unitSystem = useUnitSystem();
   const [over, setOver] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [draft, setDraft] = useState<ParseResult | null>(null);
@@ -220,29 +242,7 @@ function UploadPanel() {
         ) : (
           <>
             {draft.warnings.map(w => <p key={w} className="warn">{w}</p>)}
-            {draft.measurements.length > 0 && (
-              <div className="table-wrap review-wrap"><table className="table review">
-                <thead><tr><th>Marker</th><th>Value</th><th>Unit</th><th>Range</th><th>Date</th><th>Read as</th><th /></tr></thead>
-                <tbody>
-                  {draft.measurements.map(m => (
-                    <tr key={m.id}>
-                      <td><select value={m.markerId ?? ''} onChange={e => patch(m.id, { markerId: e.target.value || null })} aria-label="Marker">
-                        <option value="">{m.rawName} (unmatched)</option>
-                        {BIOMARKERS.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-                      </select></td>
-                      <td><input value={m.valueText} aria-label="Value" onChange={e => { const v = parseFloat(e.target.value.replace(/,/g, '')); patch(m.id, { valueText: e.target.value, value: Number.isFinite(v) ? v : null }); }} />
-                        {(() => { const d = displayMeasurement(m, unitSystem); return d.converted && <small className="review__alt" title="How this value is shown in your unit setting">Shown as {d.text} {d.unit}</small>; })()}</td>
-                      <td><input value={m.unit} aria-label="Unit" onChange={e => patch(m.id, { unit: e.target.value })} /></td>
-                      <td className="muted">{m.range?.text ?? 'None'}
-                        {(() => { const d = displayMeasurement(m, unitSystem); return d.converted && d.range && <small className="review__alt">Shown as {rangeText(d.range)} {d.unit}</small>; })()}</td>
-                      <td><input type="date" value={m.date ?? ''} aria-label="Date" onChange={e => patch(m.id, { date: e.target.value || null })} /></td>
-                      <td><span className={`conf${m.confidence === 'low' ? ' conf--low' : ''}`}>{m.confidence === 'high' ? 'Clear' : m.confidence === 'medium' ? 'Check unit' : 'Check'}</span></td>
-                      <td><button className="btn btn--quiet" onClick={() => drop(m.id)} aria-label={`Remove ${m.rawName}`}>{Icon.close}</button></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table></div>
-            )}
+            {draft.measurements.length > 0 && <ReviewTable measurements={draft.measurements} onPatch={patch} onDrop={drop} />}
             {draft.scans.length > 0 && (
               <div className="section" style={{ marginTop: 12 }}><h3>Scans</h3>
                 <div className="gallery">{draft.scans.map(s => (

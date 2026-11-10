@@ -14,6 +14,8 @@ import { CONSENT_VERSION, countryPolicy, isCountryCode, signUpProblem, type Data
 import { searchOffline } from './gazetteer';
 import { uid } from '../lib/id';
 import { ApiError, type Backend, type ScanPatch } from './backend';
+import type { AgentConnection, AgentConnectionsInfo, CreatedAgentToken } from '../../shared/agents';
+import type { LabCatalog, LabOrderView, LabResultSaved, LabResultView, LabSlot } from '../../shared/lab-bundle';
 
 interface StoredAccount extends Account { salt: string; hash: string }
 
@@ -103,6 +105,9 @@ function checkLocation(patch: Partial<ProfileInput>, out: Partial<ProfileInput>)
   if (patch.postalCode !== undefined) out.postalCode = patch.postalCode?.trim().slice(0, 20) || null;
   return out;
 }
+
+const noAgents = () => new ApiError(503, 'preview', 'Connecting AI agents needs the LotusPond server, and this preview runs without one.');
+const noLabs = () => new ApiError(503, 'preview', 'Booking a home test needs the LotusPond server, and this preview runs without one.');
 
 export class BrowserBackend implements Backend {
   readonly kind = 'browser' as const;
@@ -484,6 +489,21 @@ export class BrowserBackend implements Backend {
     return { map: null, nearbySearch: false };
   }
 
+  /* Lab booking needs the LotusPond server: a preview shows no bookings and explains why it can't book. */
+  async labCatalog(): Promise<LabCatalog> { throw noLabs(); }
+  async labSlots(): Promise<LabSlot[]> { throw noLabs(); }
+  async labOrders(): Promise<LabOrderView[]> { return []; }
+  async labOrder(): Promise<LabOrderView> { throw noLabs(); }
+  async bookLab(): Promise<LabOrderView> { throw noLabs(); }
+  async cancelLabOrder(): Promise<LabOrderView> { throw noLabs(); }
+  async labOrderSlots(): Promise<LabSlot[]> { throw noLabs(); }
+  async rescheduleLabOrder(): Promise<LabOrderView> { throw noLabs(); }
+  async labResults(): Promise<LabResultView[]> { return []; }
+  async labReport(): Promise<Blob> { throw noLabs(); }
+  labReportUrl(): string | null { return null; }
+  async saveLabResult(): Promise<LabResultSaved> { throw noLabs(); }
+  async dismissLabResult(): Promise<LabResultView> { throw noLabs(); }
+
   async nearbyFacilities(): Promise<FacilitySearchResult> {
     throw new ApiError(503, 'preview', 'Finding labs needs the LotusPond server, and this preview runs without one.');
   }
@@ -502,4 +522,9 @@ export class BrowserBackend implements Backend {
   async allKeys(): Promise<IDBValidKey[]> {
     return keys(this.store);
   }
+
+  async agentConnections(): Promise<AgentConnectionsInfo> { throw noAgents(); }
+  async createAgentToken(): Promise<CreatedAgentToken> { throw noAgents(); }
+  async updateAgentConnection(): Promise<AgentConnection> { throw noAgents(); }
+  async disconnectAgent(): Promise<void> { throw noAgents(); }
 }

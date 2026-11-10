@@ -164,7 +164,9 @@ export interface ConsentRecord {
 /** Account events kept in the audit log and shown as "Recent activity". */
 export type AuditKind =
   | 'account_created' | 'sign_in' | 'sign_in_failed' | 'sign_out' | 'password_changed' | 'sessions_revoked'
-  | 'export' | 'profile_deleted' | 'records_deleted' | 'account_deleted' | 'consent_changed' | 'preferences_changed';
+  | 'export' | 'profile_deleted' | 'records_deleted' | 'account_deleted' | 'consent_changed' | 'preferences_changed'
+  | 'lab_order_created' | 'lab_order_cancelled' | 'lab_results_saved'
+  | 'agent_connected' | 'agent_disconnected' | 'agent_access' | 'agent_wrote';
 
 /** The only details an audit event may carry. Deliberately narrow: never names, values, file names or other health data. */
 export interface AuditDetail {
@@ -173,6 +175,8 @@ export interface AuditDetail {
   unitSystem?: 'conventional' | 'si';
   /** Opaque id of the profile acted on. */
   profileId?: string;
+  /** Opaque id of the agent connection (shared/agents.ts) that acted. */
+  connectionId?: string;
 }
 
 export interface ActivityEvent {

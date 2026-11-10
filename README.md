@@ -1,8 +1,20 @@
 # LotusPond Health
 
-A personal health record. Create an account, keep a profile for yourself and each family member, upload lab reports and scans, and see every result on a detailed 3D model of the body, organ by organ. Results, scans and the original files are stored in your account.
+**Your family's health records, ready for any AI agent.** LotusPond keeps lab results, scans, conditions and medications for you and each family member, turns them into a summary an agent can use, and lets the agents you choose read it: Claude, ChatGPT, Gemini, Grok, Meta AI, or your own. You decide whose records each agent sees and whether it may add to them. You can disconnect any agent at any time.
+
+It works with any agent that speaks the [Model Context Protocol](https://modelcontextprotocol.io): the server is a remote MCP server at `/mcp`, with OAuth 2.1 sign-in so agents connect like any other connector. The app around it is a full personal health record: upload reports, see results on a 3D body map, book a home sample collection.
+
+See [docs/agents.md](docs/agents.md) for how agents connect, the tools they get, and the safety model.
 
 ## What it does
+
+- **Connected agents.** Add LotusPond to Claude (Settings → Connectors → Add custom connector), ChatGPT (developer-mode connectors), Claude Code, Cursor or any MCP client with one address: `https://<your server>/mcp`. The agent opens a LotusPond sign-in, where you pick the profiles it may see and whether it may add readings. Agents that cannot sign in use an access token made on Account. Agents get:
+  - a **health summary**: results outside their range, values moving toward or away from range, tests that may be due given the profile's conditions, BMI, conditions, medications and allergies;
+  - each marker's **history and trend**, the profile details, and the list of scans and files (never the files themselves);
+  - with permission, ways to **add what you tell them**: a reading (blood pressure, weight, glucose), or a condition, medication or allergy, each marked with the agent that added it;
+  - **lab tests near you** and a **booking proposal** that you confirm in the app. Agents never book or pay by themselves.
+
+  Every connection, read (hourly) and write shows in Recent activity.
 
 - **Accounts and profiles.** Sign up with email, password and the country you live in, which decides where your records are stored and which rules apply (see [Data residency](#data-residency)). One account holds your own profile plus any family members you add (children, partner, parents). Each profile keeps date of birth, sex, height, weight (with BMI), blood type, conditions, medications, allergies and notes. Switch between people from the menu at the top.
 - **Upload** lab report PDFs (text-based), CSV/JSON exports, DICOM files (`.dcm`) and scan photos. Files are read in the browser and every value is shown for review before it is saved. The original file is kept with the values read from it.
@@ -18,6 +30,7 @@ A personal health record. Create an account, keep a profile for yourself and eac
 - **Biomarkers**: latest value of each marker grouped by body system, with its position in the reference range and its trend over time.
 - **Scans**: assign scans to body areas; view with zoom, and brightness/contrast for DICOM.
 - **Files**: every original report and scan, with links to open, download or delete it.
+- **Find a lab**: labs, imaging centres and hospitals near you on a map. For accounts held in India, **Home collection** books a lab visit at home for any profile: pick a package for your pincode and a time, follow the order from booking to report, move or cancel the visit, then check the results on the same review screen as an upload before they are added. Only the simulated lab is connected so far (see [Lab booking](#lab-booking-in-progress)).
 - **Account**: where your records are stored, the consents you gave (with date and version), recent sign-ins and changes, units for lab values (conventional or SI), contacts for data questions; change password, sign out other devices, export a profile as JSON, delete a profile or the whole account.
 
 Reference ranges come from your report when it prints one; otherwise a typical adult range is used and labelled. LotusPond explains results; it does not diagnose.
@@ -42,7 +55,6 @@ You need [Node.js](https://nodejs.org) 22.12 or newer (check with `node -v`) and
 ```bash
 git clone https://github.com/lotuspond-ai/lotuspond-health.git
 cd lotuspond-health
-git checkout claude/friendly-brahmagupta-vul203    # until the pull request is merged
 npm install
 npm run local
 ```
@@ -180,6 +192,29 @@ All routes are under `/api` and use JSON unless noted.
 | `POST /profiles/:id/measurements`, `PATCH`/`DELETE …/measurements/:mid` | Save, edit or delete results |
 | `POST /profiles/:id/documents` (multipart), `GET …/documents/:did/file`, `DELETE …/documents/:did` | Store, fetch or delete original files |
 | `POST /profiles/:id/scans`, `PATCH`/`DELETE …/scans/:sid` | Save, edit or delete scans |
+| `GET /lab/catalog?pincode=`, `GET /lab/slots?partner=&pincode=&date=&items=` | Lab booking: packages and home-collection slots from the partners serving the account's region |
+| `GET`, `POST /profiles/:id/lab-orders` | A profile's lab bookings, or book one (needs an `Idempotency-Key` header) |
+| `GET /profiles/:id/lab-orders/:oid`, `POST …/:oid/cancel`, `GET …/:oid/slots?date=`, `POST …/:oid/reschedule` | One booking with its status timeline; cancel it, or find a new time (same lab, address and tests) and move the visit |
+| `GET /profiles/:id/lab-results`, `GET …/lab-results/:rid/report` | Lab results waiting for review (`?status=all` for every delivery), and the report PDF |
+| `POST …/lab-results/:rid/save` `{ measurements }`, `POST …/:rid/dismiss` | Save the reviewed values and the PDF as the profile's records (replacing an earlier delivery of the same order), or drop the result |
+
+| `GET /agents`, `POST /agents/tokens`, `PATCH`/`DELETE /agents/:id` | Connected agents: list them with the MCP address, create an access token (shown once), change profiles or permissions, disconnect |
+
+Agents use `POST /mcp` (MCP, JSON-RPC over Streamable HTTP) and the OAuth endpoints `/.well-known/oauth-protected-resource`, `/.well-known/oauth-authorization-server`, `/oauth/register`, `/oauth/authorize`, `/oauth/token` and `/oauth/revoke`, all outside `/api` ([docs/agents.md](docs/agents.md)).
+
+Lab partners call `POST /hooks/:partner/:secret` (outside `/api`; see [Lab booking](#lab-booking-in-progress)).
+
+## Lab booking (in progress)
+
+Book a home sample collection with a lab partner for any profile, and follow it from booking to report. The design is in [docs/lab-booking-backend.md](docs/lab-booking-backend.md); the code is in `server/src/lab/` ([its README](server/src/lab/README.md)).
+
+- **Partners.** No real lab is connected yet. `LAB_PARTNERS=fake` runs a simulated lab inside the server: it has packages, slots and an order timeline, sends signed webhooks, and writes reports as structured results plus a PDF. It is on by default in development and refused in production. Each partner serves one data region (the simulated lab: India), and only accounts held there can book with it.
+- **Orders.** Orders are kept in the account's cell with the profile they are for, and carry the booking consent (notice version and time). The patient's contact details are encrypted with the cell's file key. Partner webhooks are only hints: the server asks the partner for the current status, and a poller catches missed webhooks.
+- **Results.** When the lab's report is ready, the server fetches it and keeps it, with the PDF, waiting for review. The app reads it like an upload; saving makes the values measurements and the PDF a document in the profile, replacing whatever an earlier delivery of the same order saved (a partial report, or one later amended).
+- **In the app.** Find a lab → Home collection (shown only for accounts in a region with a partner, and not in the server-less preview). Booking takes four steps: tests for a pincode, a visit time (India time), who is tested and where the collector comes, then a notice naming the lab and what it receives, which must be accepted. The booking is sent with an idempotency key tied to exactly those details, so retrying after a dropped connection never books twice. Orders show a progress tracker and can be moved or cancelled while the lab allows it. The screen checks the lab every few seconds while an order is moving, and every minute elsewhere in the app; results waiting to be checked show as a count on Find a lab. Code: `src/components/labs/` (`HomeTests`, `BookingDialog`, `SlotPicker`, `ResultReview`) and `src/state/lab.ts`.
+- **Not built yet.** Payments (orders are pay-at-collection), notifications, and keeping the mobile number and address for the next booking.
+
+To try it, run `npm run dev`, sign up with India as the country, open Find a lab and book with a Bengaluru, Mumbai or Delhi pincode (e.g. 560034). The order moves a step every 10 seconds (set `LAB_FAKE_STEP_MS` to change that). Add `#partial`, `#recollect`, `#slot-full` and the like to the patient's name to play other scenarios ([list](server/src/lab/README.md#the-simulated-lab)).
 
 ## Mobile apps (iOS and Android)
 
@@ -229,13 +264,15 @@ The product's own site, **https://health.lotuspond.ai**, is built by the same Vi
 | `src/three/` | React Three Fiber stage: tissue materials, pond floor, camera, x-ray and cross-sections, adaptive quality |
 | `src/components/bodymap2d/`, `public/bodymap/` | Pre-rendered body map (default view) and its images |
 | `src/anatomy/organs.ts` | Organ metadata: meshes, tissues, landmarks, linked body systems |
-| `src/lib/` | Biomarker catalog, file parsers, the records store |
+| `src/lib/` | File parsers, the records store (the biomarker catalog is in `shared/catalog.ts`, used by the agent summaries too) |
 | `src/api/` | Data access: `http.ts` talks to the API, `browser.ts` keeps everything in IndexedDB for server-less previews |
 | `src/state/` | Session (account, profiles, open profile), interface state, toasts |
-| `src/pages/`, `src/components/` | Interface |
+| `src/pages/`, `src/components/` | Interface (`src/components/labs/`: Find a lab, home collection booking and lab results review) |
 | `index.html`, `privacy/`, `terms/`, `trust/`, `404.html`, `src/site/` | Public website (see above); `app.html` is the app shell |
 | `tools/site/` | Build plugin for the website, region tables, screenshot and social-image tool |
 | `server/src/` | API: routes, auth, database schema, file storage, cells (`cells.ts`) and compliance records (`compliance/`: directory, consents, audit log, secrets) |
+| `server/src/agents/` | Agent connections: MCP endpoint (`mcp.ts`), tools (`tools.ts`), health summary (`synthesis.ts`), OAuth (`oauth.ts`), grants and tokens (`grants.ts`), the app's routes (`routes.ts`) |
+| `server/src/lab/` | Lab booking: partner interface and simulated lab, order state machine, webhooks, booking service and routes ([README](server/src/lab/README.md)) |
 | `server/drizzle/` | SQL migrations (generate with `npm run db:generate` after changing `server/src/db/schema.ts`) |
 | `shared/` | Types and limits used by both sides |
 | `tools/anatomy/` | Python generator for `public/models/anatomy.glb` (signed-distance modelling, surface nets, quadric decimation) |

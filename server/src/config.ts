@@ -31,6 +31,8 @@ const Env = z.object({
   DATA_DIR: z.string().default('.data'),
   /** Built frontend to serve (defaults to ../dist in production). */
   STATIC_DIR: z.string().optional(),
+  /** Public address of this server, e.g. https://health.lotuspond.ai. Used in OAuth and MCP metadata for agents; derived from the request when unset. */
+  PUBLIC_URL: z.string().url().optional(),
   /** Extra origins allowed to make changes, comma-separated (for a frontend on another host). */
   APP_ORIGINS: z.string().default(''),
   /** Origins of the iOS and Android apps. They may call the API with bearer tokens (CORS, no cookies). */
@@ -47,6 +49,9 @@ const Env = z.object({
   FACILITY_SEARCH: z.enum(['on', 'off', 'true', 'false', '1', '0']).default('on'),
   /** 'fixture' answers from recorded responses in server/data/fixtures (development and tests only). */
   FACILITY_PROVIDER: z.enum(['http', 'fixture']).default('http'),
+  /** Lab partners for home sample collection, comma-separated. Only 'fake' (the simulated lab) exists so far. */
+  LAB_PARTNERS: z.string().optional(),
+  LAB_FAKE_STEP_MS: z.coerce.number().int().min(100).max(3_600_000).default(10_000),
   OVERPASS_URL: z.string().url().default('https://overpass-api.de/api/interpreter'),
   GEOCODER_URL: z.string().url().default('https://nominatim.openstreetmap.org'),
   /** Contact address sent to OpenStreetMap services (Nominatim usage policy asks for one). */
@@ -112,6 +117,8 @@ export interface Config {
   databaseUrl: string | undefined;
   dataDir: string;
   staticDir: string | undefined;
+  /** Public origin (no trailing slash), when configured. */
+  publicUrl: string | undefined;
   allowedOrigins: string[];
   appClientOrigins: string[];
   regionApiOrigins: Partial<Record<DataRegion, string>>;
@@ -120,6 +127,8 @@ export interface Config {
   sessionTtlMs: number;
   maxUploadBytes: number;
   facilities: FacilityConfig;
+  /** Lab partners switched on (docs/lab-booking-backend.md). */
+  labs: { partners: string[]; fakeStepMs: number };
   map: MapConfig;
   servedRegions: DataRegion[];
   /** Settings for each served region. A region with neither databaseUrl nor dataDir is kept in the default cell. */
@@ -175,6 +184,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (e.FACILITY_PROVIDER === 'fixture' && e.NODE_ENV === 'production') {
     throw new Error('Invalid configuration: FACILITY_PROVIDER=fixture is for development only.');
   }
+  // The simulated lab is on by default in development, so booking can be tried without a partner.
+  const labPartners = list(e.LAB_PARTNERS ?? (e.NODE_ENV === 'development' ? 'fake' : ''));
+  const unknownLab = labPartners.filter(p => p !== 'fake');
+  if (unknownLab.length) throw new Error(`Invalid configuration: LAB_PARTNERS: unknown partner ${unknownLab.join(', ')} (only fake exists so far)`);
+  if (labPartners.includes('fake') && e.NODE_ENV === 'production') {
+    throw new Error('Invalid configuration: LAB_PARTNERS=fake is the simulated lab, for development and tests only.');
+  }
   const cellVar = (r: DataRegion, name: string) => (e as unknown as Record<string, string | undefined>)[`CELL_${r.toUpperCase()}_${name}`];
   const servedRegions = parseRegions(e.SERVED_REGIONS);
 
@@ -215,6 +231,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     databaseUrl: e.DATABASE_URL,
     dataDir: e.DATA_DIR,
     staticDir: e.STATIC_DIR,
+    publicUrl: e.PUBLIC_URL ? new URL(e.PUBLIC_URL).origin : undefined,
     allowedOrigins: e.APP_ORIGINS.split(',').map(s => s.trim().replace(/\/$/, '')).filter(Boolean),
     appClientOrigins: e.APP_CLIENT_ORIGINS.split(',').map(s => s.trim().replace(/\/$/, '')).filter(Boolean),
     regionApiOrigins: parseRegionOrigins(e.REGION_API_ORIGINS),
@@ -230,6 +247,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       contactEmail: e.GEO_CONTACT_EMAIL,
       timeoutMs: e.GEO_TIMEOUT_MS,
     },
+    labs: { partners: labPartners, fakeStepMs: e.LAB_FAKE_STEP_MS },
     map: {
       pmtilesUrl: e.MAP_PMTILES_URL || undefined,
       styleUrl: e.MAP_STYLE_URL,

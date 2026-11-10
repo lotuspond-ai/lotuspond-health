@@ -1,5 +1,6 @@
 // Backend that talks to the LotusPond API: on the same origin (/api) with cookie sessions on the website, or
 // across sites with token sessions in the iOS and Android apps (see ./appSession.ts).
+import type { AgentConnection, AgentConnectionsInfo, CreateAgentTokenInput, CreatedAgentToken } from '../../shared/agents';
 import type {
   Account, ActivityEvent, ConsentKind, ConsentRecord, DocumentKind, Measurement, MeasurementInput, Profile, ProfileInput, ProfileRecords,
   RegisterInput, ScanInput, ScanItem, ServiceInfo, SessionInfo, StoredDocument,
@@ -9,6 +10,7 @@ import { roundCoord } from '../../shared/facilities';
 import { countryPolicy } from '../../shared/regions';
 import { ApiError, type Backend, type ScanPatch } from './backend';
 import type { AppSession, Region } from './appSession';
+import type { LabBookingInput, LabCatalog, LabOrderView, LabResultSaved, LabResultView, LabSlot } from '../../shared/lab-bundle';
 
 const BASE = '/api';
 
@@ -37,8 +39,9 @@ export class HttpBackend implements Backend {
     return { method, credentials: 'omit', headers: this.app.headers() };
   }
 
-  private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  private async request<T>(method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<T> {
     const init = await this.init(method);
+    Object.assign(init.headers as Record<string, string>, headers);
     if (body instanceof FormData) init.body = body;
     else if (body !== undefined) {
       init.body = JSON.stringify(body);
@@ -187,7 +190,45 @@ export class HttpBackend implements Backend {
     return this.request<FacilitySearchResult>('GET', `/facilities?${params}`);
   }
   searchPlaces(q: string) { return this.request<GeoCandidate[]>('GET', `/geo/search?${new URLSearchParams({ q })}`); }
+
+  labCatalog(pincode: string) { return this.request<LabCatalog>('GET', `/lab/catalog?${new URLSearchParams({ pincode })}`); }
+  async labSlots(q: { partner: string; pincode: string; date: string; items: string[] }) {
+    const params = new URLSearchParams({ partner: q.partner, pincode: q.pincode, date: q.date, items: q.items.join(',') });
+    return (await this.request<{ slots: LabSlot[] }>('GET', `/lab/slots?${params}`)).slots;
+  }
+  async labOrders(pid: string) { return (await this.request<{ orders: LabOrderView[] }>('GET', `/profiles/${pid}/lab-orders`)).orders; }
+  async labOrder(pid: string, id: string) { return (await this.request<{ order: LabOrderView }>('GET', `/profiles/${pid}/lab-orders/${id}`)).order; }
+  async bookLab(pid: string, input: LabBookingInput, idempotencyKey: string) {
+    return (await this.request<{ order: LabOrderView }>('POST', `/profiles/${pid}/lab-orders`, input, { 'Idempotency-Key': idempotencyKey })).order;
+  }
+  async cancelLabOrder(pid: string, id: string, reason?: string) {
+    return (await this.request<{ order: LabOrderView }>('POST', `/profiles/${pid}/lab-orders/${id}/cancel`, reason ? { reason } : {})).order;
+  }
+  async labOrderSlots(pid: string, id: string, date: string) {
+    return (await this.request<{ slots: LabSlot[] }>('GET', `/profiles/${pid}/lab-orders/${id}/slots?${new URLSearchParams({ date })}`)).slots;
+  }
+  async rescheduleLabOrder(pid: string, id: string, slot: LabSlot) {
+    return (await this.request<{ order: LabOrderView }>('POST', `/profiles/${pid}/lab-orders/${id}/reschedule`, { slot })).order;
+  }
+  async labResults(pid: string) { return (await this.request<{ results: LabResultView[] }>('GET', `/profiles/${pid}/lab-results`)).results; }
+  labReportUrl(pid: string, rid: string) { return this.app ? null : `${BASE}/profiles/${pid}/lab-results/${rid}/report`; }
+  async labReport(pid: string, rid: string) {
+    const res = await this.fetchFile(`/profiles/${pid}/lab-results/${rid}/report`);
+    if (!res.ok) throw new ApiError(res.status, 'file', res.status === 404 ? 'The lab report was not found.' : 'The lab report could not be loaded.');
+    return res.blob();
+  }
+  saveLabResult(pid: string, rid: string, measurements: MeasurementInput[]) {
+    return this.request<LabResultSaved>('POST', `/profiles/${pid}/lab-results/${rid}/save`, { measurements });
+  }
+  async dismissLabResult(pid: string, rid: string) {
+    return (await this.request<{ result: LabResultView }>('POST', `/profiles/${pid}/lab-results/${rid}/dismiss`, {})).result;
+  }
   reversePlace(lat: number, lon: number) {
     return this.request<GeoReverse>('GET', `/geo/reverse?${new URLSearchParams({ lat: roundCoord(lat).toFixed(2), lon: roundCoord(lon).toFixed(2) })}`);
   }
+
+  agentConnections() { return this.request<AgentConnectionsInfo>('GET', '/agents'); }
+  createAgentToken(input: CreateAgentTokenInput) { return this.request<CreatedAgentToken>('POST', '/agents/tokens', input); }
+  updateAgentConnection(id: string, patch: Partial<Pick<AgentConnection, 'scopes' | 'profileIds'>>) { return this.request<AgentConnection>('PATCH', `/agents/${id}`, patch); }
+  disconnectAgent(id: string) { return this.request<void>('DELETE', `/agents/${id}`); }
 }
