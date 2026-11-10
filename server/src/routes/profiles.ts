@@ -9,7 +9,8 @@ import { LIMITS } from '../../../shared/constants.ts';
 import type { Db } from '../db/client.ts';
 import { documents, labResults, measurements, profiles, scans, type ProfileRow } from '../db/schema.ts';
 import { eventContext, recentActivity, recordEvent } from '../compliance/audit.ts';
-import { listConsents } from '../compliance/consents.ts';
+import { listConsents, recordConsents } from '../compliance/consents.ts';
+import { needsGuardian } from '../../../shared/family.ts';
 import { badRequest, conflict, HttpError, notFound } from '../lib/errors.ts';
 import { readJson, requireAuth, UUID, type AppEnv, type Deps } from '../http.ts';
 import {
@@ -72,7 +73,16 @@ export function profileRoutes(deps: Deps) {
     const [{ n }] = await db.select({ n: count() }).from(profiles).where(eq(profiles.userId, c.var.user.id));
     if (n >= LIMITS.profilesPerAccount) throw conflict(`An account can hold up to ${LIMITS.profilesPerAccount} profiles.`);
     if (body.relationship === 'self') throw badRequest('Your account already has your own profile. Choose who this person is to you.');
-    const [row] = await db.insert(profiles).values({ ...body, relationship: body.relationship ?? 'other', userId: c.var.user.id }).returning();
+    const { confirmation, ...fields } = body;
+    const relationship = fields.relationship ?? 'other';
+    if (confirmation !== 'guardian' && needsGuardian(relationship, fields.dateOfBirth)) {
+      throw badRequest('For a child, confirm that you are their parent or legal guardian.', 'guardian_required');
+    }
+    const row = await db.transaction(async tx => {
+      const [created] = await tx.insert(profiles).values({ ...fields, relationship, userId: c.var.user.id }).returning();
+      await recordConsents(tx, c.var.user.id, c.var.user.country, [{ kind: 'family_profile', granted: true, detail: { profileId: created.id, relationship, confirmation } }]);
+      return created;
+    });
     return c.json(toProfile(row), 201);
   });
 
@@ -99,6 +109,7 @@ export function profileRoutes(deps: Deps) {
     if (p.relationship === 'self') throw conflict('Your own profile cannot be removed. To remove everything, delete your account.');
     await db.delete(profiles).where(eq(profiles.id, p.id));
     await files.deletePrefix(p.id);
+    await recordConsents(db, c.var.user.id, c.var.user.country, [{ kind: 'family_profile', granted: false, detail: { profileId: p.id, relationship: p.relationship } }]);
     await recordEvent(db, eventContext(c, deps), c.var.user.id, 'profile_deleted', { profileId: p.id });
     return c.body(null, 204);
   });

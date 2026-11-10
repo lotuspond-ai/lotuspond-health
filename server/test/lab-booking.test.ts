@@ -143,7 +143,7 @@ describe('booking', () => {
   test('a family member\'s booking is kept under their profile', async () => {
     const env = labEnv(database, filesDir, );
     const { c, profileId } = await env.signUp();
-    const partner = await c.json<{ id: string }>('POST', '/api/profiles', { displayName: 'Ravi', relationship: 'partner' }, 201);
+    const partner = await c.json<{ id: string }>('POST', '/api/profiles', { displayName: 'Ravi', relationship: 'partner', confirmation: 'agreed' }, 201);
     const o = (await env.book(c, partner.id, bookingBody(await env.slot(c), { patient: { name: 'Ravi Rao', age: 38, sex: 'male' } }))).body.order!;
     assert.equal(o.profileId, partner.id);
     assert.deepEqual((await c.json<{ orders: LabOrderView[] }>('GET', `/api/profiles/${partner.id}/lab-orders`)).orders.map(x => x.id), [o.id]);
@@ -251,7 +251,7 @@ describe('managing orders', () => {
   test('deleting a profile deletes its lab orders', async () => {
     const env = labEnv(database, filesDir, );
     const { c } = await env.signUp();
-    const member = await c.json<{ id: string }>('POST', '/api/profiles', { displayName: 'Mum', relationship: 'parent' }, 201);
+    const member = await c.json<{ id: string }>('POST', '/api/profiles', { displayName: 'Mum', relationship: 'parent', confirmation: 'agreed' }, 201);
     const o = (await env.book(c, member.id, bookingBody(await env.slot(c), { patient: { name: 'Lata Rao', age: 61, sex: 'female' } }))).body.order!;
     const del = await c.call('DELETE', `/api/profiles/${member.id}`, { confirm: true });
     assert.ok(del.status < 300, `delete profile: ${del.status} ${await del.clone().text()}`);

@@ -11,6 +11,7 @@ import { eventContext, recordEvent } from '../compliance/audit.ts';
 import { agentGrants } from '../db/schema.ts';
 import { badRequest, conflict, notFound } from '../lib/errors.ts';
 import { readJson, requireAuth, UUID, type AppEnv, type Deps } from '../http.ts';
+import { recordSharingConsent } from './grants.ts';
 import { cleanScopes, deleteGrant, issueSecret, listGrants, ownProfiles, toConnection } from './grants.ts';
 import { publicOrigin } from './oauth.ts';
 
@@ -49,6 +50,7 @@ export function agentRoutes(deps: Deps) {
       expiresAt: body.expiresInDays ? new Date(Date.now() + body.expiresInDays * 24 * 60 * 60_000) : null,
     }).returning();
     const token = await issueSecret(db, c.var.user.region, grant.id, 'personal');
+    await recordSharingConsent(db, c.var.user, grant);
     await recordEvent(db, eventContext(c, deps), c.var.user.id, 'agent_connected', { connectionId: grant.id });
     const out: CreatedAgentToken = { connection: toConnection(grant), token, mcpUrl: `${publicOrigin(c, deps.config)}${MCP_PATH}` };
     return c.json(out, 201);
@@ -69,6 +71,7 @@ export function agentRoutes(deps: Deps) {
     if (!Object.keys(set).length) throw badRequest('Nothing to change.');
     const [row] = await db.update(agentGrants).set(set).where(and(eq(agentGrants.id, id), eq(agentGrants.userId, c.var.user.id))).returning();
     if (!row) throw notFound('That connection');
+    await recordSharingConsent(db, c.var.user, row);
     return c.json(toConnection(row));
   });
 
@@ -77,6 +80,7 @@ export function agentRoutes(deps: Deps) {
     if (!UUID.test(id)) throw notFound('That connection');
     const gone = await deleteGrant(c.var.cell.db, c.var.user.id, id);
     if (!gone) throw notFound('That connection');
+    await recordSharingConsent(c.var.cell.db, c.var.user, gone, false);
     await recordEvent(c.var.cell.db, eventContext(c, deps), c.var.user.id, 'agent_disconnected', { connectionId: id });
     return c.body(null, 204);
   });

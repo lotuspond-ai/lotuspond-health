@@ -2,7 +2,7 @@
 // HttpBackend talks to the LotusPond API; BrowserBackend keeps everything in this browser (preview builds).
 import type {
   Account, ActivityEvent, ConsentKind, ConsentRecord, DocumentKind, Measurement, MeasurementInput, Profile, ProfileInput, ProfileRecords,
-  RegisterInput, ScanInput, ScanItem, ServiceInfo, SessionInfo, StoredDocument,
+  RegisterInput, ScanInput, FamilyConfirmation, ScanItem, ServiceInfo, SessionInfo, StoredDocument,
   FacilityQuery, FacilitySearchResult, GeoCandidate, GeoReverse, PublicConfig,
 } from '../types';
 import type { AgentConnection, AgentConnectionsInfo, CreateAgentTokenInput, CreatedAgentToken } from '../../shared/agents';
@@ -45,7 +45,8 @@ export interface Backend {
   /** Recent account events, newest first. */
   activity(): Promise<ActivityEvent[]>;
 
-  createProfile(input: ProfileInput): Promise<Profile>;
+  /** Add a family member, with what the account holder confirmed (shared/family.ts); recorded as a consent. */
+  createProfile(input: ProfileInput, confirmation: FamilyConfirmation): Promise<Profile>;
   updateProfile(id: string, patch: Partial<ProfileInput>): Promise<Profile>;
   deleteProfile(id: string): Promise<void>;
 

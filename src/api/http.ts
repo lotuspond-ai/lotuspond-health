@@ -2,7 +2,7 @@
 // across sites with token sessions in the iOS and Android apps (see ./appSession.ts).
 import type { AgentConnection, AgentConnectionsInfo, CreateAgentTokenInput, CreatedAgentToken } from '../../shared/agents';
 import type {
-  Account, ActivityEvent, ConsentKind, ConsentRecord, DocumentKind, Measurement, MeasurementInput, Profile, ProfileInput, ProfileRecords,
+  Account, ActivityEvent, FamilyConfirmation, ConsentKind, ConsentRecord, DocumentKind, Measurement, MeasurementInput, Profile, ProfileInput, ProfileRecords,
   RegisterInput, ScanInput, ScanItem, ServiceInfo, SessionInfo, StoredDocument,
 } from '../types';
 import type { FacilityQuery, FacilitySearchResult, GeoCandidate, GeoReverse, PublicConfig } from '../types';
@@ -126,7 +126,7 @@ export class HttpBackend implements Backend {
   setConsent(kind: ConsentKind, granted: boolean) { return this.request<ConsentRecord[]>('PATCH', '/auth/consents', { kind, granted }); }
   activity() { return this.request<ActivityEvent[]>('GET', '/auth/activity'); }
 
-  createProfile(input: ProfileInput) { return this.request<Profile>('POST', '/profiles', input); }
+  createProfile(input: ProfileInput, confirmation: FamilyConfirmation) { return this.request<Profile>('POST', '/profiles', { ...input, confirmation }); }
   updateProfile(id: string, patch: Partial<ProfileInput>) { return this.request<Profile>('PATCH', `/profiles/${id}`, patch); }
   deleteProfile(id: string) { return this.request<void>('DELETE', `/profiles/${id}`); }
 

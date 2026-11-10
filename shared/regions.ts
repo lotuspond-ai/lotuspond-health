@@ -164,7 +164,7 @@ export function countryName(code: string, locale?: string): string {
 }
 
 /** Version of the consent texts. Bump when Terms, Privacy or the health-data consent change materially. */
-export const CONSENT_VERSION = '2026-11-03';
+export const CONSENT_VERSION = '2026-11-10';
 
 /** English names that take "the" inside a sentence ("records for people in the United Kingdom"). */
 const WITH_THE = new Set('AE AX BS CC CF CK DO FK FO GB GM GS HM IM IO KM KY MH MP MV NL PH PN SB SC TC TF UM US VG VI'.split(' '));

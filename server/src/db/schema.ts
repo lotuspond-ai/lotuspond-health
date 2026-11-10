@@ -1,6 +1,6 @@
 // Database schema (PostgreSQL). Generate migrations with `npm run db:generate -w server`.
 import { boolean, date, doublePrecision, index, integer, jsonb, pgTable, real, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
-import type { AuditDetail, AuditKind, ConsentKind, RefRange } from '../../../shared/types.ts';
+import type { AuditDetail, AuditKind, ConsentDetail, ConsentKind, RefRange } from '../../../shared/types.ts';
 import type { DataRegion, UnitSystem } from '../../../shared/regions.ts';
 import type { LabResultBundle, OrderStatus } from '../../../shared/lab-bundle.ts';
 
@@ -142,7 +142,7 @@ export const facilityCache = pgTable('facility_cache', {
 });
 /**
  * Consent decisions, append-only: each grant or withdrawal is a new row with the text version it refers to.
- * The latest row per kind is the current state.
+ * The latest row per kind is the current state; for family_profile and agent_sharing, per profile or connection.
  */
 export const consents = pgTable('consents', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -152,6 +152,8 @@ export const consents = pgTable('consents', {
   granted: boolean('granted').notNull(),
   /** Country of residence when the decision was made. */
   country: text('country'),
+  /** For per-item consents (family_profile, agent_sharing): the profile or connection, as ids and permissions only. */
+  detail: jsonb('detail').$type<ConsentDetail>(),
   createdAt: createdAt(),
 }, t => [index('consents_user_idx').on(t.userId, t.createdAt)]);
 

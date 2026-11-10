@@ -65,6 +65,7 @@ Every response carries the disclaimer that this is information to discuss with a
     - Refresh tokens last 90 days and rotate on every use.
     - Tokens are bound to the `/mcp` resource (RFC 8707).
   - **Disconnecting** deletes the grant and all of its tokens. Revoking one token works too (`POST /oauth/revoke`, RFC 7009).
+- **Consent records.** Allowing a connection, changing its profiles or permissions, and disconnecting each add an `agent_sharing` consent record: text version, agent name, profiles, permissions, time and country. Account shows them in the consent history. Adding a family member records a `family_profile` consent with what the account holder confirmed (parent or guardian for a child or anyone under 18; the person's agreement for an adult; `shared/family.ts`).
 - **Data residency.** Grants and tokens live in the account's cell like everything else personal; only registered client names and redirect URIs are in the default database.
 - **Minimum necessary.** Agents see only the profiles shared with them and only summary data: no files, scan images, email address, contact details or lab booking addresses. Write tools only add.
 - **Prompt injection.** Test names and notes come from uploaded documents. The server instructions and tool descriptions tell agents to treat them as data, and no tool sends anything to a third party.
