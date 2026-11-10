@@ -99,7 +99,7 @@ export class ResultsService {
     if (!cfg || !o.partnerRef || o.partnerStatusAt == null) return false;
     // What this check covers: the partner status as it was when we started. A later status means check again.
     const seenAt = o.partnerStatusAt;
-    const report = await cfg.adapter.report(o.partnerRef);
+    const report = await cfg.adapter.report(o.partnerRef, o.partnerToken);
     const now = this.deps.now();
     const markChecked = (extra: Partial<OrderRecord> = {}) => orders.apply(o.id, cur => ({
       next: { ...cur, ...extra, reportCheckedStatusAt: Math.max(cur.reportCheckedStatusAt ?? 0, seenAt), reportAttempts: 0, nextReportAt: null, updatedAt: now },

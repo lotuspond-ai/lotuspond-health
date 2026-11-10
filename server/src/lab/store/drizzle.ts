@@ -18,7 +18,7 @@ const isUniqueViolation = (e: unknown) => {
 
 function toRecord(r: LabOrderRow): OrderRecord {
   return {
-    id: r.id, userId: r.userId, profileId: r.profileId, partner: r.partner as PartnerId, partnerRef: r.partnerRef, status: r.status,
+    id: r.id, userId: r.userId, profileId: r.profileId, partner: r.partner as PartnerId, partnerRef: r.partnerRef, partnerToken: r.partnerToken ?? null, status: r.status,
     partnerStatus: r.partnerStatus, partnerStatusAt: ms(r.partnerStatusAt), lastSyncedAt: ms(r.lastSyncedAt),
     items: r.items, slotStart: ms(r.slotStart), slotEnd: ms(r.slotEnd), pricePaise: r.pricePaise, payer: r.payer,
     contactCt: toBytes(r.contactCt), piiPurgedAt: ms(r.piiPurgedAt), consentVersion: r.consentVersion, consentedAt: ms(r.consentedAt),
@@ -31,7 +31,7 @@ function toRecord(r: LabOrderRow): OrderRecord {
 
 function toRow(o: OrderRecord): typeof labOrders.$inferInsert {
   return {
-    id: o.id, userId: o.userId, profileId: o.profileId, partner: o.partner, partnerRef: o.partnerRef, status: o.status,
+    id: o.id, userId: o.userId, profileId: o.profileId, partner: o.partner, partnerRef: o.partnerRef, partnerToken: o.partnerToken, status: o.status,
     partnerStatus: o.partnerStatus, partnerStatusAt: date(o.partnerStatusAt), lastSyncedAt: date(o.lastSyncedAt),
     items: o.items, slotStart: date(o.slotStart), slotEnd: date(o.slotEnd), pricePaise: o.pricePaise, payer: o.payer,
     contactCt: toB64(o.contactCt), piiPurgedAt: date(o.piiPurgedAt), consentVersion: o.consentVersion, consentedAt: date(o.consentedAt),

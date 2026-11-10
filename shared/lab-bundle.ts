@@ -1,7 +1,7 @@
 // Types shared by the API server (server/) and the app (src/) for lab orders and results.
 // See docs/lab-booking-backend.md. Keep this file free of runtime dependencies so both sides can import it.
 
-export type PartnerId = 'fake' | 'tata1mg' | 'thyrocare' | 'labsadvisor';
+export type PartnerId = 'fake' | 'orange' | 'tata1mg' | 'thyrocare' | 'labsadvisor';
 
 /** Our order states (design doc §6). Partner status names are mapped to these by each adapter. */
 export const ORDER_STATUSES = [
@@ -166,6 +166,7 @@ export interface LabResultSaved {
 /** How each partner is named in the app. */
 export const PARTNER_LABELS: Record<PartnerId, string> = {
   fake: 'LotusPond Test Lab (simulated)',
+  orange: 'Orange Health Labs',
   tata1mg: 'Tata 1mg Labs',
   thyrocare: 'Thyrocare',
   labsadvisor: 'LabsAdvisor',

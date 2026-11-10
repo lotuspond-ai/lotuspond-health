@@ -13,6 +13,9 @@ import type { OrderHooks, SyncDeps } from './orders/sync.ts';
 import { ResultsService } from './results/service.ts';
 import { FakeLab, type FakeWebhookRequest } from './partners/fake-lab.ts';
 import { FakeLabAdapter } from './partners/fake.ts';
+import { OrangeHealthAdapter, parseOrangeCatalog } from './partners/orange.ts';
+import fs from 'node:fs';
+import type { OrangeConfig } from '../config.ts';
 import type { PartnerConfig, PartnerRegistry } from './partners/types.ts';
 import { keyringSealer, type Sealer } from './sealer.ts';
 import { DrizzleOrderStore, DrizzleWebhookInbox } from './store/drizzle.ts';
@@ -151,6 +154,15 @@ export function createLabs(opts: LabsOptions): Labs {
  * The simulated lab as a partner (development and tests). It runs in this process and posts its signed webhooks
  * through `deliver` to /hooks/fake/<secret>: over HTTP to this server in development, or app.request in tests.
  */
+/** Orange Health Labs (partners/orange.ts) from the ORANGE_* settings. Serves India. */
+export function orangePartner(c: OrangeConfig): PartnerConfig {
+  const adapter = new OrangeHealthAdapter({
+    apiKey: c.apiKey, webhookSecret: c.webhookSecret, baseUrl: c.apiUrl, paymentType: c.paymentType,
+    catalog: parseOrangeCatalog(fs.readFileSync(c.catalogFile, 'utf8')),
+  });
+  return { adapter, region: 'in', hookSecret: c.hookSecret, ...(c.webhookIps.length ? { allowIps: c.webhookIps } : {}) };
+}
+
 export function fakePartner(opts: { deliver: (path: string, req: FakeWebhookRequest) => Promise<void>; now?: () => number; stepMs?: number }) {
   const hookSecret = randomBytes(16).toString('hex');
   const labSecret = randomBytes(16).toString('hex');

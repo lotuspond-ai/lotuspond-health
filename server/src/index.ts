@@ -13,7 +13,7 @@ import { EncryptedFileStore } from './lib/files-encrypted.ts';
 import { purgeExpiredSessions } from './auth/sessions.ts';
 import { purgeExpiredAgentSecrets } from './agents/grants.ts';
 import { createApp } from './app.ts';
-import { createLabs, fakePartner, type Labs } from './lab/runtime.ts';
+import { createLabs, fakePartner, orangePartner, type Labs } from './lab/runtime.ts';
 import type { PartnerConfig } from './lab/partners/types.ts';
 
 // This file runs from server/src (tsx) or server/dist (bundle); both are one level below server/.
@@ -82,6 +82,13 @@ if (config.labs.partners.length) {
     });
     stopFakeLab = fake.lab.start(1000);
     partners.push(fake.config);
+  }
+  if (config.labs.orange) {
+    try {
+      partners.push(orangePartner(config.labs.orange));
+    } catch (e) {
+      fail(e);
+    }
   }
   try {
     labs = createLabs({ cells: registry, secrets, partners });

@@ -50,6 +50,13 @@
       "when": 1794343538612,
       "tag": "0006_consent_detail",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1794345634791,
+      "tag": "0007_lab_partner_token",
+      "breakpoints": true
     }
   ]
 }

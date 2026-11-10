@@ -19,6 +19,13 @@ export interface PartnerOrderInput {
   address: Address;
 }
 
+/** A booking at the partner: its order reference, and a per-order token if its API wants one back on later calls. */
+export interface PartnerBooking {
+  partnerRef: string;
+  /** Orange Health returns one with each booking; status, cancel and reschedule need it. Null when unknown. */
+  token?: string | null;
+}
+
 export interface PartnerStatus {
   status: OrderStatus | 'unknown';
   /** The partner's own status name, kept for order_events and for alerting on unknown statuses. */
@@ -63,13 +70,14 @@ export interface LabPartner {
   catalog(pincode: string): Promise<CatalogItem[]>;
   /** Available slots on a date (yyyy-mm-dd, IST). */
   slots(q: { pincode: string; date: string; items: string[] }): Promise<Slot[]>;
-  createOrder(o: PartnerOrderInput): Promise<{ partnerRef: string }>;
+  createOrder(o: PartnerOrderInput): Promise<PartnerBooking>;
   /** Lets a retry after a timeout check whether the booking already went through. */
-  findOrderByClientRef(orderId: string): Promise<{ partnerRef: string } | null>;
-  cancel(partnerRef: string, reason: string): Promise<void>;
-  reschedule(partnerRef: string, slot: Slot): Promise<void>;
-  status(partnerRef: string): Promise<PartnerStatus>;
-  report(partnerRef: string): Promise<PartnerReport>;
+  findOrderByClientRef(orderId: string): Promise<PartnerBooking | null>;
+  // The calls below get the booking's token (PartnerBooking.token) when the partner gave one; most adapters ignore it.
+  cancel(partnerRef: string, reason: string, token?: string | null): Promise<void>;
+  reschedule(partnerRef: string, slot: Slot, token?: string | null): Promise<void>;
+  status(partnerRef: string, token?: string | null): Promise<PartnerStatus>;
+  report(partnerRef: string, token?: string | null): Promise<PartnerReport>;
   verifyWebhook(req: InboundRequest): boolean;
   /** Only identifies the order; the worker then calls status()/report() (design doc §4.3). */
   parseWebhook(body: unknown): WebhookInfo;

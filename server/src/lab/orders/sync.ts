@@ -76,7 +76,7 @@ export async function syncOrder(deps: SyncDeps, orderId: string, source: 'webhoo
   if (!order?.partnerRef) return null;
   const cfg = deps.partners.get(order.partner);
   if (!cfg) throw new Error(`No adapter configured for partner ${order.partner}`);
-  const st = await cfg.adapter.status(order.partnerRef);
+  const st = await cfg.adapter.status(order.partnerRef, order.partnerToken);
 
   const holder: { outcome?: SyncOutcome } = {};
   const after = await deps.orders.apply(order.id, cur => {

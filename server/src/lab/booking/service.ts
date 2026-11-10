@@ -19,7 +19,7 @@ import type { Logger } from '../log.ts';
 import { canCancel, canReschedule, checkMove } from '../orders/state.ts';
 import { syncOrder, type OrderHooks } from '../orders/sync.ts';
 import {
-  PartnerError,
+  PartnerError, type PartnerBooking,
   type Address, type CatalogItem, type PartnerConfig, type PartnerOrderInput, type PartnerRegistry, type Patient, type Slot,
 } from '../partners/types.ts';
 import {
@@ -219,9 +219,8 @@ export class BookingService {
       if (!claim.ok) continue;
       result.attempted++;
       try {
-        const found = await cfg.adapter.findOrderByClientRef(o.id);
-        const ref = found?.partnerRef ?? (await cfg.adapter.createOrder(this.partnerInput(o))).partnerRef;
-        if (await this.markBooked(o.id, ref, 'system')) result.booked++;
+        const booking = (await cfg.adapter.findOrderByClientRef(o.id)) ?? (await cfg.adapter.createOrder(this.partnerInput(o)));
+        if (await this.markBooked(o.id, booking, 'system')) result.booked++;
       } catch (e) {
         if (e instanceof PartnerError && !e.retryable) {
           if (await this.markFailed(o.id, e.code)) result.failed++;
@@ -240,7 +239,7 @@ export class BookingService {
     if (!canCancel(o.status)) throw new BookingError('not_cancellable', `This order can no longer be cancelled (${o.status})`);
     if (o.partnerRef) {
       try {
-        await this.partner(o.partner).adapter.cancel(o.partnerRef, reason);
+        await this.partner(o.partner).adapter.cancel(o.partnerRef, reason, o.partnerToken);
       } catch (e) {
         if (e instanceof PartnerError && e.code === 'not_allowed') {
           await this.refresh(o.id);
@@ -267,7 +266,7 @@ export class BookingService {
     const start = Date.parse(slot.start), end = Date.parse(slot.end);
     if (start <= now) throw new BookingError('slot_in_past', 'That slot has already started');
     try {
-      await this.partner(o.partner).adapter.reschedule(o.partnerRef, slot);
+      await this.partner(o.partner).adapter.reschedule(o.partnerRef, slot, o.partnerToken);
     } catch (e) {
       if (e instanceof PartnerError && e.code === 'not_allowed') {
         await this.refresh(o.id);
@@ -360,15 +359,15 @@ export class BookingService {
   /** Never rejects: every outcome is recorded on the order. */
   private async attemptPlacement(orderId: string, cfg: PartnerConfig, input: PartnerOrderInput): Promise<'done'> {
     try {
-      let partnerRef: string;
+      let booking: PartnerBooking;
       try {
-        partnerRef = (await cfg.adapter.createOrder(input)).partnerRef;
+        booking = await cfg.adapter.createOrder(input);
       } catch (e) {
         if (e instanceof PartnerError && !e.retryable) await this.markFailed(orderId, e.code === 'invalid_request' ? 'rejected_by_partner' : e.code);
         else await this.scheduleRetry(orderId, e instanceof PartnerError ? e.code : 'error');
         return 'done';
       }
-      await this.markBooked(orderId, partnerRef, 'api');
+      await this.markBooked(orderId, booking, 'api');
     } catch {
       this.deps.log.error('could not record the booking outcome', { orderId, alert: true });
     }
@@ -384,7 +383,9 @@ export class BookingService {
   }
 
   /** Returns true if this call moved the order to booked. */
-  private async markBooked(orderId: string, partnerRef: string, source: EventSource): Promise<boolean> {
+  private async markBooked(orderId: string, booking: PartnerBooking, source: EventSource): Promise<boolean> {
+    const { partnerRef } = booking;
+    const partnerToken = booking.token ?? null;
     const now = this.deps.now();
     const out: { booked?: boolean; conflict?: 'after_failure' | 'different_ref' } = {};
     const after = await this.deps.orders.apply(orderId, (cur): OrderChange => {
@@ -395,23 +396,24 @@ export class BookingService {
       if (cur.status === 'placing') {
         out.booked = true;
         return {
-          next: { ...cur, partnerRef, status: 'booked', lastSyncedAt: now, nextPlacementAt: null, updatedAt: now },
+          next: { ...cur, partnerRef, partnerToken, status: 'booked', lastSyncedAt: now, nextPlacementAt: null, updatedAt: now },
           events: [{ orderId, status: 'booked', partnerStatus: null, source, occurredAt: now, receivedAt: now, note: `lab order ${partnerRef}` }],
         };
       }
       if (cur.status === 'failed' || cur.status === 'cancelled') {
         out.conflict = 'after_failure';
-        return { next: { ...cur, partnerRef, updatedAt: now }, events: [] };
+        return { next: { ...cur, partnerRef, partnerToken, updatedAt: now }, events: [] };
       }
       // Already moved on (a webhook linked it first): just make sure the reference is stored.
-      return cur.partnerRef ? null : { next: { ...cur, partnerRef, nextPlacementAt: null, updatedAt: now }, events: [] };
+      if (cur.partnerRef) return partnerToken && !cur.partnerToken ? { next: { ...cur, partnerToken, updatedAt: now }, events: [] } : null;
+      return { next: { ...cur, partnerRef, partnerToken, nextPlacementAt: null, updatedAt: now }, events: [] };
     });
     if (!after) return false;
     if (out.conflict) {
       // A partner booking we don't want: cancel it, so no collector turns up.
       this.deps.log.error('unwanted partner booking; cancelling it at the lab', { orderId, partner: after.partner, partnerRef, reason: out.conflict, alert: true });
       const cfg = this.deps.partners.get(after.partner);
-      await cfg?.adapter.cancel(partnerRef, 'Duplicate or abandoned booking').catch(() => {
+      await cfg?.adapter.cancel(partnerRef, 'Duplicate or abandoned booking', partnerToken).catch(() => {
         this.deps.log.error('could not cancel unwanted partner booking', { orderId, partnerRef, alert: true });
       });
       return false;
