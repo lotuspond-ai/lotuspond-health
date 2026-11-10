@@ -295,6 +295,57 @@ export const labWebhookInbox = pgTable('lab_webhook_inbox', {
   index('lab_webhook_inbox_due_idx').on(t.processedAt, t.nextAttemptAt),
 ]);
 
+/* ---------- agent connections (shared/agents.ts, server/src/agents/) ---------- */
+
+/**
+ * OAuth clients that registered themselves (RFC 7591 dynamic client registration): Claude, ChatGPT and other agent
+ * platforms. Not personal data, so kept in the default database. Public clients only: they prove themselves with PKCE.
+ */
+export const oauthClients = pgTable('oauth_clients', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  redirectUris: jsonb('redirect_uris').$type<string[]>().notNull(),
+  createdAt: createdAt(),
+});
+
+/**
+ * One connected agent: what it may do and which profiles it may see. Kept in the account's cell. Revoking deletes
+ * the row, and its tokens with it.
+ */
+export const agentGrants = pgTable('agent_grants', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  kind: text('kind').$type<'oauth' | 'token'>().notNull(),
+  /** The OAuth client (oauth_clients.id in the default database); null for tokens made on Account. */
+  clientId: text('client_id'),
+  name: text('name').notNull(),
+  redirectHost: text('redirect_host'),
+  scopes: jsonb('scopes').$type<string[]>().notNull(),
+  profileIds: jsonb('profile_ids').$type<string[]>().notNull(),
+  createdAt: createdAt(),
+  lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
+  /** When the last agent_access audit event was written, so reads are logged at most once an hour. */
+  lastLoggedAt: timestamp('last_logged_at', { withTimezone: true }),
+  expiresAt: timestamp('expires_at', { withTimezone: true }),
+}, t => [index('agent_grants_user_idx').on(t.userId), uniqueIndex('agent_grants_user_client_key').on(t.userId, t.clientId)]);
+
+/**
+ * Secrets issued for a grant, stored as SHA-256: authorization codes (single use, minutes), access tokens (an hour,
+ * or as long as the grant for tokens made on Account) and refresh tokens (rotated on every use).
+ */
+export const agentTokens = pgTable('agent_tokens', {
+  id: text('id').primaryKey(),
+  grantId: uuid('grant_id').notNull().references(() => agentGrants.id, { onDelete: 'cascade' }),
+  type: text('type').$type<'code' | 'access' | 'refresh'>().notNull(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }),
+  /** Authorization codes: the PKCE challenge (S256) and the redirect URI they were issued for. */
+  codeChallenge: text('code_challenge'),
+  redirectUri: text('redirect_uri'),
+  /** The resource (RFC 8707) the token is for. */
+  resource: text('resource'),
+  createdAt: createdAt(),
+}, t => [index('agent_tokens_grant_idx').on(t.grantId)]);
+
 export type UserRow = typeof users.$inferSelect;
 export type ConsentRow = typeof consents.$inferSelect;
 export type AuditEventRow = typeof auditEvents.$inferSelect;
@@ -307,3 +358,6 @@ export type LabOrderRow = typeof labOrders.$inferSelect;
 export type LabOrderEventRow = typeof labOrderEvents.$inferSelect;
 export type LabWebhookInboxRow = typeof labWebhookInbox.$inferSelect;
 export type LabResultRow = typeof labResults.$inferSelect;
+export type OAuthClientRow = typeof oauthClients.$inferSelect;
+export type AgentGrantRow = typeof agentGrants.$inferSelect;
+export type AgentTokenRow = typeof agentTokens.$inferSelect;

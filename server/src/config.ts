@@ -31,6 +31,8 @@ const Env = z.object({
   DATA_DIR: z.string().default('.data'),
   /** Built frontend to serve (defaults to ../dist in production). */
   STATIC_DIR: z.string().optional(),
+  /** Public address of this server, e.g. https://health.lotuspond.ai. Used in OAuth and MCP metadata for agents; derived from the request when unset. */
+  PUBLIC_URL: z.string().url().optional(),
   /** Extra origins allowed to make changes, comma-separated (for a frontend on another host). */
   APP_ORIGINS: z.string().default(''),
   /** Origins of the iOS and Android apps. They may call the API with bearer tokens (CORS, no cookies). */
@@ -115,6 +117,8 @@ export interface Config {
   databaseUrl: string | undefined;
   dataDir: string;
   staticDir: string | undefined;
+  /** Public origin (no trailing slash), when configured. */
+  publicUrl: string | undefined;
   allowedOrigins: string[];
   appClientOrigins: string[];
   regionApiOrigins: Partial<Record<DataRegion, string>>;
@@ -227,6 +231,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     databaseUrl: e.DATABASE_URL,
     dataDir: e.DATA_DIR,
     staticDir: e.STATIC_DIR,
+    publicUrl: e.PUBLIC_URL ? new URL(e.PUBLIC_URL).origin : undefined,
     allowedOrigins: e.APP_ORIGINS.split(',').map(s => s.trim().replace(/\/$/, '')).filter(Boolean),
     appClientOrigins: e.APP_CLIENT_ORIGINS.split(',').map(s => s.trim().replace(/\/$/, '')).filter(Boolean),
     regionApiOrigins: parseRegionOrigins(e.REGION_API_ORIGINS),

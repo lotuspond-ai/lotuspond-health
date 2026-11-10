@@ -29,6 +29,8 @@ services:
       DATABASE_URL: postgres://lotuspond:${POSTGRES_PASSWORD}@db:5432/lotuspond
       COOKIE_SECURE: "true"
       TRUST_PROXY: "true"
+      # Agents (Claude, ChatGPT…) connect to PUBLIC_URL/mcp and sign in at PUBLIC_URL/oauth.
+      PUBLIC_URL: https://${DOMAIN:-health.lotuspond.ai}
       SERVED_REGIONS: ${SERVED_REGIONS:?Set SERVED_REGIONS in deploy/.env to the regions this server's location may hold}
       DIRECTORY_SECRET: ${DIRECTORY_SECRET:?Set DIRECTORY_SECRET in deploy/.env (make-secrets.sh does)}
       FILE_ENCRYPTION_KEY: ${FILE_ENCRYPTION_KEY:?Set FILE_ENCRYPTION_KEY in deploy/.env (make-secrets.sh does)}

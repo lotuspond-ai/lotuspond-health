@@ -1,5 +1,6 @@
 // Backend that talks to the LotusPond API: on the same origin (/api) with cookie sessions on the website, or
 // across sites with token sessions in the iOS and Android apps (see ./appSession.ts).
+import type { AgentConnection, AgentConnectionsInfo, CreateAgentTokenInput, CreatedAgentToken } from '../../shared/agents';
 import type {
   Account, ActivityEvent, ConsentKind, ConsentRecord, DocumentKind, Measurement, MeasurementInput, Profile, ProfileInput, ProfileRecords,
   RegisterInput, ScanInput, ScanItem, ServiceInfo, SessionInfo, StoredDocument,
@@ -225,4 +226,9 @@ export class HttpBackend implements Backend {
   reversePlace(lat: number, lon: number) {
     return this.request<GeoReverse>('GET', `/geo/reverse?${new URLSearchParams({ lat: roundCoord(lat).toFixed(2), lon: roundCoord(lon).toFixed(2) })}`);
   }
+
+  agentConnections() { return this.request<AgentConnectionsInfo>('GET', '/agents'); }
+  createAgentToken(input: CreateAgentTokenInput) { return this.request<CreatedAgentToken>('POST', '/agents/tokens', input); }
+  updateAgentConnection(id: string, patch: Partial<Pick<AgentConnection, 'scopes' | 'profileIds'>>) { return this.request<AgentConnection>('PATCH', `/agents/${id}`, patch); }
+  disconnectAgent(id: string) { return this.request<void>('DELETE', `/agents/${id}`); }
 }

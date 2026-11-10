@@ -21,6 +21,9 @@ interface LabState {
   /** The booking dialog, and the result being reviewed (closed by the Android back button too). */
   bookingOpen: boolean;
   reviewing: string | null;
+  /** A booking an AI agent prepared (propose_lab_booking), waiting for the person to review and confirm. */
+  proposal: AgentProposal | null;
+  setProposal: (p: AgentProposal | null) => void;
   load: (profileId: string | null) => Promise<void>;
   /** Check again quietly (a failed check keeps what is shown). */
   refresh: () => Promise<void>;
@@ -30,6 +33,23 @@ interface LabState {
   setTab: (t: 'home' | 'near') => void;
   setBookingOpen: (v: boolean) => void;
   setReviewing: (id: string | null) => void;
+}
+
+export interface AgentProposal { profileId: string; codes: string[]; pincode: string; reason: string | null }
+
+/**
+ * An agent's proposal from the link it shared (/app?book=CODE&profile=ID&pincode=NNNNNN&reason=…#labs), removed from
+ * the address once read so a reload does not offer it again.
+ */
+export function readAgentProposal(): AgentProposal | null {
+  if (typeof location === 'undefined') return null;
+  const q = new URLSearchParams(location.search);
+  const codes = (q.get('book') ?? '').split(',').map(s => s.trim()).filter(s => /^[\w.-]{1,60}$/.test(s)).slice(0, 10);
+  const profileId = q.get('profile') ?? '';
+  const pincode = q.get('pincode') ?? '';
+  if (!codes.length || !/^[0-9a-f-]{36}$/i.test(profileId) || !/^\d{6}$/.test(pincode)) return null;
+  history.replaceState(null, '', `${location.pathname}${location.hash}`);
+  return { profileId, codes, pincode, reason: q.get('reason')?.slice(0, 200) || null };
 }
 
 /** Whether the signed-in account can book home collection (a partner serves its region and there is a server). */
@@ -65,6 +85,8 @@ export const useLab = create<LabState>((set, get) => {
     tab: 'home',
     bookingOpen: false,
     reviewing: null,
+    proposal: null,
+    setProposal: proposal => set({ proposal }),
     load: async profileId => {
       if (profileId === get().profileId && get().status !== 'idle') return;
       set({ profileId, orders: [], results: [], status: 'idle', error: null, bookingOpen: false, reviewing: null });

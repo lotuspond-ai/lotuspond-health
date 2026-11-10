@@ -85,7 +85,9 @@ function BookingPanel({ profile }: { profile: Profile }) {
   const go = (s: Step) => { setStep(s); setReached(r => Math.max(r, STEPS.findIndex(x => x.id === s))); };
 
   // Tests
-  const [pincode, setPincode] = useState(PINCODE.test(profile.postalCode ?? '') ? profile.postalCode! : '');
+  // A booking an agent prepared for this profile starts from its pincode and test.
+  const proposal = useLab(s => (s.proposal?.profileId === profile.id ? s.proposal : null));
+  const [pincode, setPincode] = useState(proposal?.pincode ?? (PINCODE.test(profile.postalCode ?? '') ? profile.postalCode! : ''));
   const [catalog, setCatalog] = useState<{ status: 'idle' | 'loading' | 'error'; error?: string } | { status: 'ready'; data: LabCatalog }>({ status: 'idle' });
   const [item, setItem] = useState<LabCatalogItem | null>(null);
   // Visit
@@ -117,7 +119,8 @@ function BookingPanel({ profile }: { profile: Profile }) {
     try {
       const data = await backend.labCatalog(pin);
       setCatalog({ status: 'ready', data });
-      setItem(it => (it && data.items.some(x => x.partner === it.partner && x.code === it.code) ? it : null));
+      const proposed = proposal && pin === proposal.pincode ? data.items.find(x => proposal.codes.includes(x.code)) : undefined;
+      setItem(it => (it && data.items.some(x => x.partner === it.partner && x.code === it.code) ? it : proposed ?? null));
     } catch (e) {
       setCatalog({ status: 'error', error: errorMessage(e) });
     }

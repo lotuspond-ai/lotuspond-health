@@ -7,6 +7,7 @@ import { ApiError, errorMessage, isPreview } from '../api';
 import { FACILITY_KINDS, RADIUS_OPTIONS_KM } from '../../shared/facilities';
 import { firstName, useActiveProfile, useSession } from '../state/session';
 import { labBookingAvailable, useLab } from '../state/lab';
+import '../styles/agents.css';
 import { FacilityCard } from '../components/labs/FacilityCard';
 import { HomeTests } from '../components/labs/HomeTests';
 import { EmptyState } from '../components/labs/Illustration';
@@ -37,8 +38,34 @@ export default function Labs() {
           <button type="button" aria-pressed={mode === 'near'} onClick={() => setTab('near')}><LabIcon name="pin" />Near you</button>
         </div>
       )}
+      {available && <AgentProposalBanner />}
       {mode === 'home' ? <HomeTests /> : <NearbyLabs />}
     </main>
+  );
+}
+
+/** A booking an agent prepared: the person reviews it in the booking dialog, where they pick a visit and confirm. */
+function AgentProposalBanner() {
+  const proposal = useLab(s => s.proposal), setProposal = useLab(s => s.setProposal), setOpen = useLab(s => s.setBookingOpen);
+  const profiles = useSession(s => s.profiles);
+  const activeId = useSession(s => s.activeId), switchProfile = useSession(s => s.switchProfile);
+  const who = profiles.find(p => p.id === proposal?.profileId);
+  if (!proposal || !who) return null;
+  const review = () => {
+    if (activeId !== who.id) switchProfile(who.id);
+    useLab.getState().setTab('home');
+    // After the profile switch has loaded its bookings.
+    setTimeout(() => setOpen(true), 0);
+  };
+  return (
+    <div className="agent-proposal" role="status">
+      <p><b>An AI agent suggested a home test{who.relationship === 'self' ? '' : ` for ${who.displayName}`}.</b><br />
+        <small>{proposal.reason ? `“${proposal.reason}” · ` : ''}Pincode {proposal.pincode}. Nothing is booked until you choose a visit and confirm.</small></p>
+      <span style={{ display: 'flex', gap: 8 }}>
+        <button type="button" className="btn" onClick={() => setProposal(null)}>Dismiss</button>
+        <button type="button" className="btn btn--primary" onClick={review}>Review booking</button>
+      </span>
+    </div>
   );
 }
 

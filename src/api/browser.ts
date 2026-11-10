@@ -14,6 +14,7 @@ import { CONSENT_VERSION, countryPolicy, isCountryCode, signUpProblem, type Data
 import { searchOffline } from './gazetteer';
 import { uid } from '../lib/id';
 import { ApiError, type Backend, type ScanPatch } from './backend';
+import type { AgentConnection, AgentConnectionsInfo, CreatedAgentToken } from '../../shared/agents';
 import type { LabCatalog, LabOrderView, LabResultSaved, LabResultView, LabSlot } from '../../shared/lab-bundle';
 
 interface StoredAccount extends Account { salt: string; hash: string }
@@ -105,6 +106,7 @@ function checkLocation(patch: Partial<ProfileInput>, out: Partial<ProfileInput>)
   return out;
 }
 
+const noAgents = () => new ApiError(503, 'preview', 'Connecting AI agents needs the LotusPond server, and this preview runs without one.');
 const noLabs = () => new ApiError(503, 'preview', 'Booking a home test needs the LotusPond server, and this preview runs without one.');
 
 export class BrowserBackend implements Backend {
@@ -520,4 +522,9 @@ export class BrowserBackend implements Backend {
   async allKeys(): Promise<IDBValidKey[]> {
     return keys(this.store);
   }
+
+  async agentConnections(): Promise<AgentConnectionsInfo> { throw noAgents(); }
+  async createAgentToken(): Promise<CreatedAgentToken> { throw noAgents(); }
+  async updateAgentConnection(): Promise<AgentConnection> { throw noAgents(); }
+  async disconnectAgent(): Promise<void> { throw noAgents(); }
 }

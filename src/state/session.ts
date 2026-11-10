@@ -4,7 +4,8 @@ import type { Account, Profile, ProfileInput, RegisterInput, ServiceInfo, Sessio
 import { backend } from '../api';
 import { HttpBackend } from '../api/http';
 import { useHealth } from '../lib/store';
-import { enterApp, leaveApp } from '../site/links';
+import { enterApp, leaveApp, oauthReturn } from '../site/links';
+import { readAgentProposal, useLab } from './lab';
 import { useUI } from './ui';
 import { countryPolicy } from '../../shared/regions';
 
@@ -48,7 +49,12 @@ function recall(accountId: string): string | null {
 
 export const useSession = create<SessionState>((set, get) => {
   function start(info: SessionInfo, onboarding = false) {
-    const saved = recall(info.account.id);
+    // Signing in to connect an agent: go back to its consent page (agents/oauth.ts) instead of opening the app.
+    const back = oauthReturn();
+    if (back) { location.assign(back); return; }
+    const proposal = readAgentProposal();
+    const saved = proposal && info.profiles.some(p => p.id === proposal.profileId) ? proposal.profileId : recall(info.account.id);
+    if (proposal) useLab.getState().setProposal(proposal);
     const activeId = info.profiles.find(p => p.id === saved)?.id ?? info.profiles[0]?.id ?? null;
     set({ status: 'signed-in', account: info.account, profiles: info.profiles, activeId, onboarding, notice: null });
     enterApp();

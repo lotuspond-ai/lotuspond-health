@@ -5,6 +5,7 @@ import type {
   RegisterInput, ScanInput, ScanItem, ServiceInfo, SessionInfo, StoredDocument,
   FacilityQuery, FacilitySearchResult, GeoCandidate, GeoReverse, PublicConfig,
 } from '../types';
+import type { AgentConnection, AgentConnectionsInfo, CreateAgentTokenInput, CreatedAgentToken } from '../../shared/agents';
 import type { LabBookingInput, LabCatalog, LabOrderView, LabResultSaved, LabResultView, LabSlot } from '../../shared/lab-bundle';
 
 export class ApiError extends Error {
@@ -106,6 +107,12 @@ export interface Backend {
   saveLabResult(profileId: string, resultId: string, measurements: MeasurementInput[]): Promise<LabResultSaved>;
   /** Drop a result without saving anything. */
   dismissLabResult(profileId: string, resultId: string): Promise<LabResultView>;
+
+  /* Connected agents (shared/agents.ts): AI agents reading the records over MCP. Needs the LotusPond server. */
+  agentConnections(): Promise<AgentConnectionsInfo>;
+  createAgentToken(input: CreateAgentTokenInput): Promise<CreatedAgentToken>;
+  updateAgentConnection(id: string, patch: Partial<Pick<AgentConnection, 'scopes' | 'profileIds'>>): Promise<AgentConnection>;
+  disconnectAgent(id: string): Promise<void>;
 }
 
 /** A message suitable for showing to the person. */

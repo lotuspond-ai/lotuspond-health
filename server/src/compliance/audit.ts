@@ -53,6 +53,7 @@ function cleanDetail(d: AuditDetail | undefined): AuditDetail | null {
   if (typeof d.granted === 'boolean') out.granted = d.granted;
   if (d.unitSystem) out.unitSystem = d.unitSystem;
   if (d.profileId && /^[0-9a-f-]{36}$/i.test(d.profileId)) out.profileId = d.profileId;
+  if (d.connectionId && /^[0-9a-f-]{36}$/i.test(d.connectionId)) out.connectionId = d.connectionId;
   return Object.keys(out).length ? out : null;
 }
 
