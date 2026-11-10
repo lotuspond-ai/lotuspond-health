@@ -218,7 +218,7 @@ describe('results into the profile', () => {
     assert.equal((await other.error('GET', `/api/profiles/${profileId}/lab-results`)).status, 404);
     assert.equal((await other.error('POST', `/api/profiles/${otherProfile}/lab-results/${r.id}/save`, { measurements: [] })).status, 404);
     assert.equal((await other.error('GET', `/api/profiles/${otherProfile}/lab-results/${r.id}/report`)).status, 404);
-    const member = await c.json<{ id: string }>('POST', '/api/profiles', { displayName: 'Ravi', relationship: 'partner' }, 201);
+    const member = await c.json<{ id: string }>('POST', '/api/profiles', { displayName: 'Ravi', relationship: 'partner', confirmation: 'agreed' }, 201);
     assert.equal((await c.error('POST', `/api/profiles/${member.id}/lab-results/${r.id}/save`, { measurements: [] })).status, 404, 'saved only into the profile it was booked for');
   });
 

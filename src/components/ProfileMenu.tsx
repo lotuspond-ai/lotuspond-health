@@ -1,6 +1,7 @@
 // Top-bar profile switcher, the "add a family member" dialog, and toast messages.
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import type { Relationship } from '../types';
+import { confirmationFor, confirmationText } from '../../shared/family';
+import type { FamilyConfirmation, Relationship } from '../types';
 import { errorMessage } from '../api';
 import { RELATIONSHIP_LABEL, useActiveProfile, useSession } from '../state/session';
 import { useUI } from '../state/ui';
@@ -10,6 +11,7 @@ import {
 } from './forms';
 import { checkDraft, emptyDraft, fromDraft, type ProfileDraft, todayIso } from '../lib/profile';
 import { Icon } from './ui';
+import '../styles/agents.css';
 
 export function ProfileMenu() {
   const { profiles, activeId, account, switchProfile, signOut } = useSession();
@@ -72,6 +74,8 @@ export function AddProfileDialog() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [touched, setTouched] = useState(false);
+  // Which confirmation was ticked: a different one (child ↔ adult) has to be ticked again.
+  const [ticked, setTicked] = useState<FamilyConfirmation | null>(null);
   useEffect(() => {
     if (!addProfileOpen) return;
     const k = (e: KeyboardEvent) => e.key === 'Escape' && setAddProfileOpen(false);
@@ -82,15 +86,18 @@ export function AddProfileDialog() {
 
   const errors = checkDraft(draft);
   const patch = (p: Partial<ProfileDraft>) => setDraft({ ...draft, ...p });
-  const close = () => { setAddProfileOpen(false); setDraft(emptyDraft()); setError(null); setTouched(false); setBusy(false); };
+  const close = () => { setAddProfileOpen(false); setDraft(emptyDraft()); setError(null); setTouched(false); setBusy(false); setTicked(null); };
+  // What the person confirms depends on who they are adding (Terms §4); changing it asks again.
+  const confirmation = confirmationFor(draft.relationship, draft.dateOfBirth || null);
+  const confirmed = ticked === confirmation;
 
   async function submit(e: FormEvent) {
     e.preventDefault();
     setTouched(true);
-    if (Object.keys(errors).length) return;
+    if (Object.keys(errors).length || !confirmed) return;
     setBusy(true);
     try {
-      await createProfile(fromDraft(draft));
+      await createProfile(fromDraft(draft), confirmation);
       close();
       setView('body');
     } catch (err) {
@@ -116,6 +123,11 @@ export function AddProfileDialog() {
           <Field label="Date of birth" error={errors.dateOfBirth}>{id => <input id={id} type="date" value={draft.dateOfBirth} max={todayIso()} onChange={e => patch({ dateOfBirth: e.target.value })} />}</Field>
           <Field label="Sex assigned at birth" wide>{id => <SexChoice id={id} value={draft.sex} onChange={v => patch({ sex: v })} />}</Field>
         </div>
+        <label className="confirm-check">
+          <input type="checkbox" checked={confirmed} onChange={e => setTicked(e.target.checked ? confirmation : null)} />
+          <span>{confirmationText(confirmation, draft.displayName)}</span>
+        </label>
+        {touched && !confirmed && <p className="form-error" role="alert">Tick the confirmation to add this person.</p>}
         {error && <p className="form-error" role="alert">{error}</p>}
         <div className="dialog__actions">
           <button type="button" className="btn" onClick={close}>Cancel</button>

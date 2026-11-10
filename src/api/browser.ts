@@ -4,7 +4,7 @@
 // browsers. Data-residency cells do not apply: everything stays in this browser.
 import { createStore, del, delMany, get, keys, set, type UseStore } from 'idb-keyval';
 import type {
-  Account, ActivityEvent, AuditDetail, AuditKind, ConsentKind, ConsentRecord, DocumentKind, Measurement, MeasurementInput, Profile, ProfileInput,
+  Account, ActivityEvent, FamilyConfirmation, AuditDetail, AuditKind, ConsentKind, ConsentRecord, DocumentKind, Measurement, MeasurementInput, Profile, ProfileInput,
   ProfileRecords, RegisterInput, ScanInput, ScanItem, ServiceInfo, SessionInfo, StoredDocument,
   FacilitySearchResult, GeoCandidate, GeoReverse, PublicConfig,
 } from '../types';
@@ -14,6 +14,7 @@ import { CONSENT_VERSION, countryPolicy, isCountryCode, signUpProblem, type Data
 import { searchOffline } from './gazetteer';
 import { uid } from '../lib/id';
 import { ApiError, type Backend, type ScanPatch } from './backend';
+import { needsGuardian } from '../../shared/family';
 import type { AgentConnection, AgentConnectionsInfo, CreatedAgentToken } from '../../shared/agents';
 import type { LabCatalog, LabOrderView, LabResultSaved, LabResultView, LabSlot } from '../../shared/lab-bundle';
 
@@ -168,7 +169,10 @@ export class BrowserBackend implements Backend {
   }
 
   private async session(account: StoredAccount): Promise<SessionInfo> {
-    return { account: this.publicAccount(account), profiles: await this.profiles(account.id) };
+    const consents = await this.readConsents(account.id);
+    const latest = (k: ConsentKind) => consents.find(r => r.kind === k);
+    const consentsOutdated = (['terms', 'privacy'] as const).filter(k => latest(k)?.granted && latest(k)!.version !== CONSENT_VERSION);
+    return { account: this.publicAccount(account), profiles: await this.profiles(account.id), consentsOutdated };
   }
 
   private publicAccount(a: StoredAccount): Account {
@@ -328,19 +332,27 @@ export class BrowserBackend implements Backend {
 
   /* ---------------- profiles ---------------- */
 
-  createProfile(input: ProfileInput): Promise<Profile> {
+  createProfile(input: ProfileInput, confirmation: FamilyConfirmation): Promise<Profile> {
     return this.locked(async () => {
       const account = await this.current();
       const list = await this.profiles(account.id);
       if (list.length >= LIMITS.profilesPerAccount) throw new ApiError(409, 'conflict', `An account can hold up to ${LIMITS.profilesPerAccount} profiles.`);
       if (input.relationship === 'self') throw bad('Your account already has your own profile. Choose who this person is to you.');
       const fields = checkProfile(input);
+      if (confirmation !== 'guardian' && needsGuardian(input.relationship ?? 'other', fields.dateOfBirth)) {
+        throw new ApiError(400, 'guardian_required', 'For a child, confirm that you are their parent or legal guardian.');
+      }
       const profile: Profile = {
         id: uid(), relationship: 'other', dateOfBirth: null, sex: null, heightCm: null, weightKg: null, bloodType: null,
         conditions: [], medications: [], allergies: [], notes: '', ...fields, displayName: fields.displayName ?? input.displayName,
         createdAt: now(), updatedAt: now(),
       };
       await set(profilesKey(account.id), [...list, profile], this.store);
+      const record: ConsentRecord = {
+        kind: 'family_profile', granted: true, version: CONSENT_VERSION, createdAt: now(), country: account.country ?? null,
+        detail: { profileId: profile.id, relationship: profile.relationship, confirmation },
+      };
+      await set(consentsKey(account.id), [record, ...await this.readConsents(account.id)], this.store);
       return profile;
     });
   }

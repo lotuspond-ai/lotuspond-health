@@ -1,4 +1,4 @@
-/* Account, Connected agents (src/components/AgentConnections.tsx). */
+/* Account, Connected agents (src/components/AgentConnections.tsx), and the consent prompts (family members, updated texts). */
 .btn--small { padding: 5px 10px; font-size: 13px; }
 .agents__url { display: grid; gap: 4px; margin: 4px 0 12px; }
 .agents__copy { display: flex; gap: 8px; align-items: center; min-width: 0; }
@@ -19,3 +19,11 @@
 .agents__pre { background: var(--mist); border: 1px solid var(--line); border-radius: 8px; padding: 10px; font-size: 12.5px; overflow-x: auto; max-width: 100%; white-space: pre; }
 .agent-proposal { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; border: 1px solid var(--line); background: var(--paper); border-radius: 12px; padding: 12px 14px; margin-bottom: 14px; }
 .agent-proposal p { margin: 0; }
+/* Add a family member: what the account holder confirms (shared/family.ts). */
+.confirm-check { display: flex; gap: 10px; align-items: flex-start; margin: 14px 0 4px; font-size: 14px; }
+.confirm-check input { margin-top: 3px; flex: none; }
+/* The Terms or Privacy Policy changed: accept the current texts (App.tsx UpdatedTextsNotice). */
+.texts-notice { position: fixed; z-index: 40; left: 50%; transform: translateX(-50%); bottom: 20px; width: min(640px, calc(100% - 32px)); display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; padding: 12px 14px; border: 1px solid var(--line); border-radius: 14px; background: var(--paper); box-shadow: var(--shadow-float); }
+.texts-notice p { margin: 0; flex: 1 1 240px; font-size: 14px; }
+/* Above the phone tab bar. */
+@media (max-width: 760px) { .texts-notice { bottom: calc(84px + env(safe-area-inset-bottom, 0px)); } }

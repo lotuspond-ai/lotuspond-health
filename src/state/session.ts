@@ -1,6 +1,6 @@
 // Signed-in account, its profiles, and which profile is open.
 import { create } from 'zustand';
-import type { Account, Profile, ProfileInput, RegisterInput, ServiceInfo, SessionInfo } from '../types';
+import type { Account, ConsentKind, FamilyConfirmation, Profile, ProfileInput, RegisterInput, ServiceInfo, SessionInfo } from '../types';
 import { backend } from '../api';
 import { HttpBackend } from '../api/http';
 import { useHealth } from '../lib/store';
@@ -29,7 +29,10 @@ interface SessionState {
   signOut: () => Promise<void>;
   sessionEnded: () => void;
   switchProfile: (id: string) => void;
-  createProfile: (input: ProfileInput) => Promise<Profile>;
+  createProfile: (input: ProfileInput, confirmation: FamilyConfirmation) => Promise<Profile>;
+  /** Required consents given for older texts; the app asks to accept the current ones. */
+  consentsOutdated: ConsentKind[];
+  acceptUpdatedTexts: () => Promise<void>;
   saveProfile: (id: string, patch: Partial<ProfileInput>) => Promise<Profile>;
   deleteProfile: (id: string) => Promise<void>;
   finishOnboarding: () => void;
@@ -56,13 +59,13 @@ export const useSession = create<SessionState>((set, get) => {
     const saved = proposal && info.profiles.some(p => p.id === proposal.profileId) ? proposal.profileId : recall(info.account.id);
     if (proposal) useLab.getState().setProposal(proposal);
     const activeId = info.profiles.find(p => p.id === saved)?.id ?? info.profiles[0]?.id ?? null;
-    set({ status: 'signed-in', account: info.account, profiles: info.profiles, activeId, onboarding, notice: null });
+    set({ status: 'signed-in', account: info.account, profiles: info.profiles, activeId, onboarding, notice: null, consentsOutdated: info.consentsOutdated ?? [] });
     enterApp();
     void useHealth.getState().openProfile(activeId);
   }
 
   function reset(notice: string | null = null) {
-    set({ status: 'signed-out', account: null, profiles: [], activeId: null, onboarding: false, notice });
+    set({ status: 'signed-out', account: null, profiles: [], activeId: null, onboarding: false, notice, consentsOutdated: [] });
     void useHealth.getState().openProfile(null);
     useUI.getState().setView('body');
     leaveApp();
@@ -113,8 +116,15 @@ export const useSession = create<SessionState>((set, get) => {
       void useHealth.getState().openProfile(id);
     },
 
-    createProfile: async input => {
-      const profile = await backend.createProfile(input);
+    consentsOutdated: [],
+
+    acceptUpdatedTexts: async () => {
+      for (const kind of get().consentsOutdated) await backend.setConsent(kind, true);
+      set({ consentsOutdated: [] });
+    },
+
+    createProfile: async (input, confirmation) => {
+      const profile = await backend.createProfile(input, confirmation);
       set(s => ({ profiles: [...s.profiles, profile] }));
       get().switchProfile(profile.id);
       return profile;

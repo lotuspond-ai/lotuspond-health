@@ -56,7 +56,7 @@ async function account() {
     measurement({ date: '2026-03-14', value: 138, valueText: '138' }),
     measurement({ markerId: 'tsh', rawName: 'TSH', value: 2.1, valueText: '2.1', unit: 'µIU/mL', range: { low: 0.4, high: 4.0, source: 'report' }, status: 'normal' }),
   ] }, 201);
-  const child = await c.json<Profile>('POST', '/api/profiles', { displayName: 'Kiran', relationship: 'child' }, 201);
+  const child = await c.json<Profile>('POST', '/api/profiles', { displayName: 'Kiran', relationship: 'child', confirmation: 'guardian' }, 201);
   return { c, self, child };
 }
 

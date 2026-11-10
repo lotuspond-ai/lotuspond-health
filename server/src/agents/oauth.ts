@@ -25,6 +25,7 @@ import { agentGrants, oauthClients, profiles } from '../db/schema.ts';
 import { clientIp, type AppEnv, type Deps } from '../http.ts';
 import { RateLimiter } from '../lib/rate-limit.ts';
 import { relationshipOrder } from '../routes/profiles.ts';
+import { recordSharingConsent } from './grants.ts';
 import { ACCESS_TTL_MS, cleanScopes, CODE_TTL_MS, issueSecret, ownProfiles, REFRESH_TTL_MS, resolveSecret, parseSecret, digest } from './grants.ts';
 import { agentTokens } from '../db/schema.ts';
 
@@ -338,6 +339,7 @@ button.primary{background:var(--accent);border-color:var(--accent);color:#fff}.n
     const code = await issueSecret(db, session.user.region, grant.id, 'code', {
       ttlMs: CODE_TTL_MS, codeChallenge: req.challenge, redirectUri: req.redirectUri, resource: req.resource ? `${origin}/mcp` : null,
     });
+    await recordSharingConsent(db, session.user, grant);
     await recordEvent(db, eventContext(c, deps), session.user.id, 'agent_connected', { connectionId: grant.id });
     return c.redirect(back(req, origin, { code }), 302);
   });

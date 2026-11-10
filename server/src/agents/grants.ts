@@ -7,6 +7,7 @@ import { AGENT_SCOPES, type AgentConnection, type AgentScope } from '../../../sh
 import type { DataRegion } from '../../../shared/regions.ts';
 import type { Cell, CellRegistry } from '../cells.ts';
 import type { Db } from '../db/client.ts';
+import { recordConsents } from '../compliance/consents.ts';
 import { agentGrants, agentTokens, profiles, users, type AgentGrantRow, type UserRow } from '../db/schema.ts';
 
 export type SecretType = 'code' | 'access' | 'refresh';
@@ -57,6 +58,17 @@ export async function ownProfiles(db: Db, userId: string, ids: string[]): Promis
   const rows = await db.select({ id: profiles.id }).from(profiles).where(and(eq(profiles.userId, userId), inArray(profiles.id, ids)));
   const own = new Set(rows.map(r => r.id));
   return ids.filter(id => own.has(id));
+}
+
+/**
+ * Record the person's consent to share with a connection, as it now stands (or its withdrawal): an agent_sharing
+ * consent with the text version, the agent's name, the profiles and the permissions.
+ */
+export async function recordSharingConsent(db: Db, user: Pick<UserRow, 'id' | 'country'>, grant: AgentGrantRow, granted = true): Promise<void> {
+  await recordConsents(db, user.id, user.country, [{
+    kind: 'agent_sharing', granted,
+    detail: { connectionId: grant.id, agent: grant.name.slice(0, 80), profileIds: grant.profileIds, scopes: cleanScopes(grant.scopes) },
+  }]);
 }
 
 export async function listGrants(db: Db, userId: string): Promise<AgentGrantRow[]> {

@@ -36,7 +36,7 @@ export default function AccountPage() {
         <ResidencyPanel />
         {!isPreview && <AgentConnectionsPanel />}
         <UnitsPanel onChange={reload} />
-        <ConsentsPanel consents={consents} failed={failed} onChange={reload} />
+        <ConsentsPanel consents={consents} failed={failed} onChange={reload} profiles={profiles} />
         <ActivityPanel activity={activity} failed={failed} profiles={profiles} />
         {!isPreview && <ContactsPanel />}
         <PasswordPanel onChange={reload} />
@@ -151,17 +151,31 @@ const CONSENT_LABEL: Record<ConsentKind, string> = {
   health_data: 'Processing your health data',
   cross_border: 'Storing records outside your country',
   marketing: 'Product emails',
+  family_profile: 'Keeping a family member\'s records',
+  agent_sharing: 'Sharing with an AI agent',
 };
+
+/** Which profile or agent a per-item consent was for, as the history shows it. */
+function consentSubject(r: ConsentRecord, profiles: Profile[]): string | null {
+  const d = r.detail;
+  if (!d) return null;
+  const name = (id: string) => profiles.find(p => p.id === id)?.displayName ?? 'a removed profile';
+  if (r.kind === 'family_profile' && d.profileId) return `${name(d.profileId)}${d.confirmation === 'guardian' ? ' (as parent or guardian)' : ''}`;
+  if (r.kind === 'agent_sharing') return [d.agent, d.profileIds?.length ? `sees ${d.profileIds.map(name).join(', ')}` : null, d.scopes?.includes('health:write') ? 'may add records' : null].filter(Boolean).join(' · ');
+  return null;
+}
 const CONSENT_ORDER: ConsentKind[] = ['health_data', 'cross_border', 'terms', 'privacy', 'marketing'];
 
 /** "Given", "Withdrawn" (after an earlier yes) or "Declined" (never given). Records are newest first. */
 function decisionWord(records: ConsentRecord[], i: number): string {
   const r = records[i];
   if (r.granted) return 'Given';
-  return records.slice(i + 1).some(o => o.kind === r.kind && o.granted) ? 'Withdrawn' : 'Declined';
+  // Per-item consents (a profile, an agent) are withdrawn for that item, not the kind.
+  const item = (x: ConsentRecord) => x.detail?.connectionId ?? x.detail?.profileId ?? null;
+  return records.slice(i + 1).some(o => o.kind === r.kind && item(o) === item(r) && o.granted) ? 'Withdrawn' : 'Declined';
 }
 
-function ConsentsPanel({ consents, failed, onChange }: { consents: ConsentRecord[] | null; failed: boolean; onChange: () => void }) {
+function ConsentsPanel({ consents, failed, onChange, profiles }: { consents: ConsentRecord[] | null; failed: boolean; onChange: () => void; profiles: Profile[] }) {
   const [busy, setBusy] = useState(false);
   const [explain, setExplain] = useState<ConsentKind | null>(null);
   const latest = new Map<ConsentKind, ConsentRecord>();
@@ -228,7 +242,7 @@ function ConsentsPanel({ consents, failed, onChange }: { consents: ConsentRecord
                   <tbody>
                     {consents.map((r, i) => (
                       <tr key={`${r.kind}-${r.createdAt}-${i}`}>
-                        <td>{dateTime(r.createdAt)}</td><td>{CONSENT_LABEL[r.kind]}</td><td>{decisionWord(consents, i)}</td><td>{r.version}</td><td>{r.country ?? '—'}</td>
+                        <td>{dateTime(r.createdAt)}</td><td>{CONSENT_LABEL[r.kind]}{consentSubject(r, profiles) && <><br /><small>{consentSubject(r, profiles)}</small></>}</td><td>{decisionWord(consents, i)}</td><td>{r.version}</td><td>{r.country ?? '—'}</td>
                       </tr>
                     ))}
                   </tbody>

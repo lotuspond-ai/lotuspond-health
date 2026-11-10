@@ -19,7 +19,9 @@ import { LockScreen } from './components/AppLock';
 import { Icon, Logo } from './components/ui';
 import { isPreview } from './api';
 import { useSession } from './state/session';
-import { authModeFromLocation } from './site/links';
+import { authModeFromLocation, siteHref, siteLinkProps } from './site/links';
+import { toast } from './state/toast';
+import { errorMessage } from './api';
 import { useUI, VIEWS, type View } from './state/ui';
 import { useLock } from './native/lock';
 import { sessionReady } from './native';
@@ -92,6 +94,7 @@ function Shell({ hidden }: { hidden: boolean }) {
           <ProfileMenu />
         </div>
       </header>
+      <UpdatedTextsNotice />
       <BodyMap hidden={view !== 'body'} />
       {!hidden && <>
         {(view === 'files' || view === 'scans') && <FilesSwitch view={view} />}
@@ -113,6 +116,28 @@ function Shell({ hidden }: { hidden: boolean }) {
         <button className="tabbar__add" onClick={() => setUploadOpen(true)}><span className="tabbar__plus">{Icon.plus}</span><span>Add</span></button>
         {TABS.slice(2).map(tab)}
       </nav>
+    </div>
+  );
+}
+
+/**
+ * The Terms or Privacy Policy changed since the person accepted them (SessionInfo.consentsOutdated): say what changed
+ * and record their acceptance of the current texts. The app stays usable meanwhile.
+ */
+function UpdatedTextsNotice() {
+  const outdated = useSession(s => s.consentsOutdated);
+  const accept = useSession(s => s.acceptUpdatedTexts);
+  const [busy, setBusy] = useState(false);
+  if (!outdated.length) return null;
+  // One consent version covers both texts; name the one that changed (the Privacy Policy, for agent sharing).
+  const names = outdated.includes('privacy') ? 'Privacy Policy' : 'Terms';
+  return (
+    <div className="texts-notice" role="status">
+      <p><b>We updated our {names}.</b> It now explains how AI agents you connect can read the records you choose for them. <a href={siteHref('/privacy/')} {...siteLinkProps}>Read what changed</a></p>
+      <button type="button" className="btn btn--primary" disabled={busy} onClick={async () => {
+        setBusy(true);
+        try { await accept(); toast.info('Thank you. Your acceptance is recorded on Account.'); } catch (e) { toast.error(errorMessage(e)); setBusy(false); }
+      }}>{busy ? 'Saving…' : 'Accept'}</button>
     </div>
   );
 }

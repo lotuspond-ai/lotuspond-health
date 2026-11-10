@@ -143,12 +143,33 @@ export interface ProfileRecords {
 export interface SessionInfo {
   account: Account;
   profiles: Profile[];
+  /** Required consents given for older texts (the Terms or Privacy Policy changed): the app asks to accept the new ones. */
+  consentsOutdated?: ConsentKind[];
 }
 
 /* ---------------- consent, activity and sign-up ---------------- */
 
 /** What a person agreed to. `cross_border` applies where records are stored outside their country. */
-export type ConsentKind = 'terms' | 'privacy' | 'health_data' | 'cross_border' | 'marketing';
+export type ConsentKind = 'terms' | 'privacy' | 'health_data' | 'cross_border' | 'marketing'
+  /** The account holder confirmed their right to keep a family member's records (one record per profile). */
+  | 'family_profile'
+  /** Sharing records with a connected AI agent (one record per connection and change; withdrawn on disconnect). */
+  | 'agent_sharing';
+
+/** What the account holder confirmed when adding a family member. */
+export type FamilyConfirmation = 'guardian' | 'agreed';
+
+/** What a per-item consent (family_profile, agent_sharing) applied to. Ids, names and permissions only, never health data. */
+export interface ConsentDetail {
+  profileId?: string;
+  relationship?: string;
+  confirmation?: FamilyConfirmation;
+  connectionId?: string;
+  /** The agent's name as shown on the connection screen. */
+  agent?: string;
+  profileIds?: string[];
+  scopes?: string[];
+}
 
 /** One consent decision. Decisions are never edited; a change adds a new record. */
 export interface ConsentRecord {
@@ -159,6 +180,8 @@ export interface ConsentRecord {
   createdAt: string;
   /** Country of residence at the time. */
   country: string | null;
+  /** For family_profile and agent_sharing: which profile or connection it applies to. */
+  detail?: ConsentDetail | null;
 }
 
 /** Account events kept in the audit log and shown as "Recent activity". */
