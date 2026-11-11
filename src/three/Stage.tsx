@@ -12,6 +12,7 @@ import { useUI } from '../state/ui';
 import { useHealth, organSummary } from '../lib/store';
 import { useStage, type Tier } from '../components/stage/stageSettings';
 import { PINNED, STATUS_COLOR, pinLabel, pinState } from '../components/stage/status';
+import { ISSUE_COLOR, pinIssueClass, useIssues } from '../components/stage/issues';
 import type { OrganId } from '../types';
 
 export const POND = '#0c2528';
@@ -113,6 +114,7 @@ function Pins({ portal }: { portal: Portal }) {
   const selected = useHealth(s => s.selectedOrgan);
   const selectOrgan = useHealth(s => s.selectOrgan);
   const summary = useMemo(() => organSummary(measurements), [measurements]);
+  const issues = useIssues().organs;
   // Each <Html> re-projects itself every frame, so hidden pins are unmounted rather than hidden.
   if (!layers.labels || (selected && selected !== 'skin')) return null;
   return (
@@ -123,7 +125,7 @@ function Pins({ portal }: { portal: Portal }) {
         const showLabel = hovered === o.id || state === 'out';
         return (
           <Html key={o.id} portal={portal} position={o.pin} center zIndexRange={[20, 0]}>
-            <button className={`pin pin--${state}${hovered === o.id ? ' is-hot' : ''}`} style={{ ['--pin' as string]: STATUS_COLOR[state] }}
+            <button className={`pin pin--${state}${hovered === o.id ? ' is-hot' : ''}${pinIssueClass(issues, o.id)}`} style={{ ['--pin' as string]: issues[o.id] ? ISSUE_COLOR[issues[o.id]!] : STATUS_COLOR[state] }}
               onClick={() => selectOrgan(o.id)} onPointerEnter={() => setHovered(o.id)} onPointerLeave={() => setHovered(null)}
               aria-label={pinLabel(o.name, s)}>
               <span className="pin__dot" />

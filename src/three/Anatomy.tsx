@@ -8,6 +8,9 @@ import type { OrganId } from '../types';
 import { useUI } from '../state/ui';
 import { useHealth } from '../lib/store';
 import { ORGAN_SYSTEMS } from '../components/stage/status';
+import { ISSUE_COLOR, useIssues } from '../components/stage/issues';
+import { lowPowerDevice } from '../components/stage/stageSettings';
+import type { IssueLevel } from '../lib/attention';
 
 /** Shared lookup so the camera rig can frame meshes by name. */
 export const meshRegistry = new Map<string, THREE.Mesh>();
@@ -22,7 +25,15 @@ interface Part {
   /** Back faces drawn as cut tissue. Only shown when they can be seen: in a cross-section, or through see-through tissue. */
   inner?: THREE.Mesh; seeThrough: boolean;
   base: THREE.Color; dimmed: THREE.Color; dim: number; dimT: number; baseOpacity: number;
+  /** Results outside their range on this organ: it glows (src/components/stage/issues.ts). */
+  issue: IssueLevel | null;
 }
+
+const ISSUE_EMISSIVE: Record<IssueLevel, THREE.Color> = { out: new THREE.Color(ISSUE_COLOR.out), far: new THREE.Color(ISSUE_COLOR.far) };
+const HOVER_EMISSIVE = new THREE.Color('#3b1a22');
+const BLACK = new THREE.Color('#000000');
+/** How much the healthy organs step back while the body shows where results are outside their range. */
+const CALM_DIM = 0.32;
 
 function materialSet(spec: MeshSpec, tier: MaterialTier, inner: boolean): MaterialSet {
   const solid = tissueMaterial(spec.tissue, tier);
@@ -44,7 +55,9 @@ export function Anatomy({ tier = 'physical', depth = true }: AnatomyProps) {
   const activeSystem = useHealth(s => s.activeSystem);
   const selectOrgan = useHealth(s => s.selectOrgan);
   const { hovered, setHovered, layers, xray, section } = useUI();
+  const issues = useIssues().organs;
   const animating = useRef(true);
+  const glowing = useRef(false);
 
   const skinGhost = useMemo(() => GHOSTS.skin(), []);
   const boneGhost = useMemo(() => GHOSTS.bone(), []);
@@ -77,7 +90,7 @@ export function Anatomy({ tier = 'physical', depth = true }: AnatomyProps) {
       const base = solid.color.clone();
       const hsl = { h: 0, s: 0, l: 0 }; base.getHSL(hsl);
       const dimmed = new THREE.Color().setHSL(hsl.h, hsl.s * 0.18, Math.min(hsl.l, 0.5) * 0.42);
-      list.push({ mesh, organ, spec, sets, solid, glass, inner, seeThrough, base, dimmed, dim: 0, dimT: 0, baseOpacity: solid.opacity });
+      list.push({ mesh, organ, spec, sets, solid, glass, inner, seeThrough, base, dimmed, dim: 0, dimT: 0, baseOpacity: solid.opacity, issue: null });
     });
     return list;
   }, [scene, skinGhost]);
@@ -117,8 +130,14 @@ export function Anatomy({ tier = 'physical', depth = true }: AnatomyProps) {
       if (p.inner) p.inner.visible = mat === p.solid && (p.seeThrough ? depth || clip.length > 0 : clip.length > 0);
       p.solid.clippingPlanes = clip; p.glass.clippingPlanes = clip;
       if (p.inner) (p.inner.material as THREE.Material).clippingPlanes = clip;
-      p.dimT = !focus && activeSystem && !ORGAN_SYSTEMS[p.organ]?.has(activeSystem) ? 1 : 0;
+      // On the whole body, organs with results outside their range glow and the others step back; a chosen body
+      // system or an opened organ takes over.
+      // Only the organ itself glows: the heart's entry also owns every vessel, which would light up the whole body.
+      p.issue = !focus && ORGAN_BY_ID[p.organ].focus.includes(p.mesh.name) ? issues[p.organ] ?? null : null;
+      const anyIssue = !focus && !activeSystem && Object.keys(issues).length > 0;
+      p.dimT = !focus && activeSystem && !ORGAN_SYSTEMS[p.organ]?.has(activeSystem) ? 1 : anyIssue && !issues[p.organ] && !isBone ? CALM_DIM : 0;
     }
+    glowing.current = !focus && Object.keys(issues).length > 0;
     const skin = meshRegistry.get('skin'); if (skin) skin.visible = layers.skin && !focus;
     if (box && section.on) {
       const t = section.depth;
@@ -127,20 +146,25 @@ export function Anatomy({ tier = 'physical', depth = true }: AnatomyProps) {
       else { clipPlane.normal.set(0, -1, 0); clipPlane.constant = THREE.MathUtils.lerp(box.max.y, box.min.y, t); }
     }
     animating.current = true; invalidate();
-  }, [parts, tier, depth, selected, activeSystem, xray, layers, section, boneGhost, contextGhost, clipPlane, invalidate]);
+  }, [parts, tier, depth, selected, activeSystem, xray, layers, section, issues, boneGhost, contextGhost, clipPlane, invalidate]);
 
   useEffect(() => { animating.current = true; invalidate(); }, [hovered, invalidate]);
 
-  useFrame((_, dt) => {
-    if (!animating.current) return;
-    let busy = false;
+  useFrame(({ clock }, dt) => {
+    // The glow breathes slowly; phones and small laptops keep it steady to save power.
+    const pulse = !lowPowerDevice && glowing.current;
+    if (!animating.current && !pulse) return;
+    const breath = pulse ? 0.5 + 0.5 * Math.sin(clock.elapsedTime * 2.2) : 0.6;
+    let busy = pulse;
     const k = 1 - Math.pow(0.0004, Math.min(dt, 0.05));
     for (const p of parts) {
       p.dim += (p.dimT - p.dim) * k;
       if (Math.abs(p.dim - p.dimT) > 0.003) busy = true; else p.dim = p.dimT;
       p.solid.color.copy(p.base).lerp(p.dimmed, p.dim);
       const hot = hovered === p.organ && p.mesh.material === p.solid;
-      p.solid.emissive.set(hot ? '#3b1a22' : '#000000');
+      if (hot) { p.solid.emissive.copy(HOVER_EMISSIVE); p.solid.emissiveIntensity = 1; }
+      else if (p.issue) { p.solid.emissive.copy(ISSUE_EMISSIVE[p.issue]); p.solid.emissiveIntensity = (p.issue === 'far' ? 0.42 : 0.3) * (0.55 + 0.45 * breath); }
+      else { p.solid.emissive.copy(BLACK); p.solid.emissiveIntensity = 1; }
       p.solid.envMapIntensity = 0.9 - 0.6 * p.dim;
       if (p.baseOpacity < 1) p.solid.opacity = p.baseOpacity * (1 - 0.45 * p.dim);
     }

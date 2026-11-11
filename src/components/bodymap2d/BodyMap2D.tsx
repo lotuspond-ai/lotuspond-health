@@ -9,6 +9,8 @@ import type { OrganId } from '../../types';
 import { warmCache } from '../../sw-register';
 import { Glyph } from '../stage/Glyph';
 import { ORGAN_SYSTEMS, PINNED, STATUS_COLOR, pinLabel, pinState } from '../stage/status';
+import { ISSUE_COLOR, ISSUE_RGB, pinIssueClass, useIssues } from '../stage/issues';
+import type { IssueLevel } from '../../lib/attention';
 import { ASPECT, ID_ORGAN, MANIFEST, ORGAN_INDEX, bodymapUrl, loadIdMap, preload, type Density, type IdMap } from './manifest';
 import '../../styles/stage.css';
 
@@ -43,7 +45,7 @@ function useDensity(ref: RefObject<HTMLElement | null>): Density {
 }
 
 /** Highlight for the hovered organ (fill and outline) and dimming of organs outside the chosen body system. */
-function paintOverlay(canvas: HTMLCanvasElement, m: IdMap, hot: number, dim: Set<number> | null) {
+function paintOverlay(canvas: HTMLCanvasElement, m: IdMap, hot: number, dim: Set<number> | null, dimAlpha = 165) {
   const g = canvas.getContext('2d');
   if (!g) return;
   g.clearRect(0, 0, canvas.width, canvas.height);
@@ -62,7 +64,47 @@ function paintOverlay(canvas: HTMLCanvasElement, m: IdMap, hot: number, dim: Set
         }
         if (l === hot || r === hot || u === hot || d === hot) { px[o] = 226; px[o + 1] = 134; px[o + 2] = 158; px[o + 3] = 150; continue; }
       }
-      if (dim && id && dim.has(id)) { px[o] = 8; px[o + 1] = 30; px[o + 2] = 33; px[o + 3] = 165; }
+      if (dim && id && dim.has(id)) { px[o] = 8; px[o + 1] = 30; px[o + 2] = 33; px[o + 3] = dimAlpha; }
+    }
+  }
+  g.putImageData(img, 0, 0);
+}
+
+/**
+ * Organs with results outside their range, painted in their issue colour (src/components/stage/issues.ts): a soft fill
+ * with a brighter rim. Its own canvas, so CSS can make it breathe without repainting.
+ */
+/** Where an organ's glow may go when its region spreads over the body (the heart and its vessels). */
+interface Area { x: number; y: number; r: number }
+const SPREAD = 0.12; // a box larger than this share of the image is a spread-out region
+const AREA_R = 0.085;
+
+function paintIssues(canvas: HTMLCanvasElement, m: IdMap, levels: Map<number, IssueLevel>, areas: Map<number, Area>) {
+  const g = canvas.getContext('2d');
+  if (!g) return;
+  g.clearRect(0, 0, canvas.width, canvas.height);
+  if (!levels.size) return;
+  const { width: w, height: h, ids } = m;
+  const img = g.createImageData(w, h), px = img.data;
+  // A rim two pixels wide: any pixel of the organ with a different organ (or nothing) within two pixels.
+  const rim = (x: number, y: number, id: number) => {
+    for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+      const xx = x + dx, yy = y + dy;
+      if (xx < 0 || yy < 0 || xx >= w || yy >= h || ids[yy * w + xx] !== id) return true;
+    }
+    return false;
+  };
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x, id = ids[i];
+      const lv = id ? levels.get(id) : undefined;
+      if (!lv) continue;
+      // Only the organ itself: the heart's region also holds every vessel of the body, so it is kept to a circle
+      // around the heart.
+      const a = areas.get(id);
+      if (a && (x - a.x * w) ** 2 + (y - a.y * h) ** 2 > (a.r * w) ** 2) continue;
+      const [r, gg, b] = ISSUE_RGB[lv], o = i * 4;
+      px[o] = r; px[o + 1] = gg; px[o + 2] = b; px[o + 3] = rim(x, y, id) ? 255 : lv === 'far' ? 150 : 125;
     }
   }
   g.putImageData(img, 0, 0);
@@ -77,6 +119,8 @@ function Turntable({ angle, setAngle, density }: { angle: number; setAngle: (a: 
   const summary = useMemo(() => organSummary(measurements), [measurements]);
   const frame = useRef<HTMLDivElement>(null);
   const overlay = useRef<HTMLCanvasElement>(null);
+  const issueLayer = useRef<HTMLCanvasElement>(null);
+  const issues = useIssues().organs;
   const drag = useRef<{ id: number; x: number; start: number; moved: boolean } | null>(null);
   // The image on screen. A new angle replaces it once decoded; the previous one stays underneath while it fades in.
   const [shown, setShown] = useState(angle);
@@ -112,9 +156,26 @@ function Turntable({ angle, setAngle, density }: { angle: number; setAngle: (a: 
   useEffect(() => {
     if (!overlay.current) return;
     const hot = hovered ? ORGAN_INDEX[hovered] ?? 0 : 0;
-    const dim = activeSystem ? new Set(ID_ORGAN.flatMap((o, i) => (o && !ORGAN_SYSTEMS[o]?.has(activeSystem) ? [i] : []))) : null;
-    if (idMap) paintOverlay(overlay.current, idMap, hot, dim);
-  }, [idMap, hovered, activeSystem]);
+    // A chosen body system dims everything else; otherwise, when results are outside range, the healthy organs step
+    // back a little so the glowing ones stand out.
+    const calm = !activeSystem && Object.keys(issues).length > 0;
+    const dim = activeSystem ? new Set(ID_ORGAN.flatMap((o, i) => (o && !ORGAN_SYSTEMS[o]?.has(activeSystem) ? [i] : [])))
+      : calm ? new Set(ID_ORGAN.flatMap((o, i) => (o && o !== 'skin' && !issues[o] ? [i] : []))) : null;
+    if (idMap) paintOverlay(overlay.current, idMap, hot, dim, activeSystem ? 165 : 70);
+  }, [idMap, hovered, activeSystem, issues]);
+
+  useEffect(() => {
+    if (!issueLayer.current || !idMap) return;
+    // A chosen body system takes over the highlighting.
+    const levels = new Map<number, IssueLevel>(activeSystem ? [] : Object.entries(issues).map(([o, lv]) => [ORGAN_INDEX[o as OrganId] ?? 0, lv as IssueLevel]));
+    levels.delete(0);
+    const view = MANIFEST.angles[shown], areas = new Map<number, Area>();
+    for (const o of Object.keys(issues) as OrganId[]) {
+      const b = view.boxes[o], p = view.pins[o];
+      if (b && p && (b[2] - b[0]) * (b[3] - b[1]) > SPREAD) areas.set(ORGAN_INDEX[o] ?? 0, { x: p[0], y: p[1], r: AREA_R });
+    }
+    paintIssues(issueLayer.current, idMap, levels, areas);
+  }, [idMap, issues, activeSystem, shown]);
 
   const organAt = async (clientX: number, clientY: number, wait: boolean): Promise<OrganId | null> => {
     const m = idMap ?? (wait ? await loadIdMap(shown).catch(() => null) : null);
@@ -170,6 +231,7 @@ function Turntable({ angle, setAngle, density }: { angle: number; setAngle: (a: 
         {under !== null && under !== shown && <img className="bm2d__img" src={imageUrl(under, density)} alt="" draggable={false} />}
         <img key={shown} className="bm2d__img bm2d__img--in" src={imageUrl(shown, density)} alt="" draggable={false}
           onAnimationEnd={() => setUnder(null)} fetchPriority="high" />
+        <canvas ref={issueLayer} className="bm2d__overlay bm2d__issues" width={iw} height={ih} aria-hidden />
         <canvas ref={overlay} className="bm2d__overlay" width={iw} height={ih} aria-hidden />
         {labels && (
           <div className="bm2d__pins">
@@ -179,7 +241,7 @@ function Turntable({ angle, setAngle, density }: { angle: number; setAngle: (a: 
               const s = summary[o.id], state = pinState(s), hot = hovered === o.id;
               return (
                 <div key={o.id} className={`bm2d__pin${p[2] < -0.045 ? ' is-back' : ''}`} style={{ left: `${p[0] * 100}%`, top: `${p[1] * 100}%` }}>
-                  <button className={`pin pin--${state}${hot ? ' is-hot' : ''}`} style={{ ['--pin' as string]: STATUS_COLOR[state] }}
+                  <button className={`pin pin--${state}${hot ? ' is-hot' : ''}${pinIssueClass(issues, o.id)}`} style={{ ['--pin' as string]: issues[o.id] ? ISSUE_COLOR[issues[o.id]!] : STATUS_COLOR[state] }}
                     onPointerDown={e => e.stopPropagation()} onPointerUp={e => e.stopPropagation()} onClick={() => selectOrgan(o.id)}
                     onPointerEnter={() => setHovered(o.id)} onPointerLeave={() => setHovered(null)}
                     onFocus={() => setHovered(o.id)} onBlur={() => setHovered(null)} aria-label={pinLabel(o.name, s)}>

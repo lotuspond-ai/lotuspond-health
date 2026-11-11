@@ -655,6 +655,31 @@ section('fhir');
   check('fhir: not FHIR stays with the generic reader', !f.isFhir({ results: [] }));
 }
 
+/* ---------------- home: what needs attention, and where on the body ---------------- */
+section('attention');
+{
+  const a = await import(lib('attention.ts'));
+  const { buildSeries } = await import(lib('derive.ts'));
+  const m = (markerId, value, date, range, status, valueText = String(value), unit = 'mg/dL') => ({ id: `${markerId}-${date}`, markerId, rawName: markerId, value, valueText, unit, range: { ...range, source: 'report' }, status, date, sourceFile: 'r.pdf', confidence: 'high' });
+  const ms = [
+    m('ldl', 121, '2026-07-02', { high: 100 }, 'high'), m('ldl', 131, '2026-10-20', { high: 100 }, 'high'),
+    m('glucose_fasting', 104, '2026-10-20', { low: 70, high: 100 }, 'high'),
+    m('tsh', 2.1, '2026-10-20', { low: 0.4, high: 4.5 }, 'normal'),
+    m('vitamin_d', 8, '2026-01-10', { low: 30, high: 100 }, 'low', '8', 'ng/mL'),
+  ];
+  const now = Date.parse('2026-11-11T00:00:00Z');
+  const items = a.attentionItems(buildSeries(ms), now);
+  check('attention: only out-of-range results, furthest first', items.map(i => i.name).join(',') === 'Vitamin D (25-OH),LDL cholesterol,Fasting glucose', items.map(i => i.name).join(','));
+  const ldl = items.find(i => i.seriesKey === 'ldl');
+  check('attention: plain detail with the change', /^131 mg\/dL on .+, up from 121 on .+\.$/.test(ldl.detail), ldl.detail);
+  check('attention: far outside (LDL 31% over) vs just outside (glucose 13%)', ldl.level === 'far' && items.find(i => i.seriesKey === 'glucose_fasting').level === 'out');
+  check('attention: an old result suggests asking about a repeat', /Last checked 10 months ago/.test(items[0].next), items[0].next);
+  const organs = a.organIssues(items);
+  check('attention: organs light up by their primary marker', organs.heart === 'far' && organs.pancreas === 'out' && !organs.thyroid, JSON.stringify(organs));
+  const due = a.testsDue({ conditions: ['Type 2 diabetes'] }, ms, items, now);
+  check('attention: tests due from conditions, not repeating listed items', due.some(f => f.marker === 'HbA1c') && !due.some(f => f.marker === 'LDL cholesterol'), JSON.stringify(due.map(f => f.marker)));
+}
+
 /* ---------------- summary ---------------- */
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) { console.log('\nFailures:\n  ' + failures.join('\n  ')); process.exitCode = 1; }
