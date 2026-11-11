@@ -25,6 +25,7 @@ import { DiskFileStore } from '../src/lib/files.ts';
 import { localBrowsers, hostAllowed } from '../src/records/browsers.ts';
 import { DEMO_OTP, DEMO_PORTAL_PATH, demoPortal, type DemoPortal } from '../src/records/demo-portal.ts';
 import { navigatorRecipe } from '../src/records/navigator.ts';
+import { RecipeDriftError } from '../src/records/recipes/kit.ts';
 import { createRecordAgent, type RecordAgent } from '../src/records/service.ts';
 import { makeClient, registration, type TestClient } from './helpers.ts';
 
@@ -109,8 +110,10 @@ describe('record agent', { timeout: 180_000 }, () => {
     assert.equal(info.browser, 'LotusPond’s servers');
     const demo = info.sources.find(s => s.id === DEMO_SOURCE_ID)!;
     assert.equal(demo.availability, 'recipe');
-    // Without Claude, portals without a recipe are not offered yet; ABDM and APIs never through the browser.
-    assert.equal(info.sources.find(s => s.id === 'thyrocare')!.availability, 'unavailable');
+    // Dr Lal and Thyrocare have recipes; without Claude, portals without one are not offered yet; ABDM and APIs never through the browser.
+    assert.equal(info.sources.find(s => s.id === 'thyrocare')!.availability, 'recipe');
+    assert.equal(info.sources.find(s => s.id === 'drlal')!.availability, 'recipe');
+    assert.equal(info.sources.find(s => s.id === 'metropolis')!.availability, 'unavailable');
     assert.equal(info.sources.find(s => s.id === 'abha')!.availability, 'unavailable');
     assert.ok(info.sources.find(s => s.id === 'other-lab')!.needsUrl);
     assert.ok(info.sources.length > 40);
@@ -119,7 +122,7 @@ describe('record agent', { timeout: 180_000 }, () => {
   test('signs in with the person’s answers, saves each report once, and checks again without asking', async () => {
     const { c, self } = await account(app);
     assert.equal((await c.error('POST', '/api/records/connections', { sourceId: DEMO_SOURCE_ID, profileId: self.id, noticeVersion: 'old' })).code, 'notice_outdated');
-    assert.equal((await c.error('POST', '/api/records/connections', { sourceId: 'thyrocare', profileId: self.id, noticeVersion: RECORD_AGENT_NOTICE_VERSION })).code, 'source_unavailable');
+    assert.equal((await c.error('POST', '/api/records/connections', { sourceId: 'metropolis', profileId: self.id, noticeVersion: RECORD_AGENT_NOTICE_VERSION })).code, 'source_unavailable');
 
     const made = await c.json<{ connection: RecordConnectionView; run: RecordRunView }>('POST', '/api/records/connections', {
       sourceId: DEMO_SOURCE_ID, profileId: self.id, refreshDays: 30, noticeVersion: RECORD_AGENT_NOTICE_VERSION,
@@ -227,6 +230,16 @@ describe('record agent', { timeout: 180_000 }, () => {
     assert.equal(cancelled.status, 'cancelled');
     await agent.idle();
     assert.equal((await c.json<RecordRunView>('GET', `/api/records/runs/${made.run.id}`)).status, 'cancelled');
+  });
+
+  test('a recipe that no longer matches its portal tells the person, without Claude to take over', async () => {
+    const drifted = setup({ recipes: [{ sourceId: DEMO_SOURCE_ID, run: async () => { throw new RecipeDriftError('no login button'); } }] });
+    const { c, self } = await account(drifted.app);
+    const made = await c.json<{ run: RecordRunView }>('POST', '/api/records/connections', { sourceId: DEMO_SOURCE_ID, profileId: self.id, noticeVersion: RECORD_AGENT_NOTICE_VERSION }, 201);
+    await drifted.agent.idle();
+    const r = await c.json<RecordRunView>('GET', `/api/records/runs/${made.run.id}`);
+    assert.equal(r.status, 'failed');
+    assert.match(r.error ?? '', /has changed its website/);
   });
 
   test('portal addresses must be public https sites', async () => {

@@ -1,6 +1,9 @@
 # The record agent
 
-Status: November 2026. The engine, the app's Sources page and the MCP tool are built. Only the Demo Lab portal has a recipe. Every other portal in the list is reached through the navigator (Claude), which is off unless Anthropic credentials are set. No real portal has been tried yet.
+Status: November 2026. The engine, the app's Sources page and the MCP tool are built.
+
+- **Recipes:** Demo Lab, Dr Lal PathLabs and Thyrocare. The Dr Lal and Thyrocare recipes are tested against local copies of their portals, **not yet with real accounts** (§5.1).
+- **The navigator:** every other portal is reached through Claude, which is off unless Anthropic credentials are set.
 
 The record agent brings a family's reports in from the portals where they live: labs, hospitals, government services, pharmacies and insurers.
 
@@ -42,7 +45,7 @@ The record agent brings a family's reports in from the portals where they live: 
 
 | `access` | Means | Today |
 | --- | --- | --- |
-| `browser` | The record agent signs in with the person and downloads | Demo Lab: recipe. All others: navigator (beta), when Claude is set up |
+| `browser` | The record agent signs in with the person and downloads | Demo Lab, Dr Lal PathLabs, Thyrocare: recipes. All others: navigator (beta), when Claude is set up |
 | `abdm` | ABHA, with an ABDM consent request (LotusPond as a health information user) | Not built. ABHA FHIR exports can be uploaded ([abdm.md](abdm.md)) |
 | `api` | Official APIs with the person's OAuth sign-in (wearables, Gmail) | Not built: needs developer access or partnerships |
 | `app` | Already in LotusPond (Apple Health / Health Connect import, WhatsApp) | Works |
@@ -144,6 +147,35 @@ Recipes are deterministic, fast and cheap, and are the goal for every popular po
 2. Register it in `service.ts`.
 3. Test it against a recorded copy of the portal's pages, like `demo-portal.ts`.
 
+**When a portal changes.** Recipe helpers (`recipes/kit.ts`) cover finding the first of several likely elements, typing an OTP into one field or a row of boxes, downloading behind a link or a button, and collecting report links with their row's title, date and lab number. When a recipe can't find what it expects, it throws `RecipeDriftError`, and the server logs a warning:
+
+- **Navigator on:** the run carries on with the navigator, on the same page and sign-in.
+- **Navigator off:** the person reads that the portal changed and the agent can't follow it yet.
+
+### 5.1 Dr Lal PathLabs and Thyrocare
+
+Both were written from the portals' public pages in November 2026. This session's network could not reach them, so the pages were read through Firecrawl. Neither recipe has run against a real account.
+
+| | Dr Lal PathLabs (`recipes/drlal.ts`) | Thyrocare (`recipes/thyrocare.ts`) |
+| --- | --- | --- |
+| Where | lalpathlabs.com account: `/profile/orders` | Report login at `b2capi.thyrocare.com/login.aspx`, *Already Availed Service* |
+| Sign-in | *Login / Sign Up* (`button.msb-user`) opens a dialog: mobile number, then the OTP (one field or a row of boxes). Two tries at the code | `#txt_mob2` and Proceed; then either an OTP (`#A6` Generate, `#txt_OTP_2`, `#A5` Submit) or the account's password (`#txt_pwd2`, `#btl_pwd2`). Two tries at the code |
+| Reports | Download or view buttons on each order; orders still awaiting results are skipped | Report links on the page after sign-in, or on its *Reports* page |
+| Not used | `/download-report` (Lab/Visit ID and bill password): it has a reCAPTCHA | The barcode and lab code step of a first visit. The person is told to sign in once on the portal |
+| Care taken | The page's *Get a Callback* forms also take a mobile number. The recipe types only inside the sign-in dialog, so it never requests a sales call | Terms and other PDFs that aren't reports are skipped |
+| Known guesswork | The dialog's fields are drawn by the site's scripts, which the scrape didn't run. The recipe tries several likely shapes | Its ids are fixed, but the page after sign-in was not seen. Report links are found by their text and address |
+
+`server/test/recipes.test.ts` runs both against local copies (`test/fixtures/lab-portals.ts`) in a real Chromium. It covers:
+- a wrong code, then the right one;
+- the password and first-visit variants;
+- a kept sign-in with no questions;
+- a scheduled run that never asks;
+- skipped sample and terms PDFs;
+- the callback form left untouched;
+- `RecipeDriftError` on a redesigned page.
+
+**Before real use**, sign in with a real account (in a browser that can reach the portals) and compare against the fixtures. In particular, check Dr Lal's sign-in dialog and the page Thyrocare shows after sign-in. Then correct the recipe and the fixture together.
+
 **The navigator.** Portals without a recipe use the navigator (`navigator.ts`): Claude reading the page as text with numbered elements, acting through narrow tools.
 
 | Tool | What |
@@ -200,7 +232,7 @@ Product menus change often. Where support depends on the plan or isn't confirmed
 - **Legal.**
   - Signing in to a portal on the person's behalf with their own credentials is their choice. But a portal's terms may forbid automated access. Review this source by source, and prefer partnerships or official APIs where a lab offers them.
   - Under India's DPDP Act, LotusPond processes these reports as a data fiduciary with the person's consent, recorded per connection. Whether the Consent Manager rules apply needs advice.
-- **Recipes for real portals.** Start with the busiest labs (Dr Lal, Thyrocare, Metropolis, Redcliffe, Healthians) and Apollo 24|7.
+- **Recipes for more portals:** Metropolis, Redcliffe, Healthians and Apollo 24|7 next. Check the Dr Lal and Thyrocare recipes with real accounts first (§5.1).
 - **ABDM as a health information user**, to pull ABHA-linked records with a consent artefact instead of a browser.
 - **Wearable and email APIs** (OAuth): Ultrahuman, Oura, Fitbit, Garmin, Withings, LibreView, Gmail.
 - **Several instances.** Several API instances need the queue and questions in a shared store (the database and a pub/sub) instead of memory.

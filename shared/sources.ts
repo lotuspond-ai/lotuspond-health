@@ -85,9 +85,11 @@ export const SOURCES: SourceInfo[] = [
 
   /* ---------------- labs ---------------- */
   { id: 'drlal', name: 'Dr Lal PathLabs', category: 'lab', regions: IN, access: 'browser', signIn: 'otp',
-    hosts: ['lalpathlabs.com'], startUrl: 'https://www.lalpathlabs.com/', holds: ['Lab reports', 'Past bookings'] },
+    hosts: ['lalpathlabs.com'], startUrl: 'https://www.lalpathlabs.com/', holds: ['Lab reports', 'Past bookings'],
+    note: 'Signs in with your mobile number and the OTP Dr Lal sends, then downloads the reports on your orders.' },
   { id: 'thyrocare', name: 'Thyrocare', category: 'lab', regions: IN, access: 'browser', signIn: 'otp',
-    hosts: ['thyrocare.com'], startUrl: 'https://www.thyrocare.com/', holds: ['Lab reports', 'Aarogyam packages'] },
+    hosts: ['thyrocare.com'], startUrl: 'https://www.thyrocare.com/', holds: ['Lab reports', 'Aarogyam packages'],
+    note: 'Signs in with your mobile number and an OTP (or your Thyrocare password). The first time, Thyrocare may ask for the barcode on a report.' },
   { id: 'metropolis', name: 'Metropolis Healthcare', category: 'lab', regions: IN, access: 'browser', signIn: 'otp',
     hosts: ['metropolisindia.com'], startUrl: 'https://www.metropolisindia.com/', holds: ['Lab reports', 'Past bookings'] },
   { id: 'agilus', name: 'Agilus Diagnostics (formerly SRL)', category: 'lab', regions: IN, access: 'browser', signIn: 'otp',

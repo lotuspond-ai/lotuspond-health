@@ -11,6 +11,7 @@
 // blocked, so a page cannot send the person's data elsewhere through the agent.
 import { chromium, type Browser, type BrowserContext } from 'playwright-core';
 import type { RecordAgentConfig } from '../config.ts';
+import { PortalError } from './recipes/types.ts';
 
 export type StorageState = Awaited<ReturnType<BrowserContext['storageState']>>;
 
@@ -164,4 +165,25 @@ export function browserProvider(c: RecordAgentConfig['browser']): BrowserProvide
   if (c.kind === 'cdp') return cdpBrowsers(c.url);
   if (c.kind === 'browserbase') return browserbaseBrowsers(c);
   return localBrowsers({ executablePath: c.executablePath });
+}
+
+/** Download a file in the browser's session (its cookies), following redirects only to allowed hosts. */
+export async function downloadFile(context: BrowserContext, url: string, allowHosts: string[], maxBytes: number): Promise<{ bytes: Uint8Array; contentType: string }> {
+  let target = url;
+  for (let hop = 0; hop < 4; hop++) {
+    if (!hostAllowed(target, allowHosts)) throw new PortalError('The portal pointed to a file on another website, which the record agent does not open.');
+    const res = await context.request.get(target, { maxRedirects: 0, timeout: 60_000, failOnStatusCode: false });
+    if (res.status() >= 300 && res.status() < 400 && res.headers().location) {
+      target = new URL(res.headers().location, target).href;
+      await res.dispose();
+      continue;
+    }
+    if (!res.ok()) throw new PortalError(`The portal did not hand over a report (status ${res.status()}).`);
+    const length = Number(res.headers()['content-length'] ?? 0);
+    if (length > maxBytes) throw new PortalError('A report was larger than LotusPond accepts.');
+    const body = new Uint8Array(await res.body());
+    if (body.byteLength > maxBytes) throw new PortalError('A report was larger than LotusPond accepts.');
+    return { bytes: body, contentType: res.headers()['content-type'] ?? 'application/octet-stream' };
+  }
+  throw new PortalError('The portal redirected too many times.');
 }

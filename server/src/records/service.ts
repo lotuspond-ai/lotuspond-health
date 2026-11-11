@@ -26,10 +26,13 @@ import { documents, profiles, recordConnections, recordItems, recordRuns, type R
 import { decryptFile, encryptFile, isEncrypted } from '../lib/files-encrypted.ts';
 import { badRequest, conflict, notFound } from '../lib/errors.ts';
 import { notifyAgentWrite } from '../notifications.ts';
-import { hostAllowed, type BrowserProvider, type StorageState } from './browsers.ts';
+import { downloadFile, type BrowserProvider, type StorageState } from './browsers.ts';
 import { DEMO_PORTAL_PATH } from './demo-portal.ts';
 import { navigatorRecipe, type NavigatorOptions } from './navigator.ts';
 import { demoRecipe } from './recipes/demo.ts';
+import { drlalRecipe } from './recipes/drlal.ts';
+import { thyrocareRecipe } from './recipes/thyrocare.ts';
+import { RecipeDriftError } from './recipes/kit.ts';
 import { NeedsPersonError, PortalError, REPORT_TYPES, RunStoppedError, sniffType, type Ask, type PortalReport, type Recipe, type RecipeContext } from './recipes/types.ts';
 
 const MIN = 60_000, DAY = 24 * 60 * MIN;
@@ -119,7 +122,7 @@ export function createRecordAgent(opts: RecordAgentOptions): RecordAgent {
   const now = opts.now ?? Date.now;
   const questionMs = opts.questionMs ?? QUESTION_MS;
   const resolve = opts.resolve ?? (async (h: string) => (await lookup(h, { all: true })).map(a => a.address));
-  const recipes = new Map<string, Recipe>([[demoRecipe.sourceId, demoRecipe], ...(opts.recipes ?? []).map(r => [r.sourceId, r] as const)]);
+  const recipes = new Map<string, Recipe>([demoRecipe, drlalRecipe(), thyrocareRecipe(), ...(opts.recipes ?? [])].map(r => [r.sourceId, r] as const));
   const live = new Map<string, Live>();
   const queue: Job[] = [];
   let running = 0;
@@ -257,9 +260,16 @@ export function createRecordAgent(opts: RecordAgentOptions): RecordAgent {
         step: async text => { await setRun(cell, job.runId, { step: text.slice(0, 120) }); },
         remember: v => { const t = v.trim(); if (t && t !== identifier) { identifier = t; identifierChanged = true; } },
         ask: q => ask(cell, job, l, q),
-        download: url => download(session!.context, url, allowHosts, opts.maxBytes),
+        download: url => downloadFile(session!.context, url, allowHosts, opts.maxBytes),
       };
-      const work = recipe.run(ctx);
+      // A recipe that finds the portal changed hands the run to the navigator (same page, same sign-in), if it is on.
+      const work = recipe.run(ctx).catch(async e => {
+        if (!(e instanceof RecipeDriftError)) throw e;
+        console.warn(`[records] the ${source.id} recipe no longer matches the portal: ${e.message}`);
+        if (!opts.navigator || l.abort.signal.aborted) throw new PortalError(`${source.name} has changed its website, and the record agent cannot follow it yet. Upload the reports, or try again in a few days.`);
+        await ctx.step(`${source.name} looks different; Claude is finding the way`);
+        return navigatorRecipe(source.id, opts.navigator).run(ctx);
+      });
       // After a cancel the recipe may still fail on the closed browser; that is expected and ignored.
       work.catch(() => {});
       const reports = await Promise.race([
@@ -317,26 +327,6 @@ export function createRecordAgent(opts: RecordAgentOptions): RecordAgent {
     });
     await setRun(cell, job.runId, { status: 'running', question: null, step: 'Carrying on' });
     return answer;
-  }
-
-  async function download(context: RecipeContext['context'], url: string, allowHosts: string[], maxBytes: number) {
-    let target = url;
-    for (let hop = 0; hop < 4; hop++) {
-      if (!hostAllowed(target, allowHosts)) throw new PortalError('The portal pointed to a file on another website, which the record agent does not open.');
-      const res = await context.request.get(target, { maxRedirects: 0, timeout: 60_000, failOnStatusCode: false });
-      if (res.status() >= 300 && res.status() < 400 && res.headers().location) {
-        target = new URL(res.headers().location, target).href;
-        await res.dispose();
-        continue;
-      }
-      if (!res.ok()) throw new PortalError(`The portal did not hand over a report (status ${res.status()}).`);
-      const length = Number(res.headers()['content-length'] ?? 0);
-      if (length > maxBytes) throw new PortalError('A report was larger than LotusPond accepts.');
-      const body = new Uint8Array(await res.body());
-      if (body.byteLength > maxBytes) throw new PortalError('A report was larger than LotusPond accepts.');
-      return { bytes: body, contentType: res.headers()['content-type'] ?? 'application/octet-stream' };
-    }
-    throw new PortalError('The portal redirected too many times.');
   }
 
   /** Save the reports this connection has not brought in before. Returns the new documents' ids. */
