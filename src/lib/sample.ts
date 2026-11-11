@@ -59,6 +59,8 @@ const VISITS: Record<string, Row[]> = {
     ['cortisol', '14.2', 'µg/dL', '5 - 23'],
     ['urine_pus_cells', '2-3', '/hpf', '0 - 5'],
     ['urine_protein', 'Negative', '', 'Negative'],
+    ['bp_systolic', '126', 'mmHg', '90 - 120'],
+    ['bp_diastolic', '81', 'mmHg', '60 - 80'],
   ],
 };
 

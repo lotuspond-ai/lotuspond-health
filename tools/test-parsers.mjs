@@ -40,7 +40,8 @@ section('catalog');
 const ids = new Set();
 for (const b of BIOMARKERS) {
   check(`unique id ${b.id}`, !ids.has(b.id)); ids.add(b.id);
-  check(`${b.id} has organs`, b.organs.length > 0);
+  // Whole-body vitals (temperature, weight, body fat) belong to no single organ; everything else shows on the body map.
+  check(`${b.id} has organs`, b.organs.length > 0 || b.system === 'vitals');
   check(`${b.id} has about`, b.about.length > 10);
   check(`${b.id} system label`, !!SYSTEM_LABELS[b.system]);
   check(`${b.id} aliases lower-case`, b.aliases.every(a => a === a.toLowerCase()));
@@ -576,6 +577,51 @@ const ON = { enabled: true, delayMs: 60_000 };
   const lock2 = createAppLock(d2);
   await lock2.start();
   check('lock: cannot turn on without Face ID or a passcode', (await lock2.setEnabled(true)) === false && d2.prompts === 0 && !!lock2.store.getState().message);
+}
+
+/* ---------------- phone health import (Apple Health, Health Connect) ---------------- */
+section('health import');
+{
+  process.env.TZ = process.env.TZ || 'UTC';
+  const h = await import(lib('health-import.ts'));
+  const k = t => h.KIND_BY_TYPE.get(t);
+  const today = '2026-11-11';
+  // Blood pressure: two readings on one day are averaged, each half becomes its own marker; today is left out.
+  const bp = h.dailyValues(k('bloodPressure'), [
+    { value: 0, unit: 'mmHg', startDate: '2026-11-09T07:00:00Z', systolic: 128, diastolic: 84 },
+    { value: 0, unit: 'mmHg', startDate: '2026-11-09T20:00:00Z', systolic: 121, diastolic: 79 },
+    { value: 0, unit: 'mmHg', startDate: '2026-11-10T07:00:00Z', systolic: 118, diastolic: 76 },
+    { value: 0, unit: 'mmHg', startDate: '2026-11-11T07:00:00Z', systolic: 140, diastolic: 90 },
+  ], today);
+  check('health: BP daily mean, split into systolic and diastolic', eq(bp.map(d => [d.markerId, d.date, d.value, d.readings]), [
+    ['bp_systolic', '2026-11-09', 125, 2], ['bp_diastolic', '2026-11-09', 82, 2],
+    ['bp_systolic', '2026-11-10', 118, 1], ['bp_diastolic', '2026-11-10', 76, 1],
+  ]), JSON.stringify(bp));
+  // SpO2: HealthKit fractions and Health Connect percentages both become %; an implausible reading is dropped.
+  const sp = h.dailyValues(k('oxygenSaturation'), [
+    { value: 0.97, unit: 'percent', startDate: '2026-11-08T01:00:00Z' },
+    { value: 95, unit: 'percent', startDate: '2026-11-08T03:00:00Z' },
+    { value: 12, unit: 'percent', startDate: '2026-11-08T04:00:00Z' },
+  ], today);
+  check('health: SpO2 fraction and percent, implausible dropped', eq(sp.map(d => [d.value, d.readings]), [[96, 2]]), JSON.stringify(sp));
+  const t = h.dailyValues(k('bodyTemperature'), [{ value: 98.6, unit: 'fahrenheit', startDate: '2026-11-01T08:00:00Z' }], today);
+  check('health: temperature in °F converted to °C', t[0]?.value === 37, JSON.stringify(t));
+  const g = h.dailyValues(k('bloodGlucose'), [{ value: 5.5, unit: 'mmol/L', startDate: '2026-11-01T08:00:00Z' }], today);
+  check('health: glucose in mmol/L converted to mg/dL', g[0]?.value === 99, JSON.stringify(g));
+  const w = h.dailyValues(k('weight'), [{ value: 72.46, unit: 'kilogram', startDate: '2026-11-01T08:00:00Z' }, { value: NaN, unit: 'kilogram', startDate: '2026-11-01T09:00:00Z' }], today);
+  check('health: weight to one decimal, NaN ignored', w.length === 1 && w[0].value === 72.5, JSON.stringify(w));
+
+  const ms = h.toMeasurements(bp, 'apple_health');
+  const sys = ms.find(m => m.markerId === 'bp_systolic' && m.date === '2026-11-09');
+  check('health: results carry the source, unit, typical range and status', !!sys && sys.sourceFile === 'Apple Health' && sys.unit === 'mmHg' && sys.range?.source === 'typical' && sys.status === 'high' && sys.confidence === 'high', JSON.stringify(sys));
+  const fresh = h.onlyNewDays(ms, [{ markerId: 'bp_systolic', date: '2026-11-09', sourceFile: 'Apple Health' }, { markerId: 'bp_diastolic', date: '2026-11-10', sourceFile: 'Sample report' }]);
+  check('health: a day already imported from the same source is skipped', fresh.length === 3 && !fresh.some(m => m.markerId === 'bp_systolic' && m.date === '2026-11-09'));
+  check('health: next import starts the day after the last one', h.importStart([{ date: '2026-10-30', sourceFile: 'Apple Health' }, { date: '2026-11-05', sourceFile: 'Health Connect' }], 'apple_health', today, 90) === '2026-10-31');
+  check('health: first import goes back the chosen number of days', h.importStart([], 'health_connect', today, 30) === '2026-10-12');
+  const win = h.monthWindows('2026-09-15', '2026-11-11');
+  check('health: reads are split by calendar month', win.length === 3 && win[0].startDate.startsWith('2026-09-15') && win[2].endDate.startsWith('2026-11-11'), JSON.stringify(win));
+  check('health: summary line', h.importSummary(ms) === 'Blood pressure: 2 days', h.importSummary(ms));
+  check('health: every kind maps to catalogue markers with LOINC codes', h.IMPORT_KINDS.every(x => x.markers.every(id => findMarker(id)?.loinc)));
 }
 
 /* ---------------- summary ---------------- */

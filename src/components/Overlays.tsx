@@ -3,6 +3,9 @@ import { useHealth, getScanBlob } from '../lib/store';
 import { parseFile } from '../lib/parse';
 import { releaseOcr } from '../lib/parse/ocr-engine';
 import { AiReadOffers } from './AiRead';
+import { HealthImportPanel } from './HealthImport';
+import { healthStore as phoneHealthStore } from '../native/health';
+import { SOURCE_NAME } from '../lib/health-import';
 import { renderDicom } from '../lib/parse/dicom';
 import { BIOMARKERS, SYSTEM_LABELS } from '../lib/catalog';
 import { ORGAN_BY_ID } from '../anatomy/organs';
@@ -182,9 +185,12 @@ function UploadPanel() {
   const [files, setFiles] = useState<File[]>([]);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  // Apple Health or Health Connect, in the apps only.
+  const healthStore = useMemo(() => phoneHealthStore(), []);
+  const [healthOpen, setHealthOpen] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const camera = useRef<HTMLInputElement>(null);
-  const close = () => { if (saving) return; setOpen(false); setDraft(null); setBusy(null); setFiles([]); setSaveError(null); void releaseOcr(); };
+  const close = () => { if (saving) return; setOpen(false); setDraft(null); setBusy(null); setFiles([]); setSaveError(null); setHealthOpen(false); void releaseOcr(); };
   useEscape(close);
   const who = profile?.relationship === 'self' ? 'your' : `${firstName(profile)}’s`;
 
@@ -232,12 +238,15 @@ function UploadPanel() {
   return (
     <div className="scrim" onClick={close}>
       <div className="dialog dialog--upload" role="dialog" aria-modal="true" aria-labelledby="up-title" onClick={e => e.stopPropagation()}>
-        <div className="dialog__head"><div><h2 id="up-title">{draft ? 'Check what was read' : 'Add results and scans'}</h2>
+        <div className="dialog__head"><div><h2 id="up-title">{draft ? 'Check what was read' : healthOpen && healthStore ? `Import from ${SOURCE_NAME[healthStore.source]}` : 'Add results and scans'}</h2>
           <p className="muted">{draft
             ? `Edit anything that looks wrong, then add it to ${who} records.`
+            : healthOpen && healthStore ? `Readings are added to ${who} records only after you check them.`
             : isPreview ? `Files are read on this device and saved to ${who} records in this browser.` : `Files are read on this device, then saved with the originals to ${who} records.`}</p></div>
           <button className="btn btn--quiet x" onClick={close} aria-label="Close">{Icon.close}</button></div>
-        {!draft ? (
+        {!draft && healthOpen && healthStore ? (
+          <HealthImportPanel store={healthStore} onDraft={d => { setFiles([]); setDraft(d); }} onCancel={() => setHealthOpen(false)} />
+        ) : !draft ? (
           <div className={`drop${over ? ' is-over' : ''}`} onDragOver={e => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)}
             onDrop={e => { e.preventDefault(); setOver(false); void handle(e.dataTransfer.files); }}>
             <h3>{busy ?? <><span className="only-fine">Drop files here</span><span className="only-touch">Add a report or scan</span></>}</h3>
@@ -245,6 +254,7 @@ function UploadPanel() {
             <div className="drop__actions">
               <button className="btn btn--primary" onClick={() => input.current?.click()} disabled={!!busy}>{Icon.upload} Choose files</button>
               <button className="btn only-touch" onClick={() => camera.current?.click()} disabled={!!busy}>{Icon.camera} Take a photo</button>
+              {healthStore && <button className="btn" onClick={() => setHealthOpen(true)} disabled={!!busy}>{Icon.heart} Import from {SOURCE_NAME[healthStore.source]}</button>}
             </div>
             <input ref={input} type="file" multiple hidden accept={ACCEPT} onChange={e => { const f = takeFiles(e.target); if (f.length) void handle(f); }} />
             <input ref={camera} type="file" hidden accept="image/*" capture="environment" onChange={e => { const f = takeFiles(e.target); if (f.length) void handle(f); }} />
@@ -252,6 +262,7 @@ function UploadPanel() {
           </div>
         ) : (
           <>
+            {draft.notes?.map(n => <p key={n} className="muted review__note">{n}</p>)}
             {draft.warnings.map(w => <p key={w} className="warn">{w}</p>)}
             <AiReadOffers draft={draft} files={files} onRead={replaceRead} />
             {draft.measurements.length > 0 && <ReviewTable measurements={draft.measurements} onPatch={patch} onDrop={drop} />}
@@ -267,7 +278,7 @@ function UploadPanel() {
             {draft.measurements.length === 0 && draft.scans.length === 0 && <p className="lede" style={{ marginTop: 12 }}>Nothing could be read from these files. Try a text-based PDF, a CSV export, or image files.</p>}
             {saveError && <p className="form-error" role="alert" style={{ marginTop: 14 }}>{saveError}</p>}
             <div className="tools dialog__actions">
-              <button className="btn" disabled={saving} onClick={() => { setDraft(null); setFiles([]); setSaveError(null); }}>Choose other files</button>
+              <button className="btn" disabled={saving} onClick={() => { setDraft(null); setFiles([]); setSaveError(null); }}>{healthOpen ? 'Back' : 'Choose other files'}</button>
               <button className="btn btn--primary" disabled={saving || (!draft.measurements.length && !draft.scans.length)}
                 onClick={() => void save(draft)}>{saving ? 'Saving…' : <>Add {[draft.measurements.length && `${draft.measurements.length} result${draft.measurements.length === 1 ? '' : 's'}`, draft.scans.length && `${draft.scans.length} scan${draft.scans.length === 1 ? '' : 's'}`].filter(Boolean).join(' and ')}</>}</button>
             </div>

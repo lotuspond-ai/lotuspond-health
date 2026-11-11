@@ -12,6 +12,7 @@ The iOS and Android apps are the LotusPond app shell (`app.html`) running in a n
 - **Camera.** Add → *Take a photo* opens the camera for a report or a scan film.
 - **Touch.** Pinch to zoom and double-tap in the scan viewer. Tap a landmark in an open organ to read its note.
 - **Files without links.** In the apps an API link can't be opened directly, because every request needs the sign-in token. Original reports and the profile export are therefore fetched with the token and handed to the system share sheet (Files, Drive, AirDrop, a PDF viewer...). The buttons are *Open or save* on Files and *Export* on Profile.
+- **Apple Health and Health Connect.** Add → *Import from Apple Health* (iOS) or *Import from Health Connect* (Android) reads blood pressure, glucose, resting heart rate, SpO2, respiratory rate, temperature, weight and body fat, as one average per day, into the upload review. Read only. See [health-import.md](health-import.md).
 - **Location.** *Use my location* in Find a lab asks for approximate location only (`coarseLocation`). The app rounds it to about 1 km before saving it as the home area, as on the web.
 - **Native shell:**
   - launch screen and icons
@@ -43,7 +44,7 @@ By default the apps call the public site (`SITE_URL`, `https://health.lotuspond.
 | --- | --- |
 | Both | Node 22.12+ and `npm install` |
 | iOS | macOS with Xcode 26 or later. Dependencies come through Swift Package Manager; there is no CocoaPods step. |
-| Android | Android Studio with SDK 36, and JDK 21 |
+| Android | Android Studio with SDK 36, and JDK 21. The app runs on Android 8 (API 26) and later, which Health Connect requires. |
 
 ## Build and run
 
@@ -185,6 +186,7 @@ Plugins: `@capacitor/app`, `filesystem`, `geolocation`, `haptics`, `privacy-scre
    - App Store *App Privacy*: the data types above, linked to the user, not used for tracking, purpose App Functionality.
    - Play *Data safety*: the matching types (personal info, health and fitness, photos, files and docs, approximate location, app info and performance). Mark them collected, not shared, encrypted in transit, and deletable on request (Account → *Delete account*).
    - Both stores have health-app policies. Fill in Play's health apps declaration, and keep the "explains results, does not diagnose" wording in listings.
+   - Apple Health and Health Connect: turn on the HealthKit capability for the App ID, and in Play Console answer the Health Connect permissions questions for the eight read types and the history permission ([health-import.md](health-import.md#native-setup)).
    - The App Store requires in-app account deletion. Account → *Delete account* does this.
 
 ## App lock
@@ -207,6 +209,7 @@ Turned on from **Account → App lock**, in the apps only. Turning it on or off 
   - the share sheet for reports and exports
   - the location prompt
   - Face ID, Touch ID and Android fingerprint prompts, the passcode fallback and the app switcher cover
+  - the Apple Health and Health Connect permission sheets and imports ([health-import.md](health-import.md))
 - **Self-hosted map tiles.** With `MAP_PMTILES_URL` the apps fetch the `.pmtiles` file from the API host in byte ranges, across origins. The server's CORS answer allows `Range` and exposes `Content-Range` and `ETag` for this, but it hasn't been tried in the iOS and Android web views yet.
 - **Later features:**
   - "Open in LotusPond" from Files, Mail and other apps (document types and intent filters)

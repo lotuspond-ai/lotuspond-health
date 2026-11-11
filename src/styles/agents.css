@@ -31,3 +31,10 @@
 .ai-read { border: 1px solid var(--line); border-radius: 12px; background: var(--paper); padding: 12px 14px; margin: 0 0 12px; }
 .ai-read p { margin: 0 0 8px; }
 .ai-read .confirm-check { margin-top: 4px; }
+/* Upload dialog: import from Apple Health or Health Connect (src/components/HealthImport.tsx). */
+.health-import .lede { margin: 0 0 12px; }
+.health-import__kinds { border: 1px solid var(--line); border-radius: 12px; padding: 4px 14px 12px; margin: 0 0 12px; display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); column-gap: 16px; }
+.health-import__kinds legend { padding: 0 6px; font-weight: 600; font-size: 14px; }
+.health-import__kinds .confirm-check { margin: 10px 0 0; }
+.health-import__period { display: flex; gap: 10px; align-items: center; font-size: 14px; margin: 0 0 8px; }
+.review__note { margin: 0 0 10px; font-size: 14px; }

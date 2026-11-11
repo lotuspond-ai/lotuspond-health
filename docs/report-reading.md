@@ -47,7 +47,7 @@ Most Indian lab results reach people as PDFs, phone photos or WhatsApp images. L
 
 ## LOINC codes
 
-Each catalogue marker that has a confident match carries its LOINC code (`shared/loinc.ts`): 93 of 95 markers today. HOMA-IR and Lp-PLA2 are left out. Every code passes LOINC's check digit (checked in `tools/test-parsers.mjs`).
+Each catalogue marker that has a confident match carries its LOINC code (`shared/loinc.ts`): 102 of 104 markers today, including the vitals added for phone imports. HOMA-IR and Lp-PLA2 are left out. Every code passes LOINC's check digit (checked in `tools/test-parsers.mjs`).
 
 - Agents get the code in `get_results`, the health summary and marker history.
 - A CSV with a LOINC column, or structured lab results carrying codes, match the marker by code.
