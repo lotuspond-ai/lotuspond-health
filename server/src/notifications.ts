@@ -13,7 +13,7 @@ export function toNotification(r: NotificationRow): AppNotification {
 }
 
 /** Tell the person an agent added something. A failure here never undoes the write: the write is logged anyway. */
-export async function notifyAgentWrite(db: Db, n: { userId: string; profileId: string; connectionId: string; agentName: string; detail: NotificationDetail }): Promise<void> {
+export async function notifyAgentWrite(db: Db, n: { userId: string; profileId: string; connectionId: string | null; agentName: string; detail: NotificationDetail }): Promise<void> {
   try {
     await db.insert(notifications).values({ userId: n.userId, profileId: n.profileId, kind: 'agent_write', connectionId: n.connectionId, agentName: n.agentName.slice(0, 80), detail: n.detail });
   } catch (e) {

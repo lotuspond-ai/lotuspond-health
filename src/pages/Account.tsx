@@ -155,6 +155,7 @@ const CONSENT_LABEL: Record<ConsentKind, string> = {
   family_profile: 'Keeping a family member\'s records',
   agent_sharing: 'Sharing with an AI agent',
   ai_extraction: 'Reading a report with Claude',
+  assistant: 'Using the LotusPond assistant',
 };
 
 /** Which profile or agent a per-item consent was for, as the history shows it. */
@@ -164,6 +165,9 @@ function consentSubject(r: ConsentRecord, profiles: Profile[]): string | null {
   const name = (id: string) => profiles.find(p => p.id === id)?.displayName ?? 'a removed profile';
   if (r.kind === 'ai_extraction' && d.profileId) return `A report for ${name(d.profileId)}`;
   if (r.kind === 'family_profile' && d.profileId) return `${name(d.profileId)}${d.confirmation === 'guardian' ? ' (as parent or guardian)' : ''}`;
+  if (r.kind === 'assistant' && r.granted && d.categories) {
+    return `Sees ${d.categories.length ? d.categories.map(k => AGENT_CATEGORY_TEXT[k as AgentCategory]?.title.toLowerCase()).filter(Boolean).join(', ') : 'the basics only'}`;
+  }
   if (r.kind === 'agent_sharing') {
     const kinds = d.categories ? (d.categories.length ? d.categories.map(k => AGENT_CATEGORY_TEXT[k as AgentCategory]?.title.toLowerCase()).filter(Boolean).join(', ') : 'the basics only') : null;
     return [d.agent, d.profileIds?.length ? `sees ${d.profileIds.map(name).join(', ')}` : null, kinds, d.scopes?.includes('health:write') ? 'may add records' : null,
@@ -287,6 +291,7 @@ const ACTIVITY_LABEL: Record<AuditKind, string> = {
   agent_wrote: 'Agent added to records',
   agent_write_undone: 'Undid an agent’s addition',
   report_read_by_ai: 'Report read with Claude',
+  assistant_chat: 'Started a chat with the assistant',
 };
 
 function describe(e: ActivityEvent, profiles: Profile[]): string | null {

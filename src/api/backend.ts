@@ -6,6 +6,8 @@ import type {
   FacilityQuery, FacilitySearchResult, GeoCandidate, GeoReverse, PublicConfig,
 } from '../types';
 import type { NotificationList, UndoResult } from '../../shared/notifications';
+import type { AssistantConsent, AssistantEvent, AssistantInfo, AssistantMessage } from '../../shared/assistant';
+import type { AgentCategory } from '../../shared/agents';
 import type { AgentConnection, AgentConnectionsInfo, CreateAgentTokenInput, CreatedAgentToken, UpdateAgentConnectionInput } from '../../shared/agents';
 import type { LabBookingInput, LabCatalog, LabOrderView, LabResultSaved, LabResultView, LabSlot } from '../../shared/lab-bundle';
 
@@ -126,6 +128,15 @@ export interface Backend {
   notifications(): Promise<NotificationList>;
   markNotificationsRead(ids?: string[]): Promise<NotificationList>;
   undoNotification(id: string): Promise<UndoResult>;
+
+  /* LotusPond's assistant (shared/assistant.ts). Needs the LotusPond server and Anthropic credentials on it. */
+  assistantInfo(): Promise<AssistantInfo>;
+  agreeToAssistant(categories: AgentCategory[]): Promise<AssistantConsent>;
+  withdrawAssistant(): Promise<void>;
+  assistantConversation(id: string): Promise<{ id: string; profileId: string; title: string; messages: AssistantMessage[] }>;
+  deleteAssistantConversation(id: string): Promise<void>;
+  /** Sends a message; the answer arrives as events until `done` or `error`. */
+  sendToAssistant(input: { profileId: string; conversationId?: string; text: string }, onEvent: (e: AssistantEvent) => void, signal?: AbortSignal): Promise<void>;
 }
 
 /** A message suitable for showing to the person. */

@@ -26,6 +26,11 @@ export interface ToolContext {
   grant: AgentGrantRow;
   /** Public address of the app, for links the person opens to confirm something. */
   appUrl: string;
+  /**
+   * Set for LotusPond's own assistant (server/src/assistant/): it works on the profile open in the app unless asked
+   * about another, and its additions are not tied to a connection.
+   */
+  assistant?: { defaultProfileId: string };
 }
 
 /** A problem the agent should read and can fix (wrong profile, unknown marker); sent as a tool error, not a protocol error. */
@@ -58,7 +63,8 @@ async function profileFor(ctx: ToolContext, id: string | undefined): Promise<Pro
   const { db } = ctx.cell;
   const rows = await db.select().from(profiles).where(and(eq(profiles.userId, ctx.user.id), inArray(profiles.id, allowed)));
   if (!rows.length) throw new ToolError('The profiles shared with this connection no longer exist.');
-  let row = id ? rows.find(r => r.id === id) : rows.find(r => r.relationship === 'self') ?? (rows.length === 1 ? rows[0] : undefined);
+  const fallback = ctx.assistant ? rows.find(r => r.id === ctx.assistant!.defaultProfileId) : undefined;
+  let row = id ? rows.find(r => r.id === id) : fallback ?? rows.find(r => r.relationship === 'self') ?? (rows.length === 1 ? rows[0] : undefined);
   if (!row && id) throw new ToolError('That profile is not shared with this connection. Call list_profiles for the ones that are.');
   if (!row) throw new ToolError(`Several profiles are shared and none is the account holder's: pass profile_id (${rows.map(r => `${r.displayName}: ${r.id}`).join(', ')}).`);
   return toProfile(row);
@@ -252,7 +258,7 @@ export const TOOLS: Tool[] = [
         sourceFile: `Added by ${ctx.grant.name}`.slice(0, 200), confidence: 'medium',
       }).returning();
       await notifyAgentWrite(ctx.cell.db, {
-        userId: ctx.user.id, profileId: p.id, connectionId: ctx.grant.id, agentName: ctx.grant.name,
+        userId: ctx.user.id, profileId: p.id, connectionId: ctx.assistant ? null : ctx.grant.id, agentName: ctx.grant.name,
         detail: { type: 'reading', measurementId: row.id, marker: row.rawName.slice(0, 120), value: row.valueText.slice(0, 40), unit: row.unit.slice(0, 30), date: row.date },
       });
       return { saved: point(toMeasurement(row)), profile: { id: p.id, name: p.displayName } };
@@ -285,7 +291,7 @@ export const TOOLS: Tool[] = [
       const added = (before: string[], after: string[]) => after.slice(before.length);
       const detail = { type: 'profile' as const, conditions: added(p.conditions, next.conditions), medications: added(p.medications, next.medications), allergies: added(p.allergies, next.allergies) };
       if (detail.conditions.length || detail.medications.length || detail.allergies.length) {
-        await notifyAgentWrite(ctx.cell.db, { userId: ctx.user.id, profileId: p.id, connectionId: ctx.grant.id, agentName: ctx.grant.name, detail });
+        await notifyAgentWrite(ctx.cell.db, { userId: ctx.user.id, profileId: p.id, connectionId: ctx.assistant ? null : ctx.grant.id, agentName: ctx.grant.name, detail });
       }
       return { profile: { id: row.id, name: row.displayName, conditions: row.conditions, medications: row.medications, allergies: row.allergies } };
     },

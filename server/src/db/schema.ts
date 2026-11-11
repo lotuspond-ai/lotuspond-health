@@ -370,6 +370,36 @@ export const notifications = pgTable('notifications', {
   undoneAt: timestamp('undone_at', { withTimezone: true }),
 }, t => [index('notifications_user_idx').on(t.userId, t.createdAt)]);
 
+/**
+ * Conversations with LotusPond's own assistant (server/src/assistant/), in the account's cell. One conversation is
+ * about one profile; the person can ask about others in it.
+ */
+export const assistantConversations = pgTable('assistant_conversations', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  profileId: uuid('profile_id').notNull().references(() => profiles.id, { onDelete: 'cascade' }),
+  title: text('title').notNull(),
+  createdAt: createdAt(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, t => [index('assistant_conversations_user_idx').on(t.userId, t.updatedAt)]);
+
+/**
+ * Every message of a conversation as sent to and returned by the model, in order and never edited (the model's
+ * thinking blocks are valid only in an unchanged history). `text` and `meta` are what the app shows.
+ */
+export const assistantMessages = pgTable('assistant_messages', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  conversationId: uuid('conversation_id').notNull().references(() => assistantConversations.id, { onDelete: 'cascade' }),
+  seq: integer('seq').notNull(),
+  role: text('role').$type<'user' | 'assistant'>().notNull(),
+  /** The message as the API takes it (content blocks, tool uses and results included). */
+  content: jsonb('content').$type<unknown>().notNull(),
+  /** Shown in the app: the person's words, or the assistant's reply; empty for tool-result turns. */
+  text: text('text').notNull().default(''),
+  meta: jsonb('meta').$type<{ tools?: string[]; organs?: string[]; links?: { label: string; url: string }[]; wrote?: boolean; refused?: boolean }>(),
+  createdAt: createdAt(),
+}, t => [uniqueIndex('assistant_messages_seq_key').on(t.conversationId, t.seq)]);
+
 export type UserRow = typeof users.$inferSelect;
 export type ConsentRow = typeof consents.$inferSelect;
 export type AuditEventRow = typeof auditEvents.$inferSelect;
@@ -386,3 +416,5 @@ export type OAuthClientRow = typeof oauthClients.$inferSelect;
 export type AgentGrantRow = typeof agentGrants.$inferSelect;
 export type AgentTokenRow = typeof agentTokens.$inferSelect;
 export type NotificationRow = typeof notifications.$inferSelect;
+export type AssistantConversationRow = typeof assistantConversations.$inferSelect;
+export type AssistantMessageRow = typeof assistantMessages.$inferSelect;

@@ -10,6 +10,7 @@ import {
   type AgentCategory, type AgentConnection, type AgentScope, type CreatedAgentToken,
 } from '../../shared/agents';
 import { ConfirmButton, Field } from './forms';
+import { useAssistant } from '../state/assistant';
 import '../styles/agents.css';
 
 const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString(undefined, { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : 'Never');
@@ -38,6 +39,7 @@ export function AgentConnectionsPanel() {
         Let AI agents such as Claude, ChatGPT, Gemini, Grok or Meta AI read your health records and help with them. You choose whose
         records each agent sees and whether it may add to them. Disconnect at any time: it stops at once.
       </p>
+      <AssistantSettings />
       {failed && <p className="form-error" role="alert">Connected agents could not be loaded.</p>}
       {mcpUrl && (
         <div className="agents__url">
@@ -233,6 +235,53 @@ function TokenShown({ made, onDone }: { made: CreatedAgentToken; onDone: () => v
         <button type="button" className="btn" onClick={() => copy(config, 'Configuration')}>Copy configuration</button>
         <button type="button" className="btn btn--primary" onClick={onDone}>Done</button>
       </div>
+    </div>
+  );
+}
+
+/** LotusPond's own assistant: what it may read, and turning it off (the consent is recorded each time). */
+function AssistantSettings() {
+  const { info, load, agree } = useAssistant();
+  const [editing, setEditing] = useState(false);
+  const [kinds, setKinds] = useState<AgentCategory[]>([]);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { if (!info) void load(); }, [info, load]);
+  if (!info?.enabled) return null;
+  const c = info.consent;
+  const on = !!c?.granted;
+  return (
+    <div className="agents__assistant">
+      <div>
+        <b>LotusPond assistant</b>
+        <small>{on
+          ? `On · reads ${c!.categories.length ? c!.categories.map(k => AGENT_CATEGORY_TEXT[k].title.toLowerCase()).join(', ') : 'the basics only'} · runs on Claude by Anthropic`
+          : 'Off. Turn it on from Ask in the top bar.'}</small>
+      </div>
+      {on && !editing && (
+        <div className="agents__row-actions">
+          <button type="button" className="btn btn--small" onClick={() => { setKinds(c!.categories); setEditing(true); }}>Change</button>
+          <ConfirmButton confirmText="Turn off the assistant?" busyText="Turning off…" className="btn btn--small btn--danger"
+            onConfirm={async () => { try { await backend.withdrawAssistant(); await load(); toast.info('The assistant is off.'); } catch (e) { toast.error(errorMessage(e)); } }}>Turn off</ConfirmButton>
+        </div>
+      )}
+      {editing && (
+        <div className="agents__form agents__edit">
+          <fieldset className="agents__choices">
+            <legend>What it may read</legend>
+            {AGENT_CATEGORIES.map(k => (
+              <label key={k}><input type="checkbox" checked={kinds.includes(k)} onChange={() => setKinds(v => (v.includes(k) ? v.filter(x => x !== k) : [...v, k]))} />
+                <span>{AGENT_CATEGORY_TEXT[k].title}</span></label>
+            ))}
+          </fieldset>
+          <div className="panel__actions">
+            <button type="button" className="btn btn--small" onClick={() => setEditing(false)} disabled={busy}>Cancel</button>
+            <button type="button" className="btn btn--small btn--primary" disabled={busy} onClick={async () => {
+              setBusy(true);
+              try { await agree(kinds); setEditing(false); toast.info('Saved. It applies to your next message.'); } catch (e) { toast.error(errorMessage(e)); } finally { setBusy(false); }
+            }}>Save</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -173,7 +173,9 @@ export type ConsentKind = 'terms' | 'privacy' | 'health_data' | 'cross_border' |
   /** Sharing records with a connected AI agent (one record per connection and change; withdrawn on disconnect). */
   | 'agent_sharing'
   /** Sending one photographed or scanned report to Claude to read it (one record per upload; src/components/AiRead). */
-  | 'ai_extraction';
+  | 'ai_extraction'
+  /** Talking with LotusPond's assistant, which sends the parts of the records it needs to Anthropic (shared/assistant.ts). */
+  | 'assistant';
 
 /** What the account holder confirmed when adding a family member. */
 export type FamilyConfirmation = 'guardian' | 'agreed';
@@ -212,7 +214,7 @@ export type AuditKind =
   | 'account_created' | 'sign_in' | 'sign_in_failed' | 'sign_out' | 'password_changed' | 'sessions_revoked'
   | 'export' | 'profile_deleted' | 'records_deleted' | 'account_deleted' | 'consent_changed' | 'preferences_changed'
   | 'lab_order_created' | 'lab_order_cancelled' | 'lab_results_saved'
-  | 'agent_connected' | 'agent_disconnected' | 'agent_access' | 'agent_wrote' | 'agent_write_undone'
+  | 'agent_connected' | 'agent_disconnected' | 'agent_access' | 'agent_wrote' | 'agent_write_undone' | 'assistant_chat'
   | 'report_read_by_ai';
 
 /** The only details an audit event may carry. Deliberately narrow: never names, values, file names or other health data. */
