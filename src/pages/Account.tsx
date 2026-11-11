@@ -3,6 +3,7 @@ import { backend, errorMessage, isPreview } from '../api';
 import { useSession } from '../state/session';
 import { toast } from '../state/toast';
 import { formatDate } from '../lib/derive';
+import { AGENT_CATEGORY_TEXT, type AgentCategory } from '../../shared/agents';
 import { UNIT_SYSTEM_LABEL } from '../lib/units';
 import { LIMITS } from '../../shared/constants';
 import { countryInSentence, countryName, countryPolicy, storageSentence, type UnitSystem } from '../../shared/regions';
@@ -163,7 +164,11 @@ function consentSubject(r: ConsentRecord, profiles: Profile[]): string | null {
   const name = (id: string) => profiles.find(p => p.id === id)?.displayName ?? 'a removed profile';
   if (r.kind === 'ai_extraction' && d.profileId) return `A report for ${name(d.profileId)}`;
   if (r.kind === 'family_profile' && d.profileId) return `${name(d.profileId)}${d.confirmation === 'guardian' ? ' (as parent or guardian)' : ''}`;
-  if (r.kind === 'agent_sharing') return [d.agent, d.profileIds?.length ? `sees ${d.profileIds.map(name).join(', ')}` : null, d.scopes?.includes('health:write') ? 'may add records' : null].filter(Boolean).join(' · ');
+  if (r.kind === 'agent_sharing') {
+    const kinds = d.categories ? (d.categories.length ? d.categories.map(k => AGENT_CATEGORY_TEXT[k as AgentCategory]?.title.toLowerCase()).filter(Boolean).join(', ') : 'the basics only') : null;
+    return [d.agent, d.profileIds?.length ? `sees ${d.profileIds.map(name).join(', ')}` : null, kinds, d.scopes?.includes('health:write') ? 'may add records' : null,
+      d.expiresAt ? `until ${formatDate(d.expiresAt.slice(0, 10))}` : null].filter(Boolean).join(' · ');
+  }
   return null;
 }
 const CONSENT_ORDER: ConsentKind[] = ['health_data', 'cross_border', 'terms', 'privacy', 'marketing'];

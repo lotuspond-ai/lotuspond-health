@@ -7,12 +7,12 @@
 import { eq } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { AGENT_SCOPE_TEXT } from '../../../shared/agents.ts';
+import { AGENT_CATEGORY_TEXT, AGENT_SCOPE_TEXT } from '../../../shared/agents.ts';
 import { recordEvent } from '../compliance/audit.ts';
 import { agentGrants } from '../db/schema.ts';
 import type { AppEnv, Deps } from '../http.ts';
 import { RateLimiter } from '../lib/rate-limit.ts';
-import { resolveSecret, type ResolvedSecret } from './grants.ts';
+import { grantCategories, resolveSecret, type ResolvedSecret } from './grants.ts';
 import { publicOrigin, resourceMetadataUrl } from './oauth.ts';
 import { ToolError, toolsFor, type ToolContext } from './tools.ts';
 
@@ -109,7 +109,8 @@ async function handle(ctx: ToolContext, auth: ResolvedSecret, raw: unknown, user
   if (msg.id === undefined) return null; // notification (notifications/initialized, cancelled…)
 
   const labs = !!ctx.deps.labs?.forCell(ctx.cell);
-  const tools = toolsFor(auth.grant.scopes, labs);
+  const categories = grantCategories(auth.grant);
+  const tools = toolsFor(auth.grant.scopes, labs, categories);
 
   switch (msg.method) {
     case 'initialize': {
@@ -119,7 +120,7 @@ async function handle(ctx: ToolContext, auth: ResolvedSecret, raw: unknown, user
         protocolVersion: PROTOCOL_VERSIONS.includes(asked) ? asked : PROTOCOL_VERSIONS[0],
         capabilities: { tools: { listChanged: false } },
         serverInfo: SERVER_INFO,
-        instructions: `${INSTRUCTIONS} This connection may: ${auth.grant.scopes.map(s => AGENT_SCOPE_TEXT[s as keyof typeof AGENT_SCOPE_TEXT]?.title.toLowerCase()).filter(Boolean).join(', ')}.`,
+        instructions: `${INSTRUCTIONS} This connection may: ${auth.grant.scopes.map(s => AGENT_SCOPE_TEXT[s as keyof typeof AGENT_SCOPE_TEXT]?.title.toLowerCase()).filter(Boolean).join(', ')}. It shares: ${categories.map(c => AGENT_CATEGORY_TEXT[c].title.toLowerCase()).join('; ') || 'only the basics (name, age, sex, height, weight, blood type)'}. Anything else is not shared with you: say so rather than guess, and the person can change it in LotusPond Health, Account, Connected agents.`,
       });
     }
     case 'ping':
@@ -137,7 +138,7 @@ async function handle(ctx: ToolContext, auth: ResolvedSecret, raw: unknown, user
     case 'tools/call': {
       const name = msg.params?.name;
       const t = tools.find(x => x.name === name);
-      if (!t) return failure(id, -32602, `Unknown tool: ${String(name)}. This connection may lack the permission for it.`);
+      if (!t) return failure(id, -32602, `Unknown tool: ${String(name)}. This connection may lack the permission for it, or not share the kind of data it uses.`);
       const args = t.input.safeParse(msg.params?.arguments ?? {});
       if (!args.success) {
         const issue = args.error.issues[0];

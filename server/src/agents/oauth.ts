@@ -17,7 +17,7 @@ import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import { eq } from 'drizzle-orm';
 import { Hono, type Context } from 'hono';
-import { AGENT_SCOPE_TEXT, AGENT_SCOPES, type AgentScope } from '../../../shared/agents.ts';
+import { AGENT_BASICS_TEXT, AGENT_CATEGORIES, AGENT_CATEGORY_TEXT, AGENT_EXPIRY_CHOICES, AGENT_SCOPE_TEXT, AGENT_SCOPES, type AgentScope } from '../../../shared/agents.ts';
 import type { Config } from '../config.ts';
 import { eventContext, recordEvent } from '../compliance/audit.ts';
 import { findSession, readSessionCookie } from '../auth/sessions.ts';
@@ -26,7 +26,7 @@ import { clientIp, type AppEnv, type Deps } from '../http.ts';
 import { RateLimiter } from '../lib/rate-limit.ts';
 import { relationshipOrder } from '../routes/profiles.ts';
 import { recordSharingConsent } from './grants.ts';
-import { ACCESS_TTL_MS, cleanScopes, CODE_TTL_MS, issueSecret, ownProfiles, REFRESH_TTL_MS, resolveSecret, parseSecret, digest } from './grants.ts';
+import { ACCESS_TTL_MS, cleanCategories, cleanScopes, expiryIn, grantCategories, CODE_TTL_MS, issueSecret, ownProfiles, REFRESH_TTL_MS, resolveSecret, parseSecret, digest } from './grants.ts';
 import { agentTokens } from '../db/schema.ts';
 
 /** This server's public origin: PUBLIC_URL, or the request's (forwarded) host. */
@@ -259,7 +259,7 @@ export function oauthRoutes(deps: Deps, opts: OAuthOptions = {}) {
 main{max-width:520px;margin:0 auto;padding:32px 16px}.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:24px}
 h1{font-size:1.35rem;margin:0 0 4px}p{margin:8px 0}.muted{color:var(--muted);font-size:.92rem}.brand{font-weight:600;color:var(--accent);margin-bottom:16px}
 fieldset{border:0;padding:0;margin:20px 0 0}legend{font-weight:600;margin-bottom:6px}label{display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-top:1px solid var(--line)}
-label:first-of-type{border-top:0}input{margin-top:4px;accent-color:var(--accent)}small{display:block;color:var(--muted)}
+label:first-of-type{border-top:0}select{font:inherit;padding:8px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--ink);margin:4px 0}fieldset .muted{margin:0 0 4px}input{margin-top:4px;accent-color:var(--accent)}small{display:block;color:var(--muted)}
 .actions{display:flex;gap:12px;margin-top:24px}button{flex:1;font:inherit;padding:12px;border-radius:10px;border:1px solid var(--line);background:transparent;color:var(--ink);cursor:pointer}
 button.primary{background:var(--accent);border-color:var(--accent);color:#fff}.note{color:var(--warn);font-size:.92rem}code{font-size:.9em;word-break:break-all}
 </style></head><body><main><div class="brand">LotusPond Health</div><div class="card">${body}</div></main></body></html>`, status);
@@ -297,13 +297,21 @@ button.primary{background:var(--accent);border-color:var(--accent);color:#fff}.n
       code_challenge_method: 'S256', response_type: 'code', resource: req.resource ?? '', csrf: csrfFor(session.id, req),
     }).map(([k, v]) => `<input type="hidden" name="${k}" value="${escapeHtml(v)}">`).join('');
     const profileRows = rows.map(p => `<label><input type="checkbox" name="profile" value="${p.id}"${preselected.has(p.id) ? ' checked' : ''}><span>${escapeHtml(p.displayName)}<small>${p.relationship === 'self' ? 'You' : escapeHtml(p.relationship[0].toUpperCase() + p.relationship.slice(1))}</small></span></label>`).join('');
+    const shared = new Set(existing ? grantCategories(existing) : AGENT_CATEGORIES);
+    const categoryRows = AGENT_CATEGORIES.map(k => `<label><input type="checkbox" name="category" value="${k}"${shared.has(k) ? ' checked' : ''}><span>${escapeHtml(AGENT_CATEGORY_TEXT[k].title)}<small>${escapeHtml(AGENT_CATEGORY_TEXT[k].detail)}</small></span></label>`).join('');
+    // Reconnecting keeps a connection's remaining time as the nearest choice; a new one defaults to a year.
+    const left = existing?.expiresAt ? (existing.expiresAt.getTime() - Date.now()) / 86_400_000 : existing ? null : 365;
+    const pick = left == null ? null : AGENT_EXPIRY_CHOICES.filter(x => x.days != null).reduce((a, b) => (Math.abs(b.days! - left) < Math.abs(a.days! - left) ? b : a)).days;
+    const expiryOptions = AGENT_EXPIRY_CHOICES.map(x => `<option value="${x.days ?? 'never'}"${x.days === pick ? ' selected' : ''}>${escapeHtml(x.label)}</option>`).join('');
     const scopeRows = AGENT_SCOPES.filter(s => req.scopes.includes(s)).map(s => `<label><input type="checkbox" name="scope" value="${s}" checked${s === 'health:read' ? ' disabled' : ''}><span>${escapeHtml(AGENT_SCOPE_TEXT[s].title)}<small>${escapeHtml(AGENT_SCOPE_TEXT[s].detail)}</small></span></label>`).join('');
     return page(c, 'Connect an agent', `
 <h1>Connect ${escapeHtml(client.name)}?</h1>
 <p class="muted">Signed in as ${escapeHtml(session.user.email)}. After you allow it, you return to <code>${escapeHtml(host)}</code>.</p>
 <form method="post" action="/oauth/authorize">${hidden}<input type="hidden" name="scope" value="health:read">
 <fieldset><legend>Whose records it may see</legend>${profileRows}</fieldset>
+<fieldset><legend>What it may see</legend><input type="hidden" name="categories_shown" value="1"><p class="muted">${escapeHtml(AGENT_BASICS_TEXT)}</p>${categoryRows}</fieldset>
 <fieldset><legend>What it may do</legend>${scopeRows}</fieldset>
+<fieldset><legend>Keep connected for</legend><select name="expires" aria-label="Keep connected for">${expiryOptions}</select><small>After that the agent stops, and you can connect it again.</small></fieldset>
 <p class="note">The agent's company receives what it reads, under its own privacy terms. You can remove this connection at any time on Account, Connected agents.</p>
 <div class="actions"><button type="submit" name="decision" value="deny">Cancel</button><button class="primary" type="submit" name="decision" value="allow">Allow</button></div>
 </form>`);
@@ -329,12 +337,16 @@ button.primary{background:var(--accent);border-color:var(--accent);color:#fff}.n
 
     const { db } = session.cell;
     const scopes = cleanScopes(['health:read', ...many('scope')]);
+    // A consent page from before the categories existed has no such field: it keeps sharing everything, as it said.
+    const categories = one('categories_shown') ? cleanCategories(many('category')) : null;
+    const days = Number(one('expires'));
+    const expiresAt = AGENT_EXPIRY_CHOICES.some(x => x.days === days) ? expiryIn(days) : null;
     const profileIds = await ownProfiles(db, session.user.id, [...new Set(many('profile'))].slice(0, 50));
     if (!profileIds.length) return page(c, 'Choose a profile', '<h1>Choose at least one profile</h1><p>Go back and tick whose records the agent may see.</p>', 400);
     const redirectHost = (() => { try { return new URL(req.redirectUri).host || null; } catch { return null; } })();
     const [grant] = await db.insert(agentGrants)
-      .values({ userId: session.user.id, kind: 'oauth', clientId: client.id, name: client.name, redirectHost, scopes, profileIds })
-      .onConflictDoUpdate({ target: [agentGrants.userId, agentGrants.clientId], set: { name: client.name, redirectHost, scopes, profileIds } })
+      .values({ userId: session.user.id, kind: 'oauth', clientId: client.id, name: client.name, redirectHost, scopes, categories, profileIds, expiresAt })
+      .onConflictDoUpdate({ target: [agentGrants.userId, agentGrants.clientId], set: { name: client.name, redirectHost, scopes, categories, profileIds, expiresAt } })
       .returning();
     const code = await issueSecret(db, session.user.region, grant.id, 'code', {
       ttlMs: CODE_TTL_MS, codeChallenge: req.challenge, redirectUri: req.redirectUri, resource: req.resource ? `${origin}/mcp` : null,

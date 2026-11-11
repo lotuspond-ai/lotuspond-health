@@ -4,6 +4,7 @@
 // was last done, not what it means.
 import type { BiomarkerDef, Measurement, Profile, ScanItem, Status, StoredDocument } from '../../../shared/types.ts';
 import { findMarker, normalizeName, SYSTEM_LABELS } from '../../../shared/catalog.ts';
+import { AGENT_CATEGORIES, AGENT_CATEGORY_TEXT, type AgentCategory } from '../../../shared/agents.ts';
 
 const DAY = 24 * 60 * 60 * 1000;
 /** A change smaller than this (relative to the range width, or to the value without a range) counts as steady. */
@@ -43,14 +44,19 @@ export interface FollowUp {
 export interface HealthSummary {
   profile: {
     id: string; name: string; relationship: string; ageYears: number | null; sex: string | null;
-    bmi: number | null; bloodType: string | null; conditions: string[]; medications: string[]; allergies: string[];
+    bmi: number | null; bloodType: string | null;
+    /** Only when the connection shares conditions, medications and allergies. */
+    conditions?: string[]; medications?: string[]; allergies?: string[];
   };
-  counts: { results: number; markers: number; scans: number; documents: number };
-  lastResultDate: string | null;
-  outOfRange: MarkerSummary[];
-  changing: MarkerSummary[];
-  followUps: FollowUp[];
-  bySystem: { system: string; markers: number; outOfRange: number }[];
+  /** results and markers only with lab results shared; scans and documents only with the list of files shared. */
+  counts: { results?: number; markers?: number; scans?: number; documents?: number };
+  lastResultDate?: string | null;
+  outOfRange?: MarkerSummary[];
+  changing?: MarkerSummary[];
+  followUps?: FollowUp[];
+  bySystem?: { system: string; markers: number; outOfRange: number }[];
+  /** Kinds of data this connection may not see, so the agent knows they exist but were not shared. */
+  notShared: string[];
   disclaimer: string;
 }
 
@@ -192,7 +198,22 @@ export function followUps(profile: Pick<Profile, 'conditions'>, summaries: Marke
   return out;
 }
 
-export function healthSummary(profile: Profile, records: { measurements: Measurement[]; scans: ScanItem[]; documents: StoredDocument[] }, now = Date.now()): HealthSummary {
+export function healthSummary(
+  profile: Profile, records: { measurements: Measurement[]; scans: ScanItem[]; documents: StoredDocument[] }, now = Date.now(),
+  share: readonly AgentCategory[] = AGENT_CATEGORIES,
+): HealthSummary {
+  const results = share.includes('results'), conditions = share.includes('conditions'), files = share.includes('files');
+  const out: HealthSummary = {
+    profile: {
+      id: profile.id, name: profile.displayName, relationship: profile.relationship, ageYears: ageYears(profile.dateOfBirth, now),
+      sex: profile.sex, bmi: bmi(profile.heightCm, profile.weightKg), bloodType: profile.bloodType,
+      ...(conditions ? { conditions: profile.conditions, medications: profile.medications, allergies: profile.allergies } : {}),
+    },
+    counts: files ? { scans: records.scans.length, documents: records.documents.length } : {},
+    notShared: AGENT_CATEGORIES.filter(c => !share.includes(c)).map(c => AGENT_CATEGORY_TEXT[c].title),
+    disclaimer: DISCLAIMER,
+  };
+  if (!results) return out;
   const all = markerSummaries(records.measurements, now);
   const bySystem = new Map<string, { markers: number; outOfRange: number }>();
   for (const s of all) {
@@ -203,18 +224,14 @@ export function healthSummary(profile: Profile, records: { measurements: Measure
     bySystem.set(k, e);
   }
   const dates = records.measurements.map(m => m.date).filter((d): d is string => !!d).sort();
+  // Follow-ups from conditions would reveal the conditions, so they need that category too.
   return {
-    profile: {
-      id: profile.id, name: profile.displayName, relationship: profile.relationship, ageYears: ageYears(profile.dateOfBirth, now),
-      sex: profile.sex, bmi: bmi(profile.heightCm, profile.weightKg), bloodType: profile.bloodType,
-      conditions: profile.conditions, medications: profile.medications, allergies: profile.allergies,
-    },
-    counts: { results: records.measurements.length, markers: all.length, scans: records.scans.length, documents: records.documents.length },
+    ...out,
+    counts: { ...out.counts, results: records.measurements.length, markers: all.length },
     lastResultDate: dates.at(-1) ?? null,
     outOfRange: all.filter(s => s.latest.status === 'high' || s.latest.status === 'low'),
     changing: all.filter(s => s.direction === 'toward_range' || s.direction === 'away_from_range'),
-    followUps: followUps(profile, all),
+    followUps: followUps(conditions ? profile : { conditions: [] }, all),
     bySystem: [...bySystem].map(([system, v]) => ({ system, ...v })).sort((a, b) => b.outOfRange - a.outOfRange || b.markers - a.markers),
-    disclaimer: DISCLAIMER,
   };
 }

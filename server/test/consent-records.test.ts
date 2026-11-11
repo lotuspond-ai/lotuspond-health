@@ -108,7 +108,7 @@ describe('agent sharing', () => {
     const sharing = (await c.json<ConsentRecord[]>('GET', '/api/auth/consents')).filter(r => r.kind === 'agent_sharing').reverse(); // oldest first
     assert.equal(sharing.length, 3);
     assert.deepEqual(sharing.map(r => r.granted), [true, true, false]);
-    assert.deepEqual(sharing[0].detail, { connectionId: made.connection.id, agent: 'Claude Desktop', profileIds: [self.id], scopes: ['health:read'] });
+    assert.deepEqual(sharing[0].detail, { connectionId: made.connection.id, agent: 'Claude Desktop', profileIds: [self.id], scopes: ['health:read'], categories: ['results', 'conditions', 'files', 'labs'], expiresAt: null });
     assert.deepEqual(sharing[1].detail?.profileIds, [self.id, kid.id]);
     assert.deepEqual(sharing[1].detail?.scopes, ['health:read', 'health:write']);
     assert.ok(sharing.every(r => r.version === CONSENT_VERSION && r.country === 'IN'));

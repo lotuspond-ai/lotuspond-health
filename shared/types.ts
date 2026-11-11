@@ -188,6 +188,10 @@ export interface ConsentDetail {
   agent?: string;
   profileIds?: string[];
   scopes?: string[];
+  /** Kinds of data shared with an agent (shared/agents.ts AgentCategory). */
+  categories?: string[];
+  /** When the agent connection stops, if it was given an expiry. */
+  expiresAt?: string | null;
 }
 
 /** One consent decision. Decisions are never edited; a change adds a new record. */

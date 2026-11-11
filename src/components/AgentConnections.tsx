@@ -5,7 +5,10 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { backend, errorMessage } from '../api';
 import { useSession } from '../state/session';
 import { toast } from '../state/toast';
-import { AGENT_SCOPE_TEXT, AGENT_SCOPES, type AgentConnection, type AgentScope, type CreatedAgentToken } from '../../shared/agents';
+import {
+  AGENT_BASICS_TEXT, AGENT_CATEGORIES, AGENT_CATEGORY_TEXT, AGENT_EXPIRY_CHOICES, AGENT_SCOPE_TEXT, AGENT_SCOPES,
+  type AgentCategory, type AgentConnection, type AgentScope, type CreatedAgentToken,
+} from '../../shared/agents';
 import { ConfirmButton, Field } from './forms';
 import '../styles/agents.css';
 
@@ -21,6 +24,7 @@ export function AgentConnectionsPanel() {
   const [list, setList] = useState<AgentConnection[] | null>(null);
   const [failed, setFailed] = useState(false);
   const [made, setMade] = useState<CreatedAgentToken | null>(null);
+  const [editing, setEditing] = useState<string | null>(null);
   const reload = useCallback(() => {
     backend.agentConnections().then(r => { setMcpUrl(r.mcpUrl); setList(r.connections); setFailed(false); }, () => setFailed(true));
   }, []);
@@ -66,13 +70,17 @@ export function AgentConnectionsPanel() {
                   {a.kind === 'oauth' ? `Signed in${a.redirectHost ? ` via ${a.redirectHost}` : ''}` : 'Access token'}
                   {' · '}{a.scopes.map(s => AGENT_SCOPE_TEXT[s].title).join(', ')}
                 </small>
-                <small>Sees: {names(a.profileIds)}</small>
-                <small>Last used: {when(a.lastUsedAt)}{a.expiresAt ? ` · Expires ${when(a.expiresAt)}` : ''}</small>
+                <small>Sees: {names(a.profileIds)} · {a.categories.length ? a.categories.map(k => AGENT_CATEGORY_TEXT[k].title).join(', ') : 'the basics only'}</small>
+                <small>Last used: {when(a.lastUsedAt)} · {a.expiresAt ? `Expires ${when(a.expiresAt)}` : 'No expiry'}</small>
+                {editing === a.id && <EditConnection conn={a} onDone={changed => { setEditing(null); if (changed) reload(); }} />}
               </div>
+              <div className="agents__row-actions">
+              {editing !== a.id && <button type="button" className="btn btn--small" onClick={() => setEditing(a.id)}>Change</button>}
               <ConfirmButton confirmText={`Disconnect ${a.name}?`} busyText="Disconnecting…" className="btn btn--small btn--danger"
                 onConfirm={async () => {
                   try { await backend.disconnectAgent(a.id); toast.info(`${a.name} disconnected.`); reload(); } catch (e) { toast.error(errorMessage(e)); }
                 }}>Disconnect</ConfirmButton>
+              </div>
             </li>
           ))}
         </ul>
@@ -83,27 +91,78 @@ export function AgentConnectionsPanel() {
   );
 }
 
+const toggle = <T,>(list: T[], v: T) => (list.includes(v) ? list.filter(x => x !== v) : [...list, v]);
+
+interface Choice { profileIds: string[]; categories: AgentCategory[]; scopes: AgentScope[]; expires: string }
+
+/** Whose records, which kinds of data, what it may do and how long: shared by the new token form and Change. */
+function Choices({ value, onChange, expiryLabel }: { value: Choice; onChange: (c: Choice) => void; expiryLabel: string }) {
+  const profiles = useSession(s => s.profiles);
+  const set = (p: Partial<Choice>) => onChange({ ...value, ...p });
+  return (
+    <>
+      <fieldset className="agents__choices">
+        <legend>Whose records it may see</legend>
+        {profiles.map(p => (
+          <label key={p.id}><input type="checkbox" checked={value.profileIds.includes(p.id)} onChange={() => set({ profileIds: toggle(value.profileIds, p.id) })} /> {p.displayName}{p.relationship === 'self' ? ' (you)' : ''}</label>
+        ))}
+      </fieldset>
+      <fieldset className="agents__choices">
+        <legend>What it may see</legend>
+        <small>{AGENT_BASICS_TEXT}</small>
+        {AGENT_CATEGORIES.map(k => (
+          <label key={k}>
+            <input type="checkbox" checked={value.categories.includes(k)} onChange={() => set({ categories: toggle(value.categories, k) })} />
+            <span>{AGENT_CATEGORY_TEXT[k].title}<small>{AGENT_CATEGORY_TEXT[k].detail}</small></span>
+          </label>
+        ))}
+      </fieldset>
+      <fieldset className="agents__choices">
+        <legend>What it may do</legend>
+        {AGENT_SCOPES.map(s => (
+          <label key={s}>
+            <input type="checkbox" checked={value.scopes.includes(s)} disabled={s === 'health:read'} onChange={() => set({ scopes: toggle(value.scopes, s) })} />
+            <span>{AGENT_SCOPE_TEXT[s].title}<small>{AGENT_SCOPE_TEXT[s].detail}</small></span>
+          </label>
+        ))}
+      </fieldset>
+      <div className="form-grid">
+        <Field label={expiryLabel}>{id => (
+          <select id={id} value={value.expires} onChange={e => set({ expires: e.target.value })}>
+            {value.expires === 'keep' && <option value="keep">Keep the current expiry</option>}
+            <option value="7">7 days</option>
+            {AGENT_EXPIRY_CHOICES.map(x => <option key={x.days ?? 'never'} value={x.days ?? 'never'}>{x.label}</option>)}
+          </select>
+        )}</Field>
+      </div>
+    </>
+  );
+}
+
+const expiryDays = (v: string): number | null => (v === 'never' ? null : Number(v));
+
 function CreateToken({ onCreated }: { onCreated: (m: CreatedAgentToken) => void }) {
   const profiles = useSession(s => s.profiles);
   const [open, setOpen] = useState(false);
   const [name, setName] = useState('');
-  const [chosen, setChosen] = useState<string[]>(() => profiles.filter(p => p.relationship === 'self').map(p => p.id));
-  const [scopes, setScopes] = useState<AgentScope[]>(['health:read']);
-  const [days, setDays] = useState<string>('90');
+  const [choice, setChoice] = useState<Choice>(() => ({
+    profileIds: profiles.filter(p => p.relationship === 'self').map(p => p.id), categories: [...AGENT_CATEGORIES], scopes: ['health:read'], expires: '90',
+  }));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   if (!open) return <div className="panel__actions"><button type="button" className="btn" onClick={() => setOpen(true)}>Create an access token</button></div>;
 
-  const toggle = <T,>(list: T[], v: T) => (list.includes(v) ? list.filter(x => x !== v) : [...list, v]);
   async function submit(e: FormEvent) {
     e.preventDefault();
     setError(null);
     if (!name.trim()) { setError('Name the agent, so you can tell connections apart.'); return; }
-    if (!chosen.length) { setError('Choose at least one profile.'); return; }
+    if (!choice.profileIds.length) { setError('Choose at least one profile.'); return; }
     setBusy(true);
     try {
-      onCreated(await backend.createAgentToken({ name: name.trim(), profileIds: chosen, scopes, expiresInDays: days === 'never' ? null : Number(days) }));
+      onCreated(await backend.createAgentToken({
+        name: name.trim(), profileIds: choice.profileIds, scopes: choice.scopes, categories: choice.categories, expiresInDays: expiryDays(choice.expires),
+      }));
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -117,33 +176,45 @@ function CreateToken({ onCreated }: { onCreated: (m: CreatedAgentToken) => void 
       <div className="form-grid">
         <Field label="Agent name" hint="For example: Claude Desktop, my health bot." wide>{id => <input id={id} value={name} maxLength={60} onChange={e => setName(e.target.value)} />}</Field>
       </div>
-      <fieldset className="agents__choices">
-        <legend>Whose records it may see</legend>
-        {profiles.map(p => (
-          <label key={p.id}><input type="checkbox" checked={chosen.includes(p.id)} onChange={() => setChosen(toggle(chosen, p.id))} /> {p.displayName}{p.relationship === 'self' ? ' (you)' : ''}</label>
-        ))}
-      </fieldset>
-      <fieldset className="agents__choices">
-        <legend>What it may do</legend>
-        {AGENT_SCOPES.map(s => (
-          <label key={s}>
-            <input type="checkbox" checked={scopes.includes(s)} disabled={s === 'health:read'} onChange={() => setScopes(toggle(scopes, s))} />
-            <span>{AGENT_SCOPE_TEXT[s].title}<small>{AGENT_SCOPE_TEXT[s].detail}</small></span>
-          </label>
-        ))}
-      </fieldset>
-      <div className="form-grid">
-        <Field label="Expires">{id => (
-          <select id={id} value={days} onChange={e => setDays(e.target.value)}>
-            <option value="7">In 7 days</option><option value="30">In 30 days</option><option value="90">In 90 days</option>
-            <option value="365">In a year</option><option value="never">Never</option>
-          </select>
-        )}</Field>
-      </div>
+      <Choices value={choice} onChange={setChoice} expiryLabel="Expires after" />
       {error && <p className="form-error" role="alert">{error}</p>}
       <div className="panel__actions">
         <button type="button" className="btn" onClick={() => setOpen(false)}>Cancel</button>
         <button className="btn btn--primary" disabled={busy}>{busy ? 'Creating…' : 'Create token'}</button>
+      </div>
+    </form>
+  );
+}
+
+/** Change what a connection may see and do, and how long it lasts. It applies to the agent's next request. */
+function EditConnection({ conn, onDone }: { conn: AgentConnection; onDone: (changed: boolean) => void }) {
+  const [choice, setChoice] = useState<Choice>({ profileIds: conn.profileIds, categories: conn.categories, scopes: conn.scopes, expires: 'keep' });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    if (!choice.profileIds.length) { setError('Choose at least one profile, or disconnect the agent instead.'); return; }
+    setBusy(true);
+    setError(null);
+    try {
+      await backend.updateAgentConnection(conn.id, {
+        profileIds: choice.profileIds, categories: choice.categories, scopes: choice.scopes,
+        ...(choice.expires === 'keep' ? {} : { expiresInDays: expiryDays(choice.expires) }),
+      });
+      toast.info(`${conn.name} updated. It applies to its next request.`);
+      onDone(true);
+    } catch (err) {
+      setError(errorMessage(err));
+      setBusy(false);
+    }
+  }
+  return (
+    <form className="agents__form agents__edit" onSubmit={submit} noValidate aria-label={`Change ${conn.name}`}>
+      <Choices value={choice} onChange={setChoice} expiryLabel="Connected for" />
+      {error && <p className="form-error" role="alert">{error}</p>}
+      <div className="panel__actions">
+        <button type="button" className="btn" onClick={() => onDone(false)} disabled={busy}>Cancel</button>
+        <button className="btn btn--primary" disabled={busy}>{busy ? 'Saving…' : 'Save'}</button>
       </div>
     </form>
   );

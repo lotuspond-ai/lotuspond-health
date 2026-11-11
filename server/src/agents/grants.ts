@@ -3,7 +3,7 @@
 // cell, like session tokens. Only SHA-256 digests are stored.
 import { createHash, randomBytes } from 'node:crypto';
 import { and, eq, inArray, lt } from 'drizzle-orm';
-import { AGENT_SCOPES, type AgentConnection, type AgentScope } from '../../../shared/agents.ts';
+import { AGENT_CATEGORIES, AGENT_SCOPES, type AgentCategory, type AgentConnection, type AgentScope } from '../../../shared/agents.ts';
 import type { DataRegion } from '../../../shared/regions.ts';
 import type { Cell, CellRegistry } from '../cells.ts';
 import type { Db } from '../db/client.ts';
@@ -38,6 +38,15 @@ export function parseSecret(cells: CellRegistry, secret: string): { cell: Cell; 
 export const cleanScopes = (s: readonly string[]): AgentScope[] =>
   AGENT_SCOPES.filter(x => s.includes(x));
 
+/** The categories a grant shares: null (connections made before categories existed) means all of them. */
+export const grantCategories = (g: Pick<AgentGrantRow, 'categories'>): AgentCategory[] =>
+  g.categories == null ? [...AGENT_CATEGORIES] : AGENT_CATEGORIES.filter(x => g.categories!.includes(x));
+
+export const cleanCategories = (s: readonly string[]): AgentCategory[] => AGENT_CATEGORIES.filter(x => s.includes(x));
+
+/** Days from now → a date, or null. */
+export const expiryIn = (days: number | null | undefined): Date | null => (days ? new Date(Date.now() + days * 24 * 60 * 60_000) : null);
+
 export function toConnection(g: AgentGrantRow): AgentConnection {
   return {
     id: g.id,
@@ -45,6 +54,7 @@ export function toConnection(g: AgentGrantRow): AgentConnection {
     name: g.name,
     redirectHost: g.redirectHost,
     scopes: cleanScopes(g.scopes),
+    categories: grantCategories(g),
     profileIds: g.profileIds,
     createdAt: g.createdAt.toISOString(),
     lastUsedAt: g.lastUsedAt?.toISOString() ?? null,
@@ -62,12 +72,15 @@ export async function ownProfiles(db: Db, userId: string, ids: string[]): Promis
 
 /**
  * Record the person's consent to share with a connection, as it now stands (or its withdrawal): an agent_sharing
- * consent with the text version, the agent's name, the profiles and the permissions.
+ * consent with the text version, the agent's name, the profiles, the permissions, the kinds of data and the expiry.
  */
 export async function recordSharingConsent(db: Db, user: Pick<UserRow, 'id' | 'country'>, grant: AgentGrantRow, granted = true): Promise<void> {
   await recordConsents(db, user.id, user.country, [{
     kind: 'agent_sharing', granted,
-    detail: { connectionId: grant.id, agent: grant.name.slice(0, 80), profileIds: grant.profileIds, scopes: cleanScopes(grant.scopes) },
+    detail: {
+      connectionId: grant.id, agent: grant.name.slice(0, 80), profileIds: grant.profileIds, scopes: cleanScopes(grant.scopes),
+      categories: grantCategories(grant), expiresAt: grant.expiresAt?.toISOString() ?? null,
+    },
   }]);
 }
 

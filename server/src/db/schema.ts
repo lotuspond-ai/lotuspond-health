@@ -325,6 +325,8 @@ export const agentGrants = pgTable('agent_grants', {
   name: text('name').notNull(),
   redirectHost: text('redirect_host'),
   scopes: jsonb('scopes').$type<string[]>().notNull(),
+  /** Kinds of data shared (shared/agents.ts AgentCategory); null for every kind (connections made before categories). */
+  categories: jsonb('categories').$type<string[]>(),
   profileIds: jsonb('profile_ids').$type<string[]>().notNull(),
   createdAt: createdAt(),
   lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
