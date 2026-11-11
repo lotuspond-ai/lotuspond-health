@@ -72,7 +72,7 @@ Every response carries the disclaimer that this is information to discuss with a
 
 ## Not built yet
 
-- Wearable APIs (Oura, Fitbit, Garmin) and ABHA/ABDM records as sources. Readings from Apple Health and Health Connect come in through the apps ([health-import.md](health-import.md)) and reach agents as ordinary results.
+- Wearable APIs (Oura, Fitbit, Garmin), and ABDM records fetched over the network ([abdm.md](abdm.md); FHIR files exported from ABHA apps can already be uploaded). Readings from Apple Health and Health Connect come in through the apps ([health-import.md](health-import.md)) and reach agents as ordinary results.
 - Per-connection limits by data category (for example results but not medications) and expiry for OAuth connections.
 - Notifications to the person when an agent writes, and a weekly digest of agent activity.
 - A listing in the agent directories (Claude connector directory, ChatGPT apps) once the policy and legal review is done.

@@ -1,0 +1,622 @@
+{
+ "resourceType": "Bundle",
+ "id": "synthetic-lab-record",
+ "meta": {
+  "profile": [
+   "https://nrces.in/ndhm/fhir/r4/StructureDefinition/DocumentBundle"
+  ]
+ },
+ "identifier": {
+  "system": "http://example.org",
+  "value": "synthetic-1"
+ },
+ "type": "document",
+ "timestamp": "2026-10-20T18:00:00+05:30",
+ "entry": [
+  {
+   "fullUrl": "urn:uuid:comp-1",
+   "resource": {
+    "resourceType": "Composition",
+    "id": "comp-1",
+    "meta": {
+     "profile": [
+      "https://nrces.in/ndhm/fhir/r4/StructureDefinition/DiagnosticReportRecord"
+     ]
+    },
+    "status": "final",
+    "type": {
+     "coding": [
+      {
+       "system": "http://snomed.info/sct",
+       "code": "721981007",
+       "display": "Diagnostic studies report"
+      }
+     ]
+    },
+    "subject": {
+     "reference": "urn:uuid:patient-1"
+    },
+    "date": "2026-10-20T18:00:00+05:30",
+    "title": "Diagnostic Report- Lab",
+    "author": [
+     {
+      "display": "Synthetic Lab"
+     }
+    ],
+    "section": [
+     {
+      "title": "Lab report",
+      "entry": [
+       {
+        "reference": "urn:uuid:report-1"
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "fullUrl": "urn:uuid:patient-1",
+   "resource": {
+    "resourceType": "Patient",
+    "id": "patient-1",
+    "meta": {
+     "profile": [
+      "https://nrces.in/ndhm/fhir/r4/StructureDefinition/Patient"
+     ]
+    },
+    "identifier": [
+     {
+      "system": "https://healthid.abdm.gov.in",
+      "value": "91-0000-0000-0000"
+     }
+    ],
+    "name": [
+     {
+      "text": "Asha Rao"
+     }
+    ],
+    "gender": "female",
+    "birthDate": "1990-04-12"
+   }
+  },
+  {
+   "fullUrl": "urn:uuid:report-1",
+   "resource": {
+    "resourceType": "DiagnosticReport",
+    "id": "report-1",
+    "meta": {
+     "profile": [
+      "https://nrces.in/ndhm/fhir/r4/StructureDefinition/DiagnosticReportLab"
+     ]
+    },
+    "status": "final",
+    "code": {
+     "text": "Health check"
+    },
+    "subject": {
+     "reference": "urn:uuid:patient-1"
+    },
+    "effectiveDateTime": "2026-10-20T08:30:00+05:30",
+    "issued": "2026-10-20T18:00:00+05:30",
+    "result": [
+     {
+      "reference": "urn:uuid:hba1c"
+     },
+     {
+      "reference": "urn:uuid:glu"
+     },
+     {
+      "reference": "urn:uuid:hb"
+     },
+     {
+      "reference": "urn:uuid:wbc"
+     },
+     {
+      "reference": "urn:uuid:tsh"
+     },
+     {
+      "reference": "urn:uuid:vitd"
+     },
+     {
+      "reference": "urn:uuid:uprot"
+     },
+     {
+      "reference": "urn:uuid:err"
+     },
+     {
+      "reference": "urn:uuid:ldl-pre"
+     },
+     {
+      "reference": "urn:uuid:odd"
+     },
+     {
+      "reference": "urn:uuid:bp"
+     }
+    ]
+   }
+  },
+  {
+   "fullUrl": "urn:uuid:hba1c",
+   "resource": {
+    "resourceType": "Observation",
+    "id": "hba1c",
+    "meta": {
+     "profile": [
+      "https://nrces.in/ndhm/fhir/r4/StructureDefinition/Observation"
+     ]
+    },
+    "status": "final",
+    "code": {
+     "coding": [
+      {
+       "system": "http://loinc.org",
+       "code": "4548-4",
+       "display": "Hemoglobin A1c/Hemoglobin.total in Blood"
+      }
+     ],
+     "text": "HbA1c"
+    },
+    "subject": {
+     "reference": "urn:uuid:patient-1"
+    },
+    "effectiveDateTime": "2026-10-20T08:30:00+05:30",
+    "valueQuantity": {
+     "value": 6.1,
+     "unit": "%",
+     "system": "http://unitsofmeasure.org",
+     "code": "%"
+    },
+    "referenceRange": [
+     {
+      "high": {
+       "value": 5.7
+      },
+      "text": "< 5.7"
+     }
+    ],
+    "interpretation": [
+     {
+      "coding": [
+       {
+        "system": "http://terminology.hl7.org/CodeSystem/v3-ObservationInterpretation",
+        "code": "H"
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "fullUrl": "urn:uuid:glu",
+   "resource": {
+    "resourceType": "Observation",
+    "id": "glu",
+    "meta": {
+     "profile": [
+      "https://nrces.in/ndhm/fhir/r4/StructureDefinition/Observation"
+     ]
+    },
+    "status": "final",
+    "code": {
+     "coding": [
+      {
+       "system": "http://loinc.org",
+       "code": "1558-6",
+       "display": "Fasting glucose [Mass/volume] in Serum or Plasma"
+      }
+     ],
+     "text": "Fasting glucose [Mass/volume] in Serum or Plasma"
+    },
+    "subject": {
+     "reference": "urn:uuid:patient-1"
+    },
+    "effectiveDateTime": "2026-10-20T08:30:00+05:30",
+    "valueQuantity": {
+     "value": 104,
+     "unit": "mg/dL",
+     "system": "http://unitsofmeasure.org",
+     "code": "mg/dL"
+    },
+    "referenceRange": [
+     {
+      "low": {
+       "value": 70
+      },
+      "high": {
+       "value": 100
+      }
+     }
+    ],
+    "interpretation": [
+     {
+      "coding": [
+       {
+        "system": "http://terminology.hl7.org/CodeSystem/v3-ObservationInterpretation",
+        "code": "H"
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "fullUrl": "urn:uuid:hb",
+   "resource": {
+    "resourceType": "Observation",
+    "id": "hb",
+    "meta": {
+     "profile": [
+      "https://nrces.in/ndhm/fhir/r4/StructureDefinition/Observation"
+     ]
+    },
+    "status": "final",
+    "code": {
+     "coding": [
+      {
+       "system": "http://loinc.org",
+       "code": "718-7",
+       "display": "Hemoglobin [Mass/volume] in Blood"
+      }
+     ],
+     "text": "Hemoglobin [Mass/volume] in Blood"
+    },
+    "subject": {
+     "reference": "urn:uuid:patient-1"
+    },
+    "effectiveDateTime": "2026-10-20T08:30:00+05:30",
+    "valueQuantity": {
+     "value": 13.4,
+     "system": "http://unitsofmeasure.org",
+     "code": "g/dL"
+    },
+    "referenceRange": [
+     {
+      "low": {
+       "value": 12
+      },
+      "high": {
+       "value": 15.5
+      }
+     }
+    ]
+   }
+  },
+  {
+   "fullUrl": "urn:uuid:wbc",
+   "resource": {
+    "resourceType": "Observation",
+    "id": "wbc",
+    "meta": {
+     "profile": [
+      "https://nrces.in/ndhm/fhir/r4/StructureDefinition/Observation"
+     ]
+    },
+    "status": "final",
+    "code": {
+     "coding": [
+      {
+       "system": "http://loinc.org",
+       "code": "6690-2",
+       "display": "Leukocytes [#/volume] in Blood"
+      }
+     ],
+     "text": "Leukocytes [#/volume] in Blood"
+    },
+    "subject": {
+     "reference": "urn:uuid:patient-1"
+    },
+    "effectiveDateTime": "2026-10-20T08:30:00+05:30",
+    "valueQuantity": {
+     "value": 7.8,
+     "system": "http://unitsofmeasure.org",
+     "code": "10*3/uL"
+    },
+    "referenceRange": [
+     {
+      "low": {
+       "value": 4
+      },
+      "high": {
+       "value": 11
+      }
+     }
+    ]
+   }
+  },
+  {
+   "fullUrl": "urn:uuid:tsh",
+   "resource": {
+    "resourceType": "Observation",
+    "id": "tsh",
+    "meta": {
+     "profile": [
+      "https://nrces.in/ndhm/fhir/r4/StructureDefinition/Observation"
+     ]
+    },
+    "status": "final",
+    "code": {
+     "coding": [
+      {
+       "system": "http://loinc.org",
+       "code": "3016-3",
+       "display": "Thyrotropin [Units/volume] in Serum or Plasma"
+      }
+     ],
+     "text": "Thyrotropin [Units/volume] in Serum or Plasma"
+    },
+    "subject": {
+     "reference": "urn:uuid:patient-1"
+    },
+    "effectiveDateTime": "2026-10-20T08:30:00+05:30",
+    "valueQuantity": {
+     "value": 2.4,
+     "system": "http://unitsofmeasure.org",
+     "code": "u[IU]/mL"
+    },
+    "referenceRange": [
+     {
+      "low": {
+       "value": 0.4
+      },
+      "high": {
+       "value": 4.5
+      }
+     }
+    ]
+   }
+  },
+  {
+   "fullUrl": "urn:uuid:vitd",
+   "resource": {
+    "resourceType": "Observation",
+    "id": "vitd",
+    "meta": {
+     "profile": [
+      "https://nrces.in/ndhm/fhir/r4/StructureDefinition/Observation"
+     ]
+    },
+    "status": "final",
+    "code": {
+     "coding": [
+      {
+       "system": "http://loinc.org",
+       "code": "62292-8",
+       "display": "25-Hydroxyvitamin D2+D3"
+      }
+     ],
+     "text": "25-Hydroxyvitamin D2+D3"
+    },
+    "subject": {
+     "reference": "urn:uuid:patient-1"
+    },
+    "effectiveDateTime": "2026-10-20T08:30:00+05:30",
+    "valueQuantity": {
+     "value": 8,
+     "unit": "ng/mL",
+     "system": "http://unitsofmeasure.org",
+     "code": "ng/mL",
+     "comparator": "<"
+    },
+    "referenceRange": [
+     {
+      "low": {
+       "value": 30
+      },
+      "high": {
+       "value": 100
+      }
+     }
+    ],
+    "interpretation": [
+     {
+      "coding": [
+       {
+        "system": "http://terminology.hl7.org/CodeSystem/v3-ObservationInterpretation",
+        "code": "L"
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "fullUrl": "urn:uuid:uprot",
+   "resource": {
+    "resourceType": "Observation",
+    "id": "uprot",
+    "meta": {
+     "profile": [
+      "https://nrces.in/ndhm/fhir/r4/StructureDefinition/Observation"
+     ]
+    },
+    "status": "final",
+    "code": {
+     "coding": [
+      {
+       "system": "http://loinc.org",
+       "code": "5804-0",
+       "display": "Protein [Mass/volume] in Urine by Test strip"
+      }
+     ],
+     "text": "Urine protein"
+    },
+    "subject": {
+     "reference": "urn:uuid:patient-1"
+    },
+    "effectiveDateTime": "2026-10-20T08:30:00+05:30",
+    "valueCodeableConcept": {
+     "coding": [
+      {
+       "system": "http://snomed.info/sct",
+       "code": "260385009",
+       "display": "Negative"
+      }
+     ],
+     "text": "Negative"
+    }
+   }
+  },
+  {
+   "fullUrl": "urn:uuid:err",
+   "resource": {
+    "resourceType": "Observation",
+    "id": "err",
+    "meta": {
+     "profile": [
+      "https://nrces.in/ndhm/fhir/r4/StructureDefinition/Observation"
+     ]
+    },
+    "status": "entered-in-error",
+    "code": {
+     "coding": [
+      {
+       "system": "http://loinc.org",
+       "code": "2093-3",
+       "display": "Cholesterol [Mass/volume] in Serum or Plasma"
+      }
+     ],
+     "text": "Cholesterol [Mass/volume] in Serum or Plasma"
+    },
+    "subject": {
+     "reference": "urn:uuid:patient-1"
+    },
+    "effectiveDateTime": "2026-10-20T08:30:00+05:30",
+    "valueQuantity": {
+     "value": 999,
+     "unit": "mg/dL",
+     "system": "http://unitsofmeasure.org",
+     "code": "mg/dL"
+    }
+   }
+  },
+  {
+   "fullUrl": "urn:uuid:ldl-pre",
+   "resource": {
+    "resourceType": "Observation",
+    "id": "ldl-pre",
+    "meta": {
+     "profile": [
+      "https://nrces.in/ndhm/fhir/r4/StructureDefinition/Observation"
+     ]
+    },
+    "status": "preliminary",
+    "code": {
+     "coding": [
+      {
+       "system": "http://loinc.org",
+       "code": "13457-7",
+       "display": "Cholesterol in LDL [Mass/volume] in Serum or Plasma by calculation"
+      }
+     ],
+     "text": "Cholesterol in LDL [Mass/volume] in Serum or Plasma by calculation"
+    },
+    "subject": {
+     "reference": "urn:uuid:patient-1"
+    },
+    "effectiveDateTime": "2026-10-20T08:30:00+05:30",
+    "valueQuantity": {
+     "value": 131,
+     "unit": "mg/dL",
+     "system": "http://unitsofmeasure.org",
+     "code": "mg/dL"
+    },
+    "referenceRange": [
+     {
+      "high": {
+       "value": 100
+      }
+     }
+    ]
+   }
+  },
+  {
+   "fullUrl": "urn:uuid:odd",
+   "resource": {
+    "resourceType": "Observation",
+    "id": "odd",
+    "meta": {
+     "profile": [
+      "https://nrces.in/ndhm/fhir/r4/StructureDefinition/Observation"
+     ]
+    },
+    "status": "final",
+    "code": {
+     "coding": [],
+     "text": "Lipoprotein X index"
+    },
+    "subject": {
+     "reference": "urn:uuid:patient-1"
+    },
+    "effectiveDateTime": "2026-10-20T08:30:00+05:30",
+    "valueQuantity": {
+     "value": 1.2,
+     "unit": "ratio",
+     "system": "http://unitsofmeasure.org"
+    }
+   }
+  },
+  {
+   "fullUrl": "urn:uuid:bp",
+   "resource": {
+    "resourceType": "Observation",
+    "id": "bp",
+    "meta": {
+     "profile": [
+      "https://nrces.in/ndhm/fhir/r4/StructureDefinition/Observation"
+     ]
+    },
+    "status": "final",
+    "code": {
+     "coding": [
+      {
+       "system": "http://loinc.org",
+       "code": "85354-9",
+       "display": "Blood pressure panel with all children optional"
+      }
+     ],
+     "text": "Blood pressure panel with all children optional"
+    },
+    "subject": {
+     "reference": "urn:uuid:patient-1"
+    },
+    "effectiveDateTime": "2026-10-20T08:30:00+05:30",
+    "component": [
+     {
+      "code": {
+       "coding": [
+        {
+         "system": "http://loinc.org",
+         "code": "8480-6",
+         "display": "Systolic blood pressure"
+        }
+       ]
+      },
+      "valueQuantity": {
+       "value": 132,
+       "unit": "mmHg",
+       "system": "http://unitsofmeasure.org",
+       "code": "mm[Hg]"
+      }
+     },
+     {
+      "code": {
+       "coding": [
+        {
+         "system": "http://loinc.org",
+         "code": "8462-4",
+         "display": "Diastolic blood pressure"
+        }
+       ]
+      },
+      "valueQuantity": {
+       "value": 86,
+       "system": "http://unitsofmeasure.org",
+       "code": "mm[Hg]"
+      }
+     }
+    ]
+   }
+  }
+ ]
+}

@@ -258,7 +258,7 @@ function UploadPanel() {
             </div>
             <input ref={input} type="file" multiple hidden accept={ACCEPT} onChange={e => { const f = takeFiles(e.target); if (f.length) void handle(f); }} />
             <input ref={camera} type="file" hidden accept="image/*" capture="environment" onChange={e => { const f = takeFiles(e.target); if (f.length) void handle(f); }} />
-            <div className="formats"><span>Lab report PDF</span><span>Photo of a report</span><span>CSV or JSON export</span><span>DICOM (.dcm)</span><span>X-ray or scan photos</span></div>
+            <div className="formats"><span>Lab report PDF</span><span>Photo of a report</span><span>CSV or JSON export</span><span>FHIR / ABHA record</span><span>DICOM (.dcm)</span><span>X-ray or scan photos</span></div>
           </div>
         ) : (
           <>

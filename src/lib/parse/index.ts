@@ -64,12 +64,12 @@ export async function parseFile(file: File, onProgress?: ParseProgress): Promise
       if (file.size > MAX_TEXT) return empty('This file is too large to read as a table.');
       const text = await file.text();
       const trimmed = text.replace(/^﻿/, '').trimStart();
-      if (trimmed.startsWith('{') || trimmed.startsWith('[')) return parseJsonText(text, file.name);
+      if (trimmed.startsWith('{') || trimmed.startsWith('[')) return parseJsonFile(text, file.name);
       return parseCsvText(text, file.name);
     }
     case 'json': {
       if (file.size > MAX_TEXT) return empty('This file is too large to read.');
-      return parseJsonText(await file.text(), file.name);
+      return parseJsonFile(await file.text(), file.name);
     }
     case 'dicom':
       return parseDicomFile(file);
@@ -85,4 +85,36 @@ export async function parseFile(file: File, onProgress?: ParseProgress): Promise
     default:
       return empty('This file type is not supported. Use a PDF lab report, CSV or JSON export, DICOM (.dcm) or an image.');
   }
+}
+
+/**
+ * JSON, with FHIR's embedded reports: a DiagnosticReport that carries only a PDF (common in ABDM records) is read
+ * like an uploaded PDF, and its results are added to the review with the bundle as their source.
+ */
+async function parseJsonFile(text: string, fileName: string): Promise<ParseResult> {
+  const r = parseJsonText(text, fileName);
+  if (r.measurements.length) return r;
+  let data: unknown;
+  try { data = JSON.parse(text.replace(/^\uFEFF/, '')); } catch { return r; }
+  const { isFhir, fhirAttachments, fhirPatientName } = await import('./fhir.ts');
+  if (!isFhir(data)) return r;
+  const pdfs = fhirAttachments(data).filter(a => /pdf/i.test(a.contentType)).slice(0, 10);
+  if (!pdfs.length) return r;
+  const { parsePdf } = await import('./pdf.ts');
+  const out: ParseResult = { ...r, warnings: r.warnings.filter(w => !/No lab results were found/.test(w)) };
+  for (const a of pdfs) {
+    try {
+      const bytes = Uint8Array.from(atob(a.data.replace(/\s+/g, '')), c => c.charCodeAt(0));
+      const read = await parsePdf(new File([bytes], fileName, { type: 'application/pdf' }));
+      out.measurements.push(...read.measurements);
+      out.warnings.push(...read.warnings.map(w => `${a.title}: ${w}`));
+      out.detectedDate ??= read.detectedDate;
+    } catch {
+      out.warnings.push(`${a.title}: the report attached to this record could not be read.`);
+    }
+  }
+  const who = fhirPatientName(data);
+  if (who && out.measurements.length) out.warnings.unshift(`These results are for ${who}. Add them only to that person’s profile.`);
+  if (!out.measurements.length && !out.warnings.length) out.warnings.push('No lab results were found in this FHIR file or the report attached to it.');
+  return out;
 }
