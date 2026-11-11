@@ -18,7 +18,8 @@ export const APOLLO_ORIGIN = 'https://www.apollo247.com';
 
 const SEND = ['button:has-text("Continue")', 'button:has-text("Send OTP")', 'button:has-text("Get OTP")', 'button:has-text("Proceed")', 'button:has-text("Login")', 'button[type=submit]'];
 const VERIFY = ['button:has-text("Verify")', 'button:has-text("Submit")', 'button:has-text("Continue")', 'button:has-text("Login")', 'button[type=submit]'];
-const CODE = ['input[autocomplete="one-time-code"]', 'input[placeholder*="otp" i]', 'input[name*="otp" i]', 'input[id*="otp" i]', 'input[maxlength="6"]', 'input[maxlength="4"]'];
+// Seen live: <input type="tel" maxlength="6" title="Please enter the otp"> under "Enter OTP", with Verify.
+const CODE = ['input[title*="otp" i]', 'input[autocomplete="one-time-code"]', 'input[placeholder*="otp" i]', 'input[name*="otp" i]', 'input[id*="otp" i]', 'input[maxlength="6"]:not([name*="mobile" i])', 'input[maxlength="4"]:not([name*="mobile" i])'];
 /** The kinds of records Health Records shows, as tab or menu labels. */
 const KINDS = ['Test Reports', 'Lab Reports', 'Lab Tests', 'Reports', 'Prescriptions', 'Hospitalization', 'Hospitalisation', 'Discharge Summary', 'Medical Bills', 'Insurance'];
 
@@ -46,7 +47,8 @@ async function signIn(ctx: RecipeContext): Promise<void> {
   await untickMarketing(box);
   await (await mustFind(box, SEND, 'the button that sends the OTP')).click();
 
-  const codeReady = await firstVisible(page, [...CODE.map(c => `${c}:not([type=tel])`), 'input[maxlength="1"]'], 15_000);
+  // The OTP field is a tel input too: tell it from the number field by its own marks, not its type.
+  const codeReady = await firstVisible(page, [...CODE, 'input[maxlength="1"]'], 15_000);
   if (!codeReady) throw new PortalError((await visibleError(page)) ?? 'Apollo 24|7 did not send an OTP to that number.');
   ctx.remember(phone);
   for (let attempt = 0; attempt < 2; attempt++) {
