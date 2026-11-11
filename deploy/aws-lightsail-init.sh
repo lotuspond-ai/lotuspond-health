@@ -22,9 +22,11 @@ if [ ! -f /swapfile ]; then
   echo '/swapfile none swap sw 0 0' >> /etc/fstab
 fi
 
+# The repository is private: without a deploy key this clone fails, and you clone it yourself (aws-lightsail.md, step 4).
 if [ ! -d /opt/lotuspond-health/.git ]; then
-  git clone https://github.com/lotuspond-ai/lotuspond-health.git /opt/lotuspond-health
+  GIT_TERMINAL_PROMPT=0 git clone https://github.com/lotuspond-ai/lotuspond-health.git /opt/lotuspond-health \
+    || echo "Repository not cloned (private); add a deploy key and clone it, see deploy/aws-lightsail.md step 4."
 fi
-if id ubuntu >/dev/null 2>&1; then chown -R ubuntu:ubuntu /opt/lotuspond-health; fi
+if id ubuntu >/dev/null 2>&1 && [ -d /opt/lotuspond-health ]; then chown -R ubuntu:ubuntu /opt/lotuspond-health; fi
 
 echo "Ready. Next: cd /opt/lotuspond-health/deploy && ./make-secrets.sh (see deploy/aws-lightsail.md)."

@@ -4,6 +4,10 @@ This is the India server from [`README.md`](README.md) (`SERVED_REGIONS=in`) on 
 
 **Cost:** the Linux General Purpose plan with 4 GB RAM, 2 vCPU and 80 GB SSD is $24 a month, including a public IPv4 address. In Mumbai it includes 2 TB of data transfer a month (half the allowance of other regions). Automatic snapshots and an S3 bucket for backups add a few dollars. Check the [Lightsail pricing page](https://aws.amazon.com/lightsail/pricing/) for the current figures.
 
+## Quick route: one script in AWS CloudShell
+
+Steps 1 and 2 can be done in one go. Open [AWS CloudShell](https://console.aws.amazon.com/cloudshell/home?region=ap-south-1) (the terminal in the AWS console, already signed in), paste the contents of [`aws-lightsail-create.sh`](aws-lightsail-create.sh), and press Enter. It creates the instance with the first-boot script, daily automatic snapshots, a static IP and the firewall rules, then prints the IPv4 and IPv6 addresses for step 3. Running it again skips what already exists.
+
 ## 1. Create the instance
 
 In the [Lightsail console](https://lightsail.aws.amazon.com/), choose **Create instance**:
@@ -30,6 +34,30 @@ Connect with SSH (or the console's browser terminal) and check that the launch s
 
 ```bash
 tail -n 5 /var/log/cloud-init-output.log
+```
+
+The repository is private, so the launch script cannot clone it. Give the server a read-only deploy key:
+
+```bash
+ssh-keygen -t ed25519 -N "" -f ~/.ssh/lotuspond_deploy -C lotuspond-health-server
+```
+
+```bash
+cat ~/.ssh/lotuspond_deploy.pub
+```
+
+On GitHub, open the repository's **Settings → Deploy keys → Add deploy key**, paste that public key, and leave **Allow write access** off. Then clone:
+
+```bash
+sudo mkdir -p /opt/lotuspond-health && sudo chown ubuntu:ubuntu /opt/lotuspond-health
+```
+
+```bash
+GIT_SSH_COMMAND="ssh -i ~/.ssh/lotuspond_deploy -o StrictHostKeyChecking=accept-new" git clone git@github.com:lotuspond-ai/lotuspond-health.git /opt/lotuspond-health
+```
+
+```bash
+git -C /opt/lotuspond-health config core.sshCommand "ssh -i ~/.ssh/lotuspond_deploy"
 ```
 
 Then follow [`README.md`](README.md) from step 3, in `/opt/lotuspond-health/deploy`:
