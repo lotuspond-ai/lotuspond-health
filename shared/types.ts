@@ -7,7 +7,7 @@ export type OrganId =
 
 /** Body systems used to group biomarkers in the UI. */
 export type SystemId =
-  | 'heart' | 'metabolic' | 'liver' | 'kidney' | 'blood' | 'thyroid' | 'nutrition' | 'inflammation' | 'hormones' | 'urine';
+  | 'heart' | 'metabolic' | 'liver' | 'kidney' | 'blood' | 'thyroid' | 'nutrition' | 'inflammation' | 'hormones' | 'urine' | 'vitals';
 
 export type Status = 'low' | 'normal' | 'high' | 'unknown';
 
@@ -76,6 +76,8 @@ export interface ParseResult {
   detectedDate: string | null;
   /** Files read with OCR (photos, scanned PDFs) and how well that went; the review offers a better read when poor. */
   reads?: FileRead[];
+  /** Plain information for the review, such as what an import from Apple Health covered. */
+  notes?: string[];
 }
 
 /** How a photographed or scanned report was read on the device. */

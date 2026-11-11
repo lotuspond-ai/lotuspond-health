@@ -38,6 +38,8 @@
 	</dict>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Unlock LotusPond Health with Face ID so only you can open your results.</string>
+	<key>NSHealthShareUsageDescription</key>
+	<string>Import blood pressure, glucose, weight and other measurements you choose from Apple Health into your LotusPond records. You check them before they are added. LotusPond never changes your Apple Health data.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Take a photo of a lab report or scan to add it to your body map. Photos stay on this device.</string>
 	<key>NSPhotoLibraryUsageDescription</key>

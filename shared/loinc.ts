@@ -97,6 +97,15 @@ export const LOINC: Readonly<Record<string, string>> = {
   urine_rbc: '13945-1',
   urine_pus_cells: '5821-4',
   urine_nitrite: '5802-4',
+  bp_systolic: '8480-6',
+  bp_diastolic: '8462-4',
+  resting_heart_rate: '40443-4',
+  spo2: '59408-5',
+  respiratory_rate: '9279-1',
+  body_temperature: '8310-5',
+  body_weight: '29463-7',
+  body_fat: '41982-0',
+  glucose_meter: '41653-7',
 };
 
 /** LOINC's mod-10 check digit for the part before the dash. */

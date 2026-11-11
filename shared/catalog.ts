@@ -14,6 +14,7 @@ export const SYSTEM_LABELS: Record<SystemId, string> = {
   inflammation: 'Inflammation',
   hormones: 'Hormones',
   urine: 'Urine',
+  vitals: 'Vitals & body',
 };
 
 type Extra = Pick<BiomarkerDef, 'altUnits' | 'typical' | 'lowerIsBetter'>;
@@ -447,9 +448,49 @@ const URINE: BiomarkerDef[] = [
     { lowerIsBetter: true }),
 ];
 
+// Measured at home or by a phone, watch or scale (docs/health-import.md), or typed in. Aliases are kept specific so
+// that a report header such as "Weight: 70 kg" or "Pulse" beside the patient's name does not become a result.
+const VITALS: BiomarkerDef[] = [
+  def('bp_systolic', 'Systolic blood pressure', 'mmHg', 'vitals', ['heart'],
+    ['systolic blood pressure', 'systolic bp', 'bp systolic', 'blood pressure systolic', 'systolic pressure', 'sbp'],
+    'The higher number in a blood pressure reading: the pressure in the arteries while the heart beats.',
+    { typical: { low: 90, high: 120 }, lowerIsBetter: true }),
+  def('bp_diastolic', 'Diastolic blood pressure', 'mmHg', 'vitals', ['heart'],
+    ['diastolic blood pressure', 'diastolic bp', 'bp diastolic', 'blood pressure diastolic', 'diastolic pressure', 'dbp'],
+    'The lower number in a blood pressure reading: the pressure in the arteries between beats.',
+    { typical: { low: 60, high: 80 }, lowerIsBetter: true }),
+  def('resting_heart_rate', 'Resting heart rate', 'bpm', 'vitals', ['heart'],
+    ['resting heart rate', 'resting pulse', 'resting pulse rate', 'rhr', 'heart rate resting'],
+    'Heartbeats per minute at rest. Fitness, sleep, illness and some medicines change it.',
+    { altUnits: [{ unit: 'beats/min', factor: 1 }, { unit: '/min', factor: 1 }], typical: { low: 60, high: 100 } }),
+  def('spo2', 'Oxygen saturation (SpO2)', '%', 'vitals', ['lungs'],
+    ['spo2', 'sp o2', 'oxygen saturation', 'pulse oximetry', 'blood oxygen', 'o2 saturation', 'oxygen saturation spo2'],
+    'How much of the blood’s haemoglobin is carrying oxygen, as measured by a finger or wrist sensor.',
+    { typical: { low: 95 } }),
+  def('respiratory_rate', 'Respiratory rate', 'breaths/min', 'vitals', ['lungs'],
+    ['respiratory rate', 'breathing rate', 'respiration rate', 'breaths per minute'],
+    'Breaths per minute at rest, often measured by a watch during sleep.',
+    { altUnits: [{ unit: '/min', factor: 1 }], typical: { low: 12, high: 20 } }),
+  def('body_temperature', 'Body temperature', '°C', 'vitals', [],
+    ['body temperature', 'body temp', 'oral temperature'],
+    'Temperature measured with a thermometer. It is a little lower in the morning and higher in the evening.',
+    { altUnits: [{ unit: 'C', factor: 1 }, { unit: 'celsius', factor: 1 }], typical: { low: 36.1, high: 37.2 } }),
+  def('body_weight', 'Body weight', 'kg', 'vitals', [],
+    ['body weight', 'body mass weight'],
+    'Weight from a scale. Its trend over weeks says more than any single day.',
+    { altUnits: [{ unit: 'kgs', factor: 1 }, { unit: 'lb', factor: 0.45359237 }, { unit: 'lbs', factor: 0.45359237 }] }),
+  def('body_fat', 'Body fat', '%', 'vitals', [],
+    ['body fat', 'body fat percentage', 'body fat percent', 'fat percentage'],
+    'The share of body weight that is fat, estimated by a smart scale or other device. Devices differ, so compare readings from the same one.'),
+  def('glucose_meter', 'Glucose (home meter)', 'mg/dL', 'metabolic', ['pancreas'],
+    ['glucose home meter', 'home glucose', 'glucometer', 'glucometer glucose', 'capillary blood glucose', 'cbg', 'glucose capillary', 'fingerstick glucose', 'sensor glucose', 'cgm glucose'],
+    'Blood sugar from a finger-prick meter or a glucose sensor (CGM). Imported as one average per day; it rises after meals.',
+    { altUnits: [GLU_MMOL], typical: { low: 70, high: 180 } }),
+];
+
 export const BIOMARKERS: BiomarkerDef[] = [
   ...LIPIDS, ...METABOLIC, ...CARDIAC, ...INFLAMMATION, ...LIVER, ...KIDNEY,
-  ...BLOOD, ...NUTRITION, ...THYROID, ...HORMONES, ...URINE,
+  ...BLOOD, ...NUTRITION, ...THYROID, ...HORMONES, ...URINE, ...VITALS,
 ];
 
 for (const b of BIOMARKERS) if (LOINC[b.id]) b.loinc = LOINC[b.id];
@@ -477,7 +518,7 @@ const QUALIFIER_WORDS = ['ratio', 'ionized', 'ionised', 'ionic', 'urine', 'urina
 /** Qualifiers that may be ignored when no other alias carries them (e.g. "Calcium Total" → calcium). */
 const SOFT_QUALIFIER_WORDS = ['direct', 'total', 'fasting'];
 /** Aliases that are only trusted as an exact match, never inside a longer name. */
-const EXACT_ONLY = new Set(['mon', 'neu', 'lym', 'bas', 'eos', 'sap', 'got', 'gpt', 'abc', 'alc', 'amc', 'aec', 'anc', 'alb', 'glob', 'chol', 'trig', 'tni', 'tnt', 'hcy', 'co2', 'tco2', 'saturation', 'reaction', 'protein', 'ketone', 'ketones', 'fbg', 'ppg', 'rbg', 'abg', 'mbg', 'homa', 'ggtp', 'hct', 'tlc', 'tibc saturation']);
+const EXACT_ONLY = new Set(['mon', 'neu', 'lym', 'bas', 'eos', 'sap', 'got', 'gpt', 'abc', 'alc', 'amc', 'aec', 'anc', 'alb', 'glob', 'chol', 'trig', 'tni', 'tnt', 'hcy', 'co2', 'tco2', 'saturation', 'reaction', 'protein', 'ketone', 'ketones', 'fbg', 'ppg', 'rbg', 'abg', 'mbg', 'cbg', 'sbp', 'dbp', 'rhr', 'glucometer', 'homa', 'ggtp', 'hct', 'tlc', 'tibc saturation']);
 
 function singular(w: string): string {
   return w.length >= 4 && w.endsWith('s') && !w.endsWith('ss') && !w.endsWith('us') ? w.slice(0, -1) : w;

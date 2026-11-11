@@ -151,6 +151,7 @@ const WATCH: { words: RegExp; markers: string[]; everyDays: number; label: strin
   { words: /diabet|prediabet|insulin resist|\bpcos\b/i, markers: ['hba1c'], everyDays: 180, label: 'blood sugar' },
   { words: /cholesterol|lipid|hyperlipid|heart|coronary|cardi/i, markers: ['ldl'], everyDays: 365, label: 'cholesterol' },
   { words: /hypertens|blood pressure|kidney|renal|\bckd\b/i, markers: ['creatinine', 'egfr'], everyDays: 365, label: 'kidney function' },
+  { words: /hypertens|high blood pressure/i, markers: ['bp_systolic'], everyDays: 90, label: 'blood pressure' },
   { words: /thyroid|hashimoto|graves/i, markers: ['tsh'], everyDays: 365, label: 'thyroid' },
   { words: /an(a)?emia|iron deficien/i, markers: ['hemoglobin', 'ferritin'], everyDays: 180, label: 'blood count and iron' },
   { words: /fatty liver|hepat|liver/i, markers: ['alt'], everyDays: 365, label: 'liver' },

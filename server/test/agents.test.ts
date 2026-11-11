@@ -376,4 +376,14 @@ describe('synthesis', () => {
     assert.ok(f.some(x => x.marker === 'HbA1c' && /repeat/.test(x.suggestion)), 'out of range for more than 3 months');
     assert.ok(f.some(x => x.marker === 'TSH' && /No TSH result/.test(x.reason)));
   });
+
+  test('hypertension: blood pressure readings imported from a phone count, and old ones are flagged', () => {
+    const now = Date.parse('2026-11-10T00:00:00Z');
+    const bp = (date: string, id: string) => ({ ...measurement({ markerId: 'bp_systolic', rawName: 'Systolic blood pressure', value: 118, valueText: '118', unit: 'mmHg', range: { low: 90, high: 120, source: 'typical' }, status: 'normal', date, sourceFile: 'Apple Health' }), id });
+    const recent = markerSummaries([bp('2026-11-01', '1')] as Parameters<typeof markerSummaries>[0], now);
+    assert.equal(recent[0].loinc, '8480-6');
+    assert.ok(!followUps({ conditions: ['Hypertension'] }, recent).some(x => x.marker === 'Systolic blood pressure'), 'a reading this month is enough');
+    const old = markerSummaries([bp('2026-05-01', '1')] as Parameters<typeof markerSummaries>[0], now);
+    assert.ok(followUps({ conditions: ['High blood pressure'] }, old).some(x => x.marker === 'Systolic blood pressure' && /every 3 months/.test(x.reason)));
+  });
 });
