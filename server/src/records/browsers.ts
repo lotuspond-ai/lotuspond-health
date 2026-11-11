@@ -37,7 +37,11 @@ export interface BrowserProvider {
   open(opts: OpenOptions): Promise<BrowserSession>;
 }
 
-/** Whether a URL's host is one of the allowed hosts or a subdomain of one. Data, blob and about URLs are allowed. */
+/**
+ * Whether a URL is allowed: its host is one of the allowed hosts or a subdomain of one. An entry with a path
+ * ("www.googleapis.com/identitytoolkit/") allows only that exact host and addresses under that path: a portal's
+ * sign-in service on a shared host, without the rest of the host. Data, blob and about URLs are allowed.
+ */
 export function hostAllowed(url: string, allow: string[]): boolean {
   let u: URL;
   try { u = new URL(url); } catch { return false; }
@@ -45,18 +49,28 @@ export function hostAllowed(url: string, allow: string[]): boolean {
   if (u.protocol !== 'https:' && u.protocol !== 'http:') return false;
   const host = u.hostname.toLowerCase();
   return allow.some(h => {
-    const a = h.toLowerCase().replace(/^\.+/, '');
-    return host === a || host.endsWith(`.${a}`);
+    const entry = h.toLowerCase().replace(/^\.+/, '');
+    const slash = entry.indexOf('/');
+    if (slash > 0) return u.protocol === 'https:' && host === entry.slice(0, slash) && u.pathname.toLowerCase().startsWith(entry.slice(slash));
+    return host === entry || host.endsWith(`.${entry}`);
   });
 }
 
 async function prepare(context: BrowserContext, opts: OpenOptions): Promise<void> {
   context.setDefaultTimeout(30_000);
   context.setDefaultNavigationTimeout(45_000);
+  // Development (RECORD_DEBUG_DIR): log what the host rule blocks and which portal requests fail, to fix recipes.
+  const debug = !!process.env.RECORD_DEBUG_DIR && process.env.NODE_ENV !== 'production';
   await context.route('**/*', route => {
     const url = route.request().url();
-    return hostAllowed(url, opts.allowHosts) ? route.continue() : route.abort('blockedbyclient');
+    if (hostAllowed(url, opts.allowHosts)) return route.continue();
+    if (debug) console.log(`[records:debug] blocked ${route.request().resourceType()} ${new URL(url).host}${new URL(url).pathname.slice(0, 60)}`);
+    return route.abort('blockedbyclient');
   });
+  if (debug) {
+    context.on('response', r => { if (r.status() >= 400) console.log(`[records:debug] ${r.status()} ${r.request().method()} ${r.url().slice(0, 140)}`); });
+    context.on('requestfailed', r => { const f = r.failure()?.errorText ?? ''; if (!/blockedbyclient/i.test(f)) console.log(`[records:debug] failed ${f} ${r.url().slice(0, 140)}`); });
+  }
 }
 
 const contextOptions = (opts: OpenOptions) => ({

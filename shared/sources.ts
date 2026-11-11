@@ -26,7 +26,7 @@ export interface SourceInfo {
   holds: string[];
   access: SourceAccess;
   signIn: SourceSignIn;
-  /** Where the agent's browser may go (browser sources). Subdomains are included. */
+  /** Where the agent's browser may go (browser sources). Subdomains are included; an entry with a path allows only that path on that exact host. */
   hosts?: string[];
   /** The page the agent starts on. */
   startUrl?: string;
@@ -112,7 +112,8 @@ export const SOURCES: SourceInfo[] = [
 
   /* ---------------- hospitals ---------------- */
   { id: 'apollo', name: 'Apollo Hospitals (Apollo 24|7)', category: 'hospital', regions: IN, access: 'browser', signIn: 'otp',
-    hosts: ['apollo247.com', 'apollo247.in', 'apollohospitals.com'], startUrl: 'https://www.apollo247.com/guest-health-records',
+    // Apollo signs people in with Firebase (seen live): its token checks only, not the rest of googleapis.com.
+    hosts: ['apollo247.com', 'apollo247.in', 'apollohospitals.com', 'www.googleapis.com/identitytoolkit/', 'securetoken.googleapis.com'], startUrl: 'https://www.apollo247.com/guest-health-records',
     holds: ['Lab reports', 'Prescriptions', 'Discharge summaries', 'Consultations'],
     note: 'Signs in with your mobile number and OTP, then downloads what Apollo Health Records holds from Apollo Hospitals, Diagnostics, Clinics and 24|7.' },
   { id: 'fortis', name: 'Fortis Healthcare', category: 'hospital', regions: IN, access: 'browser', signIn: 'otp',

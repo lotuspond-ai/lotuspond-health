@@ -104,7 +104,7 @@ Every run opens a **new browser**. Nothing is shared between runs except the sig
 
 Whatever the provider:
 
-- **Allowed hosts only.** The browser may reach only the source's hosts. Every other request is aborted, so a page cannot send data elsewhere through the agent.
+- **Allowed hosts only.** The browser may reach only the source's hosts. Every other request is aborted, so a page cannot send data elsewhere through the agent. An entry with a path allows only that path on that exact host, over https. Apollo 24|7, for example, signs people in with Firebase, so it lists `www.googleapis.com/identitytoolkit/` and `securetoken.googleapis.com` (seen live), not the rest of googleapis.com.
 - **Downloads.** Downloads follow the same rule, redirects included, and are size-limited (`MAX_UPLOAD_MB`).
 - **Service workers** are blocked, so nothing can fetch around that rule.
 - **Settings.** Locale en-IN, time zone Asia/Kolkata.

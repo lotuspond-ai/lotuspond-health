@@ -101,6 +101,12 @@ describe('record agent', { timeout: 180_000 }, () => {
     assert.ok(!hostAllowed('https://lalpathlabs.com.evil.example/', ['lalpathlabs.com']));
     assert.ok(!hostAllowed('file:///etc/passwd', ['lalpathlabs.com']));
     assert.ok(hostAllowed('data:text/plain,hi', ['lalpathlabs.com']));
+    // A path entry: that sign-in service only, not the rest of the shared host.
+    const apollo = ['apollo247.com', 'www.googleapis.com/identitytoolkit/'];
+    assert.ok(hostAllowed('https://www.googleapis.com/identitytoolkit/v3/relyingparty/verifyCustomToken?key=x', apollo));
+    assert.ok(!hostAllowed('https://www.googleapis.com/upload/storage/v1/b/x/o', apollo));
+    assert.ok(!hostAllowed('https://evil.www.googleapis.com/identitytoolkit/v3', apollo));
+    assert.ok(!hostAllowed('http://www.googleapis.com/identitytoolkit/v3', apollo));
   });
 
   test('lists the sources, with the demo portal and what each can do', async () => {
