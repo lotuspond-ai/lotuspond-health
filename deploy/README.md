@@ -79,6 +79,8 @@ Importing again with the same file updates the existing entries; it does not cre
 
 ## 6. Updates
 
+To deploy automatically on every push to `main` (and `development` to a staging server), set up [`ci-cd.md`](ci-cd.md). By hand:
+
 ```bash
 git pull
 ```
