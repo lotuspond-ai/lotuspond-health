@@ -15,7 +15,7 @@ Sign-up tells every person where their records are stored. That promise is only 
 
 Anyone from a region this server does not hold sees why they cannot sign up yet; nothing is stored for them.
 
-**Starting point:** one server in India with `SERVED_REGIONS=in`, since the partner labs start in India. Add a server per region later, each with this same folder and its own `SERVED_REGIONS` and secrets. Then set `REGION_API_ORIGINS` so the mobile apps and sign-in know which host holds which region (see the main README, "Data residency" and "Mobile apps").
+**Starting point:** one server in India with `SERVED_REGIONS=in`, since the partner labs start in India. On AWS, follow [`aws-lightsail.md`](aws-lightsail.md): an Amazon Lightsail instance in Mumbai, with backups to S3 in the same region. Add a server per region later, each with this same folder and its own `SERVED_REGIONS` and secrets. Then set `REGION_API_ORIGINS` so the mobile apps and sign-in know which host holds which region (see the main README, "Data residency" and "Mobile apps").
 
 ## 2. Prepare the server
 
