@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import type { Hono } from 'hono';
 import type { AgentConnection, AgentConnectionsInfo, CreatedAgentToken } from '../../shared/agents.ts';
 import type { ActivityEvent, Profile, SessionInfo } from '../../shared/types.ts';
+import { describeWrite, type NotificationList } from '../../shared/notifications.ts';
 import { createApp } from '../src/app.ts';
 import { loadConfig } from '../src/config.ts';
 import { openDatabase, type Database } from '../src/db/client.ts';
@@ -331,6 +332,53 @@ describe('MCP tools', () => {
     await c.json('DELETE', `/api/agents/${connections[0].id}`, undefined, 204);
     assert.equal((await mcp(t.access_token, 'ping')).status, 401);
     assert.equal((await token({ grant_type: 'refresh_token', refresh_token: t.refresh_token, client_id: t.clientId })).body.error, 'invalid_grant');
+  });
+});
+
+describe('notifications of agent writes', () => {
+  test('each addition is listed with an unread count, can be marked read, and undone from the notification', async () => {
+    const { c, self } = await account();
+    const t = await connect(c, [self.id], ['health:read', 'health:write']);
+    const saved = await call(t.access_token, 'log_reading', { marker: 'Fasting glucose', value: 131, unit: 'mg/dL', date: '2026-11-01' });
+    const measurementId = saved.structuredContent!.saved ? (await c.json<{ measurements: { id: string; sourceFile: string }[] }>('GET', `/api/profiles/${self.id}/records`)).measurements.find(m => m.sourceFile === 'Added by Claude')!.id : '';
+    await call(t.access_token, 'add_to_profile', { medications: ['Metformin 500 mg'], conditions: ['type 2 diabetes', 'Hypertension'] });
+    await call(t.access_token, 'add_to_profile', { conditions: ['Hypertension'] });
+
+    let list = await c.json<NotificationList>('GET', '/api/notifications');
+    assert.equal(list.unread, 2, 'a duplicate-only addition is not a notification');
+    assert.equal(list.items.length, 2);
+    const [profileNote, readingNote] = list.items;
+    assert.equal(readingNote.agentName, 'Claude');
+    assert.deepEqual(readingNote.detail, { type: 'reading', measurementId, marker: 'Fasting glucose', value: '131', unit: 'mg/dL', date: '2026-11-01' });
+    assert.deepEqual(profileNote.detail, { type: 'profile', conditions: ['Hypertension'], medications: ['Metformin 500 mg'], allergies: [] }, 'only what was new');
+    assert.equal(describeWrite(profileNote.detail), 'a condition: Hypertension; a medication: Metformin 500 mg');
+
+    list = await c.json<NotificationList>('POST', '/api/notifications/read', { ids: [readingNote.id] });
+    assert.equal(list.unread, 1);
+
+    // Someone else cannot see or undo them.
+    const other = (await account()).c;
+    assert.equal((await other.json<NotificationList>('GET', '/api/notifications')).items.length, 0);
+    assert.equal((await other.error('POST', `/api/notifications/${readingNote.id}/undo`, {})).status, 404);
+
+    // The person adds an allergy themselves, then undoes the agent's profile entries: only those go.
+    await c.json('PATCH', `/api/profiles/${self.id}`, { allergies: ['Penicillin'] });
+    const undone = await c.json<{ removed: boolean; notification: { undoneAt: string | null } }>('POST', `/api/notifications/${profileNote.id}/undo`, {});
+    assert.equal(undone.removed, true);
+    assert.ok(undone.notification.undoneAt);
+    const prof = (await c.json<Profile[]>('GET', '/api/profiles')).find(p => p.id === self.id)!;
+    assert.deepEqual(prof.conditions, ['Type 2 diabetes']);
+    assert.deepEqual(prof.medications, []);
+    assert.deepEqual(prof.allergies, ['Penicillin']);
+
+    const r = await c.json<{ removed: boolean }>('POST', `/api/notifications/${readingNote.id}/undo`, {});
+    assert.equal(r.removed, true);
+    const records = await c.json<{ measurements: { id: string }[] }>('GET', `/api/profiles/${self.id}/records`);
+    assert.ok(!records.measurements.some(m => m.id === measurementId), 'the reading is gone');
+    assert.equal((await c.json<{ removed: boolean }>('POST', `/api/notifications/${readingNote.id}/undo`, {})).removed, false, 'undoing twice changes nothing');
+    const activity = await c.json<ActivityEvent[]>('GET', '/api/auth/activity');
+    assert.equal(activity.filter(e => e.kind === 'agent_write_undone').length, 2);
+    assert.equal((await c.json<NotificationList>('GET', '/api/notifications')).unread, 0, 'undoing also marks it read');
   });
 });
 

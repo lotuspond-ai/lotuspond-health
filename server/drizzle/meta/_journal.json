@@ -64,6 +64,13 @@
       "when": 1794397770817,
       "tag": "0008_agent_categories",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1794399877717,
+      "tag": "0009_notifications",
+      "breakpoints": true
     }
   ]
 }

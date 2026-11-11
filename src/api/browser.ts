@@ -16,6 +16,7 @@ import { uid } from '../lib/id';
 import { ApiError, type Backend, type ScanPatch } from './backend';
 import { needsGuardian } from '../../shared/family';
 import type { AgentConnection, AgentConnectionsInfo, CreatedAgentToken } from '../../shared/agents';
+import type { NotificationList, UndoResult } from '../../shared/notifications';
 import type { AiExtraction } from '../../shared/types';
 import type { LabCatalog, LabOrderView, LabResultSaved, LabResultView, LabSlot } from '../../shared/lab-bundle';
 
@@ -537,6 +538,10 @@ export class BrowserBackend implements Backend {
   }
 
   async agentConnections(): Promise<AgentConnectionsInfo> { throw noAgents(); }
+  // No agents can connect to the preview, so nothing is ever added by one.
+  async notifications(): Promise<NotificationList> { return { unread: 0, items: [] }; }
+  async markNotificationsRead(): Promise<NotificationList> { return { unread: 0, items: [] }; }
+  async undoNotification(): Promise<UndoResult> { throw noAgents(); }
   async createAgentToken(): Promise<CreatedAgentToken> { throw noAgents(); }
   async updateAgentConnection(): Promise<AgentConnection> { throw noAgents(); }
   async disconnectAgent(): Promise<void> { throw noAgents(); }

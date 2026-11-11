@@ -17,6 +17,7 @@ import { toDocument, toMeasurement, toProfile, toScan } from '../serialize.ts';
 import { orderView } from '../lab/booking/view.ts';
 import { ageYears, bmi, DISCLAIMER, healthSummary, markerSummaries, summarizeMarker } from './synthesis.ts';
 import { grantCategories } from './grants.ts';
+import { notifyAgentWrite } from '../notifications.ts';
 
 export interface ToolContext {
   deps: Deps;
@@ -224,7 +225,7 @@ export const TOOLS: Tool[] = [
   tool({
     name: 'log_reading',
     title: 'Add a reading',
-    description: 'Save a reading the person tells you, such as weight, blood pressure (one call per value: systolic and diastolic separately), fasting glucose or a home test. Only save what the person stated; never estimate. The entry is marked as added by this agent and can be removed in the app.',
+    description: 'Save a reading the person tells you, such as weight, blood pressure (one call per value: systolic and diastolic separately), fasting glucose or a home test. Only save what the person stated; never estimate. The entry is marked as added by this agent; the person is notified in the app and can undo it.',
     scope: 'health:write',
     category: 'results',
     writes: true,
@@ -250,6 +251,10 @@ export const TOOLS: Tool[] = [
         date: args.date ?? new Date().toISOString().slice(0, 10),
         sourceFile: `Added by ${ctx.grant.name}`.slice(0, 200), confidence: 'medium',
       }).returning();
+      await notifyAgentWrite(ctx.cell.db, {
+        userId: ctx.user.id, profileId: p.id, connectionId: ctx.grant.id, agentName: ctx.grant.name,
+        detail: { type: 'reading', measurementId: row.id, marker: row.rawName.slice(0, 120), value: row.valueText.slice(0, 40), unit: row.unit.slice(0, 30), date: row.date },
+      });
       return { saved: point(toMeasurement(row)), profile: { id: p.id, name: p.displayName } };
     },
   }),
@@ -257,7 +262,7 @@ export const TOOLS: Tool[] = [
   tool({
     name: 'add_to_profile',
     title: 'Add conditions, medications or allergies',
-    description: 'Add conditions, medications or allergies the person tells you to their profile. Only add what they stated; existing entries are kept and duplicates are skipped. Nothing is removed: removals are done by the person in the app.',
+    description: 'Add conditions, medications or allergies the person tells you to their profile. Only add what they stated; existing entries are kept and duplicates are skipped. Nothing is removed: removals are done by the person in the app, who is notified of what you add and can undo it.',
     scope: 'health:write',
     category: 'conditions',
     writes: true,
@@ -270,12 +275,18 @@ export const TOOLS: Tool[] = [
     async run(ctx, args) {
       const p = await profileFor(ctx, args.profile_id);
       if (!args.conditions?.length && !args.medications?.length && !args.allergies?.length) throw new ToolError('Pass at least one condition, medication or allergy.');
-      const [row] = await ctx.cell.db.update(profiles).set({
+      const next = {
         conditions: appendUnique(p.conditions, args.conditions),
         medications: appendUnique(p.medications, args.medications),
         allergies: appendUnique(p.allergies, args.allergies),
-        updatedAt: new Date(),
-      }).where(eq(profiles.id, p.id)).returning();
+      };
+      const [row] = await ctx.cell.db.update(profiles).set({ ...next, updatedAt: new Date() }).where(eq(profiles.id, p.id)).returning();
+      // Only what was new: duplicates were skipped, so they are not the agent's to undo.
+      const added = (before: string[], after: string[]) => after.slice(before.length);
+      const detail = { type: 'profile' as const, conditions: added(p.conditions, next.conditions), medications: added(p.medications, next.medications), allergies: added(p.allergies, next.allergies) };
+      if (detail.conditions.length || detail.medications.length || detail.allergies.length) {
+        await notifyAgentWrite(ctx.cell.db, { userId: ctx.user.id, profileId: p.id, connectionId: ctx.grant.id, agentName: ctx.grant.name, detail });
+      }
       return { profile: { id: row.id, name: row.displayName, conditions: row.conditions, medications: row.medications, allergies: row.allergies } };
     },
   }),

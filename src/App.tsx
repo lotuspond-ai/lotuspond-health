@@ -15,6 +15,7 @@ import { useLab } from './state/lab';
 import { AuthScreen, Offline, Splash } from './components/Auth';
 import { Onboarding } from './components/Onboarding';
 import { AddProfileDialog, ProfileMenu, Toasts } from './components/ProfileMenu';
+import { NotificationBell } from './components/Notifications';
 import { LockScreen } from './components/AppLock';
 import { Icon, Logo } from './components/ui';
 import { isPreview } from './api';
@@ -92,6 +93,7 @@ function Shell({ hidden }: { hidden: boolean }) {
         <div className="topbar__end">
           {isPreview && <span className="privacy" title="This preview has no server. Your account and records are saved in this browser only.">{Icon.lock} Preview · saved in this browser</span>}
           <button className="btn btn--primary topbar__upload" onClick={() => setUploadOpen(true)}>{Icon.upload} Upload</button>
+          <NotificationBell />
           <ProfileMenu />
         </div>
       </header>

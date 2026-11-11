@@ -212,7 +212,7 @@ export type AuditKind =
   | 'account_created' | 'sign_in' | 'sign_in_failed' | 'sign_out' | 'password_changed' | 'sessions_revoked'
   | 'export' | 'profile_deleted' | 'records_deleted' | 'account_deleted' | 'consent_changed' | 'preferences_changed'
   | 'lab_order_created' | 'lab_order_cancelled' | 'lab_results_saved'
-  | 'agent_connected' | 'agent_disconnected' | 'agent_access' | 'agent_wrote'
+  | 'agent_connected' | 'agent_disconnected' | 'agent_access' | 'agent_wrote' | 'agent_write_undone'
   | 'report_read_by_ai';
 
 /** The only details an audit event may carry. Deliberately narrow: never names, values, file names or other health data. */

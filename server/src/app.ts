@@ -18,6 +18,7 @@ import { configRoutes, mapFileRoutes } from './routes/config.ts';
 import { addCspSources, mapCspSources } from './facilities/index.ts';
 import { hookRoutes, labOrderRoutes, labResultRoutes, labRoutes } from './lab/routes.ts';
 import { agentRoutes } from './agents/routes.ts';
+import { notificationRoutes } from './routes/notifications.ts';
 import { extractionRoutes } from './extraction/routes.ts';
 import { mcpRoutes } from './agents/mcp.ts';
 import { oauthRoutes, type OAuthOptions } from './agents/oauth.ts';
@@ -129,6 +130,7 @@ export function createApp(input: DepsInput, opts: { oauth?: OAuthOptions } = {})
     app.route('/api/profiles/:pid/lab-results', labResultRoutes(deps, deps.labs));
   }
   app.route('/api/agents', agentRoutes(deps));
+  app.route('/api/notifications', notificationRoutes(deps));
   if (deps.extractor) app.route('/api/profiles/:pid/extract', extractionRoutes(deps, deps.extractor));
   app.route('/api/profiles', profileRoutes(deps));
   app.route('/api/facilities', facilityRoutes(deps));

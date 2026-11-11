@@ -5,6 +5,7 @@ import type {
   RegisterInput, ScanInput, FamilyConfirmation, AiExtraction, ScanItem, ServiceInfo, SessionInfo, StoredDocument,
   FacilityQuery, FacilitySearchResult, GeoCandidate, GeoReverse, PublicConfig,
 } from '../types';
+import type { NotificationList, UndoResult } from '../../shared/notifications';
 import type { AgentConnection, AgentConnectionsInfo, CreateAgentTokenInput, CreatedAgentToken, UpdateAgentConnectionInput } from '../../shared/agents';
 import type { LabBookingInput, LabCatalog, LabOrderView, LabResultSaved, LabResultView, LabSlot } from '../../shared/lab-bundle';
 
@@ -120,6 +121,11 @@ export interface Backend {
   createAgentToken(input: CreateAgentTokenInput): Promise<CreatedAgentToken>;
   updateAgentConnection(id: string, patch: UpdateAgentConnectionInput): Promise<AgentConnection>;
   disconnectAgent(id: string): Promise<void>;
+
+  /* Notifications (shared/notifications.ts): what connected agents added, with an undo. Needs the LotusPond server. */
+  notifications(): Promise<NotificationList>;
+  markNotificationsRead(ids?: string[]): Promise<NotificationList>;
+  undoNotification(id: string): Promise<UndoResult>;
 }
 
 /** A message suitable for showing to the person. */

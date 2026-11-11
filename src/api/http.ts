@@ -1,6 +1,7 @@
 // Backend that talks to the LotusPond API: on the same origin (/api) with cookie sessions on the website, or
 // across sites with token sessions in the iOS and Android apps (see ./appSession.ts).
 import { AI_EXTRACTION_NOTICE_VERSION, type AiExtraction } from '../../shared/types';
+import type { NotificationList, UndoResult } from '../../shared/notifications';
 import type { AgentConnection, AgentConnectionsInfo, CreateAgentTokenInput, CreatedAgentToken, UpdateAgentConnectionInput } from '../../shared/agents';
 import type {
   Account, ActivityEvent, FamilyConfirmation, ConsentKind, ConsentRecord, DocumentKind, Measurement, MeasurementInput, Profile, ProfileInput, ProfileRecords,
@@ -232,6 +233,9 @@ export class HttpBackend implements Backend {
   createAgentToken(input: CreateAgentTokenInput) { return this.request<CreatedAgentToken>('POST', '/agents/tokens', input); }
   updateAgentConnection(id: string, patch: UpdateAgentConnectionInput) { return this.request<AgentConnection>('PATCH', `/agents/${id}`, patch); }
   disconnectAgent(id: string) { return this.request<void>('DELETE', `/agents/${id}`); }
+  notifications() { return this.request<NotificationList>('GET', '/notifications'); }
+  markNotificationsRead(ids?: string[]) { return this.request<NotificationList>('POST', '/notifications/read', ids ? { ids } : {}); }
+  undoNotification(id: string) { return this.request<UndoResult>('POST', `/notifications/${id}/undo`, {}); }
 
   extractReport(pid: string, file: Blob, fileName: string) {
     const form = new FormData();

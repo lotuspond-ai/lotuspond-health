@@ -12,6 +12,7 @@ import { purgeOldEvents } from './compliance/audit.ts';
 import { EncryptedFileStore } from './lib/files-encrypted.ts';
 import { purgeExpiredSessions } from './auth/sessions.ts';
 import { purgeExpiredAgentSecrets } from './agents/grants.ts';
+import { purgeOldNotifications } from './notifications.ts';
 import { createApp } from './app.ts';
 import { claudeExtractor } from './extraction/claude.ts';
 import { createLabs, fakePartner, orangePartner, type Labs } from './lab/runtime.ts';
@@ -60,6 +61,7 @@ async function sweep() {
     await purgeExpiredSessions(cell.db);
     await purgeOldEvents(cell.db, config.auditRetentionMs);
     await purgeExpiredAgentSecrets(cell.db);
+    await purgeOldNotifications(cell.db);
   }
 }
 await sweep();
