@@ -624,6 +624,37 @@ section('health import');
   check('health: every kind maps to catalogue markers with LOINC codes', h.IMPORT_KINDS.every(x => x.markers.every(id => findMarker(id)?.loinc)));
 }
 
+/* ---------------- FHIR R4 (ABDM / ABHA apps) ---------------- */
+section('fhir');
+{
+  const f = await import(lib('parse/fhir.ts'));
+  const text = readFileSync(join(fixtures, 'fhir/lab-record-bundle.json'), 'utf8');
+  const r = parseJsonText(text, 'lab-record-bundle.json');
+  const by = id => r.measurements.find(m => m.markerId === id);
+  check('fhir: bundle detected', f.isFhir(JSON.parse(text)));
+  check('fhir: LOINC picks the marker (HbA1c by code, name "HbA1c")', by('hba1c')?.value === 6.1 && by('hba1c')?.status === 'high', JSON.stringify(by('hba1c')));
+  check('fhir: date from effectiveDateTime', by('hba1c')?.date === '2026-10-20');
+  check('fhir: report range kept', by('glucose_fasting')?.range?.low === 70 && by('glucose_fasting')?.range?.high === 100 && by('glucose_fasting')?.range?.source === 'report', JSON.stringify(by('glucose_fasting')?.range));
+  check('fhir: unit from the UCUM code when unit is missing', by('hemoglobin')?.unit === 'g/dL' && by('wbc')?.value === 7.8, `${by('hemoglobin')?.unit} ${by('wbc')?.unit} ${by('wbc')?.value}`);
+  check('fhir: UCUM u[IU]/mL read as µIU/mL', by('tsh')?.value === 2.4 && by('tsh')?.confidence !== 'low', JSON.stringify(by('tsh')));
+  check('fhir: comparator kept (<8)', by('vitamin_d')?.valueText.startsWith('<') && by('vitamin_d')?.status === 'low', JSON.stringify(by('vitamin_d')));
+  check('fhir: coded qualitative value', by('urine_protein')?.valueText === 'Negative');
+  check('fhir: entered-in-error left out', !r.measurements.some(m => m.value === 999) && r.warnings.some(w => /entered in error/.test(w)));
+  check('fhir: preliminary marked for checking', by('ldl')?.confidence === 'low' && r.warnings.some(w => /preliminary/.test(w)));
+  check('fhir: BP panel components become systolic and diastolic', by('bp_systolic')?.value === 132 && by('bp_diastolic')?.value === 86 && by('bp_diastolic')?.unit === 'mmHg', `${JSON.stringify(by('bp_systolic'))} ${JSON.stringify(by('bp_diastolic'))}`);
+  check('fhir: unknown code kept unmatched for review', r.measurements.some(m => !m.markerId && m.rawName === 'Lipoprotein X index'));
+  check('fhir: the panel itself (no value) is not a row', !r.measurements.some(m => /panel/i.test(m.rawName)));
+  check('fhir: whose results these are', r.warnings.some(w => w.includes('Asha Rao')));
+  check('fhir: 11 rows', r.measurements.length === 11, String(r.measurements.length));
+  const single = parseJsonText(JSON.stringify({ resourceType: 'Observation', status: 'final', code: { coding: [{ system: 'http://loinc.org', code: '2093-3' }] }, valueQuantity: { value: 5.2, unit: 'mmol/L' }, effectiveDateTime: '2026-01-05' }), 'obs.json');
+  check('fhir: single Observation, name from LOINC, mmol/L converted', single.measurements[0]?.markerId === 'total_cholesterol' && Math.round(single.measurements[0].value) === 201, JSON.stringify(single.measurements[0]));
+  const pdfOnly = JSON.parse(readFileSync(join(fixtures, 'fhir/pdf-only-report.json'), 'utf8'));
+  const att = f.fhirAttachments(pdfOnly);
+  check('fhir: PDF in presentedForm found', att.length === 1 && att[0].contentType === 'application/pdf' && att[0].title === 'Lipid profile.pdf' && att[0].data.length > 1000);
+  check('fhir: UCUM display', f.ucumDisplay('10*3/uL') === '10^3/µL' && f.ucumDisplay('mm[Hg]') === 'mmHg' && f.ucumDisplay('[IU]/L') === 'IU/L' && f.ucumDisplay('Cel') === '°C' && f.ucumDisplay('ug/dL') === 'µg/dL' && f.ucumDisplay('mg/dL') === 'mg/dL');
+  check('fhir: not FHIR stays with the generic reader', !f.isFhir({ results: [] }));
+}
+
 /* ---------------- summary ---------------- */
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) { console.log('\nFailures:\n  ' + failures.join('\n  ')); process.exitCode = 1; }
