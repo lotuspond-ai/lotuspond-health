@@ -120,6 +120,10 @@ const Env = z.object({
   /** LotusPond as the health information user its consent requests come from (Eka's clinic and doctor ids). */
   EKA_HIU_CLINIC_ID: z.string().trim().min(1).optional(),
   EKA_HIU_DOCTOR_OID: z.string().trim().min(1).optional(),
+  /* Withings (docs/record-agent.md): on when the client id and secret are set. Register the redirect URI
+     PUBLIC_URL/records/oauth/withings/callback in the Withings developer dashboard. */
+  WITHINGS_CLIENT_ID: z.string().trim().min(8).optional(),
+  WITHINGS_CLIENT_SECRET: z.string().trim().min(8).optional(),
   /** The key Eka signs webhooks with; the webhook at /hooks/eka is served only when it is set. */
   EKA_WEBHOOK_SIGNING_KEY: z.string().trim().min(16).optional(),
   OVERPASS_URL: z.string().url().default('https://overpass-api.de/api/interpreter'),
@@ -193,6 +197,8 @@ export interface RecordAgentConfig {
   debugDir?: string;
   /** ABHA through Eka Care's ABDM Connect, when its client is set. */
   eka?: { apiUrl: string; clientId: string; clientSecret: string; hiu?: { clinicId: string; doctorOid: string }; webhookSigningKey?: string };
+  /** Withings, when its client is set; `redirectUri` is where its sign-in page sends people back. */
+  withings?: { clientId: string; clientSecret: string; redirectUri: string };
 }
 
 export interface CellConfig {
@@ -330,6 +336,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       } : {}),
     };
     if (!!e.EKA_CLIENT_ID !== !!e.EKA_CLIENT_SECRET) throw new Error('Invalid configuration: EKA_CLIENT_ID and EKA_CLIENT_SECRET go together.');
+    if (!!e.WITHINGS_CLIENT_ID !== !!e.WITHINGS_CLIENT_SECRET) throw new Error('Invalid configuration: WITHINGS_CLIENT_ID and WITHINGS_CLIENT_SECRET go together.');
+    if (e.WITHINGS_CLIENT_ID && e.WITHINGS_CLIENT_SECRET) {
+      if (!e.PUBLIC_URL) throw new Error('Invalid configuration: Withings needs PUBLIC_URL, for the address its sign-in page sends people back to.');
+      records.withings = { clientId: e.WITHINGS_CLIENT_ID, clientSecret: e.WITHINGS_CLIENT_SECRET, redirectUri: `${new URL(e.PUBLIC_URL).origin}/records/oauth/withings/callback` };
+    }
   }
   const cellVar = (r: DataRegion, name: string) => (e as unknown as Record<string, string | undefined>)[`CELL_${r.toUpperCase()}_${name}`];
   const servedRegions = parseRegions(e.SERVED_REGIONS);

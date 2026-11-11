@@ -13,36 +13,15 @@
 //
 // Written from Eka's ABDM Connect reference (November 2026) and tested against a copy of it (test/abha.test.ts);
 // the client login was checked live, the ABHA steps were not (they need a real ABHA and LotusPond's HIU onboarding).
-import type { SourceInfo } from '../../../../shared/sources.ts';
-import { PortalError, RunStoppedError, type Ask, type PortalReport } from '../recipes/types.ts';
+import type { ApiContext, ApiFetcher } from '../api/types.ts';
+import { PortalError, RunStoppedError, type PortalReport } from '../recipes/types.ts';
 import { EkaError, EkaSessionError, type Eka } from './eka.ts';
 import { ekaRef } from './webhook.ts';
 
 /** What the connection keeps (sealed) between runs. */
 export interface AbhaSession { oid: string; abhaAddress: string }
 
-export interface ApiContext {
-  source: SourceInfo;
-  /** The ABHA address the person signed in with last time, if any. */
-  identifier: string | null;
-  /** The sign-in kept from the last run (JSON), if any. */
-  session: string | null;
-  ask(q: Ask): Promise<string>;
-  remember(identifier: string): void;
-  /** Keep this sign-in, even if the run fails later; `ref` lets webhooks about the person find the connection. */
-  keep(session: string, ref?: string): void;
-  step(text: string): Promise<void>;
-  /** A line for the person about how the run ended ("Approve the request in your ABHA app"). */
-  note(text: string): void;
-  signal: AbortSignal;
-  maxBytes: number;
-}
-
-/** A source the record agent reaches through an API instead of a browser. */
-export interface ApiFetcher {
-  sourceId: string;
-  run(ctx: ApiContext): Promise<PortalReport[]>;
-}
+export type { ApiContext, ApiFetcher } from '../api/types.ts';
 
 /** LotusPond as the health information user (HIU) its consent requests come from: Eka's clinic and doctor ids. */
 export interface AbhaHiu { clinicId: string; doctorOid: string }

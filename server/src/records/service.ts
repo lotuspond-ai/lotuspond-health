@@ -7,7 +7,7 @@
 // `concurrency` at a time; questions wait in memory, so a restart fails the runs that were in flight (tick() marks
 // them) and the person starts again. Scheduled runs never ask: if the portal wants the person, the connection is
 // marked needs_sign_in and waits for them.
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { lookup } from 'node:dns/promises';
@@ -37,7 +37,7 @@ import { thyrocareRecipe } from './recipes/thyrocare.ts';
 import { metropolisRecipe } from './recipes/metropolis.ts';
 import { apollo247Recipe } from './recipes/apollo247.ts';
 import { RecipeDriftError } from './recipes/kit.ts';
-import type { ApiContext, ApiFetcher } from './abdm/abha.ts';
+import { isOAuth, type ApiContext, type ApiFetcher } from './api/types.ts';
 import { NeedsPersonError, PortalError, REPORT_TYPES, RunStoppedError, sniffType, type Ask, type PortalReport, type Recipe, type RecipeContext } from './recipes/types.ts';
 
 const MIN = 60_000, DAY = 24 * 60 * MIN;
@@ -47,6 +47,10 @@ const QUESTION_MS = 5 * MIN;
 const RUN_MS = 15 * MIN;
 /** Reports saved per run, at most. */
 const MAX_REPORTS = 50;
+/** How long the person has to finish a provider's sign-in page. */
+const OAUTH_STATE_MS = 15 * MIN;
+/** The one-time OAuth state, as kept on the connection until the provider sends the person back. */
+const stateRef = (state: string) => `oauth-state:${createHash('sha256').update(state).digest('hex')}`;
 
 export interface RecordAgentOptions {
   cells: CellRegistry;
@@ -59,6 +63,8 @@ export interface RecordAgentOptions {
   navigator?: NavigatorOptions;
   /** ABHA through Eka Care's ABDM Connect (records/abdm/), when it is set up. */
   abdm?: ApiFetcher;
+  /** Sources reached through their own APIs (records/api/: Withings, ...), when each is set up. */
+  apis?: ApiFetcher[];
   /** Extra recipes (tests); the demo recipe is always included. */
   recipes?: Recipe[];
   maxBytes: number;
@@ -81,7 +87,10 @@ export interface RecordAgent {
   browserLabel: string;
   sources(region: DataRegion | null): SourceView[];
   connections(cell: Cell, userId: string): Promise<RecordConnectionView[]>;
-  connect(cell: Cell, user: UserRow, input: ConnectInput): Promise<{ connection: RecordConnectionView; run: RecordRunView }>;
+  /** Connect and start the first run; for a source with its own sign-in page (OAuth) no run yet, but that page. */
+  connect(cell: Cell, user: UserRow, input: ConnectInput): Promise<{ connection: RecordConnectionView; run: RecordRunView | null; authorizeUrl?: string }>;
+  /** The provider sent the person back from its sign-in page: keep the sign-in and start the first run. */
+  oauthCallback(sourceId: string, q: { state?: string; code?: string; error?: string }): Promise<{ ok: true; sourceName: string } | { ok: false; message: string }>;
   update(cell: Cell, userId: string, id: string, patch: { refreshDays: number | null }): Promise<RecordConnectionView>;
   startRun(cell: Cell, user: UserRow, connectionId: string): Promise<RecordRunView>;
   run(cell: Cell, userId: string, runId: string): Promise<RecordRunView>;
@@ -133,6 +142,7 @@ export function createRecordAgent(opts: RecordAgentOptions): RecordAgent {
   const questionMs = opts.questionMs ?? QUESTION_MS;
   const resolve = opts.resolve ?? (async (h: string) => (await lookup(h, { all: true })).map(a => a.address));
   const recipes = new Map<string, Recipe>([demoRecipe, drlalRecipe(), thyrocareRecipe(), metropolisRecipe(), apollo247Recipe(), ...(opts.recipes ?? [])].map(r => [r.sourceId, r] as const));
+  const apis = new Map<string, ApiFetcher>([...(opts.abdm ? [opts.abdm] : []), ...(opts.apis ?? [])].map(f => [f.sourceId, f] as const));
   const live = new Map<string, Live>();
   const queue: Job[] = [];
   let running = 0;
@@ -158,7 +168,8 @@ export function createRecordAgent(opts: RecordAgentOptions): RecordAgent {
   };
 
   function availability(s: SourceInfo): SourceAvailability {
-    if (s.access === 'abdm') return opts.abdm?.sourceId === s.id ? 'abdm' : 'unavailable';
+    if (s.access === 'abdm') return apis.has(s.id) ? 'abdm' : 'unavailable';
+    if (s.access === 'api') return apis.has(s.id) ? 'api' : 'unavailable';
     if (s.access !== 'browser') return 'unavailable';
     if (recipes.has(s.id)) return 'recipe';
     return opts.navigator ? 'navigator' : 'unavailable';
@@ -249,7 +260,7 @@ export function createRecordAgent(opts: RecordAgentOptions): RecordAgent {
       return;
     }
     // ABHA goes through an API (no browser); portals through a recipe, or the navigator when there is none.
-    const api = source.access === 'abdm' && opts.abdm?.sourceId === source.id ? opts.abdm : null;
+    const api = source.access === 'abdm' || source.access === 'api' ? apis.get(source.id) ?? null : null;
     const recipe = api ? null : recipes.get(source.id) ?? (opts.navigator && source.access === 'browser' ? navigatorRecipe(source.id, opts.navigator) : null);
     if (!api && !recipe) {
       await setRun(cell, job.runId, { status: 'failed', error: 'The record agent cannot fetch from this source yet.', finishedAt: new Date(now()) });
@@ -348,7 +359,7 @@ export function createRecordAgent(opts: RecordAgentOptions): RecordAgent {
       if (e instanceof NeedsPersonError) {
         // A scheduled run found the sign-in expired: wait for the person.
         await cell.db.update(recordConnections).set({ status: 'needs_sign_in', nextRunAt: null, updatedAt: finished }).where(eq(recordConnections.id, conn.id));
-        await setRun(cell, job.runId, { status: 'failed', step: null, question: null, error: `${source.name} wants you to sign in again. Open Sources and choose Check now.`, finishedAt: finished });
+        await setRun(cell, job.runId, { status: 'failed', step: null, question: null, error: api && isOAuth(api) ? `${source.name}'s sign-in has ended. Open Sources and choose Connect again.` : `${source.name} wants you to sign in again. Open Sources and choose Check now.`, finishedAt: finished });
       } else if (e instanceof RunStoppedError || l.abort.signal.aborted) {
         const reason = e instanceof RunStoppedError ? e.message : 'Cancelled.';
         await setRun(cell, job.runId, { status: reason === 'Cancelled.' ? 'cancelled' : 'failed', step: null, question: null, error: reason === 'Cancelled.' ? null : reason, finishedAt: finished });
@@ -474,10 +485,43 @@ export function createRecordAgent(opts: RecordAgentOptions): RecordAgent {
         await recordConsents(cell.db, user.id, user.country, [{ kind: 'record_agent', granted: true, version: RECORD_AGENT_NOTICE_VERSION, detail: { source: source.id, profileId: input.profileId, connectionId: conn.id } }]);
         await recordEvent(cell.db, null, user.id, 'records_source_connected', { profileId: input.profileId, connectionId: conn.id });
       }
+      // A source with its own sign-in page, not signed in yet (or no longer): send the person there first.
+      const fetcher = apis.get(source.id);
+      if (fetcher && isOAuth(fetcher) && (!conn.sessionCt || conn.status !== 'active')) {
+        const state = randomBytes(32).toString('base64url');
+        const [row] = await cell.db.update(recordConnections).set({ externalRef: stateRef(state), status: 'needs_sign_in', updatedAt: at }).where(eq(recordConnections.id, conn.id)).returning();
+        const [view] = await connectionViews(cell, [row]);
+        return { connection: view, run: null, authorizeUrl: fetcher.authorizeUrl(state) };
+      }
       const active = await activeRunOf(cell, conn.id);
       const run = active ?? await newRun(cell, user.id, conn, 'person');
       const [view] = await connectionViews(cell, [conn]);
       return { connection: view, run: await fullRunView(cell, run) };
+    },
+
+    async oauthCallback(sourceId, q) {
+      const fetcher = apis.get(sourceId);
+      const source = findSource(sourceId);
+      if (!fetcher || !isOAuth(fetcher) || !source) return { ok: false, message: 'That source cannot be connected here.' };
+      if (!q.state || !/^[A-Za-z0-9_-]{20,100}$/.test(q.state)) return { ok: false, message: 'That sign-in link is not valid. Start again from Sources.' };
+      const ref = stateRef(q.state);
+      for (const cell of opts.cells.cells) {
+        const [conn] = await cell.db.select().from(recordConnections).where(eq(recordConnections.externalRef, ref)).limit(1);
+        if (!conn) continue;
+        // One use only, and only for a while.
+        await cell.db.update(recordConnections).set({ externalRef: null }).where(eq(recordConnections.id, conn.id));
+        if (now() - conn.updatedAt.getTime() > OAUTH_STATE_MS) return { ok: false, message: `The ${source.name} sign-in took too long. Start again from Sources.` };
+        if (q.error || !q.code) return { ok: false, message: `${source.name} was not connected${q.error === 'access_denied' ? ': you chose not to allow access' : ''}.` };
+        let got: { session: string; ref?: string };
+        try { got = await fetcher.exchange(q.code); } catch (e) { return { ok: false, message: e instanceof PortalError ? e.message : `${source.name} did not finish the sign-in. Try again.` }; }
+        const at = new Date(now());
+        const [row] = await cell.db.update(recordConnections).set({
+          sessionCt: seal(cell, got.session, `session:${conn.id}`), externalRef: got.ref ?? null, status: 'active', updatedAt: at,
+        }).where(eq(recordConnections.id, conn.id)).returning();
+        if (!(await activeRunOf(cell, row.id))) await newRun(cell, row.userId, row, 'person');
+        return { ok: true, sourceName: source.name };
+      }
+      return { ok: false, message: 'That sign-in link has already been used or has expired. Start again from Sources.' };
     },
 
     async update(cell, userId, id, patch) {
@@ -492,6 +536,10 @@ export function createRecordAgent(opts: RecordAgentOptions): RecordAgent {
 
     async startRun(cell, user, connectionId) {
       const conn = await connectionRow(cell, user.id, connectionId);
+      const fetcher = apis.get(conn.sourceId);
+      if (fetcher && isOAuth(fetcher) && (!conn.sessionCt || conn.status !== 'active')) {
+        throw conflict(`Connect ${findSource(conn.sourceId)?.name ?? 'this source'} again: its sign-in has ended.`, 'oauth_needed');
+      }
       const active = await activeRunOf(cell, conn.id);
       return fullRunView(cell, active ?? await newRun(cell, user.id, conn, 'person'));
     },

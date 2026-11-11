@@ -149,7 +149,7 @@ export interface Backend {
   /* The record agent (shared/sources.ts): fetching reports from portals. Needs the LotusPond server. */
   recordSources(): Promise<SourcesInfo>;
   recordConnections(): Promise<RecordConnectionView[]>;
-  connectRecordSource(input: { sourceId: string; profileId: string; portalUrl?: string; refreshDays: number | null }): Promise<{ connection: RecordConnectionView; run: RecordRunView }>;
+  connectRecordSource(input: { sourceId: string; profileId: string; portalUrl?: string; refreshDays: number | null }): Promise<{ connection: RecordConnectionView; run: RecordRunView | null; authorizeUrl?: string }>;
   updateRecordConnection(id: string, patch: { refreshDays: number | null }): Promise<RecordConnectionView>;
   runRecordConnection(id: string): Promise<RecordRunView>;
   disconnectRecordSource(id: string): Promise<void>;

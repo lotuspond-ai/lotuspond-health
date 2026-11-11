@@ -255,7 +255,7 @@ export class HttpBackend implements Backend {
   recordSources() { return this.request<SourcesInfo>('GET', '/records'); }
   recordConnections() { return this.request<RecordConnectionView[]>('GET', '/records/connections'); }
   connectRecordSource(input: { sourceId: string; profileId: string; portalUrl?: string; refreshDays: number | null }) {
-    return this.request<{ connection: RecordConnectionView; run: RecordRunView }>('POST', '/records/connections', { ...input, noticeVersion: RECORD_AGENT_NOTICE_VERSION });
+    return this.request<{ connection: RecordConnectionView; run: RecordRunView | null; authorizeUrl?: string }>('POST', '/records/connections', { ...input, noticeVersion: RECORD_AGENT_NOTICE_VERSION });
   }
   updateRecordConnection(id: string, patch: { refreshDays: number | null }) { return this.request<RecordConnectionView>('PATCH', `/records/connections/${id}`, patch); }
   runRecordConnection(id: string) { return this.request<RecordRunView>('POST', `/records/connections/${id}/run`, {}); }

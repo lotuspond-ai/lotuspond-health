@@ -8,6 +8,8 @@
 //   GET    /api/records/runs/:id              a run: what it is doing, what it needs from the person, what it saved
 //   POST   /api/records/runs/:id/answer       answer its question ({ answer }); passed to the portal, never stored
 //   POST   /api/records/runs/:id/cancel
+// And, outside /api (the provider's sign-in page sends the person's browser here, with no session needed):
+//   GET    /records/oauth/:sourceId/callback?state=&code=   finish connecting a source with its own sign-in (OAuth)
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { RECORD_AGENT_NOTICE_VERSION, type SourcesInfo } from '../../../shared/sources.ts';
@@ -90,5 +92,22 @@ export function recordRoutes(deps: Deps, agent: RecordAgent | undefined) {
 
   app.post('/runs/:id/cancel', async c => c.json(await on().cancel(c.var.cell, c.var.user.id, id(c.req.param('id')))));
 
+  return app;
+}
+
+/** Where a provider's sign-in page (OAuth) sends the person back. The one-time state finds the connection. */
+export function recordOAuthRoutes(agent: RecordAgent, appUrl: string) {
+  const app = new Hono();
+  app.get('/:sourceId/callback', async c => {
+    const sourceId = c.req.param('sourceId');
+    if (!/^[a-z0-9-]{2,40}$/.test(sourceId)) return c.text('Not found', 404);
+    const r = await agent.oauthCallback(sourceId, { state: c.req.query('state'), code: c.req.query('code'), error: c.req.query('error') });
+    c.header('Cache-Control', 'no-store');
+    c.header('Referrer-Policy', 'no-referrer');
+    if (r.ok) return c.redirect(`${appUrl}/app#sources`, 302);
+    const esc = (s: string) => s.replace(/[&<>"']/g, ch => `&#${ch.charCodeAt(0)};`);
+    return c.html(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Not connected</title>
+<body style="font-family:system-ui,sans-serif;max-width:32rem;margin:3rem auto;padding:0 1rem;line-height:1.5"><h1 style="font-size:1.25rem">Not connected</h1><p>${esc(r.message)}</p><p><a href="${esc(`${appUrl}/app#sources`)}">Back to Sources</a></p></body>`, 400);
+  });
   return app;
 }

@@ -25,6 +25,7 @@ function badge(s: SourceView): { text: string; tone: 'ok' | 'beta' | 'soon' } {
   if (s.availability === 'navigator') return { text: 'Beta', tone: 'beta' };
   if (s.access === 'app') return { text: 'In LotusPond', tone: 'ok' };
   if (s.availability === 'abdm') return { text: 'Ready · ABDM', tone: 'ok' };
+  if (s.availability === 'api') return { text: 'Ready', tone: 'ok' };
   if (s.access === 'abdm') return { text: 'Coming with ABDM', tone: 'soon' };
   return { text: 'Coming soon', tone: 'soon' };
 }
@@ -85,7 +86,7 @@ export default function SourcesPage() {
         <ul className="sources__grid">
           {shown.map(s => {
             const b = badge(s);
-            const canConnect = !!info?.enabled && (s.availability === 'recipe' || s.availability === 'navigator' || s.availability === 'abdm');
+            const canConnect = !!info?.enabled && (s.availability === 'recipe' || s.availability === 'navigator' || s.availability === 'abdm' || s.availability === 'api');
             return (
               <li key={s.id} className="sources__card">
                 <div className="sources__card-head"><b>{s.name}</b><span className={`sources__badge sources__badge--${b.tone}`}>{b.text}</span></div>
@@ -125,7 +126,13 @@ function Connection({ conn, onChange }: { conn: RecordConnectionView; onChange: 
         </div>
         <div className="agents__row-actions">
           {!live && <button type="button" className="btn btn--small btn--primary" onClick={async () => {
-            try { setRun(await backend.runRecordConnection(conn.id)); } catch (e) { toast.error(errorMessage(e)); }
+            try {
+              if (conn.status !== 'needs_sign_in') { setRun(await backend.runRecordConnection(conn.id)); return; }
+              // Signing in again: a source with its own sign-in page sends the person there; the others start a run.
+              const r = await backend.connectRecordSource({ sourceId: conn.sourceId, profileId: conn.profileId, refreshDays: conn.refreshDays, ...(conn.portalUrl ? { portalUrl: conn.portalUrl } : {}) });
+              if (r.authorizeUrl) { location.assign(r.authorizeUrl); return; }
+              if (r.run) setRun(r.run);
+            } catch (e) { toast.error(errorMessage(e)); }
           }}>{conn.status === 'needs_sign_in' ? 'Sign in' : 'Check now'}</button>}
           <label><span className="sr-only">How often to check {conn.sourceName}</span>
             <select value={conn.refreshDays ?? 'never'} onChange={async e => {
@@ -240,6 +247,8 @@ function ConnectDialog({ source, info, onClose }: { source: SourceView; info: So
     setBusy(true);
     try {
       const r = await backend.connectRecordSource({ sourceId: source.id, profileId, refreshDays: refresh, ...(source.needsUrl ? { portalUrl: portalUrl.trim() } : {}) });
+      // A source with its own sign-in page (Withings): the person signs in there and comes back to Sources.
+      if (r.authorizeUrl) { location.assign(r.authorizeUrl); return; }
       setRun(r.run);
     } catch (err) {
       setError(errorMessage(err));
@@ -259,7 +268,12 @@ function ConnectDialog({ source, info, onClose }: { source: SourceView; info: So
         {!run && (
           <form onSubmit={submit} noValidate>
             <ul className="sources__notice">
-              {source.availability === 'abdm' ? (<>
+              {source.availability === 'api' ? (<>
+                <li>You sign in on {source.name}’s own page and choose what to share. LotusPond never sees your {source.name} password.</li>
+                <li>LotusPond reads your measurements through {source.name}’s official API, one value per day, and never writes anything back.</li>
+                <li>It keeps the sign-in, encrypted, to check again on the schedule you choose. Disconnect to forget it; you can also remove LotusPond in your {source.name} account.</li>
+                <li>New readings are saved to Files. They join your records only after you check them.</li>
+              </>) : source.availability === 'abdm' ? (<>
                 <li>LotusPond signs in to your ABHA through Eka Care, which connects apps to ABDM. There is no browser: it asks you here for your ABHA address or number and the OTP ABDM sends.</li>
                 <li>It asks ABDM for your consent to read the records hospitals and labs linked to your ABHA, and you approve it here with your ABHA consent PIN (or in your ABHA app). It never keeps codes or PINs.</li>
                 <li>Eka Care fetches the records from those hospitals and labs and passes them to LotusPond. LotusPond keeps your Eka id and ABHA address, encrypted, to check again on the schedule you choose. Disconnect to forget them; revoke the consent in your ABHA app to stop ABDM sharing.</li>

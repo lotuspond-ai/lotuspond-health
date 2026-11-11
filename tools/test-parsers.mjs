@@ -648,6 +648,13 @@ section('fhir');
   check('fhir: 11 rows', r.measurements.length === 11, String(r.measurements.length));
   const single = parseJsonText(JSON.stringify({ resourceType: 'Observation', status: 'final', code: { coding: [{ system: 'http://loinc.org', code: '2093-3' }] }, valueQuantity: { value: 5.2, unit: 'mmol/L' }, effectiveDateTime: '2026-01-05' }), 'obs.json');
   check('fhir: single Observation, name from LOINC, mmol/L converted', single.measurements[0]?.markerId === 'total_cholesterol' && Math.round(single.measurements[0].value) === 201, JSON.stringify(single.measurements[0]));
+  // Withings daily values as the record agent saves them (server/src/records/api/withings.ts readingsBundle).
+  const wd = f.parseFhir(JSON.parse(readFileSync(join(fixtures, 'fhir/withings-daily.json'), 'utf8')), 'withings.json');
+  const wdRows = wd.measurements.map(m => `${m.date} ${m.markerId} ${m.value} ${m.unit}`).sort();
+  check('fhir: Withings daily vitals become the vitals markers', eq(wdRows, [
+    '2026-11-01 body_fat 18.2 %', '2026-11-01 body_weight 72.5 kg', '2026-11-01 bp_diastolic 84 mmHg', '2026-11-01 bp_systolic 128 mmHg',
+    '2026-11-01 resting_heart_rate 71 bpm', '2026-11-02 body_temperature 36.8 °C', '2026-11-02 spo2 97 %',
+  ]), JSON.stringify(wdRows));
   const pdfOnly = JSON.parse(readFileSync(join(fixtures, 'fhir/pdf-only-report.json'), 'utf8'));
   const att = f.fhirAttachments(pdfOnly);
   check('fhir: PDF in presentedForm found', att.length === 1 && att[0].contentType === 'application/pdf' && att[0].title === 'Lipid profile.pdf' && att[0].data.length > 1000);

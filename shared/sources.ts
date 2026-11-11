@@ -169,7 +169,9 @@ export const SOURCES: SourceInfo[] = [
   { id: 'oura', name: 'Oura', category: 'wearable', regions: ALL, access: 'api', signIn: 'oauth', holds: ['Sleep', 'Heart rate', 'Temperature'] },
   { id: 'fitbit', name: 'Fitbit and Google Health', category: 'wearable', regions: ALL, access: 'api', signIn: 'oauth', holds: ['Steps', 'Sleep', 'Heart rate', 'Weight'] },
   { id: 'garmin', name: 'Garmin', category: 'wearable', regions: ALL, access: 'api', signIn: 'oauth', holds: ['Steps', 'Sleep', 'Heart rate'] },
-  { id: 'withings', name: 'Withings', category: 'wearable', regions: ALL, access: 'api', signIn: 'oauth', holds: ['Weight', 'Blood pressure'] },
+  { id: 'withings', name: 'Withings', category: 'wearable', regions: ALL, access: 'api', signIn: 'oauth',
+    holds: ['Weight and body fat', 'Blood pressure and pulse', 'SpO2', 'Body temperature'],
+    note: 'Sign in on Withings’ own page. Each check brings in one value per day from your scale, blood pressure monitor, thermometer or oximeter, to review like a report.' },
   { id: 'libre', name: 'FreeStyle Libre (LibreView)', category: 'wearable', regions: ALL, access: 'api', signIn: 'oauth', holds: ['Continuous glucose'] },
 
   /* ---------------- messages and email ---------------- */
@@ -194,6 +196,8 @@ export type SourceAvailability =
   | 'navigator'
   /** Through the person's ABHA and an ABDM consent, with no browser (Eka Care's ABDM Connect). */
   | 'abdm'
+  /** Through the provider's own API: the person signs in on the provider's page (OAuth). */
+  | 'api'
   /** Not through the record agent: an official API, ABDM when it is not set up, or elsewhere in the app. */
   | 'unavailable';
 

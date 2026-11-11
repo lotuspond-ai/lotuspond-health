@@ -26,7 +26,7 @@ import { cloudApiClient, type WhatsAppClient } from './whatsapp/client.ts';
 import { extractionRoutes } from './extraction/routes.ts';
 import { mcpRoutes } from './agents/mcp.ts';
 import { oauthRoutes, type OAuthOptions } from './agents/oauth.ts';
-import { recordRoutes } from './records/routes.ts';
+import { recordOAuthRoutes, recordRoutes } from './records/routes.ts';
 import { ekaWebhookRoutes } from './records/abdm/webhook.ts';
 import { DEMO_PORTAL_PATH, type DemoPortal } from './records/demo-portal.ts';
 
@@ -192,6 +192,7 @@ export function createApp(input: DepsInput, opts: AppOptions = {}): Hono<AppEnv>
   // Lab partner webhooks: server to server, so outside /api (no browser checks, no CORS).
   if (deps.labs) app.route('/hooks', hookRoutes(deps, deps.labs));
   if (wa) app.route('/hooks/whatsapp', whatsappHookRoutes(wa));
+  if (deps.records) app.route('/records/oauth', recordOAuthRoutes(deps.records, config.allowedOrigins[0] ?? config.publicUrl ?? ''));
   const ekaKey = config.records?.eka?.webhookSigningKey;
   if (deps.records && ekaKey) { const records = deps.records; app.route('/hooks/eka', ekaWebhookRoutes({ signingKey: ekaKey, wake: ref => records.wake(ref) })); }
   // A pretend portal for the record agent's browsers; its own pages, so outside /api and the app's policy.

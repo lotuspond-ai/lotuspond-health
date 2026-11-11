@@ -6,6 +6,7 @@ Status: November 2026. The engine, the app's Sources page and the MCP tool are b
   - **Apollo 24|7 has run against a real account** (11 Nov 2026): it signed in with the person's number and OTP and saved all 6 documents on their Health Records page. A second run saved nothing new (§5.2).
   - The Dr Lal, Thyrocare and Metropolis recipes are tested against local copies of their portals, **not yet with real accounts** (§5.1).
 - **The navigator:** every other portal is reached through Claude, which is off unless Anthropic credentials are set.
+- **Withings, through its API** (`server/src/records/api/withings.ts`, §5.3): the person signs in on Withings' own page, and each check brings in one value per day from their scale, blood pressure monitor, thermometer or oximeter. It is on when `WITHINGS_CLIENT_ID` and `WITHINGS_CLIENT_SECRET` are set, and is not yet tried with a real Withings account.
 - **ABHA, with no browser:** through Eka Care's ABDM Connect (`server/src/records/abdm/`, docs/abdm.md). The same runs and questions: an OTP to sign in, the ABHA consent PIN to approve LotusPond's consent request. The records come in as FHIR files. It is on when `EKA_CLIENT_ID` and `EKA_CLIENT_SECRET` are set, and is waiting on LotusPond's ABDM Connect onboarding.
 
 The record agent brings a family's reports in from the portals where they live: labs, hospitals, government services, pharmacies and insurers.
@@ -21,6 +22,7 @@ The record agent brings a family's reports in from the portals where they live: 
 | `server/src/records/browsers.ts` | Where the browsers run: local Chromium, any CDP service, Browserbase |
 | `server/src/records/recipes/` | Recipes: the known steps for one portal (`demo.ts` is the pattern) |
 | `server/src/records/navigator.ts` | Claude finding its way around a portal without a recipe |
+| `server/src/records/api/` | Sources reached through their own APIs: the fetcher types, and Withings (OAuth) |
 | `server/src/records/abdm/` | ABHA through Eka Care's ABDM Connect: the client, the steps, the webhook at `/hooks/eka` |
 | `server/src/records/demo-portal.ts` | The pretend lab portal at `/demo-portal` (development and tests) |
 | `server/src/records/routes.ts` | `/api/records` |
@@ -225,6 +227,32 @@ The navigator's rules:
 - it stops after 40 model calls.
 
 Its runs are labelled *Beta* in the app, and the notice says Claude reads the portal's pages. The model is `RECORD_NAVIGATOR_MODEL` (default `claude-opus-5-5`). Its transcripts are a good starting point for a recipe.
+
+### 5.3 Withings (official API, OAuth)
+
+Withings has a free, self-serve developer account (developer.withings.com): create an application there, register the redirect URI `PUBLIC_URL/records/oauth/withings/callback`, and set `WITHINGS_CLIENT_ID` and `WITHINGS_CLIENT_SECRET` (and `PUBLIC_URL`).
+
+1. **Connect.**
+   - `POST /api/records/connections` for Withings starts no run. It answers with `authorizeUrl`, Withings' sign-in page (scope `user.metrics`), carrying a one-time `state`.
+   - The state's hash is kept on the connection for 15 minutes; the app sends the person to that page.
+2. **Back from Withings.**
+   - `GET /records/oauth/withings/callback?state&code` is outside `/api` and needs no session: the state finds the connection, and it works only once.
+   - The code is exchanged for tokens (`requesttoken` with the client secret), and the tokens are sealed on the connection.
+   - The first check starts, and the person lands on `/app#sources`.
+   - A made-up, reused or late state, or *Deny* on Withings' page, shows a short "Not connected" page.
+3. **A check.**
+   - **Tokens.** An access token lasts 3 hours, and is refreshed when it has run out. Withings replaces the refresh token on every refresh, so the new one is sealed at once, even if the check fails later.
+   - **Measures read** (`getmeas`, category 1, paged): weight, body fat, systolic and diastolic blood pressure, pulse (as resting heart rate), SpO2 and body temperature. The first check reads a year back; later checks read from the last day already read.
+   - **One value per marker per day.** Days are counted in the person's Withings time zone, and each day's readings are averaged. Today is left out; implausible values and goals are dropped.
+   - **One FHIR file per check.** The values become a FHIR `collection` bundle of vital-sign Observations with LOINC and UCUM codes, saved as `Withings <from> to <to> (<n> days).json` and reviewed like any report.
+4. **Sign-in ended.** Withings refuses the refresh token when the person removed LotusPond in their Withings account. The connection then shows *Sign in*, which opens Withings' page again; Check now answers `409 oauth_needed`.
+
+Tests: `server/test/withings.test.ts` runs against a copy of Withings' API, and `tools/test-parsers.mjs` (section *fhir*) shows the app reading such a file into the vitals markers.
+
+Not done:
+- Withings' webhooks (`notify`), which would need signed requests.
+- The mobile apps: the callback lands in the browser, not the app.
+- A real Withings account.
 
 ## 6. Trying it
 

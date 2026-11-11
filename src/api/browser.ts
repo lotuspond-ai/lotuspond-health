@@ -562,7 +562,7 @@ export class BrowserBackend implements Backend {
   // The record agent runs browsers on the LotusPond server; the preview has none.
   async recordSources(): Promise<SourcesInfo> { return { enabled: false, browser: null, noticeVersion: RECORD_AGENT_NOTICE_VERSION, sources: [] }; }
   async recordConnections(): Promise<RecordConnectionView[]> { return []; }
-  async connectRecordSource(): Promise<{ connection: RecordConnectionView; run: RecordRunView }> { throw noAgents(); }
+  async connectRecordSource(): Promise<{ connection: RecordConnectionView; run: RecordRunView | null; authorizeUrl?: string }> { throw noAgents(); }
   async updateRecordConnection(): Promise<RecordConnectionView> { throw noAgents(); }
   async runRecordConnection(): Promise<RecordRunView> { throw noAgents(); }
   async disconnectRecordSource(): Promise<void> { throw noAgents(); }
