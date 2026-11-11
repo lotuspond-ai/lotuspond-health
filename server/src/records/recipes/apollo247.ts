@@ -30,10 +30,13 @@ async function signIn(ctx: RecipeContext): Promise<void> {
   const { page } = ctx;
   await ctx.step('Signing in to Apollo 24|7');
   let found = await findDialogWith(page, DIALOGS, PHONE_FIELDS, undefined, 300);
-  if (!found) {
-    const opener = await mustFind(page, ['button:has-text("Login Now")', '#loginPopup'], 'the Login button');
+  // The page draws the button before its scripts can handle a click: wait for them, and click again if the panel
+  // does not open.
+  await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {});
+  for (let attempt = 0; !found && attempt < 3; attempt++) {
+    const opener = await mustFind(page, attempt === 1 ? ['#loginPopup', 'button:has-text("Login Now")'] : ['button:has-text("Login Now")', '#loginPopup'], 'the Login button');
     await opener.click();
-    found = await findDialogWith(page, DIALOGS, PHONE_FIELDS, undefined, 10_000);
+    found = await findDialogWith(page, DIALOGS, PHONE_FIELDS, undefined, 5000);
   }
   if (!found) throw new RecipeDriftError('The Apollo 24|7 sign-in did not open');
   const { box, field } = found;
