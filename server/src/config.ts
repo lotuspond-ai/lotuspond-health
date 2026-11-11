@@ -115,7 +115,7 @@ const Env = z.object({
   /* ABHA through Eka Care's ABDM Connect (docs/abdm.md): on when the client id and secret are set. */
   EKA_CLIENT_ID: z.string().trim().min(4).optional(),
   EKA_CLIENT_SECRET: z.string().trim().min(8).optional(),
-  /** https://api.eka.care (production) or https://api.dev.eka.care (sandbox). */
+  /** https://api.eka.care: console clients, sandbox or production, sign in here (the client decides which NHA). */
   EKA_API_URL: z.string().url().default('https://api.eka.care'),
   /** LotusPond as the health information user its consent requests come from (Eka's clinic and doctor ids). */
   EKA_HIU_CLINIC_ID: z.string().trim().min(1).optional(),

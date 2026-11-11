@@ -3,8 +3,8 @@
 // with LotusPond's client token; a call for a person also names their Eka id (oid), which Eka keys their ABHA
 // gateway session to.
 //
-//   Sandbox     https://api.dev.eka.care
-//   Production  https://api.eka.care
+//   https://api.eka.care for clients made in the Eka console, sandbox or production: the client decides which NHA
+//   environment it reaches (a console sandbox client is refused at api.dev.eka.care).
 //
 // Client token: POST /connect-auth/v1/account/login { client_id, client_secret } → access_token (about 30 minutes)
 // and refresh_token. It is kept in memory, renewed before it runs out, and renewed once more on a 401.

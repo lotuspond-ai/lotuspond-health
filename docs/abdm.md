@@ -44,17 +44,16 @@ The ABHA source runs in the record agent (docs/record-agent.md), with an API cli
    - `abha.subscription_notify`, `abha.hiu_data_push`, `abha.subscription_modified`, and `abha.consent_update` when granted, start a scheduled check of that person's connection.
    - Eka's sample `abha.consent_update` carries no `oid`, so a grant made in the ABHA app may only be picked up on the next scheduled check.
 
-Configuration (`server/.env.example`): `EKA_CLIENT_ID`, `EKA_CLIENT_SECRET`, `EKA_API_URL` (`https://api.dev.eka.care` for the sandbox; the default is production), `EKA_HIU_CLINIC_ID` and `EKA_HIU_DOCTOR_OID` (without them no consent is raised, and only records already with Eka are read), and `EKA_WEBHOOK_SIGNING_KEY`. Keep the secret and the signing key in the secret store.
+Configuration (`server/.env.example`): `EKA_CLIENT_ID`, `EKA_CLIENT_SECRET`, `EKA_API_URL` (`https://api.eka.care`, the default, for both the sandbox and the production client), `EKA_HIU_CLINIC_ID` and `EKA_HIU_DOCTOR_OID` (without them no consent is raised, and only records already with Eka are read), and `EKA_WEBHOOK_SIGNING_KEY`. Keep the secret and the signing key in the secret store.
 
 ### Account and onboarding (11 November 2026)
 
 - **Done:** an Eka developer workspace, *LotusPond Health* (data in India), and an API credential, *LotusPond Health development*. Its id and secret are kept outside the repo. Production login (`api.eka.care`) returns a token.
-- **Next: ABDM Connect onboarding** (console.eka.care → ABDM Connect → Onboard new client). This registers LotusPond with NHA, in the **sandbox** or **production**. It asks for:
-  - company details: organisation name, website and type (HMIS, LIMS, EMR, diagnostic lab, pharmacy chain, hospital chain, hospital or clinic, telemedicine; there is no PHR type);
-  - a primary contact;
-  - then an integration method, credential setup, linked facilities, and a review.
-  
-  This is a decision for LotusPond's account holder. Start in the sandbox.
+- **ABDM Connect onboarding, done (12 November 2026 IST)** in the console (ABDM Connect → Onboard new client). There are two clients, both for organisation *LotusPond* (lotuspond.ai), registered as type *EMR* (the list has no PHR type). Both use raw APIs and Eka's NHA credentials, so LotusPond goes live under Eka Care's ABDM registration and Eka's platform terms. The contact is the founder.
+  - **Sandbox:** *LotusPond — ABDM Connect (Sandbox)*, with HIP `LOTUSPOND` registered with NHA's sandbox. A workspace gets only one sandbox client, and it cannot become production. It is capped at 100 patient creations. The console lists NHA's test cases: M1 73, M2 44, M3 21, M4 189.
+  - **Production:** *LotusPond — ABDM Connect*, with **no facility linked yet**. Eka links a facility through NHPR, which first creates a Healthcare Professional ID with the contact's Aadhaar; that is meant for licensed professionals, so it was skipped. Without a HIP ID, production cannot link care contexts (M2/M3). Ask Eka how a PHR app gets one.
+  - **Both clients sign in at `https://api.eka.care`.** The sandbox client is refused at `api.dev.eka.care` ("pwd mismatch"); the client itself decides NHA sandbox or production. With the sandbox client, `GET /abdm/v1/providers?name=…` and the pincode lookup answer from ABDM.
+  - The ids and secrets are kept outside the repo.
 - **Then ask Eka (ekaconnect@eka.care):**
   - which `clinic_id` and `d_oid` a PHR app with no clinic uses for its consent requests;
   - whether LotusPond needs its own ABDM PHR certification;
