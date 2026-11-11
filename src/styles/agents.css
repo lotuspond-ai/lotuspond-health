@@ -38,3 +38,6 @@
 .health-import__kinds .confirm-check { margin: 10px 0 0; }
 .health-import__period { display: flex; gap: 10px; align-items: center; font-size: 14px; margin: 0 0 8px; }
 .review__note { margin: 0 0 10px; font-size: 14px; }
+.agents__row-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; flex: none; }
+.agents__edit { margin-top: 8px; }
+.agents__choices > small { margin-bottom: 2px; }

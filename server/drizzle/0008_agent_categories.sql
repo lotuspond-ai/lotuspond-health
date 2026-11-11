@@ -1,0 +1,1 @@
+ALTER TABLE "agent_grants" ADD COLUMN "categories" jsonb;

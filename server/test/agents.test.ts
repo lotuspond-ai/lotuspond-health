@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Hono } from 'hono';
-import type { AgentConnectionsInfo, CreatedAgentToken } from '../../shared/agents.ts';
+import type { AgentConnection, AgentConnectionsInfo, CreatedAgentToken } from '../../shared/agents.ts';
 import type { ActivityEvent, Profile, SessionInfo } from '../../shared/types.ts';
 import { createApp } from '../src/app.ts';
 import { loadConfig } from '../src/config.ts';
@@ -80,14 +80,17 @@ function authorizeUrl(clientId: string, challenge: string, over: Record<string, 
 }
 
 /** Open the consent page, then submit it with the given choices; returns the redirect. */
-async function consent(c: TestClient, url: string, choose: { profiles: string[]; scopes?: string[]; decision?: string }) {
+async function consent(c: TestClient, url: string, choose: { profiles: string[]; scopes?: string[]; categories?: string[]; expires?: string; legacy?: boolean; decision?: string }) {
   const page = await c.call('GET', url);
   assert.equal(page.status, 200);
   const html = await page.text();
   const hidden = Object.fromEntries([...html.matchAll(/<input type="hidden" name="([^"]+)" value="([^"]*)">/g)].map(m => [m[1], m[2].replace(/&amp;/g, '&')]));
   const form = new URLSearchParams();
-  for (const [k, v] of Object.entries(hidden)) if (k !== 'scope') form.append(k, v);
+  for (const [k, v] of Object.entries(hidden)) if (k !== 'scope' && !(choose.legacy && k === 'categories_shown')) form.append(k, v);
   for (const p of choose.profiles) form.append('profile', p);
+  // As the page renders them: every kind of data ticked, unless the test unticks some.
+  if (!choose.legacy) for (const k of choose.categories ?? ['results', 'conditions', 'files', 'labs']) form.append('category', k);
+  if (choose.expires) form.append('expires', choose.expires);
   for (const s of choose.scopes ?? ['health:read']) form.append('scope', s);
   form.append('decision', choose.decision ?? 'allow');
   const real = await app.request('/oauth/authorize', {
@@ -121,10 +124,10 @@ async function call(accessToken: string, name: string, args: Record<string, unkn
 }
 
 /** A full OAuth connection; returns its tokens. */
-async function connect(c: TestClient, profiles: string[], scopes = ['health:read']) {
+async function connect(c: TestClient, profiles: string[], scopes = ['health:read'], more: { categories?: string[]; expires?: string; legacy?: boolean } = {}) {
   const clientId = await register();
   const { verifier, challenge } = pkce();
-  const { location } = await consent(c, authorizeUrl(clientId, challenge), { profiles, scopes });
+  const { location } = await consent(c, authorizeUrl(clientId, challenge), { profiles, scopes, ...more });
   const code = location.searchParams.get('code')!;
   const t = await token({ grant_type: 'authorization_code', code, code_verifier: verifier, client_id: clientId, redirect_uri: 'https://claude.example/callback', resource: `${ORIGIN}/mcp` });
   assert.equal(t.status, 200, JSON.stringify(t.body));
@@ -359,6 +362,68 @@ describe('tokens made on Account', () => {
     const b = await account();
     const res = await a.c.error('POST', '/api/agents/tokens', { name: 'x', scopes: ['health:read'], profileIds: [b.self.id], expiresInDays: null });
     assert.equal(res.status, 400);
+  });
+});
+
+describe('kinds of data and expiry', () => {
+  test('a connection sharing only lab results gets only those tools and fields; a form from before categories shares everything', async () => {
+    const { c, self } = await account();
+    const t = await connect(c, [self.id], ['health:read', 'health:write'], { categories: ['results'], expires: '30' });
+    const names = ((await mcp(t.access_token, 'tools/list')).body.result.tools as { name: string }[]).map(x => x.name);
+    assert.ok(names.includes('get_results') && names.includes('log_reading'), 'results tools, including adding a reading');
+    assert.ok(!names.includes('list_files') && !names.includes('add_to_profile'), 'no files list and no adding conditions');
+    const blocked = await mcp(t.access_token, 'tools/call', { name: 'add_to_profile', arguments: { conditions: ['Asthma'] } });
+    assert.match(blocked.body.error.message, /not share the kind of data/);
+
+    const init = await mcp(t.access_token, 'initialize', { protocolVersion: '2025-06-18' });
+    assert.match(init.body.result.instructions, /It shares: lab results and readings\./);
+    const s = (await call(t.access_token, 'get_health_summary')).structuredContent!;
+    assert.equal(s.profile.conditions, undefined, 'conditions are not shared');
+    assert.ok(s.outOfRange.length >= 1, 'results are');
+    assert.ok(!s.followUps.some((f: { reason: string }) => /condition/.test(f.reason)), 'no follow-ups that reveal a condition');
+    assert.deepEqual(s.counts.scans, undefined);
+    assert.ok(s.notShared.includes('Conditions, medications and allergies'));
+    const d = (await call(t.access_token, 'get_profile_details')).structuredContent!;
+    assert.equal(d.conditions, undefined);
+    assert.equal(d.notes, undefined);
+    assert.equal(d.heightCm, 170, 'the basics are always shared');
+
+    const list = await c.json<AgentConnectionsInfo>('GET', '/api/agents');
+    const conn = list.connections.find(x => x.kind === 'oauth')!;
+    assert.deepEqual(conn.categories, ['results']);
+    const days = (Date.parse(conn.expiresAt!) - Date.now()) / 86_400_000;
+    assert.ok(days > 29.9 && days <= 30, `expires in 30 days (${days})`);
+    const consents = await c.json<{ kind: string; detail: { categories?: string[]; expiresAt?: string | null } | null }[]>('GET', '/api/auth/consents');
+    const last = consents.find(r => r.kind === 'agent_sharing')!;
+    assert.deepEqual(last.detail?.categories, ['results']);
+    assert.equal(last.detail?.expiresAt, conn.expiresAt);
+
+    // Account: share conditions too and remove the expiry; it applies to the next call.
+    const changed = await c.json<AgentConnection>('PATCH', `/api/agents/${conn.id}`, { categories: ['results', 'conditions'], expiresInDays: null });
+    assert.deepEqual(changed.categories, ['results', 'conditions']);
+    assert.equal(changed.expiresAt, null);
+    const d2 = (await call(t.access_token, 'get_profile_details')).structuredContent!;
+    assert.deepEqual(d2.conditions, ['Type 2 diabetes']);
+    const none = await c.json<AgentConnection>('PATCH', `/api/agents/${conn.id}`, { categories: [] });
+    assert.deepEqual(none.categories, []);
+    const basics = ((await mcp(t.access_token, 'tools/list')).body.result.tools as { name: string }[]).map(x => x.name);
+    assert.deepEqual(basics.sort(), ['get_health_summary', 'get_profile_details', 'list_profiles'], 'basics only');
+
+    const old = await connect(c, [self.id], ['health:read'], { legacy: true });
+    const all = ((await mcp(old.access_token, 'tools/list')).body.result.tools as { name: string }[]).map(x => x.name);
+    assert.ok(all.includes('list_files') && all.includes('get_results'), 'an older consent page keeps sharing everything it listed');
+  });
+
+  test('the consent page lists the kinds of data and the expiry, a year by default', async () => {
+    const { c, self } = await account();
+    const clientId = await register();
+    const { challenge } = pkce();
+    const html = await (await c.call('GET', authorizeUrl(clientId, challenge))).text();
+    for (const k of ['results', 'conditions', 'files', 'labs']) assert.match(html, new RegExp(`name="category" value="${k}" checked`));
+    assert.match(html, /<option value="365" selected>A year<\/option>/);
+    assert.match(html, /<option value="never">Until I disconnect it<\/option>/);
+    assert.match(html, /Every connection sees the name/);
+    void self;
   });
 });
 

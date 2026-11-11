@@ -5,7 +5,7 @@ import type {
   RegisterInput, ScanInput, FamilyConfirmation, AiExtraction, ScanItem, ServiceInfo, SessionInfo, StoredDocument,
   FacilityQuery, FacilitySearchResult, GeoCandidate, GeoReverse, PublicConfig,
 } from '../types';
-import type { AgentConnection, AgentConnectionsInfo, CreateAgentTokenInput, CreatedAgentToken } from '../../shared/agents';
+import type { AgentConnection, AgentConnectionsInfo, CreateAgentTokenInput, CreatedAgentToken, UpdateAgentConnectionInput } from '../../shared/agents';
 import type { LabBookingInput, LabCatalog, LabOrderView, LabResultSaved, LabResultView, LabSlot } from '../../shared/lab-bundle';
 
 export class ApiError extends Error {
@@ -118,7 +118,7 @@ export interface Backend {
   /* Connected agents (shared/agents.ts): AI agents reading the records over MCP. Needs the LotusPond server. */
   agentConnections(): Promise<AgentConnectionsInfo>;
   createAgentToken(input: CreateAgentTokenInput): Promise<CreatedAgentToken>;
-  updateAgentConnection(id: string, patch: Partial<Pick<AgentConnection, 'scopes' | 'profileIds'>>): Promise<AgentConnection>;
+  updateAgentConnection(id: string, patch: UpdateAgentConnectionInput): Promise<AgentConnection>;
   disconnectAgent(id: string): Promise<void>;
 }
 

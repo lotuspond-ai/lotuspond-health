@@ -1,31 +1,34 @@
 // The app's view of agent connections (Account, Connected agents):
 //   GET    /api/agents          connections and the MCP address
 //   POST   /api/agents/tokens   create an access token for an agent that takes one (Claude Desktop, Claude Code, scripts)
-//   PATCH  /api/agents/:id      change the profiles or permissions of a connection
+//   PATCH  /api/agents/:id      change the profiles, permissions, kinds of data or expiry of a connection
 //   DELETE /api/agents/:id      disconnect: the agent's tokens stop working at once
 import { and, eq } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { AGENT_SCOPES, MCP_PATH, type AgentConnectionsInfo, type CreatedAgentToken } from '../../../shared/agents.ts';
+import { AGENT_CATEGORIES, AGENT_SCOPES, MCP_PATH, type AgentConnectionsInfo, type CreatedAgentToken } from '../../../shared/agents.ts';
 import { eventContext, recordEvent } from '../compliance/audit.ts';
 import { agentGrants } from '../db/schema.ts';
 import { badRequest, conflict, notFound } from '../lib/errors.ts';
 import { readJson, requireAuth, UUID, type AppEnv, type Deps } from '../http.ts';
 import { recordSharingConsent } from './grants.ts';
-import { cleanScopes, deleteGrant, issueSecret, listGrants, ownProfiles, toConnection } from './grants.ts';
+import { cleanCategories, cleanScopes, deleteGrant, expiryIn, issueSecret, listGrants, ownProfiles, toConnection } from './grants.ts';
 import { publicOrigin } from './oauth.ts';
 
 const MAX_CONNECTIONS = 25;
 const Scopes = z.array(z.enum(AGENT_SCOPES as [string, ...string[]])).min(1).max(AGENT_SCOPES.length);
+const Categories = z.array(z.enum(AGENT_CATEGORIES as [string, ...string[]])).max(AGENT_CATEGORIES.length);
+const ExpiresInDays = z.number().int().min(1).max(365).nullable();
 const ProfileIds = z.array(z.string().regex(UUID)).min(1, 'Choose at least one profile.').max(50);
 
 const CreateBody = z.object({
   name: z.string().trim().min(1, 'Name the agent.').max(60),
   scopes: Scopes,
+  categories: Categories.optional(),
   profileIds: ProfileIds,
-  expiresInDays: z.number().int().min(1).max(365).nullable(),
+  expiresInDays: ExpiresInDays,
 });
-const PatchBody = z.object({ scopes: Scopes.optional(), profileIds: ProfileIds.optional() });
+const PatchBody = z.object({ scopes: Scopes.optional(), categories: Categories.optional(), profileIds: ProfileIds.optional(), expiresInDays: ExpiresInDays.optional() });
 
 export function agentRoutes(deps: Deps) {
   const app = new Hono<AppEnv>();
@@ -47,7 +50,8 @@ export function agentRoutes(deps: Deps) {
     const scopes = cleanScopes(['health:read', ...body.scopes]);
     const [grant] = await db.insert(agentGrants).values({
       userId: c.var.user.id, kind: 'token', clientId: null, name: body.name, redirectHost: null, scopes, profileIds,
-      expiresAt: body.expiresInDays ? new Date(Date.now() + body.expiresInDays * 24 * 60 * 60_000) : null,
+      categories: body.categories ? cleanCategories(body.categories) : null,
+      expiresAt: expiryIn(body.expiresInDays),
     }).returning();
     const token = await issueSecret(db, c.var.user.region, grant.id, 'personal');
     await recordSharingConsent(db, c.var.user, grant);
@@ -63,6 +67,8 @@ export function agentRoutes(deps: Deps) {
     const body = await readJson(c, PatchBody);
     const set: Partial<typeof agentGrants.$inferInsert> = {};
     if (body.scopes) set.scopes = cleanScopes(['health:read', ...body.scopes]);
+    if (body.categories) set.categories = cleanCategories(body.categories);
+    if (body.expiresInDays !== undefined) set.expiresAt = expiryIn(body.expiresInDays);
     if (body.profileIds) {
       const own = await ownProfiles(db, c.var.user.id, [...new Set(body.profileIds)]);
       if (own.length !== new Set(body.profileIds).size) throw badRequest('A chosen profile is not in this account.');
