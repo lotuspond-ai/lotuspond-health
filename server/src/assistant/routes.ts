@@ -6,27 +6,27 @@
 //   DELETE /api/assistant/conversations/:id   delete a conversation
 //   POST   /api/assistant/messages            send a message ({ profileId, conversationId?, text }); the answer is
 //                                             streamed as server-sent events (AssistantEvent)
-import { and, asc, desc, eq } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { z } from 'zod';
-import { AGENT_CATEGORIES, AGENT_CATEGORY_TEXT, type AgentCategory } from '../../../shared/agents.ts';
+import { AGENT_CATEGORIES } from '../../../shared/agents.ts';
 import {
-  ASSISTANT_MAX_INPUT, ASSISTANT_MAX_TURNS, ASSISTANT_NAME, ASSISTANT_NOTICE_VERSION,
-  type AssistantConsent, type AssistantEvent, type AssistantInfo, type AssistantMessage,
+  ASSISTANT_MAX_INPUT, ASSISTANT_MAX_TURNS, ASSISTANT_NOTICE_VERSION,
+  type AssistantEvent, type AssistantInfo, type AssistantMessage,
 } from '../../../shared/assistant.ts';
 import { eventContext, recordEvent } from '../compliance/audit.ts';
 import { recordConsents } from '../compliance/consents.ts';
-import { assistantConversations, assistantMessages, consents, profiles, type AgentGrantRow, type AssistantMessageRow, type UserRow } from '../db/schema.ts';
-import type { Db } from '../db/client.ts';
+import { assistantConversations, type AssistantMessageRow } from '../db/schema.ts';
 import { conflict, HttpError, notFound, tooMany } from '../lib/errors.ts';
 import { RateLimiter } from '../lib/rate-limit.ts';
 import { readJson, requireAuth, UUID, type AppEnv, type Deps } from '../http.ts';
-import { relationshipOrder } from '../routes/profiles.ts';
 import { cleanCategories } from '../agents/grants.ts';
 import { publicOrigin } from '../agents/oauth.ts';
-import { toolsFor, type ToolContext } from '../agents/tools.ts';
 import { AssistantError, type Assistant } from './agent.ts';
+import { accountProfiles, assistantConsent, conversationMessages, conversationTitle, runTurn, userTurns } from './turn.ts';
+
+export { assistantConsent };
 
 /** Messages per account per hour. */
 const PER_HOUR = 60;
@@ -41,13 +41,6 @@ const MessageBody = z.object({
   text: z.string().trim().min(1, 'Write a message.').max(ASSISTANT_MAX_INPUT),
 });
 
-export async function assistantConsent(db: Db, userId: string): Promise<AssistantConsent | null> {
-  const [row] = await db.select().from(consents).where(and(eq(consents.userId, userId), eq(consents.kind, 'assistant')))
-    .orderBy(desc(consents.createdAt), desc(consents.id)).limit(1);
-  if (!row) return null;
-  return { granted: row.granted, version: row.version, categories: cleanCategories(row.detail?.categories ?? []), at: row.createdAt.toISOString() };
-}
-
 const toMessage = (r: AssistantMessageRow): AssistantMessage => ({
   id: r.id, role: r.role, text: r.text, createdAt: r.createdAt.toISOString(),
   ...(r.meta?.tools?.length ? { tools: r.meta.tools } : {}),
@@ -56,17 +49,6 @@ const toMessage = (r: AssistantMessageRow): AssistantMessage => ({
   ...(r.meta?.wrote ? { wrote: true } : {}),
   ...(r.meta?.refused ? { refused: true } : {}),
 });
-
-/** The assistant acts like a connection that sees every profile of the account, with the kinds of data agreed to. */
-function assistantGrant(user: UserRow, profileIds: string[], categories: AgentCategory[]): AgentGrantRow {
-  return {
-    id: user.id, userId: user.id, kind: 'token', clientId: null, name: ASSISTANT_NAME, redirectHost: null,
-    scopes: ['health:read', 'health:write'], categories, profileIds,
-    createdAt: new Date(), lastUsedAt: null, lastLoggedAt: null, expiresAt: null,
-  };
-}
-
-const title = (text: string) => { const t = text.replace(/\s+/g, ' ').trim(); return t.length > 60 ? `${t.slice(0, 57)}…` : t; };
 
 export function assistantRoutes(deps: Deps, assistant: Assistant | undefined) {
   const limiter = new RateLimiter(PER_HOUR, 60 * 60_000);
@@ -79,7 +61,7 @@ export function assistantRoutes(deps: Deps, assistant: Assistant | undefined) {
       .orderBy(desc(assistantConversations.updatedAt)).limit(30);
     const body: AssistantInfo = {
       enabled: !!assistant, noticeVersion: ASSISTANT_NOTICE_VERSION, consent: await assistantConsent(db, c.var.user.id),
-      conversations: rows.map(r => ({ id: r.id, profileId: r.profileId, title: r.title, updatedAt: r.updatedAt.toISOString() })),
+      conversations: rows.map(r => ({ id: r.id, profileId: r.profileId, title: r.title, updatedAt: r.updatedAt.toISOString(), ...(r.channel === 'whatsapp' ? { channel: 'whatsapp' as const } : {}) })),
     };
     return c.json(body);
   });
@@ -109,8 +91,8 @@ export function assistantRoutes(deps: Deps, assistant: Assistant | undefined) {
     const { db } = c.var.cell;
     const [conv] = await db.select().from(assistantConversations).where(and(eq(assistantConversations.id, id), eq(assistantConversations.userId, c.var.user.id))).limit(1);
     if (!conv) throw notFound('That conversation');
-    const rows = await db.select().from(assistantMessages).where(eq(assistantMessages.conversationId, id)).orderBy(asc(assistantMessages.seq));
-    return c.json({ id: conv.id, profileId: conv.profileId, title: conv.title, messages: rows.filter(r => r.text).map(toMessage) });
+    const rows = await conversationMessages(db, id);
+    return c.json({ id: conv.id, profileId: conv.profileId, title: conv.title, ...(conv.channel === 'whatsapp' ? { channel: 'whatsapp' } : {}), messages: rows.filter(r => r.text).map(toMessage) });
   });
 
   app.delete('/conversations/:id', async c => {
@@ -131,7 +113,7 @@ export function assistantRoutes(deps: Deps, assistant: Assistant | undefined) {
     const wait = limiter.hit(user.id);
     if (wait) throw tooMany(`You have sent many messages in the last hour. Try again in ${Math.ceil(wait / 60)} minutes.`);
 
-    const all = (await db.select().from(profiles).where(eq(profiles.userId, user.id))).sort(relationshipOrder);
+    const all = await accountProfiles(db, user.id);
     const profile = all.find(p => p.id === body.profileId);
     if (!profile) throw notFound('That profile');
 
@@ -139,32 +121,17 @@ export function assistantRoutes(deps: Deps, assistant: Assistant | undefined) {
       ? (await db.select().from(assistantConversations).where(and(eq(assistantConversations.id, body.conversationId), eq(assistantConversations.userId, user.id))).limit(1))[0]
       : undefined;
     if (body.conversationId && !conv) throw notFound('That conversation');
-    const rows = conv ? await db.select().from(assistantMessages).where(eq(assistantMessages.conversationId, conv.id)).orderBy(asc(assistantMessages.seq)) : [];
-    const turns = rows.filter(r => r.role === 'user' && r.text).length;
-    if (turns >= ASSISTANT_MAX_TURNS) throw conflict('This conversation is long. Start a new one to keep answers quick.', 'conversation_full');
-
-    const categories = consent.categories;
-    const notShared = AGENT_CATEGORIES.filter(k => !categories.includes(k)).map(k => AGENT_CATEGORY_TEXT[k].title.toLowerCase());
-    const today = new Date().toISOString().slice(0, 10);
-    const context = [
-      `Today is ${today}.`,
-      `The app has ${profile.displayName}'s records open (profile_id ${profile.id}, ${profile.relationship === 'self' ? 'the account holder' : `their ${profile.relationship}`}). Tools use this profile unless you pass another profile_id.`,
-      `Profiles in this account: ${all.map(p => `${p.displayName} (${p.relationship}, ${p.id})`).join('; ')}.`,
-      notShared.length ? `The person has not shared these kinds of data with you: ${notShared.join('; ')}.` : 'The person has shared every kind of data with you.',
-    ].join('\n');
-
-    const labs = !!deps.labs?.forCell(c.var.cell);
-    const grant = assistantGrant(user, all.map(p => p.id), categories);
-    const ctx: ToolContext = { deps, cell: c.var.cell, user, grant, appUrl: `${publicOrigin(c, deps.config)}/app`, assistant: { defaultProfileId: profile.id } };
-    const tools = toolsFor(grant.scopes, labs, categories);
-    const history = rows.map(r => ({ role: r.role, content: r.content })) as Parameters<Assistant['reply']>[0]['history'];
-    const userMsg = { role: 'user' as const, content: body.text };
+    // WhatsApp conversations are read in the app; they carry on from WhatsApp only.
+    if (conv?.channel === 'whatsapp') throw conflict('This conversation happens on WhatsApp. Start a new chat here.', 'whatsapp_conversation');
+    const rows = conv ? await conversationMessages(db, conv.id) : [];
+    if (userTurns(rows) >= ASSISTANT_MAX_TURNS) throw conflict('This conversation is long. Start a new one to keep answers quick.', 'conversation_full');
 
     if (!conv) {
-      [conv] = await db.insert(assistantConversations).values({ userId: user.id, profileId: profile.id, title: title(body.text) }).returning();
+      [conv] = await db.insert(assistantConversations).values({ userId: user.id, profileId: profile.id, title: conversationTitle(body.text) }).returning();
       await recordEvent(db, eventContext(c, deps), user.id, 'assistant_chat', { profileId: profile.id });
     }
     const conversation = conv;
+    const appUrl = `${publicOrigin(c, deps.config)}/app`;
     const abort = new AbortController();
 
     return streamSSE(c, async stream => {
@@ -174,20 +141,9 @@ export function assistantRoutes(deps: Deps, assistant: Assistant | undefined) {
       const send = (e: AssistantEvent) => { queue = queue.then(() => stream.writeSSE({ data: JSON.stringify(e) })).catch(() => {}); };
       send({ type: 'start', conversationId: conversation.id, title: conversation.title });
       try {
-        const turn = await assistant.reply({ history: [...history, userMsg], context, tools, ctx, emit: send, signal: abort.signal });
-        // The person's message and every message of the answer, in order; the reply's text and what it did go on the
-        // last one, which is what the app shows.
-        let seq = rows.length;
-        const lastAssistant = turn.added.map(m => m.role).lastIndexOf('assistant');
-        await db.insert(assistantMessages).values([
-          { conversationId: conversation.id, seq: seq++, role: 'user', content: body.text, text: body.text },
-          ...turn.added.map((m, i) => ({
-            conversationId: conversation.id, seq: seq++, role: m.role as 'user' | 'assistant', content: m.content,
-            text: i === lastAssistant ? turn.text.trim() || '…' : '',
-            meta: i === lastAssistant ? { tools: turn.tools, organs: turn.organs, links: turn.links, wrote: turn.wrote, refused: turn.refused } : null,
-          })),
-        ]);
-        await db.update(assistantConversations).set({ updatedAt: new Date() }).where(eq(assistantConversations.id, conversation.id));
+        const turn = await runTurn({
+          deps, assistant, cell: c.var.cell, user, consent, all, profile, conversation, rows, text: body.text, appUrl, emit: send, signal: abort.signal,
+        });
         if (turn.wrote) send({ type: 'changed', profileId: profile.id });
         send({
           type: 'done',

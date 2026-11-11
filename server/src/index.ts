@@ -103,7 +103,10 @@ if (config.labs.partners.length) {
 
 const extractor = config.aiExtraction.enabled ? claudeExtractor({ model: config.aiExtraction.model }) : undefined;
 const assistant = config.assistant.enabled ? claudeAssistant({ model: config.assistant.model }) : undefined;
-const app = createApp({ db: opened.defaultDatabase.db, files: registry.defaultCell.files, config, cells: registry, secrets, labs, extractor, assistant });
+let whatsapp: import('./whatsapp/service.ts').WhatsAppService | undefined;
+const app = createApp({ db: opened.defaultDatabase.db, files: registry.defaultCell.files, config, cells: registry, secrets, labs, extractor, assistant }, { whatsapp: { onService: s => { whatsapp = s; } } });
+const sweepWhatsApp = setInterval(() => void whatsapp?.purge().catch(() => {}), 60 * 60 * 1000);
+sweepWhatsApp.unref();
 const stopLabs = labs?.start();
 const server = serve({ fetch: app.fetch, port: config.port, hostname: config.host }, info => {
   const where = (d: (typeof opened.databases)[number]) => (d.database.kind === 'pglite' ? `PGlite in ${path.dirname(d.filesRoot)}` : 'PostgreSQL');
@@ -115,6 +118,8 @@ const server = serve({ fetch: app.fetch, port: config.port, hostname: config.hos
   }
   if (config.staticDir) console.log(`[api] serving the app from ${config.staticDir}`);
   if (assistant) console.log(`[api] assistant: on (${config.assistant.model})`);
+  if (whatsapp) console.log(`[api] WhatsApp: on (+${config.whatsapp!.number}); Meta posts to ${config.publicUrl ?? '<PUBLIC_URL>'}/hooks/whatsapp`);
+  else if (config.whatsapp) console.warn('[api] WhatsApp is set up but the assistant is off, so WhatsApp is off too.');
   if (extractor) console.log(`[api] reading reports with Claude: on (${config.aiExtraction.model}), only for uploads the person sends`);
   if (labs) console.log(`[api] lab booking: ${[...labs.partners.keys()].join(', ')}${labs.partners.has('fake') ? ` (the simulated lab; orders move a step every ${config.labs.fakeStepMs / 1000} s)` : ''}`);
 });

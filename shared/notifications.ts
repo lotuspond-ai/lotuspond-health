@@ -6,7 +6,9 @@ import type { Profile } from './types.ts';
 /** What an agent added: a reading (one result), or entries appended to a profile's lists. */
 export type NotificationDetail =
   | { type: 'reading'; measurementId: string; marker: string; value: string; unit: string; date: string | null }
-  | { type: 'profile'; conditions?: string[]; medications?: string[]; allergies?: string[] };
+  | { type: 'profile'; conditions?: string[]; medications?: string[]; allergies?: string[] }
+  /** A report sent on WhatsApp, saved to the profile's files for the person to review. */
+  | { type: 'document'; documentId: string; fileName: string };
 
 export interface AppNotification {
   id: string;
@@ -40,6 +42,7 @@ export const NOTIFICATION_LIST_MAX = 50;
 
 /** "a reading: Fasting glucose 104 mg/dL" or "a condition: Asthma; an allergy: Penicillin". */
 export function describeWrite(d: NotificationDetail): string {
+  if (d.type === 'document') return `a file: ${d.fileName}`;
   if (d.type === 'reading') return `a reading: ${d.marker} ${d.value}${d.unit ? ` ${d.unit}` : ''}`;
   const part = (list: string[] | undefined, one: string, many: string) =>
     list?.length ? `${list.length === 1 ? one : many}: ${list.join(', ')}` : null;

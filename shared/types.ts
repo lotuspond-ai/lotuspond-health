@@ -175,7 +175,9 @@ export type ConsentKind = 'terms' | 'privacy' | 'health_data' | 'cross_border' |
   /** Sending one photographed or scanned report to Claude to read it (one record per upload; src/components/AiRead). */
   | 'ai_extraction'
   /** Talking with LotusPond's assistant, which sends the parts of the records it needs to Anthropic (shared/assistant.ts). */
-  | 'assistant';
+  | 'assistant'
+  /** Talking with the assistant on WhatsApp from a linked number (shared/whatsapp.ts); withdrawn when unlinked. */
+  | 'whatsapp';
 
 /** What the account holder confirmed when adding a family member. */
 export type FamilyConfirmation = 'guardian' | 'agreed';
@@ -215,7 +217,7 @@ export type AuditKind =
   | 'export' | 'profile_deleted' | 'records_deleted' | 'account_deleted' | 'consent_changed' | 'preferences_changed'
   | 'lab_order_created' | 'lab_order_cancelled' | 'lab_results_saved'
   | 'agent_connected' | 'agent_disconnected' | 'agent_access' | 'agent_wrote' | 'agent_write_undone' | 'assistant_chat'
-  | 'report_read_by_ai';
+  | 'report_read_by_ai' | 'whatsapp_linked' | 'whatsapp_unlinked' | 'whatsapp_report';
 
 /** The only details an audit event may carry. Deliberately narrow: never names, values, file names or other health data. */
 export interface AuditDetail {

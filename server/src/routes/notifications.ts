@@ -28,7 +28,7 @@ export function notificationRoutes(deps: Deps) {
   app.post('/:id/undo', async c => {
     const id = c.req.param('id');
     if (!UUID.test(id)) throw notFound('That notification');
-    const out = await undoAgentWrite(c.var.cell.db, c.var.user.id, id);
+    const out = await undoAgentWrite(c.var.cell.db, c.var.cell.files, c.var.user.id, id);
     if (!out) throw notFound('That notification');
     if (out.removed) {
       await recordEvent(c.var.cell.db, eventContext(c, deps), c.var.user.id, 'agent_write_undone', {

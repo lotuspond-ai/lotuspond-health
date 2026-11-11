@@ -6,7 +6,7 @@ import { Fragment, useEffect, useRef, useState, type FormEvent, type ReactNode }
 import { AGENT_BASICS_TEXT, AGENT_CATEGORIES, AGENT_CATEGORY_TEXT, type AgentCategory } from '../../../shared/agents';
 import { ASSISTANT_MAX_INPUT, ASSISTANT_NOTICE_VERSION } from '../../../shared/assistant';
 import { countryName } from '../../../shared/regions';
-import { errorMessage, isPreview } from '../../api';
+import { backend, errorMessage, isPreview } from '../../api';
 import { useAssistant } from '../../state/assistant';
 import { firstName, useActiveProfile, useSession } from '../../state/session';
 import { useEscape } from '../useEscape';
@@ -69,7 +69,16 @@ export function AssistantPanel() {
 const SUGGESTIONS = ['What needs my attention?', 'How has my cholesterol changed?', 'My blood pressure today was 130/85', 'Which tests are due?'];
 
 function Panel() {
-  const { info, messages, live, error, setOpen, send, stop, newChat, openConversation } = useAssistant();
+  const { info, messages, live, error, setOpen, send, stop, newChat, openConversation, channel } = useAssistant();
+  const setView = useUI(s => s.setView);
+  // Offer WhatsApp when the server has it and this account has not linked a number.
+  const [offerWhatsApp, setOfferWhatsApp] = useState(false);
+  useEffect(() => {
+    if (isPreview) return;
+    let live = true;
+    backend.whatsappInfo().then(w => { if (live) setOfferWhatsApp(w.enabled && !w.link); }, () => {});
+    return () => { live = false; };
+  }, []);
   const profile = useActiveProfile();
   // A question typed in the home brief before agreeing waits here.
   const [text, setText] = useState(() => { const d = useAssistant.getState().draft; useAssistant.setState({ draft: '' }); return d; });
@@ -145,8 +154,11 @@ function Panel() {
                   <div className="assistant__chips">{SUGGESTIONS.map(s => <button key={s} type="button" className="chip-btn" onClick={() => { if (profile) void send(profile.id, s); }}>{s}</button>)}</div>
                   {convs.length > 0 && (
                     <div className="assistant__recent"><h3>Recent</h3>
-                      {convs.map(c => <button key={c.id} type="button" className="linkish" onClick={() => void openConversation(c.id)}>{c.title}</button>)}
+                      {convs.map(c => <button key={c.id} type="button" className="linkish" onClick={() => void openConversation(c.id)}>{c.channel === 'whatsapp' ? `WhatsApp · ${c.title}` : c.title}</button>)}
                     </div>
+                  )}
+                  {offerWhatsApp && (
+                    <p className="note assistant__wa">Talk to LotusPond on WhatsApp too, and send reports from there. <button type="button" className="linkish" onClick={() => { close(); setView('account'); }}>Link WhatsApp</button></p>
                   )}
                 </div>
               )}
@@ -156,6 +168,12 @@ function Panel() {
               )}
               {error && <p className="form-error assistant__error" role="alert">{error}</p>}
             </div>
+            {channel === 'whatsapp' ? (
+              <div className="assistant__composer assistant__composer--note">
+                <p className="note">This conversation happened on WhatsApp. Carry it on there, or start a new chat here.</p>
+                <button type="button" className="btn btn--primary btn--small" onClick={newChat}>New chat</button>
+              </div>
+            ) : (
             <form className="assistant__composer" onSubmit={submit}>
               <textarea ref={input} value={text} rows={1} maxLength={ASSISTANT_MAX_INPUT} placeholder={listening ? 'Listening…' : 'Message LotusPond'}
                 aria-label="Message LotusPond" onChange={e => setText(e.target.value)}
@@ -166,6 +184,7 @@ function Panel() {
                 ? <button type="button" className="btn btn--small" onClick={stop}>Stop</button>
                 : <button className="btn btn--primary btn--small" disabled={!text.trim()}>Send</button>}
             </form>
+            )}
             <p className="assistant__foot">Answers come from Claude and can be wrong. LotusPond explains results; it does not diagnose. In an emergency, call your local emergency number.</p>
           </>
         )}

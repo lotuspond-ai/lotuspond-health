@@ -61,6 +61,18 @@ const Env = z.object({
   /** LotusPond's assistant (chat in the app): on when Anthropic credentials are set, unless ASSISTANT=off. */
   ASSISTANT: z.enum(['on', 'off']).default('on'),
   ASSISTANT_MODEL: z.string().trim().min(1).default('claude-opus-5-5'),
+  /* WhatsApp (docs/whatsapp.md): the assistant on WhatsApp through Meta's Cloud API. On when all four are set. */
+  /** The business phone number's id in WhatsApp Manager (not the number itself). */
+  WHATSAPP_PHONE_NUMBER_ID: z.string().trim().regex(/^\d{5,32}$/, 'The phone number id is digits, from WhatsApp Manager.').optional(),
+  /** The number people message, with country code, e.g. 919876543210 (used for the wa.me link). */
+  WHATSAPP_NUMBER: z.string().trim().transform(s => s.replace(/[\s+()-]/g, '')).pipe(z.string().regex(/^\d{8,15}$/, 'Write the number with its country code, digits only.')).optional(),
+  /** A system user access token with whatsapp_business_messaging. */
+  WHATSAPP_ACCESS_TOKEN: z.string().trim().min(20).optional(),
+  /** The Meta app secret: webhook deliveries are signed with it. */
+  WHATSAPP_APP_SECRET: z.string().trim().min(16).optional(),
+  /** What Meta sends when the webhook is verified; set the same value in the app's webhook settings. */
+  WHATSAPP_VERIFY_TOKEN: z.string().trim().min(16).optional(),
+  WHATSAPP_GRAPH_URL: z.string().url().default('https://graph.facebook.com/v23.0'),
   /* Orange Health Labs (lab/partners/orange.ts), with LAB_PARTNERS=orange. */
   /** The partner API key Orange Health issues (integrations@orangehealth.in). */
   ORANGE_API_KEY: z.string().trim().min(8).optional(),
@@ -165,6 +177,8 @@ export interface Config {
   /** The Claude read is on (credentials present and not switched off), and its model. */
   aiExtraction: { enabled: boolean; model: string };
   assistant: { enabled: boolean; model: string };
+  /** The assistant on WhatsApp, when the Cloud API is set up (and the assistant is on). */
+  whatsapp: { phoneNumberId: string; number: string; accessToken: string; appSecret: string; verifyToken: string; graphUrl: string } | undefined;
   map: MapConfig;
   servedRegions: DataRegion[];
   /** Settings for each served region. A region with neither databaseUrl nor dataDir is kept in the default cell. */
@@ -298,6 +312,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     labs: { partners: labPartners, fakeStepMs: e.LAB_FAKE_STEP_MS, ...(orange ? { orange } : {}) },
     aiExtraction: { enabled: e.AI_EXTRACTION === 'on' && !!(env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN), model: e.AI_EXTRACTION_MODEL },
     assistant: { enabled: e.ASSISTANT === 'on' && !!(env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN), model: e.ASSISTANT_MODEL },
+    whatsapp: e.WHATSAPP_PHONE_NUMBER_ID && e.WHATSAPP_NUMBER && e.WHATSAPP_ACCESS_TOKEN && e.WHATSAPP_APP_SECRET && e.WHATSAPP_VERIFY_TOKEN
+      ? { phoneNumberId: e.WHATSAPP_PHONE_NUMBER_ID, number: e.WHATSAPP_NUMBER, accessToken: e.WHATSAPP_ACCESS_TOKEN, appSecret: e.WHATSAPP_APP_SECRET, verifyToken: e.WHATSAPP_VERIFY_TOKEN, graphUrl: e.WHATSAPP_GRAPH_URL.replace(/\/$/, '') }
+      : undefined,
     map: {
       pmtilesUrl: e.MAP_PMTILES_URL || undefined,
       styleUrl: e.MAP_STYLE_URL,

@@ -17,7 +17,7 @@ import { ArrowIcon, ModalityBadge, SystemIcon, UiIcon } from './icons';
 import { rangeText } from './context/summary';
 import { displayMeasurement, roundForDisplay } from '../lib/units';
 import { OrganSelect } from '../pages/Scans';
-import { errorMessage, isPreview } from '../api';
+import { backend, errorMessage, isPreview } from '../api';
 import { firstName, useActiveProfile, useUnitSystem } from '../state/session';
 import { toast } from '../state/toast';
 import { isNative } from '../native/platform';
@@ -185,6 +185,12 @@ function UploadPanel() {
   const [files, setFiles] = useState<File[]>([]);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  // A file already in the records (sent on WhatsApp, or Read results in Files): read it, and link the results to it.
+  const review = useUI(s => s.review);
+  const reviewDoc = useHealth(s => (review ? s.documents.find(d => d.id === review.documentId) : undefined));
+  const healthReady = useHealth(s => !s.loading && s.profileId === review?.profileId);
+  const [stored, setStored] = useState<Record<string, string>>({});
+  const started = useRef(false);
   // Apple Health or Health Connect, in the apps only.
   const healthStore = useMemo(() => phoneHealthStore(), []);
   const [healthOpen, setHealthOpen] = useState(false);
@@ -198,7 +204,7 @@ function UploadPanel() {
     setSaving(true);
     setSaveError(null);
     try {
-      const done = await addResult(d, files);
+      const done = await addResult(d, files, stored);
       setSaving(false);
       close();
       const parts = [done.measurements && `${done.measurements} result${done.measurements > 1 ? 's' : ''}`, done.scans && `${done.scans} scan${done.scans > 1 ? 's' : ''}`].filter(Boolean);
@@ -224,6 +230,20 @@ function UploadPanel() {
     }
     setBusy(null); setDraft(merged);
   }
+  useEffect(() => {
+    if (!review || started.current || !healthReady) return;
+    started.current = true;
+    if (!reviewDoc) { setSaveError('That file is no longer in these records.'); return; }
+    void (async () => {
+      setBusy(`Opening ${reviewDoc.fileName}…`);
+      try {
+        const blob = await backend.documentFile(review.profileId, reviewDoc.id);
+        setStored({ [reviewDoc.fileName]: reviewDoc.id });
+        await handle([new File([blob], reviewDoc.fileName, { type: reviewDoc.contentType })]);
+      } catch (e) { setBusy(null); setSaveError(`Could not open ${reviewDoc.fileName}. ${errorMessage(e)}`); }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- read the file once, when the records are loaded
+  }, [review, healthReady, reviewDoc]);
   const patch = (id: string, p: Partial<Measurement>) => setDraft(d => d && { ...d, measurements: d.measurements.map(m => m.id === id ? { ...m, ...p } : m) });
   const drop = (id: string) => setDraft(d => d && { ...d, measurements: d.measurements.filter(m => m.id !== id) });
   // Claude's read of one file replaces what the device read from it.
@@ -259,6 +279,7 @@ function UploadPanel() {
             <input ref={input} type="file" multiple hidden accept={ACCEPT} onChange={e => { const f = takeFiles(e.target); if (f.length) void handle(f); }} />
             <input ref={camera} type="file" hidden accept="image/*" capture="environment" onChange={e => { const f = takeFiles(e.target); if (f.length) void handle(f); }} />
             <div className="formats"><span>Lab report PDF</span><span>Photo of a report</span><span>CSV or JSON export</span><span>FHIR / ABHA record</span><span>DICOM (.dcm)</span><span>X-ray or scan photos</span></div>
+            {saveError && <p className="form-error" role="alert" style={{ marginTop: 14 }}>{saveError}</p>}
           </div>
         ) : (
           <>

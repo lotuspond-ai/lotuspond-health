@@ -22,6 +22,8 @@ interface AssistantState {
   draft: string;
   /** The profile the current conversation is about. */
   forProfile: string | null;
+  /** Set when the open conversation happened on WhatsApp: it is read here and carried on there. */
+  channel: 'whatsapp' | null;
   load: () => Promise<void>;
   setOpen: (open: boolean) => void;
   agree: (categories: AgentCategory[]) => Promise<void>;
@@ -48,6 +50,7 @@ export const useAssistant = create<AssistantState>()((set, get) => ({
   error: null,
   draft: '',
   forProfile: null,
+  channel: null,
 
   load: async () => {
     try { set({ info: await backend.assistantInfo() }); } catch { /* not signed in yet, or offline: the button stays hidden */ }
@@ -59,20 +62,20 @@ export const useAssistant = create<AssistantState>()((set, get) => ({
     set(s => ({ info: s.info && { ...s.info, consent } }));
   },
 
-  newChat: () => { get().stop(); set({ conversationId: null, messages: [], live: null, error: null }); },
+  newChat: () => { get().stop(); set({ conversationId: null, messages: [], live: null, error: null, channel: null }); },
 
   openConversation: async id => {
     get().stop();
     try {
       const c = await backend.assistantConversation(id);
-      set({ conversationId: c.id, messages: c.messages, live: null, error: null, forProfile: c.profileId });
+      set({ conversationId: c.id, messages: c.messages, live: null, error: null, forProfile: c.profileId, channel: c.channel ?? null });
     } catch (e) { set({ error: errorMessage(e) }); }
   },
 
   send: async (profileId, text) => {
     if (get().live) return;
     // A conversation is about one profile: switching profiles starts a new one.
-    if (get().forProfile && get().forProfile !== profileId) set({ conversationId: null, messages: [], error: null });
+    if ((get().forProfile && get().forProfile !== profileId) || get().channel) set({ conversationId: null, messages: [], error: null, channel: null });
     set({ forProfile: profileId });
     const mine: AssistantMessage = { id: `local-${Date.now()}`, role: 'user', text, createdAt: new Date().toISOString() };
     set(s => ({ messages: [...s.messages, mine], live: { text: '', doing: 'Thinking…', tools: [], organs: [], links: [] }, error: null }));

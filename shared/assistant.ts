@@ -22,6 +22,8 @@ export interface AssistantConversationSummary {
   profileId: string;
   title: string;
   updatedAt: string;
+  /** Set for a conversation that happens on WhatsApp (read-only in the app). */
+  channel?: 'whatsapp';
 }
 
 export interface AssistantLink { label: string; url: string }

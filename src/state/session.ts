@@ -6,7 +6,7 @@ import { HttpBackend } from '../api/http';
 import { useHealth } from '../lib/store';
 import { enterApp, leaveApp, oauthReturn } from '../site/links';
 import { readAgentProposal, useLab } from './lab';
-import { useUI } from './ui';
+import { readReviewLink, useUI } from './ui';
 import { countryPolicy } from '../../shared/regions';
 
 type Status = 'loading' | 'signed-out' | 'signed-in' | 'offline';
@@ -58,12 +58,15 @@ export const useSession = create<SessionState>((set, get) => {
     const back = oauthReturn();
     if (back) { location.assign(back); return; }
     const proposal = readAgentProposal();
-    const saved = proposal && info.profiles.some(p => p.id === proposal.profileId) ? proposal.profileId : recall(info.account.id);
+    const review = readReviewLink();
+    const linked = review?.profileId ?? proposal?.profileId;
+    const saved = linked && info.profiles.some(p => p.id === linked) ? linked : recall(info.account.id);
     if (proposal) useLab.getState().setProposal(proposal);
     const activeId = info.profiles.find(p => p.id === saved)?.id ?? info.profiles[0]?.id ?? null;
     set({ status: 'signed-in', account: info.account, profiles: info.profiles, activeId, onboarding, notice: null, consentsOutdated: info.consentsOutdated ?? [] });
     enterApp();
     void useHealth.getState().openProfile(activeId);
+    if (review && review.profileId === activeId) useUI.getState().openReview(review);
   }
 
   function reset(notice: string | null = null) {

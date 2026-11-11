@@ -3,7 +3,8 @@
 import { and, desc, eq, inArray, isNull, lt, sql } from 'drizzle-orm';
 import { NOTIFICATION_KEEP_DAYS, NOTIFICATION_LIST_MAX, type AppNotification, type NotificationDetail, type NotificationList } from '../../shared/notifications.ts';
 import type { Db } from './db/client.ts';
-import { measurements, notifications, profiles, type NotificationRow, type ProfileRow } from './db/schema.ts';
+import { documents, measurements, notifications, profiles, type NotificationRow, type ProfileRow } from './db/schema.ts';
+import type { FileStore } from './lib/files.ts';
 
 export function toNotification(r: NotificationRow): AppNotification {
   return {
@@ -41,10 +42,10 @@ const without = (list: string[], remove: string[] | undefined) => {
 };
 
 /**
- * Undo what an agent added: delete the reading, or take the added entries off the profile's lists (only those still
+ * Undo what an agent added: delete the reading or the saved file (results already added from that file stay), or take the added entries off the profile's lists (only those still
  * there; anything the person added or changed since stays). Returns whether anything was still there to remove.
  */
-export async function undoAgentWrite(db: Db, userId: string, id: string): Promise<{ notification: AppNotification; removed: boolean; profile?: ProfileRow } | null> {
+export async function undoAgentWrite(db: Db, files: FileStore, userId: string, id: string): Promise<{ notification: AppNotification; removed: boolean; profile?: ProfileRow } | null> {
   const [row] = await db.select().from(notifications).where(and(eq(notifications.id, id), eq(notifications.userId, userId))).limit(1);
   if (!row) return null;
   if (row.undoneAt) return { notification: toNotification(row), removed: false };
@@ -54,6 +55,9 @@ export async function undoAgentWrite(db: Db, userId: string, id: string): Promis
   if (d.type === 'reading') {
     const gone = await db.delete(measurements).where(and(eq(measurements.id, d.measurementId), eq(measurements.profileId, row.profileId))).returning({ id: measurements.id });
     removed = gone.length > 0;
+  } else if (d.type === 'document') {
+    const [doc] = await db.delete(documents).where(and(eq(documents.id, d.documentId), eq(documents.profileId, row.profileId))).returning();
+    if (doc) { await files.delete(doc.storageKey); removed = true; }
   } else {
     const [p] = await db.select().from(profiles).where(and(eq(profiles.id, row.profileId), eq(profiles.userId, userId))).limit(1);
     if (p) {

@@ -7,6 +7,7 @@ import type {
 } from '../types';
 import type { NotificationList, UndoResult } from '../../shared/notifications';
 import type { AssistantConsent, AssistantEvent, AssistantInfo, AssistantMessage } from '../../shared/assistant';
+import type { WhatsAppInfo, WhatsAppLink, WhatsAppLinkStart } from '../../shared/whatsapp';
 import type { AgentCategory } from '../../shared/agents';
 import type { AgentConnection, AgentConnectionsInfo, CreateAgentTokenInput, CreatedAgentToken, UpdateAgentConnectionInput } from '../../shared/agents';
 import type { LabBookingInput, LabCatalog, LabOrderView, LabResultSaved, LabResultView, LabSlot } from '../../shared/lab-bundle';
@@ -133,9 +134,15 @@ export interface Backend {
   assistantInfo(): Promise<AssistantInfo>;
   agreeToAssistant(categories: AgentCategory[]): Promise<AssistantConsent>;
   withdrawAssistant(): Promise<void>;
-  assistantConversation(id: string): Promise<{ id: string; profileId: string; title: string; messages: AssistantMessage[] }>;
+  assistantConversation(id: string): Promise<{ id: string; profileId: string; title: string; channel?: 'whatsapp'; messages: AssistantMessage[] }>;
   deleteAssistantConversation(id: string): Promise<void>;
   /** Sends a message; the answer arrives as events until `done` or `error`. */
+  /* The assistant on WhatsApp (shared/whatsapp.ts). Needs WhatsApp set up on the server. */
+  whatsappInfo(): Promise<WhatsAppInfo>;
+  /** Agree to the WhatsApp notice and get a code to send from WhatsApp. */
+  startWhatsAppLink(): Promise<WhatsAppLinkStart>;
+  setWhatsAppProfile(profileId: string): Promise<WhatsAppLink>;
+  unlinkWhatsApp(): Promise<void>;
   sendToAssistant(input: { profileId: string; conversationId?: string; text: string }, onEvent: (e: AssistantEvent) => void, signal?: AbortSignal): Promise<void>;
 }
 
