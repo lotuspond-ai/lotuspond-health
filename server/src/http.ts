@@ -13,6 +13,7 @@ import type { Secrets } from './compliance/secrets.ts';
 import type { Labs } from './lab/runtime.ts';
 import type { Assistant } from './assistant/agent.ts';
 import type { ReportExtractor } from './extraction/claude.ts';
+import type { RecordAgent } from './records/service.ts';
 
 export interface Deps {
   /** The default database: non-personal data (directory, partner labs, facility cache). Personal data is in `cells`. */
@@ -29,6 +30,8 @@ export interface Deps {
   extractor?: ReportExtractor;
   /** LotusPond's assistant (server/src/assistant/), when switched on. */
   assistant?: Assistant;
+  /** The record agent (server/src/records/), when RECORD_AGENT is on. */
+  records?: RecordAgent;
 }
 
 export interface AppEnv {

@@ -8,6 +8,7 @@ import type {
 import type { NotificationList, UndoResult } from '../../shared/notifications';
 import type { AssistantConsent, AssistantEvent, AssistantInfo, AssistantMessage } from '../../shared/assistant';
 import type { WhatsAppInfo, WhatsAppLink, WhatsAppLinkStart } from '../../shared/whatsapp';
+import type { RecordConnectionView, RecordRunView, SourcesInfo } from '../../shared/sources';
 import type { AgentCategory } from '../../shared/agents';
 import type { AgentConnection, AgentConnectionsInfo, CreateAgentTokenInput, CreatedAgentToken, UpdateAgentConnectionInput } from '../../shared/agents';
 import type { LabBookingInput, LabCatalog, LabOrderView, LabResultSaved, LabResultView, LabSlot } from '../../shared/lab-bundle';
@@ -144,6 +145,17 @@ export interface Backend {
   setWhatsAppProfile(profileId: string): Promise<WhatsAppLink>;
   unlinkWhatsApp(): Promise<void>;
   sendToAssistant(input: { profileId: string; conversationId?: string; text: string }, onEvent: (e: AssistantEvent) => void, signal?: AbortSignal): Promise<void>;
+
+  /* The record agent (shared/sources.ts): fetching reports from portals. Needs the LotusPond server. */
+  recordSources(): Promise<SourcesInfo>;
+  recordConnections(): Promise<RecordConnectionView[]>;
+  connectRecordSource(input: { sourceId: string; profileId: string; portalUrl?: string; refreshDays: number | null }): Promise<{ connection: RecordConnectionView; run: RecordRunView }>;
+  updateRecordConnection(id: string, patch: { refreshDays: number | null }): Promise<RecordConnectionView>;
+  runRecordConnection(id: string): Promise<RecordRunView>;
+  disconnectRecordSource(id: string): Promise<void>;
+  recordRun(id: string): Promise<RecordRunView>;
+  answerRecordRun(id: string, answer: string): Promise<RecordRunView>;
+  cancelRecordRun(id: string): Promise<RecordRunView>;
 }
 
 /** A message suitable for showing to the person. */

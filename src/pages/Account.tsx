@@ -4,6 +4,7 @@ import { useSession } from '../state/session';
 import { toast } from '../state/toast';
 import { formatDate } from '../lib/derive';
 import { AGENT_CATEGORY_TEXT, type AgentCategory } from '../../shared/agents';
+import { sourceById } from '../../shared/sources';
 import { UNIT_SYSTEM_LABEL } from '../lib/units';
 import { LIMITS } from '../../shared/constants';
 import { countryInSentence, countryName, countryPolicy, storageSentence, type UnitSystem } from '../../shared/regions';
@@ -157,6 +158,7 @@ const CONSENT_LABEL: Record<ConsentKind, string> = {
   ai_extraction: 'Reading a report with Claude',
   assistant: 'Using the LotusPond assistant',
   whatsapp: 'Talking with the assistant on WhatsApp',
+  record_agent: 'Fetching records with the record agent',
 };
 
 /** Which profile or agent a per-item consent was for, as the history shows it. */
@@ -165,6 +167,7 @@ function consentSubject(r: ConsentRecord, profiles: Profile[]): string | null {
   if (!d) return null;
   const name = (id: string) => profiles.find(p => p.id === id)?.displayName ?? 'a removed profile';
   if (r.kind === 'ai_extraction' && d.profileId) return `A report for ${name(d.profileId)}`;
+  if (r.kind === 'record_agent' && d.source) return `${sourceById(d.source)?.name ?? d.source}${d.profileId ? ` for ${name(d.profileId)}` : ''}`;
   if (r.kind === 'family_profile' && d.profileId) return `${name(d.profileId)}${d.confirmation === 'guardian' ? ' (as parent or guardian)' : ''}`;
   if (r.kind === 'assistant' && r.granted && d.categories) {
     return `Sees ${d.categories.length ? d.categories.map(k => AGENT_CATEGORY_TEXT[k as AgentCategory]?.title.toLowerCase()).filter(Boolean).join(', ') : 'the basics only'}`;
@@ -296,6 +299,9 @@ const ACTIVITY_LABEL: Record<AuditKind, string> = {
   whatsapp_linked: 'Linked a WhatsApp number',
   whatsapp_unlinked: 'Unlinked WhatsApp',
   whatsapp_report: 'Sent a report on WhatsApp',
+  records_source_connected: 'Connected a record source',
+  records_source_disconnected: 'Disconnected a record source',
+  records_fetched: 'The record agent brought in reports',
 };
 
 function describe(e: ActivityEvent, profiles: Profile[]): string | null {

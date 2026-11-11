@@ -4,6 +4,7 @@ import { AI_EXTRACTION_NOTICE_VERSION, type AiExtraction } from '../../shared/ty
 import type { NotificationList, UndoResult } from '../../shared/notifications';
 import { ASSISTANT_NOTICE_VERSION, type AssistantConsent, type AssistantEvent, type AssistantInfo, type AssistantMessage } from '../../shared/assistant';
 import { WHATSAPP_NOTICE_VERSION, type WhatsAppInfo, type WhatsAppLink, type WhatsAppLinkStart } from '../../shared/whatsapp';
+import { RECORD_AGENT_NOTICE_VERSION, type RecordConnectionView, type RecordRunView, type SourcesInfo } from '../../shared/sources';
 import type { AgentCategory } from '../../shared/agents';
 import type { AgentConnection, AgentConnectionsInfo, CreateAgentTokenInput, CreatedAgentToken, UpdateAgentConnectionInput } from '../../shared/agents';
 import type {
@@ -250,6 +251,18 @@ export class HttpBackend implements Backend {
   startWhatsAppLink() { return this.request<WhatsAppLinkStart>('POST', '/whatsapp/link', { noticeVersion: WHATSAPP_NOTICE_VERSION }); }
   setWhatsAppProfile(profileId: string) { return this.request<WhatsAppLink>('PATCH', '/whatsapp/link', { profileId }); }
   unlinkWhatsApp() { return this.request<void>('DELETE', '/whatsapp/link'); }
+
+  recordSources() { return this.request<SourcesInfo>('GET', '/records'); }
+  recordConnections() { return this.request<RecordConnectionView[]>('GET', '/records/connections'); }
+  connectRecordSource(input: { sourceId: string; profileId: string; portalUrl?: string; refreshDays: number | null }) {
+    return this.request<{ connection: RecordConnectionView; run: RecordRunView }>('POST', '/records/connections', { ...input, noticeVersion: RECORD_AGENT_NOTICE_VERSION });
+  }
+  updateRecordConnection(id: string, patch: { refreshDays: number | null }) { return this.request<RecordConnectionView>('PATCH', `/records/connections/${id}`, patch); }
+  runRecordConnection(id: string) { return this.request<RecordRunView>('POST', `/records/connections/${id}/run`, {}); }
+  disconnectRecordSource(id: string) { return this.request<void>('DELETE', `/records/connections/${id}`); }
+  recordRun(id: string) { return this.request<RecordRunView>('GET', `/records/runs/${id}`); }
+  answerRecordRun(id: string, answer: string) { return this.request<RecordRunView>('POST', `/records/runs/${id}/answer`, { answer }); }
+  cancelRecordRun(id: string) { return this.request<RecordRunView>('POST', `/records/runs/${id}/cancel`, {}); }
 
   /** The answer streams back as server-sent events, one JSON AssistantEvent each. */
   async sendToAssistant(input: { profileId: string; conversationId?: string; text: string }, onEvent: (e: AssistantEvent) => void, signal?: AbortSignal) {

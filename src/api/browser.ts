@@ -19,6 +19,7 @@ import type { AgentConnection, AgentConnectionsInfo, CreatedAgentToken } from '.
 import type { NotificationList, UndoResult } from '../../shared/notifications';
 import { ASSISTANT_NOTICE_VERSION, type AssistantConsent, type AssistantInfo, type AssistantMessage } from '../../shared/assistant';
 import { WHATSAPP_NOTICE_VERSION, type WhatsAppInfo, type WhatsAppLink, type WhatsAppLinkStart } from '../../shared/whatsapp';
+import { RECORD_AGENT_NOTICE_VERSION, type RecordConnectionView, type RecordRunView, type SourcesInfo } from '../../shared/sources';
 import type { AiExtraction } from '../../shared/types';
 import type { LabCatalog, LabOrderView, LabResultSaved, LabResultView, LabSlot } from '../../shared/lab-bundle';
 
@@ -558,5 +559,15 @@ export class BrowserBackend implements Backend {
   async createAgentToken(): Promise<CreatedAgentToken> { throw noAgents(); }
   async updateAgentConnection(): Promise<AgentConnection> { throw noAgents(); }
   async disconnectAgent(): Promise<void> { throw noAgents(); }
+  // The record agent runs browsers on the LotusPond server; the preview has none.
+  async recordSources(): Promise<SourcesInfo> { return { enabled: false, browser: null, noticeVersion: RECORD_AGENT_NOTICE_VERSION, sources: [] }; }
+  async recordConnections(): Promise<RecordConnectionView[]> { return []; }
+  async connectRecordSource(): Promise<{ connection: RecordConnectionView; run: RecordRunView }> { throw noAgents(); }
+  async updateRecordConnection(): Promise<RecordConnectionView> { throw noAgents(); }
+  async runRecordConnection(): Promise<RecordRunView> { throw noAgents(); }
+  async disconnectRecordSource(): Promise<void> { throw noAgents(); }
+  async recordRun(): Promise<RecordRunView> { throw noAgents(); }
+  async answerRecordRun(): Promise<RecordRunView> { throw noAgents(); }
+  async cancelRecordRun(): Promise<RecordRunView> { throw noAgents(); }
   async extractReport(): Promise<AiExtraction> { throw new ApiError(503, 'preview', 'Reading with Claude needs the LotusPond server, and this preview runs without one.'); }
 }

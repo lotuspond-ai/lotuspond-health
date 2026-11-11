@@ -87,6 +87,29 @@ const Env = z.object({
   ORANGE_PAYMENT_TYPE: z.string().trim().min(1).default('paid_by_group'),
   /** Optional comma-separated addresses Orange Health sends webhooks from. */
   ORANGE_WEBHOOK_IPS: z.string().default(''),
+  /* The record agent (docs/record-agent.md): fetches reports from portals in a browser of its own for each person. */
+  /** On by default in development and tests; in production it needs RECORD_AGENT=on. */
+  RECORD_AGENT: z.enum(['on', 'off']).optional(),
+  /**
+   * Where its browsers run: 'local' starts Chromium on this server (Playwright); 'cdp' connects to any browser service
+   * that gives a Chrome DevTools Protocol address (Steel, Browserless, Hyperbrowser, Anchor, your own); 'browserbase'
+   * creates a Browserbase session for each run.
+   */
+  RECORD_BROWSER: z.enum(['local', 'cdp', 'browserbase']).default('local'),
+  /** For 'cdp': the wss:// address, with its key, e.g. wss://connect.steel.dev?apiKey=… */
+  RECORD_BROWSER_CDP_URL: z.string().url().optional(),
+  /** For 'local': a Chromium or Chrome to use instead of Playwright's own. */
+  RECORD_BROWSER_EXECUTABLE: z.string().optional(),
+  BROWSERBASE_API_KEY: z.string().trim().min(8).optional(),
+  BROWSERBASE_PROJECT_ID: z.string().trim().min(4).optional(),
+  BROWSERBASE_API_URL: z.string().url().default('https://api.browserbase.com'),
+  /** Runs at the same time on this server; more wait their turn. */
+  RECORD_CONCURRENCY: z.coerce.number().int().min(1).max(50).default(2),
+  /** The pretend lab portal at /demo-portal, to try the agent (development and tests only; on by default there). */
+  RECORD_DEMO_PORTAL: z.enum(['on', 'off']).optional(),
+  /** Claude finding its way around portals without a recipe: on when Anthropic credentials are set, unless off. */
+  RECORD_NAVIGATOR: z.enum(['on', 'off']).default('on'),
+  RECORD_NAVIGATOR_MODEL: z.string().trim().min(1).default('claude-opus-5-5'),
   OVERPASS_URL: z.string().url().default('https://overpass-api.de/api/interpreter'),
   GEOCODER_URL: z.string().url().default('https://nominatim.openstreetmap.org'),
   /** Contact address sent to OpenStreetMap services (Nominatim usage policy asks for one). */
@@ -145,6 +168,17 @@ export interface OrangeConfig {
   webhookIps: string[];
 }
 
+export interface RecordAgentConfig {
+  browser:
+    | { kind: 'local'; executablePath?: string }
+    | { kind: 'cdp'; url: string }
+    | { kind: 'browserbase'; apiKey: string; projectId: string; apiUrl: string };
+  concurrency: number;
+  demoPortal: boolean;
+  /** Claude's model for the navigator, when it is on. */
+  navigator: { model: string } | undefined;
+}
+
 export interface CellConfig {
   region: DataRegion;
   /** Own PostgreSQL database. */
@@ -177,6 +211,8 @@ export interface Config {
   /** The Claude read is on (credentials present and not switched off), and its model. */
   aiExtraction: { enabled: boolean; model: string };
   assistant: { enabled: boolean; model: string };
+  /** The record agent (records/), when switched on. */
+  records: RecordAgentConfig | undefined;
   /** The assistant on WhatsApp, when the Cloud API is set up (and the assistant is on). */
   whatsapp: { phoneNumberId: string; number: string; accessToken: string; appSecret: string; verifyToken: string; graphUrl: string } | undefined;
   map: MapConfig;
@@ -253,6 +289,22 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (labPartners.includes('fake') && e.NODE_ENV === 'production') {
     throw new Error('Invalid configuration: LAB_PARTNERS=fake is the simulated lab, for development and tests only.');
   }
+  let records: RecordAgentConfig | undefined;
+  if ((e.RECORD_AGENT ?? (e.NODE_ENV === 'production' ? 'off' : 'on')) === 'on') {
+    const b = e.RECORD_BROWSER;
+    if (b === 'cdp' && !e.RECORD_BROWSER_CDP_URL) throw new Error('Invalid configuration: RECORD_BROWSER=cdp needs RECORD_BROWSER_CDP_URL (the wss:// address of the browser service).');
+    if (b === 'browserbase' && !(e.BROWSERBASE_API_KEY && e.BROWSERBASE_PROJECT_ID)) throw new Error('Invalid configuration: RECORD_BROWSER=browserbase needs BROWSERBASE_API_KEY and BROWSERBASE_PROJECT_ID.');
+    const demoPortal = (e.RECORD_DEMO_PORTAL ?? (e.NODE_ENV === 'production' ? 'off' : 'on')) === 'on';
+    if (demoPortal && e.NODE_ENV === 'production') throw new Error('Invalid configuration: RECORD_DEMO_PORTAL is the pretend lab portal, for development and tests only.');
+    records = {
+      browser: b === 'cdp' ? { kind: 'cdp', url: e.RECORD_BROWSER_CDP_URL! }
+        : b === 'browserbase' ? { kind: 'browserbase', apiKey: e.BROWSERBASE_API_KEY!, projectId: e.BROWSERBASE_PROJECT_ID!, apiUrl: e.BROWSERBASE_API_URL.replace(/\/$/, '') }
+          : { kind: 'local', ...(e.RECORD_BROWSER_EXECUTABLE ? { executablePath: e.RECORD_BROWSER_EXECUTABLE } : {}) },
+      concurrency: e.RECORD_CONCURRENCY,
+      demoPortal,
+      navigator: e.RECORD_NAVIGATOR === 'on' && !!(env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN) ? { model: e.RECORD_NAVIGATOR_MODEL } : undefined,
+    };
+  }
   const cellVar = (r: DataRegion, name: string) => (e as unknown as Record<string, string | undefined>)[`CELL_${r.toUpperCase()}_${name}`];
   const servedRegions = parseRegions(e.SERVED_REGIONS);
 
@@ -312,6 +364,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     labs: { partners: labPartners, fakeStepMs: e.LAB_FAKE_STEP_MS, ...(orange ? { orange } : {}) },
     aiExtraction: { enabled: e.AI_EXTRACTION === 'on' && !!(env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN), model: e.AI_EXTRACTION_MODEL },
     assistant: { enabled: e.ASSISTANT === 'on' && !!(env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN), model: e.ASSISTANT_MODEL },
+    records,
     whatsapp: e.WHATSAPP_PHONE_NUMBER_ID && e.WHATSAPP_NUMBER && e.WHATSAPP_ACCESS_TOKEN && e.WHATSAPP_APP_SECRET && e.WHATSAPP_VERIFY_TOKEN
       ? { phoneNumberId: e.WHATSAPP_PHONE_NUMBER_ID, number: e.WHATSAPP_NUMBER, accessToken: e.WHATSAPP_ACCESS_TOKEN, appSecret: e.WHATSAPP_APP_SECRET, verifyToken: e.WHATSAPP_VERIFY_TOKEN, graphUrl: e.WHATSAPP_GRAPH_URL.replace(/\/$/, '') }
       : undefined,

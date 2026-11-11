@@ -85,6 +85,13 @@
       "when": 1794409189897,
       "tag": "0011_whatsapp",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1794425975882,
+      "tag": "0012_record_agent",
+      "breakpoints": true
     }
   ]
 }

@@ -18,6 +18,9 @@ import { createApp } from './app.ts';
 import { claudeExtractor } from './extraction/claude.ts';
 import { createLabs, fakePartner, orangePartner, type Labs } from './lab/runtime.ts';
 import type { PartnerConfig } from './lab/partners/types.ts';
+import { createRecordAgent } from './records/service.ts';
+import { browserProvider } from './records/browsers.ts';
+import { demoPortal } from './records/demo-portal.ts';
 
 // This file runs from server/src (tsx) or server/dist (bundle); both are one level below server/.
 const serverRoot = fileURLToPath(new URL('..', import.meta.url));
@@ -103,11 +106,20 @@ if (config.labs.partners.length) {
 
 const extractor = config.aiExtraction.enabled ? claudeExtractor({ model: config.aiExtraction.model }) : undefined;
 const assistant = config.assistant.enabled ? claudeAssistant({ model: config.assistant.model }) : undefined;
+// The record agent (docs/record-agent.md): its browsers reach this server's demo portal at its local address.
+const records = config.records
+  ? createRecordAgent({
+    cells: registry, secrets, config: config.records, browsers: browserProvider(config.records.browser), selfUrl: `http://127.0.0.1:${config.port}`,
+    maxBytes: config.maxUploadBytes, ...(config.records.navigator ? { navigator: { model: config.records.navigator.model } } : {}),
+  })
+  : undefined;
+const portal = config.records?.demoPortal ? demoPortal() : undefined;
 let whatsapp: import('./whatsapp/service.ts').WhatsAppService | undefined;
-const app = createApp({ db: opened.defaultDatabase.db, files: registry.defaultCell.files, config, cells: registry, secrets, labs, extractor, assistant }, { whatsapp: { onService: s => { whatsapp = s; } } });
+const app = createApp({ db: opened.defaultDatabase.db, files: registry.defaultCell.files, config, cells: registry, secrets, labs, extractor, assistant, records }, { whatsapp: { onService: s => { whatsapp = s; } }, demoPortal: portal });
 const sweepWhatsApp = setInterval(() => void whatsapp?.purge().catch(() => {}), 60 * 60 * 1000);
 sweepWhatsApp.unref();
 const stopLabs = labs?.start();
+const stopRecords = records?.start();
 const server = serve({ fetch: app.fetch, port: config.port, hostname: config.host }, info => {
   const where = (d: (typeof opened.databases)[number]) => (d.database.kind === 'pglite' ? `PGlite in ${path.dirname(d.filesRoot)}` : 'PostgreSQL');
   console.log(`[api] LotusPond Health API on http://localhost:${info.port} (${where(opened.databases[0])})`);
@@ -121,6 +133,7 @@ const server = serve({ fetch: app.fetch, port: config.port, hostname: config.hos
   if (whatsapp) console.log(`[api] WhatsApp: on (+${config.whatsapp!.number}); Meta posts to ${config.publicUrl ?? '<PUBLIC_URL>'}/hooks/whatsapp`);
   else if (config.whatsapp) console.warn('[api] WhatsApp is set up but the assistant is off, so WhatsApp is off too.');
   if (extractor) console.log(`[api] reading reports with Claude: on (${config.aiExtraction.model}), only for uploads the person sends`);
+  if (records) console.log(`[api] record agent: on, browsers on ${records.browserLabel}${config.records!.navigator ? `, navigator ${config.records!.navigator.model}` : ', recipes only'}${portal ? '; demo portal at /demo-portal' : ''}`);
   if (labs) console.log(`[api] lab booking: ${[...labs.partners.keys()].join(', ')}${labs.partners.has('fake') ? ` (the simulated lab; orders move a step every ${config.labs.fakeStepMs / 1000} s)` : ''}`);
 });
 
@@ -133,6 +146,7 @@ async function stop(signal: string) {
   stopping = true;
   console.log(`[api] ${signal}: shutting down`);
   stopLabs?.();
+  stopRecords?.();
   stopFakeLab?.();
   server.close();
   await opened.close();

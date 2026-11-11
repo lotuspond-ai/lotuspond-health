@@ -71,3 +71,21 @@
 @keyframes wa-dot { 50% { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .agents__whatsapp .wa-wait .dots i { animation: none; } }
 .agents__wa-profile select { font: inherit; padding: 4px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel, transparent); color: inherit; }
+/* How to connect each agent (src/components/AgentDirectory.tsx). */
+.agentdir { border-top: 1px solid var(--line); padding-top: 12px; margin: 4px 0 14px; display: grid; gap: 10px; }
+.agentdir h3 { font-size: 15px; margin: 0; }
+.agentdir__group { display: grid; gap: 6px; }
+.agentdir__label { color: var(--ink-2); font-weight: 600; font-size: 12.5px; text-transform: uppercase; letter-spacing: .04em; }
+.agentdir__chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.agentdir__chip { display: grid; text-align: left; gap: 1px; border: 1px solid var(--line); background: var(--paper); border-radius: 10px; padding: 6px 10px; font: inherit; color: var(--ink); cursor: pointer; }
+.agentdir__chip b { font-size: 13.5px; }
+.agentdir__chip small { color: var(--ink-2); font-size: 11.5px; }
+.agentdir__chip[aria-pressed='true'] { border-color: var(--pond); box-shadow: inset 0 0 0 1px var(--pond); }
+.agentdir__steps { border: 1px solid var(--line); background: var(--mist); border-radius: 12px; padding: 12px 14px; display: grid; gap: 8px; justify-items: start; min-width: 0; }
+.agentdir__steps ol { margin: 0; padding-left: 20px; display: grid; gap: 4px; font-size: 14px; overflow-wrap: anywhere; }
+.agentdir__steps .agents__pre { width: 100%; margin: 0; }
+.agentdir__paste { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; display: grid; gap: 6px; }
+.agentdir__paste small { color: var(--ink-2); }
+.agentdir__paste-row { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; font-size: 14px; }
+.agentdir__paste-row select { border: 1px solid var(--line); background: var(--paper); border-radius: var(--r-ctl); padding: 5px 8px; font-size: 13px; }
+.agentdir__kind { display: flex; gap: 6px; align-items: center; }

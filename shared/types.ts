@@ -177,7 +177,9 @@ export type ConsentKind = 'terms' | 'privacy' | 'health_data' | 'cross_border' |
   /** Talking with LotusPond's assistant, which sends the parts of the records it needs to Anthropic (shared/assistant.ts). */
   | 'assistant'
   /** Talking with the assistant on WhatsApp from a linked number (shared/whatsapp.ts); withdrawn when unlinked. */
-  | 'whatsapp';
+  | 'whatsapp'
+  /** The record agent fetching from one source for one profile (shared/sources.ts); withdrawn on disconnect. */
+  | 'record_agent';
 
 /** What the account holder confirmed when adding a family member. */
 export type FamilyConfirmation = 'guardian' | 'agreed';
@@ -196,6 +198,8 @@ export interface ConsentDetail {
   categories?: string[];
   /** When the agent connection stops, if it was given an expiry. */
   expiresAt?: string | null;
+  /** For record_agent: the source (shared/sources.ts) the agent fetches from. */
+  source?: string;
 }
 
 /** One consent decision. Decisions are never edited; a change adds a new record. */
@@ -217,7 +221,8 @@ export type AuditKind =
   | 'export' | 'profile_deleted' | 'records_deleted' | 'account_deleted' | 'consent_changed' | 'preferences_changed'
   | 'lab_order_created' | 'lab_order_cancelled' | 'lab_results_saved'
   | 'agent_connected' | 'agent_disconnected' | 'agent_access' | 'agent_wrote' | 'agent_write_undone' | 'assistant_chat'
-  | 'report_read_by_ai' | 'whatsapp_linked' | 'whatsapp_unlinked' | 'whatsapp_report';
+  | 'report_read_by_ai' | 'whatsapp_linked' | 'whatsapp_unlinked' | 'whatsapp_report'
+  | 'records_source_connected' | 'records_source_disconnected' | 'records_fetched';
 
 /** The only details an audit event may carry. Deliberately narrow: never names, values, file names or other health data. */
 export interface AuditDetail {

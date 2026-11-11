@@ -7,6 +7,7 @@ import Files from './pages/Files';
 import ProfilePage from './pages/Profile';
 import AccountPage from './pages/Account';
 import Labs from './pages/Labs';
+import Sources from './pages/Sources';
 import { MarkerDrawer, ScanViewer, UploadDialog } from './components/Overlays';
 import { BookingDialog } from './components/labs/BookingDialog';
 import { ResultReview } from './components/labs/ResultReview';
@@ -31,7 +32,7 @@ import { sessionReady } from './native';
 
 const NAV: { id: View; label: string }[] = [
   { id: 'body', label: 'Body map' }, { id: 'markers', label: 'Biomarkers' }, { id: 'scans', label: 'Scans' }, { id: 'files', label: 'Files' },
-  { id: 'labs', label: 'Find a lab' },
+  { id: 'sources', label: 'Sources' }, { id: 'labs', label: 'Find a lab' },
 ];
 
 /** Phone tab bar (shown below 760px): four places and Add in the middle. Scans sit with Files. */
@@ -39,7 +40,7 @@ const TABS: { id: View; label: string; icon: ReactNode; also?: View[] }[] = [
   { id: 'body', label: 'Body', icon: Icon.body },
   { id: 'markers', label: 'Results', icon: Icon.markers },
   { id: 'labs', label: 'Labs', icon: Icon.pin },
-  { id: 'files', label: 'Files', icon: Icon.file, also: ['scans'] },
+  { id: 'files', label: 'Files', icon: Icon.file, also: ['scans', 'sources'] },
 ];
 
 export default function App() {
@@ -102,10 +103,11 @@ function Shell({ hidden }: { hidden: boolean }) {
       <UpdatedTextsNotice />
       <BodyMap hidden={view !== 'body'} />
       {!hidden && <>
-        {(view === 'files' || view === 'scans') && <FilesSwitch view={view} />}
+        {(view === 'files' || view === 'scans' || view === 'sources') && <FilesSwitch view={view} />}
         {view === 'markers' && <Biomarkers />}
         {view === 'scans' && <Scans />}
         {view === 'files' && <Files />}
+        {view === 'sources' && <Sources />}
         {view === 'profile' && <ProfilePage />}
         {view === 'account' && <AccountPage />}
         {view === 'labs' && <Labs />}
@@ -148,13 +150,14 @@ function UpdatedTextsNotice() {
   );
 }
 
-/** On phones Files and Scans share a tab; this switch sits above either page there. */
+/** On phones Files, Scans and Sources share a tab; this switch sits above each of them there. */
 function FilesSwitch({ view }: { view: View }) {
   const setView = useUI(s => s.setView);
   return (
     <div className="files-switch seg" role="group" aria-label="Show">
       <button aria-pressed={view === 'files'} onClick={() => setView('files')}>Reports and files</button>
       <button aria-pressed={view === 'scans'} onClick={() => setView('scans')}>Scans</button>
+      <button aria-pressed={view === 'sources'} onClick={() => setView('sources')}>Sources</button>
     </div>
   );
 }
