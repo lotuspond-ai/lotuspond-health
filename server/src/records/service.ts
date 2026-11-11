@@ -308,6 +308,17 @@ export function createRecordAgent(opts: RecordAgentOptions): RecordAgent {
       if (saved.length) await recordEvent(cell.db, null, job.userId, 'records_fetched', { profileId: conn.profileId, connectionId: conn.id });
     } catch (e) {
       await failCapture();
+      // Keep a sign-in the run got before it failed, so trying again (or the navigator) need not ask for a new code.
+      if (session && !(e instanceof NeedsPersonError)) {
+        const kept = await session.close().catch(() => null);
+        session = null;
+        if (kept?.cookies.length) {
+          await cell.db.update(recordConnections).set({
+            sessionCt: seal(cell, JSON.stringify(kept), `session:${conn.id}`),
+            ...(identifierChanged && identifier ? { identifierCt: seal(cell, identifier, `identifier:${conn.id}`) } : {}),
+          }).where(eq(recordConnections.id, conn.id)).catch(() => {});
+        }
+      }
       const finished = new Date(now());
       if (e instanceof NeedsPersonError) {
         // A scheduled run found the sign-in expired: wait for the person.

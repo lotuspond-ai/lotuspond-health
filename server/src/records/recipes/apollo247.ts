@@ -23,8 +23,34 @@ const CODE = ['input[title*="otp" i]', 'input[autocomplete="one-time-code"]', 'i
 /** The kinds of records Health Records shows, as tab or menu labels. */
 const KINDS = ['Test Reports', 'Lab Reports', 'Lab Tests', 'Reports', 'Prescriptions', 'Hospitalization', 'Hospitalisation', 'Discharge Summary', 'Medical Bills', 'Insurance'];
 
-async function signedIn(page: Page): Promise<boolean> {
-  return !(await firstVisible(page, ['button:has-text("Login Now")', '#loginPopup:has-text("Login")'], 3000));
+/**
+ * Whether Apollo shows a signed-in person. Seen live: right after the OTP the guest page is still drawn for a few
+ * seconds while Apollo signs in, so wait for the page to settle and for the guest buttons to stay gone.
+ */
+async function signedIn(page: Page, settleMs = 3000): Promise<boolean> {
+  await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {});
+  const end = Date.now() + settleMs;
+  while (Date.now() < end) {
+    if (await firstVisible(page, ['button:has-text("Login Now")', '#loginPopup:has-text("Login")'], 500)) {
+      await page.waitForTimeout(500);
+      continue;
+    }
+    return true;
+  }
+  return !(await firstVisible(page, ['button:has-text("Login Now")', '#loginPopup:has-text("Login")'], 500));
+}
+
+/** After Verify: the panel closes when the code was right (then sign-in finishes), or shows an error under the field. */
+async function afterVerify(page: Page, codeField: string[]): Promise<'signed_in' | 'rejected' | 'unknown'> {
+  const end = Date.now() + 25_000;
+  while (Date.now() < end) {
+    const err = await firstVisible(page, [':text("Incorrect OTP")', ':text("Invalid OTP")', ':text("attempts left")'], 300);
+    if (err) return 'rejected';
+    const field = await firstVisible(page, codeField, 300);
+    if (!field) return (await signedIn(page, 15_000)) ? 'signed_in' : 'unknown';
+    await page.waitForTimeout(500);
+  }
+  return 'unknown';
 }
 
 async function signIn(ctx: RecipeContext): Promise<void> {
@@ -72,9 +98,9 @@ async function signIn(ctx: RecipeContext): Promise<void> {
     const verify = await firstVisible(scope, VERIFY, 3000);
     if (verify) await verify.click();
     else await page.keyboard.press('Enter');
-    await page.waitForLoadState('load').catch(() => {});
-    await page.waitForTimeout(1500);
-    if (await signedIn(page)) return;
+    const outcome = await afterVerify(page, CODE);
+    if (outcome === 'signed_in') return;
+    if (outcome === 'unknown') throw new RecipeDriftError('After the OTP, Apollo 24|7 neither signed in nor said the code was wrong');
   }
   throw new PortalError((await visibleError(page)) ?? 'Apollo 24|7 did not accept the OTP.');
 }
@@ -91,7 +117,7 @@ export const apollo247Recipe = (origin = APOLLO_ORIGIN): Recipe => ({
       await signIn(ctx);
       await page.goto(`${origin}/guest-health-records`);
       await page.waitForLoadState('load').catch(() => {});
-      if (!(await signedIn(page))) throw new RecipeDriftError('Signed in, but Health Records still asks to log in');
+      if (!(await signedIn(page, 15_000))) throw new RecipeDriftError('Signed in, but Health Records still asks to log in');
     }
     await ctx.step('Reading your health records');
     await firstVisible(page, KINDS.map(k => `:is(button, a, [role=tab]):has-text("${k}")`), 10_000);
