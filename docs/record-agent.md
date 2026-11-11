@@ -6,6 +6,7 @@ Status: November 2026. The engine, the app's Sources page and the MCP tool are b
   - **Apollo 24|7 has run against a real account** (11 Nov 2026): it signed in with the person's number and OTP and saved all 6 documents on their Health Records page. A second run saved nothing new (§5.2).
   - The Dr Lal, Thyrocare and Metropolis recipes are tested against local copies of their portals, **not yet with real accounts** (§5.1).
 - **The navigator:** every other portal is reached through Claude, which is off unless Anthropic credentials are set.
+- **ABHA, with no browser:** through Eka Care's ABDM Connect (`server/src/records/abdm/`, docs/abdm.md). The same runs and questions: an OTP to sign in, the ABHA consent PIN to approve LotusPond's consent request. The records come in as FHIR files. It is on when `EKA_CLIENT_ID` and `EKA_CLIENT_SECRET` are set, and is waiting on LotusPond's ABDM Connect onboarding.
 
 The record agent brings a family's reports in from the portals where they live: labs, hospitals, government services, pharmacies and insurers.
 
@@ -20,6 +21,7 @@ The record agent brings a family's reports in from the portals where they live: 
 | `server/src/records/browsers.ts` | Where the browsers run: local Chromium, any CDP service, Browserbase |
 | `server/src/records/recipes/` | Recipes: the known steps for one portal (`demo.ts` is the pattern) |
 | `server/src/records/navigator.ts` | Claude finding its way around a portal without a recipe |
+| `server/src/records/abdm/` | ABHA through Eka Care's ABDM Connect: the client, the steps, the webhook at `/hooks/eka` |
 | `server/src/records/demo-portal.ts` | The pretend lab portal at `/demo-portal` (development and tests) |
 | `server/src/records/routes.ts` | `/api/records` |
 | `src/pages/Sources.tsx` | The Sources page (Files on phones: Reports and files · Scans · Sources) |

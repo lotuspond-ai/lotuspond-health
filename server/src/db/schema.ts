@@ -461,6 +461,8 @@ export const recordConnections = pgTable('record_connections', {
   identifierCt: text('identifier_ct'),
   /** The portal's sign-in as Playwright storage state, sealed, base64. */
   sessionCt: text('session_ct'),
+  /** For sources reached through an API: a hash of the person's id there (ABHA: their Eka id), so webhooks find it. */
+  externalRef: text('external_ref'),
   refreshDays: integer('refresh_days'),
   nextRunAt: timestamp('next_run_at', { withTimezone: true }),
   lastSuccessAt: timestamp('last_success_at', { withTimezone: true }),
@@ -470,6 +472,7 @@ export const recordConnections = pgTable('record_connections', {
 }, t => [
   uniqueIndex('record_connections_key').on(t.userId, t.profileId, t.sourceId, t.portalUrl),
   index('record_connections_due_idx').on(t.status, t.nextRunAt),
+  index('record_connections_external_idx').on(t.externalRef),
 ]);
 
 /** One visit of the agent to a portal: started by the person or by the schedule. */
@@ -486,6 +489,8 @@ export const recordRuns = pgTable('record_runs', {
   saved: integer('saved').notNull().default(0),
   documentIds: jsonb('document_ids').$type<string[]>().notNull().default([]),
   error: text('error'),
+  /** How a run ended, for the person, when it is not an error ("Approve the request in your ABHA app"). */
+  note: text('note'),
   startedAt: timestamp('started_at', { withTimezone: true }).notNull(),
   finishedAt: timestamp('finished_at', { withTimezone: true }),
 }, t => [index('record_runs_connection_idx').on(t.connectionId, t.startedAt), index('record_runs_status_idx').on(t.status)]);

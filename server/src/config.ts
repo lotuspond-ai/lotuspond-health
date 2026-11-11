@@ -112,6 +112,16 @@ const Env = z.object({
   RECORD_NAVIGATOR_MODEL: z.string().trim().min(1).default('claude-opus-5-5'),
   /** Development only: save a screenshot and the page at every step of a run here, to fix recipes against real pages. */
   RECORD_DEBUG_DIR: z.string().optional(),
+  /* ABHA through Eka Care's ABDM Connect (docs/abdm.md): on when the client id and secret are set. */
+  EKA_CLIENT_ID: z.string().trim().min(4).optional(),
+  EKA_CLIENT_SECRET: z.string().trim().min(8).optional(),
+  /** https://api.eka.care (production) or https://api.dev.eka.care (sandbox). */
+  EKA_API_URL: z.string().url().default('https://api.eka.care'),
+  /** LotusPond as the health information user its consent requests come from (Eka's clinic and doctor ids). */
+  EKA_HIU_CLINIC_ID: z.string().trim().min(1).optional(),
+  EKA_HIU_DOCTOR_OID: z.string().trim().min(1).optional(),
+  /** The key Eka signs webhooks with; the webhook at /hooks/eka is served only when it is set. */
+  EKA_WEBHOOK_SIGNING_KEY: z.string().trim().min(16).optional(),
   OVERPASS_URL: z.string().url().default('https://overpass-api.de/api/interpreter'),
   GEOCODER_URL: z.string().url().default('https://nominatim.openstreetmap.org'),
   /** Contact address sent to OpenStreetMap services (Nominatim usage policy asks for one). */
@@ -181,6 +191,8 @@ export interface RecordAgentConfig {
   navigator: { model: string } | undefined;
   /** Development only: where each step's screenshot and page are saved. */
   debugDir?: string;
+  /** ABHA through Eka Care's ABDM Connect, when its client is set. */
+  eka?: { apiUrl: string; clientId: string; clientSecret: string; hiu?: { clinicId: string; doctorOid: string }; webhookSigningKey?: string };
 }
 
 export interface CellConfig {
@@ -309,7 +321,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       demoPortal,
       navigator: e.RECORD_NAVIGATOR === 'on' && !!(env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN) ? { model: e.RECORD_NAVIGATOR_MODEL } : undefined,
       ...(e.RECORD_DEBUG_DIR ? { debugDir: e.RECORD_DEBUG_DIR } : {}),
+      ...(e.EKA_CLIENT_ID && e.EKA_CLIENT_SECRET ? {
+        eka: {
+          apiUrl: e.EKA_API_URL.replace(/\/$/, ''), clientId: e.EKA_CLIENT_ID, clientSecret: e.EKA_CLIENT_SECRET,
+          ...(e.EKA_HIU_CLINIC_ID && e.EKA_HIU_DOCTOR_OID ? { hiu: { clinicId: e.EKA_HIU_CLINIC_ID, doctorOid: e.EKA_HIU_DOCTOR_OID } } : {}),
+          ...(e.EKA_WEBHOOK_SIGNING_KEY ? { webhookSigningKey: e.EKA_WEBHOOK_SIGNING_KEY } : {}),
+        },
+      } : {}),
     };
+    if (!!e.EKA_CLIENT_ID !== !!e.EKA_CLIENT_SECRET) throw new Error('Invalid configuration: EKA_CLIENT_ID and EKA_CLIENT_SECRET go together.');
   }
   const cellVar = (r: DataRegion, name: string) => (e as unknown as Record<string, string | undefined>)[`CELL_${r.toUpperCase()}_${name}`];
   const servedRegions = parseRegions(e.SERVED_REGIONS);

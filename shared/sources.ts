@@ -3,7 +3,7 @@
 // Each source says what it holds and how it is reached:
 //   browser  the record agent opens the portal in its own browser, signs in with the person (they type the OTP or
 //            password into LotusPond, which passes it to that browser and never stores it) and downloads reports;
-//   abdm     through the person's ABHA and an ABDM consent request (not built yet; ABHA app exports can be uploaded);
+//   abdm     through the person's ABHA, via Eka Care's ABDM Connect (records/abdm/): an OTP, then a consent they approve;
 //   api      an official API with the person's sign-in (OAuth), once we have a partnership or developer access;
 //   app      already handled elsewhere in LotusPond (Apple Health / Health Connect import, WhatsApp).
 //
@@ -61,7 +61,7 @@ export const SOURCES: SourceInfo[] = [
   /* ---------------- government ---------------- */
   { id: 'abha', name: 'ABHA (Ayushman Bharat Health Account)', category: 'government', regions: IN, access: 'abdm', signIn: 'abha',
     holds: ['Records linked by hospitals, labs and government programmes', 'Prescriptions', 'Discharge summaries', 'Vaccinations'],
-    note: 'Needs LotusPond to be registered as an ABDM health information user. Until then, export FHIR records from your ABHA app and upload them.' },
+    note: 'Sign in with your ABHA (an OTP), approve LotusPond’s consent request with your ABHA PIN, and the records hospitals and labs linked to it come in as FHIR files to review.' },
   { id: 'digilocker', name: 'DigiLocker', category: 'government', regions: IN, access: 'browser', signIn: 'otp',
     hosts: ['digilocker.gov.in', 'meripehchaan.gov.in'], startUrl: 'https://www.digilocker.gov.in/',
     holds: ['Vaccination certificates', 'Health insurance documents issued to DigiLocker', 'Disability and other certificates'] },
@@ -192,7 +192,9 @@ export type SourceAvailability =
   | 'recipe'
   /** No recipe yet: the agent (Claude) finds its way around the portal with the person. Experimental. */
   | 'navigator'
-  /** Not through the record agent: ABDM, an official API, or elsewhere in the app. */
+  /** Through the person's ABHA and an ABDM consent, with no browser (Eka Care's ABDM Connect). */
+  | 'abdm'
+  /** Not through the record agent: an official API, ABDM when it is not set up, or elsewhere in the app. */
   | 'unavailable';
 
 export interface SourceView extends SourceInfo {
@@ -210,7 +212,7 @@ export interface SourcesInfo {
   sources: SourceView[];
 }
 
-export const RECORD_AGENT_NOTICE_VERSION = '2026-11-11';
+export const RECORD_AGENT_NOTICE_VERSION = '2026-11-11.2';
 
 export type RecordConnectionStatus = 'active' | 'needs_sign_in' | 'paused';
 export type RecordRunStatus = 'queued' | 'running' | 'waiting' | 'succeeded' | 'failed' | 'cancelled';
@@ -244,6 +246,8 @@ export interface RecordRunView {
   /** Documents saved by this run, for the review links. */
   documents: { id: string; fileName: string }[];
   error: string | null;
+  /** How the run ended when it is not an error ("Approve the request in your ABHA app"). */
+  note: string | null;
   startedAt: string;
   finishedAt: string | null;
 }

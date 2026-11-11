@@ -21,6 +21,8 @@ import type { PartnerConfig } from './lab/partners/types.ts';
 import { createRecordAgent } from './records/service.ts';
 import { browserProvider } from './records/browsers.ts';
 import { demoPortal } from './records/demo-portal.ts';
+import { createEka } from './records/abdm/eka.ts';
+import { abhaFetcher } from './records/abdm/abha.ts';
 
 // This file runs from server/src (tsx) or server/dist (bundle); both are one level below server/.
 const serverRoot = fileURLToPath(new URL('..', import.meta.url));
@@ -111,6 +113,7 @@ const records = config.records
   ? createRecordAgent({
     cells: registry, secrets, config: config.records, browsers: browserProvider(config.records.browser), selfUrl: `http://127.0.0.1:${config.port}`,
     maxBytes: config.maxUploadBytes, ...(config.records.navigator ? { navigator: { model: config.records.navigator.model } } : {}),
+    ...(config.records.eka ? { abdm: abhaFetcher({ eka: createEka(config.records.eka), ...(config.records.eka.hiu ? { hiu: config.records.eka.hiu } : {}) }) } : {}),
   })
   : undefined;
 const portal = config.records?.demoPortal ? demoPortal() : undefined;

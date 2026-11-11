@@ -37,6 +37,7 @@ import { thyrocareRecipe } from './recipes/thyrocare.ts';
 import { metropolisRecipe } from './recipes/metropolis.ts';
 import { apollo247Recipe } from './recipes/apollo247.ts';
 import { RecipeDriftError } from './recipes/kit.ts';
+import type { ApiContext, ApiFetcher } from './abdm/abha.ts';
 import { NeedsPersonError, PortalError, REPORT_TYPES, RunStoppedError, sniffType, type Ask, type PortalReport, type Recipe, type RecipeContext } from './recipes/types.ts';
 
 const MIN = 60_000, DAY = 24 * 60 * MIN;
@@ -56,6 +57,8 @@ export interface RecordAgentOptions {
   selfUrl: string;
   /** Claude for portals without a recipe; leave out to offer only sources with recipes. */
   navigator?: NavigatorOptions;
+  /** ABHA through Eka Care's ABDM Connect (records/abdm/), when it is set up. */
+  abdm?: ApiFetcher;
   /** Extra recipes (tests); the demo recipe is always included. */
   recipes?: Recipe[];
   maxBytes: number;
@@ -85,6 +88,9 @@ export interface RecordAgent {
   answer(cell: Cell, userId: string, runId: string, answer: string): Promise<RecordRunView>;
   cancel(cell: Cell, userId: string, runId: string): Promise<RecordRunView>;
   disconnect(cell: Cell, user: UserRow, id: string): Promise<void>;
+  /** A webhook said there is news for the person behind this reference (records/abdm/webhook.ts): check their
+   *  connections now, as scheduled runs (nobody is asked anything). Returns how many runs were started. */
+  wake(ref: string): Promise<number>;
   /** Start scheduled runs that are due, and fail runs a restart left behind. */
   tick(): Promise<void>;
   start(): () => void;
@@ -104,7 +110,7 @@ const iso = (d: Date | null | undefined) => d?.toISOString() ?? null;
 export function runView(r: RecordRunRow, docs: { id: string; fileName: string }[] = []): RecordRunView {
   return {
     id: r.id, connectionId: r.connectionId, status: r.status, trigger: r.trigger, step: r.step, question: r.question ?? null,
-    found: r.found, saved: r.saved, documents: docs, error: r.error, startedAt: r.startedAt.toISOString(), finishedAt: iso(r.finishedAt),
+    found: r.found, saved: r.saved, documents: docs, error: r.error, note: r.note ?? null, startedAt: r.startedAt.toISOString(), finishedAt: iso(r.finishedAt),
   };
 }
 
@@ -152,6 +158,7 @@ export function createRecordAgent(opts: RecordAgentOptions): RecordAgent {
   };
 
   function availability(s: SourceInfo): SourceAvailability {
+    if (s.access === 'abdm') return opts.abdm?.sourceId === s.id ? 'abdm' : 'unavailable';
     if (s.access !== 'browser') return 'unavailable';
     if (recipes.has(s.id)) return 'recipe';
     return opts.navigator ? 'navigator' : 'unavailable';
@@ -241,83 +248,101 @@ export function createRecordAgent(opts: RecordAgentOptions): RecordAgent {
       await setRun(cell, job.runId, { status: 'cancelled', step: null, question: null, finishedAt: new Date(now()) });
       return;
     }
-    const recipe = recipes.get(source.id) ?? (opts.navigator && source.access === 'browser' ? navigatorRecipe(source.id, opts.navigator) : null);
-    if (!recipe) {
+    // ABHA goes through an API (no browser); portals through a recipe, or the navigator when there is none.
+    const api = source.access === 'abdm' && opts.abdm?.sourceId === source.id ? opts.abdm : null;
+    const recipe = api ? null : recipes.get(source.id) ?? (opts.navigator && source.access === 'browser' ? navigatorRecipe(source.id, opts.navigator) : null);
+    if (!api && !recipe) {
       await setRun(cell, job.runId, { status: 'failed', error: 'The record agent cannot fetch from this source yet.', finishedAt: new Date(now()) });
       return;
     }
     const timeout = setTimeout(() => l.abort.abort(new RunStoppedError('The run took too long and was stopped.')), RUN_MS);
     timeout.unref();
-    const { startUrl, allowHosts } = placeOf(source, conn.portalUrl);
     let identifier = unseal(cell, conn.identifierCt, `identifier:${conn.id}`);
     let identifierChanged = false;
     const storage = unseal(cell, conn.sessionCt, `session:${conn.id}`);
-    await setRun(cell, job.runId, { status: 'running', step: 'Starting a browser' });
+    await setRun(cell, job.runId, { status: 'running', step: api ? `Connecting to ${source.name}` : 'Starting a browser' });
+    const remember = (v: string) => { const t = v.trim(); if (t && t !== identifier) { identifier = t; identifierChanged = true; } };
+    const stopped = new Promise<never>((_, reject) => l.abort.signal.addEventListener('abort', () => reject(l.abort.signal.reason ?? new RunStoppedError('Cancelled.')), { once: true }));
+    stopped.catch(() => {});
+    /** Until it ends, a run's work may still fail after a cancel (a closed browser); that is expected and ignored. */
+    const race = <T>(work: Promise<T>) => { work.catch(() => {}); return Promise.race([work, stopped]); };
 
     let session: Awaited<ReturnType<BrowserProvider['open']>> | null = null;
     let failCapture: () => Promise<void> = async () => {};
-    let state: StorageState | null = null;
+    // The sign-in to keep (sealed): an API source's own, or the browser's storage state; and its webhook reference.
+    let kept: { session: string; ref?: string } | null = null;
+    let note: string | null = null;
+    const keepSignIn = (k: { session: string; ref?: string } | null) => (k ? {
+      sessionCt: seal(cell, k.session, `session:${conn.id}`), ...(k.ref ? { externalRef: k.ref } : {}),
+    } : {});
+    const keepIdentifier = () => (identifierChanged && identifier ? { identifierCt: seal(cell, identifier, `identifier:${conn.id}`) } : {});
     try {
-      session = await opts.browsers.open({ allowHosts, ...(storage ? { storageState: JSON.parse(storage) as StorageState } : {}) });
-      const page = await session.context.newPage();
-      // Development: what the browser showed at each step (config.debugDir; refused in production).
-      let shot = 0;
-      const capture = async (label: string) => {
-        if (!opts.config.debugDir) return;
-        try {
-          const base = path.join(opts.config.debugDir, `${job.runId.slice(0, 8)}-${String(++shot).padStart(2, '0')}-${label.replace(/[^a-z0-9]+/gi, '-').slice(0, 40)}`);
-          await mkdir(opts.config.debugDir, { recursive: true });
-          await page.screenshot({ path: `${base}.png`, fullPage: true });
-          await writeFile(`${base}.html`, await page.content());
-        } catch { /* best effort */ }
-      };
-      failCapture = () => capture('failed');
-      const ctx: RecipeContext = {
-        page, context: session.context, source, startUrl, allowHosts, identifier, signal: l.abort.signal, maxBytes: opts.maxBytes,
-        step: async text => { await capture(text); await setRun(cell, job.runId, { step: text.slice(0, 120) }); },
-        remember: v => { const t = v.trim(); if (t && t !== identifier) { identifier = t; identifierChanged = true; } },
-        ask: async q => { await capture(`ask ${q.kind}`); return ask(cell, job, l, q); },
-        download: url => downloadFile(session!.context, url, allowHosts, opts.maxBytes),
-      };
-      // A recipe that finds the portal changed hands the run to the navigator (same page, same sign-in), if it is on.
-      const work = recipe.run(ctx).catch(async e => {
-        if (!(e instanceof RecipeDriftError)) throw e;
-        console.warn(`[records] the ${source.id} recipe no longer matches the portal: ${e.message}`);
-        if (!opts.navigator || l.abort.signal.aborted) throw new PortalError(`${source.name} has changed its website, and the record agent cannot follow it yet. Upload the reports, or try again in a few days.`);
-        await ctx.step(`${source.name} looks different; Claude is finding the way`);
-        return navigatorRecipe(source.id, opts.navigator).run(ctx);
-      });
-      // After a cancel the recipe may still fail on the closed browser; that is expected and ignored.
-      work.catch(() => {});
-      const reports = await Promise.race([
-        work,
-        new Promise<never>((_, reject) => l.abort.signal.addEventListener('abort', () => reject(l.abort.signal.reason ?? new RunStoppedError('Cancelled.')), { once: true })),
-      ]);
+      let reports: PortalReport[];
+      if (api) {
+        const ctx: ApiContext = {
+          source, identifier, session: storage, signal: l.abort.signal, maxBytes: opts.maxBytes, remember,
+          step: async text => { await setRun(cell, job.runId, { step: text.slice(0, 120) }); },
+          ask: q => ask(cell, job, l, q),
+          keep: (s, ref) => { kept = { session: s, ...(ref ? { ref } : {}) }; },
+          note: text => { note = text.slice(0, 200); },
+        };
+        reports = await race(api.run(ctx));
+      } else {
+        const { startUrl, allowHosts } = placeOf(source, conn.portalUrl);
+        session = await opts.browsers.open({ allowHosts, ...(storage ? { storageState: JSON.parse(storage) as StorageState } : {}) });
+        const page = await session.context.newPage();
+        // Development: what the browser showed at each step (config.debugDir; refused in production).
+        let shot = 0;
+        const capture = async (label: string) => {
+          if (!opts.config.debugDir) return;
+          try {
+            const base = path.join(opts.config.debugDir, `${job.runId.slice(0, 8)}-${String(++shot).padStart(2, '0')}-${label.replace(/[^a-z0-9]+/gi, '-').slice(0, 40)}`);
+            await mkdir(opts.config.debugDir, { recursive: true });
+            await page.screenshot({ path: `${base}.png`, fullPage: true });
+            await writeFile(`${base}.html`, await page.content());
+          } catch { /* best effort */ }
+        };
+        failCapture = () => capture('failed');
+        const ctx: RecipeContext = {
+          page, context: session.context, source, startUrl, allowHosts, identifier, signal: l.abort.signal, maxBytes: opts.maxBytes, remember,
+          step: async text => { await capture(text); await setRun(cell, job.runId, { step: text.slice(0, 120) }); },
+          ask: async q => { await capture(`ask ${q.kind}`); return ask(cell, job, l, q); },
+          download: url => downloadFile(session!.context, url, allowHosts, opts.maxBytes),
+        };
+        // A recipe that finds the portal changed hands the run to the navigator (same page, same sign-in), if it is on.
+        reports = await race(recipe!.run(ctx).catch(async e => {
+          if (!(e instanceof RecipeDriftError)) throw e;
+          console.warn(`[records] the ${source.id} recipe no longer matches the portal: ${e.message}`);
+          if (!opts.navigator || l.abort.signal.aborted) throw new PortalError(`${source.name} has changed its website, and the record agent cannot follow it yet. Upload the reports, or try again in a few days.`);
+          await ctx.step(`${source.name} looks different; Claude is finding the way`);
+          return navigatorRecipe(source.id, opts.navigator).run(ctx);
+        }));
+      }
       await setRun(cell, job.runId, { step: 'Saving new reports', found: reports.length });
       const saved = await saveReports(cell, job, conn, source, reports.slice(0, MAX_REPORTS));
-      state = await session.close();
-      session = null;
+      if (session) {
+        const state = await session.close();
+        session = null;
+        if (state) kept = { session: JSON.stringify(state) };
+      }
       const finished = new Date(now());
       await cell.db.update(recordConnections).set({
         status: 'active', lastSuccessAt: finished, updatedAt: finished,
         nextRunAt: conn.refreshDays ? new Date(now() + conn.refreshDays * DAY) : null,
-        ...(state ? { sessionCt: seal(cell, JSON.stringify(state), `session:${conn.id}`) } : {}),
-        ...(identifierChanged && identifier ? { identifierCt: seal(cell, identifier, `identifier:${conn.id}`) } : {}),
+        ...keepSignIn(kept), ...keepIdentifier(),
       }).where(eq(recordConnections.id, conn.id));
-      await setRun(cell, job.runId, { status: 'succeeded', step: null, question: null, saved: saved.length, documentIds: saved, finishedAt: finished });
+      await setRun(cell, job.runId, { status: 'succeeded', step: null, question: null, saved: saved.length, documentIds: saved, note, finishedAt: finished });
       if (saved.length) await recordEvent(cell.db, null, job.userId, 'records_fetched', { profileId: conn.profileId, connectionId: conn.id });
     } catch (e) {
       await failCapture();
       // Keep a sign-in the run got before it failed, so trying again (or the navigator) need not ask for a new code.
       if (session && !(e instanceof NeedsPersonError)) {
-        const kept = await session.close().catch(() => null);
+        const state = await session.close().catch(() => null);
         session = null;
-        if (kept?.cookies.length) {
-          await cell.db.update(recordConnections).set({
-            sessionCt: seal(cell, JSON.stringify(kept), `session:${conn.id}`),
-            ...(identifierChanged && identifier ? { identifierCt: seal(cell, identifier, `identifier:${conn.id}`) } : {}),
-          }).where(eq(recordConnections.id, conn.id)).catch(() => {});
-        }
+        if (state?.cookies.length) kept = { session: JSON.stringify(state) };
+      }
+      if (kept || identifierChanged) {
+        await cell.db.update(recordConnections).set({ ...keepSignIn(kept), ...keepIdentifier() }).where(eq(recordConnections.id, conn.id)).catch(() => {});
       }
       const finished = new Date(now());
       if (e instanceof NeedsPersonError) {
@@ -430,7 +455,7 @@ export function createRecordAgent(opts: RecordAgentOptions): RecordAgent {
       if (availability(source) === 'unavailable') throw conflict('The record agent cannot fetch from this source yet.', 'source_unavailable');
       const [profile] = await cell.db.select({ id: profiles.id }).from(profiles).where(and(eq(profiles.id, input.profileId), eq(profiles.userId, user.id))).limit(1);
       if (!profile) throw notFound('That profile');
-      const needsUrl = !source.startUrl && source.id !== DEMO_SOURCE_ID;
+      const needsUrl = source.access === 'browser' && !source.startUrl && source.id !== DEMO_SOURCE_ID;
       let portalUrl = '';
       if (needsUrl) {
         if (!input.portalUrl) throw badRequest('Give the address of the portal.', 'portal_url_required');
@@ -532,6 +557,20 @@ export function createRecordAgent(opts: RecordAgentOptions): RecordAgent {
           console.error(`[records] scheduled check failed in the ${cell.id} cell`, e instanceof Error ? e.message : e);
         }
       }
+    },
+
+    async wake(ref) {
+      let started = 0;
+      for (const cell of opts.cells.cells) {
+        const rows = await cell.db.select().from(recordConnections)
+          .where(and(eq(recordConnections.externalRef, ref), eq(recordConnections.status, 'active'), isNotNull(recordConnections.sessionCt))).limit(10);
+        for (const conn of rows) {
+          if (await activeRunOf(cell, conn.id)) continue;
+          await newRun(cell, conn.userId, conn, 'schedule');
+          started++;
+        }
+      }
+      return started;
     },
 
     start() {
