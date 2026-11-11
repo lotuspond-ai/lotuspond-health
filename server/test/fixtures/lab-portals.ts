@@ -217,8 +217,9 @@ document.querySelectorAll('.dl').forEach(b => b.onclick = () => { location.href 
 }
 
 /**
- * Apollo 24|7: /guest-health-records with "Login Now" and the header's #loginPopup (as on the live page); the
- * sign-in dialog and the records tabs after sign-in are guesses at their shape.
+ * Apollo 24|7: /guest-health-records with "Login Now" and the header's #loginPopup, and the sign-in panel as the
+ * live page showed it on 11 Nov 2026 (a LoginModal panel, input[name=mobileNumber], a pre-ticked "offers on
+ * WhatsApp" box, Continue). The OTP step and the records tabs after sign-in are still guesses at their shape.
  */
 export function apolloPortal() {
   const app = new Hono();
@@ -229,12 +230,15 @@ export function apolloPortal() {
     if (!signed(c)) {
       return c.html(page('Health Records', `<header><div id="loginPopup" title="Login/SignUp"><span>Login</span></div></header>
 <h3>Sign In <span>To Access Your Health Records</span></h3><button class="phrGuestLogin"><span>Login Now</span></button>`, `
+const whatsapp = [];
 const open = () => {
-  const d = document.createElement('div'); d.setAttribute('role', 'dialog');
-  d.innerHTML = '<h4>Login / Sign Up</h4><input type="tel" placeholder="Enter your mobile number" maxlength="10"><button type="button" id="cont">Continue</button>';
+  const d = document.createElement('div');
+  d.className = 'LoginModal_rightModal';
+  d.innerHTML = '<h4>Sign In</h4><label>Phone Number<input type="text" name="mobileNumber"></label><label><input type="checkbox" id="wa" checked> Share health tips, appointment details and offers with me on Whatsapp</label><button type="submit" id="cont">Continue</button>';
   document.body.appendChild(d);
   d.querySelector('#cont').onclick = async () => {
-    await fetch('/otp/send', { method: 'POST', body: d.querySelector('input').value });
+    whatsapp.push(d.querySelector('#wa').checked);
+    await fetch('/otp/send', { method: 'POST', body: d.querySelector('input[name=mobileNumber]').value + (d.querySelector('#wa').checked ? ' +whatsapp' : '') });
     d.innerHTML = '<h4>Enter OTP</h4><input type="text" autocomplete="one-time-code" maxlength="6" placeholder="Enter OTP"><button type="button" id="ver">Verify</button><p class="error" style="display:none"></p>';
     d.querySelector('#ver').onclick = async () => {
       const r = await fetch('/otp/verify', { method: 'POST', body: d.querySelector('input').value });

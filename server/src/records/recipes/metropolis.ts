@@ -14,7 +14,7 @@
 // links on the page it lands on, then opens a "My Reports" / "Reports" / "Download Report" entry if there is one.
 import type { Page } from 'playwright-core';
 import { PortalError, type PortalReport, type Recipe, type RecipeContext } from './types.ts';
-import { collectReports, fillCode, firstVisible, mustFind, RecipeDriftError, reportLinks, tenDigits, visibleError } from './kit.ts';
+import { collectReports, fillCode, firstVisible, mustFind, RecipeDriftError, reportLinks, tenDigits, untickMarketing, visibleError } from './kit.ts';
 
 export const METROPOLIS_ORIGIN = 'https://www.metropolisindia.com';
 
@@ -36,6 +36,7 @@ async function signIn(ctx: RecipeContext): Promise<void> {
   const phone = tenDigits(ctx.identifier ?? await ctx.ask({ kind: 'phone', label: 'Mobile number registered with Metropolis' }));
   if (phone.length !== 10) throw new PortalError('Metropolis needs a 10-digit mobile number.');
   await field.fill(phone);
+  await untickMarketing(page.locator(desktop ? 'form#signin' : 'form#signin-mob'));
   await (await mustFind(page, desktop ? ['#sendOtpBtn'] : ['#getOtpBtn'], 'the Send OTP button')).click();
 
   const boxes = desktop ? '#otp1' : '.otp-box';

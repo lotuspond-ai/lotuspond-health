@@ -110,6 +110,8 @@ const Env = z.object({
   /** Claude finding its way around portals without a recipe: on when Anthropic credentials are set, unless off. */
   RECORD_NAVIGATOR: z.enum(['on', 'off']).default('on'),
   RECORD_NAVIGATOR_MODEL: z.string().trim().min(1).default('claude-opus-5-5'),
+  /** Development only: save a screenshot and the page at every step of a run here, to fix recipes against real pages. */
+  RECORD_DEBUG_DIR: z.string().optional(),
   OVERPASS_URL: z.string().url().default('https://overpass-api.de/api/interpreter'),
   GEOCODER_URL: z.string().url().default('https://nominatim.openstreetmap.org'),
   /** Contact address sent to OpenStreetMap services (Nominatim usage policy asks for one). */
@@ -177,6 +179,8 @@ export interface RecordAgentConfig {
   demoPortal: boolean;
   /** Claude's model for the navigator, when it is on. */
   navigator: { model: string } | undefined;
+  /** Development only: where each step's screenshot and page are saved. */
+  debugDir?: string;
 }
 
 export interface CellConfig {
@@ -296,6 +300,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     if (b === 'browserbase' && !(e.BROWSERBASE_API_KEY && e.BROWSERBASE_PROJECT_ID)) throw new Error('Invalid configuration: RECORD_BROWSER=browserbase needs BROWSERBASE_API_KEY and BROWSERBASE_PROJECT_ID.');
     const demoPortal = (e.RECORD_DEMO_PORTAL ?? (e.NODE_ENV === 'production' ? 'off' : 'on')) === 'on';
     if (demoPortal && e.NODE_ENV === 'production') throw new Error('Invalid configuration: RECORD_DEMO_PORTAL is the pretend lab portal, for development and tests only.');
+    if (e.RECORD_DEBUG_DIR && e.NODE_ENV === 'production') throw new Error('Invalid configuration: RECORD_DEBUG_DIR saves people\'s portal pages to disk, for development only.');
     records = {
       browser: b === 'cdp' ? { kind: 'cdp', url: e.RECORD_BROWSER_CDP_URL! }
         : b === 'browserbase' ? { kind: 'browserbase', apiKey: e.BROWSERBASE_API_KEY!, projectId: e.BROWSERBASE_PROJECT_ID!, apiUrl: e.BROWSERBASE_API_URL.replace(/\/$/, '') }
@@ -303,6 +308,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       concurrency: e.RECORD_CONCURRENCY,
       demoPortal,
       navigator: e.RECORD_NAVIGATOR === 'on' && !!(env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN) ? { model: e.RECORD_NAVIGATOR_MODEL } : undefined,
+      ...(e.RECORD_DEBUG_DIR ? { debugDir: e.RECORD_DEBUG_DIR } : {}),
     };
   }
   const cellVar = (r: DataRegion, name: string) => (e as unknown as Record<string, string | undefined>)[`CELL_${r.toUpperCase()}_${name}`];

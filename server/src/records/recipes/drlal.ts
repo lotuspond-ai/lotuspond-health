@@ -13,7 +13,7 @@
 // shapes, and anything missing ends the recipe with RecipeDriftError for the navigator to take over.
 import type { Locator, Page } from 'playwright-core';
 import { PortalError, type PortalReport, type Recipe, type RecipeContext } from './types.ts';
-import { collectReports, DIALOGS, fillCode, findDialogWith, firstVisible, mustFind, PHONE_FIELDS, RecipeDriftError, reportLinks, tenDigits, visibleError } from './kit.ts';
+import { collectReports, DIALOGS, fillCode, findDialogWith, firstVisible, mustFind, PHONE_FIELDS, RecipeDriftError, reportLinks, tenDigits, untickMarketing, visibleError } from './kit.ts';
 
 export const DRLAL_ORIGIN = 'https://www.lalpathlabs.com';
 
@@ -47,6 +47,7 @@ async function signIn(ctx: RecipeContext): Promise<void> {
   const phone = tenDigits(ctx.identifier ?? await ctx.ask({ kind: 'phone', label: 'Mobile number registered with Dr Lal PathLabs' }));
   if (phone.length !== 10) throw new PortalError('Dr Lal PathLabs needs a 10-digit mobile number.');
   await phoneField.fill(phone);
+  await untickMarketing(box);
   await (await mustFind(box, SEND, 'the button that sends the OTP')).click();
 
   // The OTP step: a code field (or a row of boxes) appears in the same dialog.

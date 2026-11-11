@@ -5,13 +5,14 @@
 // What the site shows:
 //   /guest-health-records: "Sign In To Access Your Health Records" with a "Login Now" button; the header has
 //     div#loginPopup (title "Login/SignUp").
-//   The sign-in opens in a dialog: mobile number, then the OTP (its fields are drawn by scripts the scrape did not
-//     run, so the recipe tries the usual shapes).
+//   The sign-in opens in a side panel (seen live on 11 Nov 2026): input[name=mobileNumber] after a "+91", a box
+//     ticked in advance for "Share health tips, appointment details and offers with me on Whatsapp" (the recipe
+//     unticks it), and Continue. The OTP step after it has not been seen yet.
 //   Signed in, Health Records sorts records into kinds (test reports, prescriptions, hospitalisations, …); the
 //     recipe opens each kind it recognises and downloads every report link in it.
 import type { Locator, Page } from 'playwright-core';
 import { PortalError, type PortalReport, type Recipe, type RecipeContext } from './types.ts';
-import { collectReports, DIALOGS, fillCode, findDialogWith, firstVisible, mustFind, PHONE_FIELDS, RecipeDriftError, reportLinks, tenDigits, visibleError, type ReportLink } from './kit.ts';
+import { collectReports, DIALOGS, fillCode, findDialogWith, firstVisible, mustFind, PHONE_FIELDS, RecipeDriftError, reportLinks, tenDigits, untickMarketing, visibleError, type ReportLink } from './kit.ts';
 
 export const APOLLO_ORIGIN = 'https://www.apollo247.com';
 
@@ -39,6 +40,7 @@ async function signIn(ctx: RecipeContext): Promise<void> {
   const phone = tenDigits(ctx.identifier ?? await ctx.ask({ kind: 'phone', label: 'Mobile number registered with Apollo 24|7' }));
   if (phone.length !== 10) throw new PortalError('Apollo 24|7 needs a 10-digit mobile number.');
   await field.fill(phone);
+  await untickMarketing(box);
   await (await mustFind(box, SEND, 'the button that sends the OTP')).click();
 
   const codeReady = await firstVisible(page, [...CODE.map(c => `${c}:not([type=tel])`), 'input[maxlength="1"]'], 15_000);

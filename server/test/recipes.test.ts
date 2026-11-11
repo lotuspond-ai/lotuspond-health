@@ -153,7 +153,7 @@ describe('Apollo 24|7 recipe', { timeout: 120_000 }, () => {
     const origin = await host(portal.app);
     const r = await run(apollo247Recipe(origin), 'apollo', { answers: ['+91 91234 56789', APOLLO_OTP] });
     assert.deepEqual(r.asked.map(q => q.kind), ['phone', 'otp']);
-    assert.deepEqual(portal.otps, ['9123456789']);
+    assert.deepEqual(portal.otps, ['9123456789'], 'the pre-ticked WhatsApp offers box was unticked');
     assert.equal(r.reports.length, 3);
     assert.ok(r.reports.every(isPdf));
     assert.deepEqual(r.reports.map(x => x.date), ['2026-08-11', '2026-05-02', '2026-08-15']);

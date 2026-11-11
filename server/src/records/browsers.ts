@@ -83,9 +83,13 @@ export function localBrowsers(opts: { executablePath?: string; headless?: boolea
   return {
     label: 'LotusPond’s servers',
     async open(o) {
+      // Where the server reaches the internet through a proxy (HTTPS_PROXY), its browsers do too; this server's own
+      // address (the demo portal) is reached directly.
+      const proxy = process.env.HTTPS_PROXY || process.env.https_proxy;
       const browser = await chromium.launch({
         headless: opts.headless ?? true,
         ...(opts.executablePath ? { executablePath: opts.executablePath } : {}),
+        ...(proxy ? { proxy: { server: proxy, bypass: 'localhost,127.0.0.1' } } : {}),
         // No sandbox only where Chromium cannot create one (containers running as root).
         args: process.getuid?.() === 0 ? ['--no-sandbox'] : [],
       });

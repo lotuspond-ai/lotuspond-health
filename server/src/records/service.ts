@@ -8,6 +8,8 @@
 // them) and the person starts again. Scheduled runs never ask: if the portal wants the person, the connection is
 // marked needs_sign_in and waits for them.
 import { createHash, randomUUID } from 'node:crypto';
+import { mkdir, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import { and, desc, eq, inArray, isNotNull, lte, sql } from 'drizzle-orm';
@@ -253,15 +255,28 @@ export function createRecordAgent(opts: RecordAgentOptions): RecordAgent {
     await setRun(cell, job.runId, { status: 'running', step: 'Starting a browser' });
 
     let session: Awaited<ReturnType<BrowserProvider['open']>> | null = null;
+    let failCapture: () => Promise<void> = async () => {};
     let state: StorageState | null = null;
     try {
       session = await opts.browsers.open({ allowHosts, ...(storage ? { storageState: JSON.parse(storage) as StorageState } : {}) });
       const page = await session.context.newPage();
+      // Development: what the browser showed at each step (config.debugDir; refused in production).
+      let shot = 0;
+      const capture = async (label: string) => {
+        if (!opts.config.debugDir) return;
+        try {
+          const base = path.join(opts.config.debugDir, `${job.runId.slice(0, 8)}-${String(++shot).padStart(2, '0')}-${label.replace(/[^a-z0-9]+/gi, '-').slice(0, 40)}`);
+          await mkdir(opts.config.debugDir, { recursive: true });
+          await page.screenshot({ path: `${base}.png`, fullPage: true });
+          await writeFile(`${base}.html`, await page.content());
+        } catch { /* best effort */ }
+      };
+      failCapture = () => capture('failed');
       const ctx: RecipeContext = {
         page, context: session.context, source, startUrl, allowHosts, identifier, signal: l.abort.signal, maxBytes: opts.maxBytes,
-        step: async text => { await setRun(cell, job.runId, { step: text.slice(0, 120) }); },
+        step: async text => { await capture(text); await setRun(cell, job.runId, { step: text.slice(0, 120) }); },
         remember: v => { const t = v.trim(); if (t && t !== identifier) { identifier = t; identifierChanged = true; } },
-        ask: q => ask(cell, job, l, q),
+        ask: async q => { await capture(`ask ${q.kind}`); return ask(cell, job, l, q); },
         download: url => downloadFile(session!.context, url, allowHosts, opts.maxBytes),
       };
       // A recipe that finds the portal changed hands the run to the navigator (same page, same sign-in), if it is on.
@@ -292,6 +307,7 @@ export function createRecordAgent(opts: RecordAgentOptions): RecordAgent {
       await setRun(cell, job.runId, { status: 'succeeded', step: null, question: null, saved: saved.length, documentIds: saved, finishedAt: finished });
       if (saved.length) await recordEvent(cell.db, null, job.userId, 'records_fetched', { profileId: conn.profileId, connectionId: conn.id });
     } catch (e) {
+      await failCapture();
       const finished = new Date(now());
       if (e instanceof NeedsPersonError) {
         // A scheduled run found the sign-in expired: wait for the person.

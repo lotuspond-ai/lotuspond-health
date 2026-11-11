@@ -186,3 +186,22 @@ export const DIALOGS = ['[role=dialog]', '[aria-modal="true"]', '.modal.show', '
 export function tenDigits(v: string): string {
   return v.replace(/\D/g, '').slice(-10);
 }
+
+/**
+ * Untick boxes a sign-in ticks for the person, for marketing ("Share health tips … and offers with me on WhatsApp").
+ * They did not agree to that through LotusPond. Boxes for terms or consent the sign-in needs are left alone.
+ */
+export async function untickMarketing(scope: Page | Locator): Promise<number> {
+  const boxes = scope.locator('input[type=checkbox]');
+  const n = Math.min(await boxes.count().catch(() => 0), 10);
+  let unticked = 0;
+  for (let i = 0; i < n; i++) {
+    const box = boxes.nth(i);
+    if (!(await box.isChecked().catch(() => false))) continue;
+    const label = await box.evaluate((el: any) => (el.closest('label')?.innerText || el.parentElement?.innerText || el.parentElement?.parentElement?.innerText || '').slice(0, 300)).catch(() => '');
+    if (!/whats ?app|offers?|promotion|marketing|newsletter|health tips|updates/i.test(label) || /terms|privacy|i agree|consent to (the )?(processing|terms)/i.test(label)) continue;
+    await box.uncheck({ force: true }).catch(() => box.click({ force: true }).catch(() => {}));
+    if (!(await box.isChecked().catch(() => true))) unticked++;
+  }
+  return unticked;
+}
