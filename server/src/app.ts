@@ -18,6 +18,7 @@ import { configRoutes, mapFileRoutes } from './routes/config.ts';
 import { addCspSources, mapCspSources } from './facilities/index.ts';
 import { hookRoutes, labOrderRoutes, labResultRoutes, labRoutes } from './lab/routes.ts';
 import { agentRoutes } from './agents/routes.ts';
+import { extractionRoutes } from './extraction/routes.ts';
 import { mcpRoutes } from './agents/mcp.ts';
 import { oauthRoutes, type OAuthOptions } from './agents/oauth.ts';
 
@@ -54,7 +55,8 @@ const SITE_CSP = [
 
 const IMMUTABLE = 'public, max-age=31536000, immutable';
 /** Files whose names change with their content: built assets, and the pre-rendered body-map images (name.<hash>.webp/png). */
-const HASHED = /[\\/]assets[\\/]|[\\/]bodymap[\\/][^\\/]+\.[0-9a-f]{10}\.(webp|png)$/;
+// …and the OCR files, in a folder named by the tesseract.js version (tools/ocr-assets.ts).
+const HASHED = /[\\/]assets[\\/]|[\\/]bodymap[\\/][^\\/]+\.[0-9a-f]{10}\.(webp|png)$|[\\/]ocr[\\/]\d+\.\d+\.\d+[\\/]/;
 
 export function createApp(input: DepsInput, opts: { oauth?: OAuthOptions } = {}): Hono<AppEnv> {
   const deps = completeDeps(input); // one default cell unless index.ts opened several
@@ -114,7 +116,7 @@ export function createApp(input: DepsInput, opts: { oauth?: OAuthOptions } = {})
 
   // JSON bodies (results, scan thumbnails) stay small; file uploads have their own limit.
   app.use('/api/*', async (c, next) => {
-    if (c.req.path.endsWith('/documents') && c.req.method === 'POST') return next();
+    if ((c.req.path.endsWith('/documents') || c.req.path.endsWith('/extract')) && c.req.method === 'POST') return next();
     return bodyLimit({ maxSize: 20 * 1024 * 1024, onError: () => { throw new HttpError(413, 'too_large', 'This request is too large.'); } })(c, next);
   });
 
@@ -127,6 +129,7 @@ export function createApp(input: DepsInput, opts: { oauth?: OAuthOptions } = {})
     app.route('/api/profiles/:pid/lab-results', labResultRoutes(deps, deps.labs));
   }
   app.route('/api/agents', agentRoutes(deps));
+  if (deps.extractor) app.route('/api/profiles/:pid/extract', extractionRoutes(deps, deps.extractor));
   app.route('/api/profiles', profileRoutes(deps));
   app.route('/api/facilities', facilityRoutes(deps));
   app.route('/api/geo', geoRoutes(deps));

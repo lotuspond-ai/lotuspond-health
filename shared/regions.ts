@@ -164,7 +164,10 @@ export function countryName(code: string, locale?: string): string {
 }
 
 /** Version of the consent texts. Bump when Terms, Privacy or the health-data consent change materially. */
-export const CONSENT_VERSION = '2026-11-10';
+export const CONSENT_VERSION = '2026-11-11';
+
+/** What changed in the texts at CONSENT_VERSION, for the notice that asks people to accept them (src/App.tsx). */
+export const CONSENT_CHANGE_SUMMARY = 'It now covers AI agents you connect, and reading a hard-to-read report photo with Claude, which happens only when you choose it for that file.';
 
 /** English names that take "the" inside a sentence ("records for people in the United Kingdom"). */
 const WITH_THE = new Set('AE AX BS CC CF CK DO FK FO GB GM GS HM IM IO KM KY MH MP MV NL PH PN SB SC TC TF UM US VG VI'.split(' '));

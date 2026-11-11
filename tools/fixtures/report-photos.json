@@ -1,0 +1,59 @@
+{
+ "note": "Synthetic, made-up reports; see make-report-photos.py.",
+ "reports": [
+  {
+   "file": "cbc-bio-ref-interval.jpg",
+   "layout": "Test Name | Result | Unit | Bio. Ref. Interval",
+   "truth": {
+    "hemoglobin": 13.2,
+    "wbc": 7.8,
+    "rbc": 4.62,
+    "hematocrit": 41.5,
+    "mcv": 89.8,
+    "mch": 28.6,
+    "mchc": 31.8
+   }
+  },
+  {
+   "file": "lipid-observed-value-flags.jpg",
+   "layout": "Investigation | Observed Value | Unit | Reference Range",
+   "truth": {
+    "total_cholesterol": 226,
+    "triglycerides": 182,
+    "hdl": 38,
+    "ldl": 151
+   }
+  },
+  {
+   "file": "thyroid-with-method.jpg",
+   "layout": "TEST | VALUE | UNITS | REFERENCE RANGE",
+   "truth": {
+    "t3": 112,
+    "t4": 8.4,
+    "tsh": 5.86
+   }
+  },
+  {
+   "file": "kidney-liver-summary.jpg",
+   "layout": "Parameter | Result | Units | Normal Range",
+   "truth": {
+    "creatinine": 0.92,
+    "urea": 28,
+    "uric_acid": 6.8,
+    "alt": 48,
+    "ast": 36,
+    "bilirubin_total": 0.8
+   }
+  },
+  {
+   "file": "diabetes-vitamins-shaded.jpg",
+   "layout": "Test Description | Result | Unit | Biological Reference",
+   "truth": {
+    "glucose_fasting": 118,
+    "hba1c": 6.4,
+    "vitamin_d": 18.6,
+    "vitamin_b12": 312
+   }
+  }
+ ]
+}

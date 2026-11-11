@@ -47,3 +47,6 @@ dist-mobile
 # production deployment secrets and backups
 deploy/.env
 deploy/backups/
+
+# Tesseract language data cached by Node tools (the app serves its own copy from /ocr/)
+*.traineddata

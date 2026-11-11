@@ -16,6 +16,7 @@ import { uid } from '../lib/id';
 import { ApiError, type Backend, type ScanPatch } from './backend';
 import { needsGuardian } from '../../shared/family';
 import type { AgentConnection, AgentConnectionsInfo, CreatedAgentToken } from '../../shared/agents';
+import type { AiExtraction } from '../../shared/types';
 import type { LabCatalog, LabOrderView, LabResultSaved, LabResultView, LabSlot } from '../../shared/lab-bundle';
 
 interface StoredAccount extends Account { salt: string; hash: string }
@@ -539,4 +540,5 @@ export class BrowserBackend implements Backend {
   async createAgentToken(): Promise<CreatedAgentToken> { throw noAgents(); }
   async updateAgentConnection(): Promise<AgentConnection> { throw noAgents(); }
   async disconnectAgent(): Promise<void> { throw noAgents(); }
+  async extractReport(): Promise<AiExtraction> { throw new ApiError(503, 'preview', 'Reading with Claude needs the LotusPond server, and this preview runs without one.'); }
 }

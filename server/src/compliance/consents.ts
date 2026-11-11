@@ -19,7 +19,7 @@ export async function listConsents(db: Db, userId: string): Promise<ConsentRecor
 }
 
 /** Consents given per profile or per connection rather than once for the account. */
-export const PER_ITEM_CONSENTS: readonly ConsentKind[] = ['family_profile', 'agent_sharing'];
+export const PER_ITEM_CONSENTS: readonly ConsentKind[] = ['family_profile', 'agent_sharing', 'ai_extraction'];
 
 /** The latest decision for each account-wide kind (per-item kinds are left out: each has many). */
 export function currentConsents(records: ConsentRecord[]): Partial<Record<ConsentKind, ConsentRecord>> {
@@ -34,7 +34,7 @@ export function outdatedConsents(records: ConsentRecord[]): ConsentKind[] {
   return (['terms', 'privacy'] as const).filter(k => current[k]?.granted && current[k]!.version !== CONSENT_VERSION);
 }
 
-export async function recordConsents(db: Db, userId: string, country: string | null, decisions: { kind: ConsentKind; granted: boolean; detail?: ConsentDetail }[]): Promise<void> {
+export async function recordConsents(db: Db, userId: string, country: string | null, decisions: { kind: ConsentKind; granted: boolean; detail?: ConsentDetail; version?: string }[]): Promise<void> {
   if (!decisions.length) return;
-  await db.insert(consents).values(decisions.map(d => ({ userId, kind: d.kind, granted: d.granted, version: CONSENT_VERSION, country, detail: d.detail ?? null })));
+  await db.insert(consents).values(decisions.map(d => ({ userId, kind: d.kind, granted: d.granted, version: d.version ?? CONSENT_VERSION, country, detail: d.detail ?? null })));
 }

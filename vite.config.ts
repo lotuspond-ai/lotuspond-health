@@ -2,6 +2,7 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { DEFAULT_SITE_URL } from './shared/site.ts'
 import { normalizeSiteUrl, site, siteInputs } from './tools/site/vite-plugin.ts'
+import { ocrAssets } from './tools/ocr-assets.ts'
 
 // In development the API runs on :8787 (npm run dev starts both); the dev server forwards /api to it.
 const api = { '/api': { target: `http://localhost:${process.env.API_PORT ?? 8787}`, changeOrigin: false } }
@@ -17,7 +18,8 @@ export default defineConfig(({ mode }) => {
   return {
     base: artifact ? './' : '/',
     appType: 'mpa',
-    plugins: [react(), site({ siteUrl, artifact })],
+    // On-device report reading: everywhere but the server-less preview (mode 'artifact').
+    plugins: [react(), site({ siteUrl, artifact }), ocrAssets({ enabled: mode !== 'artifact', base: artifact ? './' : '/' })],
     define: { __SITE_URL__: JSON.stringify(siteUrl) },
     build: {
       chunkSizeWarningLimit: 2500,

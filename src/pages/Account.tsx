@@ -153,6 +153,7 @@ const CONSENT_LABEL: Record<ConsentKind, string> = {
   marketing: 'Product emails',
   family_profile: 'Keeping a family member\'s records',
   agent_sharing: 'Sharing with an AI agent',
+  ai_extraction: 'Reading a report with Claude',
 };
 
 /** Which profile or agent a per-item consent was for, as the history shows it. */
@@ -160,6 +161,7 @@ function consentSubject(r: ConsentRecord, profiles: Profile[]): string | null {
   const d = r.detail;
   if (!d) return null;
   const name = (id: string) => profiles.find(p => p.id === id)?.displayName ?? 'a removed profile';
+  if (r.kind === 'ai_extraction' && d.profileId) return `A report for ${name(d.profileId)}`;
   if (r.kind === 'family_profile' && d.profileId) return `${name(d.profileId)}${d.confirmation === 'guardian' ? ' (as parent or guardian)' : ''}`;
   if (r.kind === 'agent_sharing') return [d.agent, d.profileIds?.length ? `sees ${d.profileIds.map(name).join(', ')}` : null, d.scopes?.includes('health:write') ? 'may add records' : null].filter(Boolean).join(' · ');
   return null;
@@ -278,6 +280,7 @@ const ACTIVITY_LABEL: Record<AuditKind, string> = {
   agent_disconnected: 'Agent disconnected',
   agent_access: 'Agent read records',
   agent_wrote: 'Agent added to records',
+  report_read_by_ai: 'Report read with Claude',
 };
 
 function describe(e: ActivityEvent, profiles: Profile[]): string | null {
