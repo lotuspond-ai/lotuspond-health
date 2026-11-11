@@ -51,9 +51,23 @@ async function signIn(ctx: RecipeContext): Promise<void> {
   const codeReady = await firstVisible(page, [...CODE, 'input[maxlength="1"]'], 15_000);
   if (!codeReady) throw new PortalError((await visibleError(page)) ?? 'Apollo 24|7 did not send an OTP to that number.');
   ctx.remember(phone);
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const code = await ctx.ask({ kind: 'otp', label: attempt ? 'That OTP was not accepted. Enter the new OTP from Apollo 24|7' : 'OTP Apollo 24|7 sent to your phone' });
+  for (let attempt = 0, resends = 0; attempt < 2; attempt++) {
+    const code = await ctx.ask({
+      kind: 'otp', label: attempt ? 'That OTP was not accepted. Enter the newest OTP from Apollo 24|7' : 'OTP Apollo 24|7 sent to your phone',
+      hint: 'No SMS? Type RESEND and Apollo sends a new code.',
+    });
     const scope: Page | Locator = (await box.isVisible().catch(() => false)) ? box : page;
+    // The person never got the code: press Apollo's Resend OTP (seen live: button[title="Request resend otp"]).
+    if (/^\s*resend\s*$/i.test(code)) {
+      if (resends++ >= 2) throw new PortalError('Apollo 24|7 did not send a code after two resends. Try again later.');
+      const resend = await firstVisible(scope, ['button[title*="resend" i]', 'button:has-text("Resend")', ':text("RESEND OTP")'], 5000);
+      if (!resend) throw new PortalError('Apollo 24|7 does not offer to resend the code yet. Try again in a minute.');
+      // It is enabled once its countdown ends.
+      for (let i = 0; i < 40 && await resend.isDisabled().catch(() => false); i++) await page.waitForTimeout(1000);
+      await resend.click();
+      attempt--;
+      continue;
+    }
     await fillCode(scope, code, CODE);
     const verify = await firstVisible(scope, VERIFY, 3000);
     if (verify) await verify.click();
