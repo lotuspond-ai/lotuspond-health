@@ -22,7 +22,7 @@ interface Stored { mode?: StageMode; studio?: boolean; glow?: boolean }
 function load(): Stored {
   try {
     const v = JSON.parse(localStorage.getItem(KEY) ?? '{}') as Stored;
-    return { mode: v.mode === '3d' ? '3d' : 'map', studio: v.studio === true, glow: v.glow === true };
+    return { mode: v.mode === '3d' ? '3d' : 'map', studio: v.studio === true, glow: v.glow !== false };
   } catch { return {}; }
 }
 
@@ -38,7 +38,7 @@ interface StageSettings {
   mode: StageMode;
   /** "Studio light": reflective floor and effects, when the device keeps up. */
   studio: boolean;
-  /** "Glow" look of the body map: a quiet figure with soft halos per organ and a grade per body system. */
+  /** "Glow" look of the body map (the default): a quiet figure with soft halos per organ and a grade per body system. */
   glow: boolean;
   /** Current tier, set by the 3D stage. */
   tier: Tier;
@@ -63,7 +63,7 @@ const startTier = (studio: boolean): Tier => pinned ?? (studio ? 3 : lowPowerDev
 export const useStage = create<StageSettings>((set, get) => ({
   mode: stored.mode ?? 'map',
   studio: stored.studio ?? false,
-  glow: stored.glow ?? false,
+  glow: stored.glow ?? true,
   tier: startTier(stored.studio ?? false),
   ceiling: 3,
   setMode: mode => { set({ mode }); save({ mode, studio: get().studio, glow: get().glow }); },

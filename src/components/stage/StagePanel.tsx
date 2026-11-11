@@ -106,7 +106,7 @@ function StageOverlay({ mode }: { mode: StageMode }) {
       {organ ? (
         <button className="btn stage__back" onClick={() => selectOrgan(null)}>{Icon.back} Whole body</button>
       ) : glow && !in3d ? (
-        <><SystemGrades /><GlowLegend /></>
+        <SystemGrades />
       ) : (
         <IssueLegend />
       )}
@@ -122,8 +122,11 @@ function StageOverlay({ mode }: { mode: StageMode }) {
 /** A ring and a letter per body system, beside the body in the glow view. Choosing one shows only its organs. */
 function SystemGrades() {
   const grades = useSystemGrades();
+  // Before any results, the rings all read "–" and nothing glows, so the keys are left out.
+  const any = grades.some(g => g.total > 0);
   const active = useHealth(s => s.activeSystem), setActive = useHealth(s => s.setActiveSystem);
   return (
+    <>
     <nav className="grades" aria-label="Body systems">
       <ul>
         {grades.map(g => {
@@ -145,8 +148,10 @@ function SystemGrades() {
           );
         })}
       </ul>
-      <p className="grades__key">A all in range · B some outside<br />C some far outside</p>
+      {any && <p className="grades__key">A all in range · B some outside<br />C some far outside</p>}
     </nav>
+    {any && <GlowLegend />}
+    </>
   );
 }
 
