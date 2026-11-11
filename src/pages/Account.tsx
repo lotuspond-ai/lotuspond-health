@@ -156,6 +156,7 @@ const CONSENT_LABEL: Record<ConsentKind, string> = {
   agent_sharing: 'Sharing with an AI agent',
   ai_extraction: 'Reading a report with Claude',
   assistant: 'Using the LotusPond assistant',
+  whatsapp: 'Talking with the assistant on WhatsApp',
 };
 
 /** Which profile or agent a per-item consent was for, as the history shows it. */
@@ -292,6 +293,9 @@ const ACTIVITY_LABEL: Record<AuditKind, string> = {
   agent_write_undone: 'Undid an agent’s addition',
   report_read_by_ai: 'Report read with Claude',
   assistant_chat: 'Started a chat with the assistant',
+  whatsapp_linked: 'Linked a WhatsApp number',
+  whatsapp_unlinked: 'Unlinked WhatsApp',
+  whatsapp_report: 'Sent a report on WhatsApp',
 };
 
 function describe(e: ActivityEvent, profiles: Profile[]): string | null {

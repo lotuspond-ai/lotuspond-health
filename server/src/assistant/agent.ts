@@ -42,6 +42,8 @@ export interface AssistantRun {
   ctx: ToolContext;
   emit: (e: AssistantEvent) => void;
   signal?: AbortSignal;
+  /** Whether there is a body map to point to (not on WhatsApp). */
+  bodyMap?: boolean;
 }
 
 export interface AssistantTurn {
@@ -97,8 +99,8 @@ export function claudeAssistant(opts: ClaudeAssistantOptions = {}): Assistant {
   const model = opts.model ?? 'claude-opus-5-5';
   return {
     model,
-    async reply({ history, context, tools, ctx, emit, signal }) {
-      const toolParams = [...tools.map(toolParam), SHOW_TOOL];
+    async reply({ history, context, tools, ctx, emit, signal, bodyMap = true }) {
+      const toolParams = [...tools.map(toolParam), ...(bodyMap ? [SHOW_TOOL] : [])];
       const byName = new Map(tools.map(t => [t.name, t]));
       const messages: MessageParam[] = [...history];
       const turn: AssistantTurn = { added: [], text: '', tools: [], organs: [], links: [], refused: false, wrote: false };

@@ -18,6 +18,7 @@ import { needsGuardian } from '../../shared/family';
 import type { AgentConnection, AgentConnectionsInfo, CreatedAgentToken } from '../../shared/agents';
 import type { NotificationList, UndoResult } from '../../shared/notifications';
 import { ASSISTANT_NOTICE_VERSION, type AssistantConsent, type AssistantInfo, type AssistantMessage } from '../../shared/assistant';
+import { WHATSAPP_NOTICE_VERSION, type WhatsAppInfo, type WhatsAppLink, type WhatsAppLinkStart } from '../../shared/whatsapp';
 import type { AiExtraction } from '../../shared/types';
 import type { LabCatalog, LabOrderView, LabResultSaved, LabResultView, LabSlot } from '../../shared/lab-bundle';
 
@@ -547,9 +548,13 @@ export class BrowserBackend implements Backend {
   async assistantInfo(): Promise<AssistantInfo> { return { enabled: false, noticeVersion: ASSISTANT_NOTICE_VERSION, consent: null, conversations: [] }; }
   async agreeToAssistant(): Promise<AssistantConsent> { throw noAgents(); }
   async withdrawAssistant(): Promise<void> { throw noAgents(); }
-  async assistantConversation(): Promise<{ id: string; profileId: string; title: string; messages: AssistantMessage[] }> { throw noAgents(); }
+  async assistantConversation(): Promise<{ id: string; profileId: string; title: string; channel?: 'whatsapp'; messages: AssistantMessage[] }> { throw noAgents(); }
   async deleteAssistantConversation(): Promise<void> { throw noAgents(); }
   async sendToAssistant(): Promise<void> { throw noAgents(); }
+  async whatsappInfo(): Promise<WhatsAppInfo> { return { enabled: false, noticeVersion: WHATSAPP_NOTICE_VERSION, link: null, pending: null }; }
+  async startWhatsAppLink(): Promise<WhatsAppLinkStart> { throw noAgents(); }
+  async setWhatsAppProfile(): Promise<WhatsAppLink> { throw noAgents(); }
+  async unlinkWhatsApp(): Promise<void> { throw noAgents(); }
   async createAgentToken(): Promise<CreatedAgentToken> { throw noAgents(); }
   async updateAgentConnection(): Promise<AgentConnection> { throw noAgents(); }
   async disconnectAgent(): Promise<void> { throw noAgents(); }

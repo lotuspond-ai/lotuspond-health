@@ -11,6 +11,7 @@ import {
 } from '../../shared/agents';
 import { ConfirmButton, Field } from './forms';
 import { useAssistant } from '../state/assistant';
+import { WhatsAppSettings } from './WhatsAppSettings';
 import '../styles/agents.css';
 
 const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString(undefined, { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : 'Never');
@@ -40,6 +41,7 @@ export function AgentConnectionsPanel() {
         records each agent sees and whether it may add to them. Disconnect at any time: it stops at once.
       </p>
       <AssistantSettings />
+      <WhatsAppSettings />
       {failed && <p className="form-error" role="alert">Connected agents could not be loaded.</p>}
       {mcpUrl && (
         <div className="agents__url">

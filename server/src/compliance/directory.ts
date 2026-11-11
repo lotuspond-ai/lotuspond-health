@@ -5,7 +5,7 @@
 import { createHmac } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
 import type { DataRegion } from '../../../shared/regions.ts';
-import { directory, users, type UserRow } from '../db/schema.ts';
+import { directory, users, whatsappDirectory, whatsappLinkCodes, type UserRow } from '../db/schema.ts';
 import type { Cell } from '../cells.ts';
 import type { Deps } from '../http.ts';
 
@@ -60,4 +60,7 @@ export async function claim(deps: DirDeps, email: string, region: DataRegion, us
 
 export async function release(deps: Pick<Deps, 'db'>, userId: string): Promise<void> {
   await deps.db.delete(directory).where(eq(directory.userId, userId));
+  // A linked WhatsApp number, or a code waiting to link one.
+  await deps.db.delete(whatsappDirectory).where(eq(whatsappDirectory.userId, userId));
+  await deps.db.delete(whatsappLinkCodes).where(eq(whatsappLinkCodes.userId, userId));
 }

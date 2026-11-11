@@ -41,3 +41,8 @@
   .assistant { inset: 0; width: auto; border-radius: 0; top: 0; padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); z-index: 60; }
   .assistant__ask span { display: none; }
 }
+
+/* A conversation from WhatsApp: read here, carried on there. */
+.assistant__composer--note { display: flex; align-items: center; gap: 10px; justify-content: space-between; }
+.assistant__composer--note .note { margin: 0; }
+.assistant__wa { margin-top: 14px; }

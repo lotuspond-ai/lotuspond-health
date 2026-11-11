@@ -3,6 +3,7 @@
 import { AI_EXTRACTION_NOTICE_VERSION, type AiExtraction } from '../../shared/types';
 import type { NotificationList, UndoResult } from '../../shared/notifications';
 import { ASSISTANT_NOTICE_VERSION, type AssistantConsent, type AssistantEvent, type AssistantInfo, type AssistantMessage } from '../../shared/assistant';
+import { WHATSAPP_NOTICE_VERSION, type WhatsAppInfo, type WhatsAppLink, type WhatsAppLinkStart } from '../../shared/whatsapp';
 import type { AgentCategory } from '../../shared/agents';
 import type { AgentConnection, AgentConnectionsInfo, CreateAgentTokenInput, CreatedAgentToken, UpdateAgentConnectionInput } from '../../shared/agents';
 import type {
@@ -242,8 +243,13 @@ export class HttpBackend implements Backend {
   assistantInfo() { return this.request<AssistantInfo>('GET', '/assistant'); }
   agreeToAssistant(categories: AgentCategory[]) { return this.request<AssistantConsent>('POST', '/assistant/consent', { noticeVersion: ASSISTANT_NOTICE_VERSION, categories }); }
   withdrawAssistant() { return this.request<void>('DELETE', '/assistant/consent'); }
-  assistantConversation(id: string) { return this.request<{ id: string; profileId: string; title: string; messages: AssistantMessage[] }>('GET', `/assistant/conversations/${id}`); }
+  assistantConversation(id: string) { return this.request<{ id: string; profileId: string; title: string; channel?: 'whatsapp'; messages: AssistantMessage[] }>('GET', `/assistant/conversations/${id}`); }
   deleteAssistantConversation(id: string) { return this.request<void>('DELETE', `/assistant/conversations/${id}`); }
+
+  whatsappInfo() { return this.request<WhatsAppInfo>('GET', '/whatsapp'); }
+  startWhatsAppLink() { return this.request<WhatsAppLinkStart>('POST', '/whatsapp/link', { noticeVersion: WHATSAPP_NOTICE_VERSION }); }
+  setWhatsAppProfile(profileId: string) { return this.request<WhatsAppLink>('PATCH', '/whatsapp/link', { profileId }); }
+  unlinkWhatsApp() { return this.request<void>('DELETE', '/whatsapp/link'); }
 
   /** The answer streams back as server-sent events, one JSON AssistantEvent each. */
   async sendToAssistant(input: { profileId: string; conversationId?: string; text: string }, onEvent: (e: AssistantEvent) => void, signal?: AbortSignal) {

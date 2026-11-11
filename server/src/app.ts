@@ -20,6 +20,9 @@ import { hookRoutes, labOrderRoutes, labResultRoutes, labRoutes } from './lab/ro
 import { agentRoutes } from './agents/routes.ts';
 import { notificationRoutes } from './routes/notifications.ts';
 import { assistantRoutes } from './assistant/routes.ts';
+import { whatsappHookRoutes, whatsappRoutes } from './whatsapp/routes.ts';
+import { whatsappService, type WhatsAppService } from './whatsapp/service.ts';
+import { cloudApiClient, type WhatsAppClient } from './whatsapp/client.ts';
 import { extractionRoutes } from './extraction/routes.ts';
 import { mcpRoutes } from './agents/mcp.ts';
 import { oauthRoutes, type OAuthOptions } from './agents/oauth.ts';
@@ -60,9 +63,20 @@ const IMMUTABLE = 'public, max-age=31536000, immutable';
 // …and the OCR files, in a folder named by the tesseract.js version (tools/ocr-assets.ts).
 const HASHED = /[\\/]assets[\\/]|[\\/]bodymap[\\/][^\\/]+\.[0-9a-f]{10}\.(webp|png)$|[\\/]ocr[\\/]\d+\.\d+\.\d+[\\/]/;
 
-export function createApp(input: DepsInput, opts: { oauth?: OAuthOptions } = {}): Hono<AppEnv> {
+export interface AppOptions {
+  oauth?: OAuthOptions;
+  /** WhatsApp: a client other than the Cloud API (tests), and a way to reach the service once it exists. */
+  whatsapp?: { client?: WhatsAppClient; onService?: (s: WhatsAppService) => void };
+}
+
+export function createApp(input: DepsInput, opts: AppOptions = {}): Hono<AppEnv> {
   const deps = completeDeps(input); // one default cell unless index.ts opened several
   const { config } = deps;
+  // The assistant on WhatsApp needs both the Cloud API settings and the assistant itself.
+  const wa = config.whatsapp && deps.assistant
+    ? whatsappService(deps, deps.assistant, opts.whatsapp?.client ?? cloudApiClient(config.whatsapp), config.whatsapp, `${config.publicUrl ?? `http://localhost:${config.port}`}/app`)
+    : undefined;
+  if (wa) opts.whatsapp?.onService?.(wa);
   const app = new Hono<AppEnv>();
   // Map tiles on the Labs page may come from another host (see facilities/map.ts).
   const appCsp = addCspSources(APP_CSP, mapCspSources(config));
@@ -133,6 +147,7 @@ export function createApp(input: DepsInput, opts: { oauth?: OAuthOptions } = {})
   app.route('/api/agents', agentRoutes(deps));
   app.route('/api/notifications', notificationRoutes(deps));
   app.route('/api/assistant', assistantRoutes(deps, deps.assistant));
+  app.route('/api/whatsapp', whatsappRoutes(deps, wa));
   if (deps.extractor) app.route('/api/profiles/:pid/extract', extractionRoutes(deps, deps.extractor));
   app.route('/api/profiles', profileRoutes(deps));
   app.route('/api/facilities', facilityRoutes(deps));
@@ -170,6 +185,7 @@ export function createApp(input: DepsInput, opts: { oauth?: OAuthOptions } = {})
 
   // Lab partner webhooks: server to server, so outside /api (no browser checks, no CORS).
   if (deps.labs) app.route('/hooks', hookRoutes(deps, deps.labs));
+  if (wa) app.route('/hooks/whatsapp', whatsappHookRoutes(wa));
 
   if (config.staticDir && fs.existsSync(path.join(config.staticDir, 'index.html'))) serveSite(app, config.staticDir, appCsp);
 

@@ -74,7 +74,7 @@ The assistant is on when the server has Anthropic credentials (`ANTHROPIC_API_KE
 
 ## Not done yet
 
-- WhatsApp (step 3): linking the person's number, and messages and uploaded reports there.
+- WhatsApp is in [whatsapp.md](whatsapp.md).
 - Uploading a report in the chat. For now it goes through Add.
 - Voice notes, and on-device speech recognition everywhere.
 - A live run against the Claude API. That needs an API key on the server.

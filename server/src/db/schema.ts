@@ -379,6 +379,8 @@ export const assistantConversations = pgTable('assistant_conversations', {
   userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   profileId: uuid('profile_id').notNull().references(() => profiles.id, { onDelete: 'cascade' }),
   title: text('title').notNull(),
+  /** Where it happens: the app, or WhatsApp from the linked number. */
+  channel: text('channel').$type<'app' | 'whatsapp'>().notNull().default('app'),
   createdAt: createdAt(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, t => [index('assistant_conversations_user_idx').on(t.userId, t.updatedAt)]);
@@ -400,6 +402,45 @@ export const assistantMessages = pgTable('assistant_messages', {
   createdAt: createdAt(),
 }, t => [uniqueIndex('assistant_messages_seq_key').on(t.conversationId, t.seq)]);
 
+/* ---------- WhatsApp (shared/whatsapp.ts, server/src/whatsapp/) ---------- */
+
+/** The WhatsApp number linked to an account, in the account's cell. One number per account, one account per number. */
+export const whatsappLinks = pgTable('whatsapp_links', {
+  userId: uuid('user_id').primaryKey().references(() => users.id, { onDelete: 'cascade' }),
+  /** The WhatsApp id: the number with its country code, digits only. */
+  phone: text('phone').notNull(),
+  /** The profile WhatsApp works on and saves reports to. */
+  profileId: uuid('profile_id').notNull().references(() => profiles.id, { onDelete: 'cascade' }),
+  createdAt: createdAt(),
+  lastMessageAt: timestamp('last_message_at', { withTimezone: true }),
+}, t => [uniqueIndex('whatsapp_links_phone_key').on(t.phone)]);
+
+/**
+ * Which cell holds the account a WhatsApp number is linked to, keyed by an HMAC of the number (like `directory`).
+ * Default database only.
+ */
+export const whatsappDirectory = pgTable('whatsapp_directory', {
+  phoneHash: text('phone_hash').primaryKey(),
+  region: text('region').$type<DataRegion>().notNull(),
+  userId: uuid('user_id').notNull(),
+  createdAt: createdAt(),
+}, t => [index('whatsapp_directory_user_idx').on(t.userId)]);
+
+/** Link codes waiting to be sent from WhatsApp, keyed by an HMAC of the code. Default database only. */
+export const whatsappLinkCodes = pgTable('whatsapp_link_codes', {
+  codeHash: text('code_hash').primaryKey(),
+  region: text('region').$type<DataRegion>().notNull(),
+  userId: uuid('user_id').notNull(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  createdAt: createdAt(),
+}, t => [index('whatsapp_link_codes_user_idx').on(t.userId)]);
+
+/** Ids of incoming WhatsApp messages already handled (Meta can deliver one more than once). Default database only. */
+export const whatsappInbound = pgTable('whatsapp_inbound', {
+  messageId: text('message_id').primaryKey(),
+  receivedAt: timestamp('received_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
 export type UserRow = typeof users.$inferSelect;
 export type ConsentRow = typeof consents.$inferSelect;
 export type AuditEventRow = typeof auditEvents.$inferSelect;
@@ -418,3 +459,4 @@ export type AgentTokenRow = typeof agentTokens.$inferSelect;
 export type NotificationRow = typeof notifications.$inferSelect;
 export type AssistantConversationRow = typeof assistantConversations.$inferSelect;
 export type AssistantMessageRow = typeof assistantMessages.$inferSelect;
+export type WhatsAppLinkRow = typeof whatsappLinks.$inferSelect;

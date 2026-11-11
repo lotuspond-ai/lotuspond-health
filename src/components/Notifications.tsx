@@ -83,12 +83,20 @@ export function NotificationBell() {
     }
   }
 
+  /** A report sent on WhatsApp: open that profile and read the file in the upload review. */
+  function review(n: AppNotification) {
+    if (n.detail.type !== 'document') return;
+    setOpen(false);
+    if (useSession.getState().activeId !== n.profileId) useSession.getState().switchProfile(n.profileId);
+    useUI.getState().openReview({ profileId: n.profileId, documentId: n.detail.documentId });
+  }
+
   async function undo(n: AppNotification) {
     setBusy(n.id);
     try {
       const r = await backend.undoNotification(n.id);
       if (r.profile) replaceProfile(r.profile);
-      if (n.detail.type === 'reading' && useHealth.getState().profileId === n.profileId) await useHealth.getState().openProfile(n.profileId);
+      if (n.detail.type !== 'profile' && useHealth.getState().profileId === n.profileId) await useHealth.getState().openProfile(n.profileId);
       setData(d => d && { ...d, items: d.items.map(x => (x.id === n.id ? r.notification : x)) });
       toast.info(r.removed ? `Removed what ${n.agentName} added.` : 'That was already removed.');
     } catch (e) {
@@ -113,7 +121,12 @@ export function NotificationBell() {
               <li key={n.id} className={n.undoneAt ? 'is-undone' : undefined}>
                 <p><b>{n.agentName}</b> added {describeWrite(n.detail)}{n.detail.type === 'reading' && n.detail.date ? ` (${formatDate(n.detail.date)})` : ''} to {whose(n.profileId)}.</p>
                 <small>{ago(n.createdAt)}{n.undoneAt ? ' · Undone' : ''}</small>
-                {!n.undoneAt && <button type="button" className="btn btn--small" disabled={busy === n.id} onClick={() => void undo(n)}>{busy === n.id ? 'Undoing…' : 'Undo'}</button>}
+                {!n.undoneAt && (
+                  <span className="notif__actions">
+                    {n.detail.type === 'document' && <button type="button" className="btn btn--small btn--primary" onClick={() => review(n)}>Check results</button>}
+                    <button type="button" className="btn btn--small" disabled={busy === n.id} onClick={() => void undo(n)}>{busy === n.id ? 'Undoing…' : n.detail.type === 'document' ? 'Delete' : 'Undo'}</button>
+                  </span>
+                )}
               </li>
             ))}
           </ul>
