@@ -90,6 +90,20 @@ check('urine context: RBC → urine_rbc', matchMarkerName('RBC', { section: 'uri
 console.log(`  names: ${nameOk}/${NAME_CASES.length} positive cases`);
 
 /* ---------------- ranges ---------------- */
+section('LOINC');
+{
+  const { LOINC, isLoincCode } = await import(new URL('../shared/loinc.ts', import.meta.url).href);
+  const codes = Object.entries(LOINC);
+  check('LOINC: every code passes the mod-10 check digit', codes.every(([, c]) => isLoincCode(c)), codes.filter(([, c]) => !isLoincCode(c)).map(([k]) => k).join(', '));
+  check('LOINC: codes are unique', new Set(codes.map(([, c]) => c)).size === codes.length);
+  check('LOINC: every code names a catalogue marker', codes.every(([id]) => findMarker(id)?.loinc === LOINC[id]));
+  check('LOINC: most markers are coded', codes.length >= BIOMARKERS.length - 5, `${codes.length} of ${BIOMARKERS.length}`);
+  check('LOINC: a code finds its marker', findMarker('2093-3')?.id === 'total_cholesterol' && findMarker('4548-4')?.id === 'hba1c');
+  check('LOINC: a wrong check digit is not a code', !isLoincCode('2093-4') && isLoincCode('718-7'));
+  const csv = parseCsvText('LOINC,Test,Result,Unit\n4548-4,Glycated Hb,6.4,%\n', 'loinc.csv');
+  check('LOINC: a CSV LOINC column matches the marker', csv.measurements[0]?.markerId === 'hba1c', JSON.stringify(csv.measurements[0]));
+}
+
 section('ranges');
 const RANGE_CASES = [
   ['13.0 - 17.0', { low: 13, high: 17 }], ['13-17', { low: 13, high: 17 }], ['< 200', { high: 200 }], ['<=5.7', { high: 5.7 }],

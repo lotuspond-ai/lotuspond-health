@@ -1,6 +1,7 @@
 // Biomarker catalog: names, aliases, canonical units and generic adult ranges.
 // Ranges are broad, sex-neutral adult ranges used only when a report does not print its own.
 import type { BiomarkerDef, OrganId, SystemId } from './types.ts';
+import { LOINC } from './loinc.ts';
 
 export const SYSTEM_LABELS: Record<SystemId, string> = {
   heart: 'Heart & lipids',
@@ -451,10 +452,19 @@ export const BIOMARKERS: BiomarkerDef[] = [
   ...BLOOD, ...NUTRITION, ...THYROID, ...HORMONES, ...URINE,
 ];
 
+for (const b of BIOMARKERS) if (LOINC[b.id]) b.loinc = LOINC[b.id];
+
 const BY_ID = new Map(BIOMARKERS.map(b => [b.id, b]));
+const BY_LOINC = new Map(BIOMARKERS.filter(b => b.loinc).map(b => [b.loinc!, b]));
+
+/** The marker with this LOINC code, if the catalogue has it. */
+export function findMarkerByLoinc(code: string | null | undefined): BiomarkerDef | undefined {
+  return code ? BY_LOINC.get(code.trim()) : undefined;
+}
 
 export function findMarker(id: string | null | undefined): BiomarkerDef | undefined {
-  return id ? BY_ID.get(id) : undefined;
+  // A LOINC code (from a CSV "LOINC" column or a lab's structured results) names a marker too.
+  return id ? BY_ID.get(id) ?? (/^\d{1,7}-\d$/.test(id.trim()) ? BY_LOINC.get(id.trim()) : undefined) : undefined;
 }
 
 /* ---------------- name matching ---------------- */

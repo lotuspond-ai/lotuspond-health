@@ -19,6 +19,8 @@ export type Direction = 'toward_range' | 'away_from_range' | 'within_range' | 'u
 export interface MarkerSummary {
   marker: string;
   markerId: string | null;
+  /** LOINC code of the marker, when the catalogue has one (shared/loinc.ts). */
+  loinc: string | null;
   system: string | null;
   latest: { value: number | null; text: string; unit: string; date: string | null; status: Status; range: string | null; rangeSource: 'report' | 'typical' | null };
   previous: { value: number | null; date: string | null; status: Status } | null;
@@ -116,6 +118,7 @@ export function summarizeMarker(points: Measurement[], now = Date.now()): Marker
   return {
     marker: def?.name ?? latest.rawName,
     markerId: latest.markerId,
+    loinc: def?.loinc ?? null,
     system: def ? SYSTEM_LABELS[def.system] : null,
     latest: {
       value: latest.value, text: latest.valueText, unit: latest.unit, date: latest.date, status: latest.status,
