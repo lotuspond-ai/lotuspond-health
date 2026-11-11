@@ -8,11 +8,12 @@
 //   The sign-in opens in a side panel (seen live on 11 Nov 2026): input[name=mobileNumber] after a "+91", a box
 //     ticked in advance for "Share health tips, appointment details and offers with me on Whatsapp" (the recipe
 //     unticks it), and Continue. The OTP step after it has not been seen yet.
-//   Signed in, Health Records sorts records into kinds (test reports, prescriptions, hospitalisations, …); the
-//     recipe opens each kind it recognises and downloads every report link in it.
+//   Signed in, /health-records lists the person's recent documents as cards with a Download link each (seen live,
+//     see run()). The recipe never clicks the site's menus: its "Lab Tests" and "Buy Insurance" links lead away.
+import { createHash } from 'node:crypto';
 import type { Locator, Page } from 'playwright-core';
 import { PortalError, type PortalReport, type Recipe, type RecipeContext } from './types.ts';
-import { collectReports, DIALOGS, fillCode, findDialogWith, firstVisible, mustFind, PHONE_FIELDS, RecipeDriftError, reportLinks, tenDigits, untickMarketing, visibleError, type ReportLink } from './kit.ts';
+import { collectReports, DIALOGS, fillCode, findDate, findDialogWith, firstVisible, mustFind, PHONE_FIELDS, RecipeDriftError, reportLinks, tenDigits, untickMarketing, visibleError, type ReportLink } from './kit.ts';
 
 export const APOLLO_ORIGIN = 'https://www.apollo247.com';
 
@@ -20,8 +21,6 @@ const SEND = ['button:has-text("Continue")', 'button:has-text("Send OTP")', 'but
 const VERIFY = ['button:has-text("Verify")', 'button:has-text("Submit")', 'button:has-text("Continue")', 'button:has-text("Login")', 'button[type=submit]'];
 // Seen live: <input type="tel" maxlength="6" title="Please enter the otp"> under "Enter OTP", with Verify.
 const CODE = ['input[title*="otp" i]', 'input[autocomplete="one-time-code"]', 'input[placeholder*="otp" i]', 'input[name*="otp" i]', 'input[id*="otp" i]', 'input[maxlength="6"]:not([name*="mobile" i])', 'input[maxlength="4"]:not([name*="mobile" i])'];
-/** The kinds of records Health Records shows, as tab or menu labels. */
-const KINDS = ['Test Reports', 'Lab Reports', 'Lab Tests', 'Reports', 'Prescriptions', 'Hospitalization', 'Hospitalisation', 'Discharge Summary', 'Medical Bills', 'Insurance'];
 
 /**
  * Whether Apollo shows a signed-in person. Seen live: right after the OTP the guest page is still drawn for a few
@@ -120,48 +119,50 @@ export const apollo247Recipe = (origin = APOLLO_ORIGIN): Recipe => ({
       if (!(await signedIn(page, 15_000))) throw new RecipeDriftError('Signed in, but Health Records still asks to log in');
     }
     await ctx.step('Reading your health records');
-    await firstVisible(page, KINDS.map(k => `:is(button, a, [role=tab]):has-text("${k}")`), 10_000);
-    // Each kind of record in turn; a tab that is not there is skipped.
-    const all: ReportLink[] = [];
+    // Seen live (11 Nov 2026): signed in, Health Records is /health-records, a single list of cards
+    // (div.HdCard_hdCard__…), each with its kind ("Lab Report | Apollo", "Prescription | Self Upload"), patient name,
+    // UHID, lab name and "Record Date - 01 Sep, 26", and a Download link to base.apolloprism.com/…/eDownload. Only
+    // the most recent documents are on the website ("To view all your previous documents please download the app").
+    if (!/\/health-records/.test(new URL(page.url()).pathname)) {
+      await page.goto(`${origin}/health-records`);
+      await page.waitForLoadState('load').catch(() => {});
+    }
+    await firstVisible(page, ['[class*="HdCard_hdCard__"]', 'a[href*="eDownload"]', 'text=/no (records|documents|reports) (found|available|yet)/i'], 20_000);
+    const cards = page.locator('[class*="HdCard_hdCard__"]');
+    const n = Math.min(await cards.count().catch(() => 0), 60);
+    const links: ReportLink[] = [];
     const seen = new Set<string>();
-    const take = async (kind: string | null) => {
-      for (const l of await reportLinks(page)) {
-        // The same record under two labels (a "Reports" menu and a "Test Reports" tab) is taken once.
-        if (seen.has(l.key)) continue;
-        seen.add(l.key);
-        const key = kind ? `${kind}:${l.key}` : l.key;
-        all.push({ ...l, key, title: kind && !l.title.toLowerCase().includes(kind.toLowerCase().slice(0, 5)) ? `${kind}: ${l.title}` : l.title });
-      }
-    };
-    let tabs = 0;
-    const opened = new Set<string>();
-    for (const kind of KINDS) {
-      const tab = await firstVisible(page, [`[role=tab]:has-text("${kind}")`, `button:has-text("${kind}")`, `a:has-text("${kind}")`], 300);
-      if (!tab) continue;
-      // "Reports" also matches the "Test Reports" tab: open each tab once.
-      const label = (await tab.innerText().catch(() => kind)).replace(/\s+/g, ' ').trim().toLowerCase();
-      if (opened.has(label)) continue;
-      opened.add(label);
-      tabs++;
-      await tab.click().catch(() => {});
-      await page.waitForTimeout(800);
-      // Downloads must happen while their tab is open: collect this tab's now.
-      const before = all.length;
-      await take(kind);
-      if (all.length > before) {
-        const got = await collectReports(ctx, 'Apollo 24|7', all.slice(before));
-        reports.push(...got);
-      }
+    for (let i = 0; i < n; i++) {
+      const card = cards.nth(i);
+      const link = card.locator('a[href*="eDownload"], a[download], a:has(:text("Download"))').first();
+      const href = await link.getAttribute('href').catch(() => null);
+      if (!href) continue;
+      const url = new URL(href, page.url());
+      const text = (await card.innerText().catch(() => '')).replace(/\s+/g, ' ');
+      const kind = (await card.locator('[class*="ReportType_hdType"]').first().innerText().catch(() => '')).replace(/\s+/g, ' ').trim();
+      const lab = text.match(/Lab Name - (.+?)(?: Record Date| Prescribed By|$)/)?.[1]?.trim() ?? null;
+      const date = findDate(text.match(/Record Date - ([^|]+?)(?: Download|$)/)?.[1] ?? text);
+      // Seen live: the link's document token changes between visits, and so do the files' bytes, so neither tells a
+      // record already brought in. What the card shows does: kind, lab, record date and file name, plus the record's
+      // place among cards that show the same (two reports from one lab on one day).
+      const kindName = kind.split('|')[0].trim() || 'Health record';
+      const shown = [kind, lab ?? '', date ?? '', url.searchParams.get('fileName') ?? ''].join('|').toLowerCase();
+      let nth = 0;
+      while (seen.has(`${shown}#${nth}`)) nth++;
+      seen.add(`${shown}#${nth}`);
+      const key = `apollo:${createHash('sha256').update(`${shown}#${nth}`).digest('hex').slice(0, 32)}`;
+      links.push({ el: link, key, title: lab ? `${kindName} ${lab}` : kindName, date });
     }
-    if (!tabs) {
-      await take(null);
-      reports.push(...await collectReports(ctx, 'Apollo 24|7', all));
+    if (!links.length) {
+      // Not the cards seen live: any report links on the page, without opening other pages.
+      links.push(...await reportLinks(page));
     }
-    if (!reports.length) {
+    if (!links.length) {
       const text = (await page.locator('body').innerText().catch(() => '')).toLowerCase();
-      if (/no (records|reports|data) (found|available|yet)|add (your )?(first )?record/.test(text) || tabs) return [];
+      if (/no (records|reports|documents|data) (found|available|yet)|add (your )?(first )?record/.test(text)) return [];
       throw new RecipeDriftError('Signed in to Apollo 24|7, but found no health records');
     }
+    reports.push(...await collectReports(ctx, 'Apollo 24|7', links));
     return reports;
   },
 });

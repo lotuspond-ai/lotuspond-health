@@ -219,12 +219,14 @@ document.querySelectorAll('.dl').forEach(b => b.onclick = () => { location.href 
 /**
  * Apollo 24|7: /guest-health-records with "Login Now" and the header's #loginPopup, and the sign-in panel as the
  * live page showed it on 11 Nov 2026 (a LoginModal panel, input[name=mobileNumber], a pre-ticked "offers on
- * WhatsApp" box, Continue). The OTP step and the records tabs after sign-in are still guesses at their shape.
+ * WhatsApp" box, Continue), and /health-records after sign-in as seen live the same day. The OTP field is simpler
+ * here than live (type=tel, title "Please enter the otp", which the recipe also finds).
  */
 export function apolloPortal() {
   const app = new Hono();
   const sessions = new Set<string>();
   const otps: string[] = [];
+  const leftRecords: string[] = [];
   const signed = (c: Context) => sessions.has(getCookie(c, 'ap') ?? '');
   app.get('/guest-health-records', c => {
     if (!signed(c)) {
@@ -249,17 +251,31 @@ const open = () => {
 document.querySelector('.phrGuestLogin').onclick = open;
 document.getElementById('loginPopup').onclick = open;`));
     }
-    return c.html(page('Health Records', `<header><div id="loginPopup"><span>Asha</span></div></header><h1>Health Records</h1>
-<div role="tablist"><button role="tab" id="t1">Test Reports</button><button role="tab" id="t2">Prescriptions</button><button role="tab" id="t3">Hospitalization</button></div>
-<div id="panel"></div><a href="/prohealth-brochure.pdf">Apollo ProHealth brochure (PDF)</a>`, `
-const panels = {
-  t1: '<div class="record-card"><p>Complete Blood Count (CBC)</p><p>Apollo Diagnostics · 11 Aug 2026</p><a href="/records/LR-881.pdf">Download</a></div><div class="record-card"><p>HbA1c</p><p>02/05/2026</p><button class="dl" data-id="LR-882">Download</button></div>',
-  t2: '<div class="record-card"><p>Dr Mehta, General Physician</p><p>15 Aug 2026</p><a href="/records/RX-12.pdf">Download</a></div>',
-  t3: '<p>No records found</p>',
-};
-const show = id => { document.getElementById('panel').innerHTML = panels[id];
-  document.querySelectorAll('.dl').forEach(b => b.onclick = () => { location.href = '/records/' + b.dataset.id + '.pdf?dl=1'; }); };
-['t1', 't2', 't3'].forEach(id => document.getElementById(id).onclick = () => show(id));`));
+    return c.redirect('/health-records');
+  });
+  // Signed in, as seen live on 11 Nov 2026: one list of cards, a Download link each to Apollo Prism's eDownload,
+  // whose document token (and the file's bytes) change on every visit; the menu's links lead away from the records.
+  app.get('/health-records', c => {
+    if (!signed(c)) return c.redirect('/guest-health-records');
+    const visit = randomBytes(6).toString('hex');
+    const card = (kind: string, lab: string | null, date: string, file: string) => `<div class="HdCard_hdCard__Hlv5G">
+<div class="HdCard_hdCardHeader__72liz"><div class="ReportType_hdType__sdHCt"><span>${kind.split('|')[0].trim()}</span> | <span>${kind.split('|')[1].trim()}</span></div><div>Uploaded - <span>${date}</span></div></div>
+<div class="HdCard_hdCardBody__cKQfW"><div class="HdCard_patientDetails__KBqia"><p>Patient Name - <span>ASHA RAO</span></p><p>Patient UHID - <span>APJ1.0000000001</span></p>${lab ? `<p>Lab Name - <span>${lab} </span></p>` : '<p>Prescribed By - <span>Prescription uploaded by Patient</span></p>'}<p>Record Date - <span>${date}</span></p></div>
+<div class="HdCard_hdCardActions__O7qwn"><a href="/247/healthRecords/eDownload?document=${visit}${randomBytes(4).toString('hex')}&fileName=${file}&mediaType=pdf" target="_blank" download=""><button class="N HdCard_download__b0EiQ" aria-label="Button"><span>Download</span></button></a><button class="O HdCard_viewPdf__Hqf2S" aria-label="Button"><span>View Pdf</span></button></div></div></div>`;
+    return c.html(page('Health Records', `<header><a href="/lab-tests">Lab Tests</a> <a href="/insurance">Buy Insurance</a> <a href="/health-records">Health Records</a></header>
+<h3>Health Documents</h3><div><p>Sync, Share and Track easily On Apollo 24|7 app</p><button class="O" aria-label="Button"><span>Download App</span></button></div>
+<div class="health-records_phrCardContainer__LWn1O">
+${card('Lab Report | Apollo', 'SL NIZAMABAD BLOCK 1', '01 Sep, 26', 'LabTest_01Sep2026.pdf')}
+${card('Lab Report | Apollo', 'SL NIZAMABAD BLOCK 1', '01 Sep, 26', 'LabTest_01Sep2026.pdf')}
+${card('Prescription | Self Upload', null, '12 Jun, 25', 'Prescription_12Jun2025.pdf')}
+</div><div><h3>+0 More Reports</h3><p>To view all your previous documents please download Apollo247 App</p></div>`));
+  });
+  app.get('/lab-tests', c => { leftRecords.push('/lab-tests'); return c.html(page('Lab Tests', '<a href="/report-sample.pdf">Sample report</a>')); });
+  app.get('/insurance', c => { leftRecords.push('/insurance'); return c.html(page('Insurance', '')); });
+  app.get('/247/healthRecords/eDownload', c => {
+    if (!signed(c)) return c.text('no', 401);
+    // A fresh file each time, as the live service seems to do.
+    return c.body(pdf('APOLLO', `Record ${randomBytes(4).toString('hex')}`, c.req.query('fileName') ?? '') as unknown as ArrayBuffer, 200, { 'content-type': 'application/pdf' });
   });
   app.post('/otp/send', async c => { otps.push(await c.req.text()); return c.text('ok'); });
   app.post('/otp/verify', async c => {
@@ -269,13 +285,5 @@ const show = id => { document.getElementById('panel').innerHTML = panels[id];
     setCookie(c, 'ap', t, { path: '/', httpOnly: true });
     return c.text('ok');
   });
-  app.get('/records/:file', c => {
-    if (!signed(c)) return c.text('no', 401);
-    const id = c.req.param('file').replace(/\.pdf$/, '');
-    const h: Record<string, string> = { 'content-type': 'application/pdf' };
-    if (c.req.query('dl')) h['content-disposition'] = `attachment; filename="${id}.pdf"`;
-    return c.body(pdf('APOLLO', 'Record', id) as unknown as ArrayBuffer, 200, h);
-  });
-  app.get('/prohealth-brochure.pdf', c => c.body(pdf('APOLLO', 'Brochure', 'B') as unknown as ArrayBuffer, 200, { 'content-type': 'application/pdf' }));
-  return { app, otps };
+  return { app, otps, leftRecords };
 }

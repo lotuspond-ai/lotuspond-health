@@ -95,6 +95,12 @@ export function findDate(text: string): string | null {
     const m = months.indexOf(named[2].toLowerCase());
     if (m >= 0) return `${named[3]}-${String(m + 1).padStart(2, '0')}-${named[1].padStart(2, '0')}`;
   }
+  // "01 Sep, 26" (Apollo 24|7): a two-digit year, taken as 20xx.
+  const short = text.match(/\b(\d{1,2})[\s-]([A-Za-z]{3})[a-z]*,?[\s-](\d{2})\b(?!\d|:)/);
+  if (short) {
+    const m = months.indexOf(short[2].toLowerCase());
+    if (m >= 0) return `20${short[3]}-${String(m + 1).padStart(2, '0')}-${short[1].padStart(2, '0')}`;
+  }
   return null;
 }
 

@@ -148,19 +148,23 @@ describe('Metropolis recipe', { timeout: 120_000 }, () => {
 });
 
 describe('Apollo 24|7 recipe', { timeout: 120_000 }, () => {
-  test('signs in from Health Records and downloads each kind of record, skipping the brochure', async () => {
+  test('signs in from Health Records and downloads each card, never leaving through the menu, each record once', async () => {
     const portal = apolloPortal();
     const origin = await host(portal.app);
     const r = await run(apollo247Recipe(origin), 'apollo', { answers: ['+91 91234 56789', APOLLO_OTP] });
     assert.deepEqual(r.asked.map(q => q.kind), ['phone', 'otp']);
     assert.deepEqual(portal.otps, ['9123456789'], 'the pre-ticked WhatsApp offers box was unticked');
-    assert.equal(r.reports.length, 3);
+    assert.deepEqual(portal.leftRecords, [], 'the menu links (Lab Tests, Buy Insurance) were not followed');
+    assert.equal(r.reports.length, 3, 'two reports from one lab on one day are both kept');
     assert.ok(r.reports.every(isPdf));
-    assert.deepEqual(r.reports.map(x => x.date), ['2026-08-11', '2026-05-02', '2026-08-15']);
-    assert.match(r.reports[2].title, /^Prescriptions: /);
+    assert.deepEqual(r.reports.map(x => x.date), ['2026-09-01', '2026-09-01', '2025-06-12']);
+    assert.match(r.reports[0].title, /^Lab Report SL NIZAMABAD BLOCK 1$/);
+    assert.ok(!r.reports.some(x => /ASHA|APJ1/.test(x.title + x.fileName)), 'no patient name or UHID in titles');
 
+    // Links and files change on every visit, but the same records come back with the same keys.
     const again = await run(apollo247Recipe(origin), 'apollo', { state: r.state, identifier: r.remembered, schedule: true });
     assert.equal(again.asked.length, 0);
     assert.deepEqual(again.reports.map(x => x.key), r.reports.map(x => x.key));
+    assert.notDeepEqual(Buffer.from(again.reports[0].bytes), Buffer.from(r.reports[0].bytes));
   });
 });

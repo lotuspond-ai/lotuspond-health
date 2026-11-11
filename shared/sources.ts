@@ -112,10 +112,11 @@ export const SOURCES: SourceInfo[] = [
 
   /* ---------------- hospitals ---------------- */
   { id: 'apollo', name: 'Apollo Hospitals (Apollo 24|7)', category: 'hospital', regions: IN, access: 'browser', signIn: 'otp',
-    // Apollo signs people in with Firebase (seen live): its token checks only, not the rest of googleapis.com.
-    hosts: ['apollo247.com', 'apollo247.in', 'apollohospitals.com', 'www.googleapis.com/identitytoolkit/', 'securetoken.googleapis.com'], startUrl: 'https://www.apollo247.com/guest-health-records',
+    // Seen live: Apollo signs people in with Firebase (its token checks only, not the rest of googleapis.com), and
+    // serves health record files from Apollo Prism (its record downloads only).
+    hosts: ['apollo247.com', 'apollo247.in', 'apollohospitals.com', 'base.apolloprism.com/247/healthRecords/', 'www.googleapis.com/identitytoolkit/', 'securetoken.googleapis.com'], startUrl: 'https://www.apollo247.com/guest-health-records',
     holds: ['Lab reports', 'Prescriptions', 'Discharge summaries', 'Consultations'],
-    note: 'Signs in with your mobile number and OTP, then downloads what Apollo Health Records holds from Apollo Hospitals, Diagnostics, Clinics and 24|7.' },
+    note: 'Signs in with your mobile number and OTP, then downloads the recent documents in Apollo Health Records (Apollo Hospitals, Diagnostics, Clinics and 24|7). Older ones are in the Apollo app only.' },
   { id: 'fortis', name: 'Fortis Healthcare', category: 'hospital', regions: IN, access: 'browser', signIn: 'otp',
     hosts: ['fortishealthcare.com'], startUrl: 'https://www.fortishealthcare.com/', holds: ['Reports', 'Discharge summaries', 'Bills'] },
   { id: 'max', name: 'Max Healthcare', category: 'hospital', regions: IN, access: 'browser', signIn: 'otp',

@@ -2,7 +2,9 @@
 
 Status: November 2026. The engine, the app's Sources page and the MCP tool are built.
 
-- **Recipes:** Demo Lab, Dr Lal PathLabs, Thyrocare, Metropolis and Apollo 24|7. The four real portals' recipes are tested against local copies of their portals, **not yet with real accounts** (§5.1).
+- **Recipes:** Demo Lab, Dr Lal PathLabs, Thyrocare, Metropolis and Apollo 24|7.
+  - **Apollo 24|7 has run against a real account** (11 Nov 2026): it signed in with the person's number and OTP and saved all 6 documents on their Health Records page. A second run saved nothing new (§5.2).
+  - The Dr Lal, Thyrocare and Metropolis recipes are tested against local copies of their portals, **not yet with real accounts** (§5.1).
 - **The navigator:** every other portal is reached through Claude, which is off unless Anthropic credentials are set.
 
 The record agent brings a family's reports in from the portals where they live: labs, hospitals, government services, pharmacies and insurers.
@@ -169,9 +171,9 @@ All four were written from the portals' public pages in November 2026. This sess
 | --- | --- | --- |
 | Where | metropolisindia.com account | Health Records (Apollo's personal health record: Apollo Hospitals, Diagnostics, Clinics and 24\|7), from `/guest-health-records` |
 | Sign-in | *Login* (`span.login-text`), then `form#signin`: `#mobile_number`, `#sendOtpBtn`, four OTP boxes `#otp1`–`#otp4`, `#verifyOtpBtn`. The phone layout's own sign-in (`#mobileNumber`, `#getOtpBtn`, `.otp-box`, `#verifyOtpMobBtn`) is used when that is the one shown | *Login Now* or the header's `#loginPopup` opens a dialog: mobile number, then the OTP |
-| Reports | Report links on the page after sign-in, or on its *My Reports* / *Reports* / *Download Report* page | Each kind of record in turn (test reports, prescriptions, hospitalisation, discharge summaries, bills), downloading every report link in it |
-| Care taken | Several lead forms on the page also take a mobile number. The recipe types only into the sign-in form | A tab is opened once even when two labels match it, and brochures are skipped |
-| Known guesswork | The sign-in ids are fixed, but the page after sign-in was not seen: scripts handle it | The sign-in dialog's fields and the records tabs after sign-in were not seen |
+| Reports | Report links on the page after sign-in, or on its *My Reports* / *Reports* / *Download Report* page | The cards on `/health-records`, each with its Download link (§5.2) |
+| Care taken | Several lead forms on the page also take a mobile number. The recipe types only into the sign-in form | Unticks the pre-ticked WhatsApp offers box. Never follows the site's menu links |
+| Known guesswork | The sign-in ids are fixed, but the page after sign-in was not seen: scripts handle it | None left: checked live, see §5.2 |
 
 `server/test/recipes.test.ts` runs all four against local copies (`test/fixtures/lab-portals.ts`) in a real Chromium. It covers:
 - a wrong code, then the right one;
@@ -183,7 +185,26 @@ All four were written from the portals' public pages in November 2026. This sess
 - each kind of Apollo record collected once;
 - `RecipeDriftError` on a redesigned page.
 
-**Before real use**, sign in with a real account (in a browser that can reach the portals) and compare against the fixtures. In particular, check the Dr Lal and Apollo sign-in dialogs, and the pages Thyrocare, Metropolis and Apollo show after sign-in. Then correct the recipe and the fixture together.
+### 5.2 Apollo 24|7, checked live (11 November 2026)
+
+The first live run used a real account. The person typed their number and each OTP into the run's questions. Several things differed from the public pages:
+
+| Step | What the live site does | What changed in the recipe |
+| --- | --- | --- |
+| Opening the sign-in | *Login Now* appears before the page's scripts can handle a click | Waits for the page to settle, then clicks again (*Login Now*, then the header's Login) if the panel doesn't open |
+| Mobile number | A side panel: `input[name=mobileNumber]` after "+91", and **"Share health tips, appointment details and offers with me on Whatsapp", ticked in advance**, then *Continue* | Unticks marketing boxes before Continue (`untickMarketing`, also used for Dr Lal and Metropolis) |
+| OTP | `<input type="tel" maxlength="6" title="Please enter the otp">` and *Verify*. A wrong code shows "Incorrect OTP, 2 attempts left", and *Resend OTP* has a 30-second countdown | Finds the field by its title. Waits for the panel to close or an "Incorrect OTP" message. The person may answer RESEND (at most twice) |
+| Finishing sign-in | The panel closes, but the guest page stays for a few seconds while Apollo signs in **through Firebase** (`www.googleapis.com/identitytoolkit/…/verifyCustomToken`) | Waits for sign-in to finish. The source allows `www.googleapis.com/identitytoolkit/` and `securetoken.googleapis.com` as path-limited entries (§3) |
+| Records | `/health-records`: a list of cards (`HdCard_hdCard__…`) showing kind ("Lab Report \| Apollo", "Prescription \| Self Upload"), patient name, UHID, lab, "Record Date - 01 Sep, 26". Each card has a Download link to `base.apolloprism.com/247/healthRecords/eDownload?document=…&fileName=…`. Only recent documents are on the website; older ones are in the app only | Reads the cards. Never clicks the site's menu links ("Lab Tests" and "Buy Insurance" lead away). Allows `base.apolloprism.com/247/healthRecords/`. Reads two-digit years |
+| Checking again | The document token in each link and the file's bytes change on every visit | Keys each record by what its card shows (kind, lab, record date, file name, and its place among identical cards). A second run saved nothing |
+
+**Lessons for every recipe:**
+- **Ask for one code per sign-in.** SMS can arrive minutes late. A new request makes the earlier code invalid, and after several requests Apollo stopped sending texts for a while. Don't restart a run while a code is on its way.
+- **Keep a sign-in that worked.** A run that signs in and then fails now keeps the portal's sign-in, so trying again needs no new code.
+- **Reusing the number sends an SMS.** A run on a connection with a remembered number fills it in and sends the SMS by itself, so start runs only when the person is ready for a code.
+- **Watch the debug log.** `RECORD_DEBUG_DIR` (development only) saves a screenshot and the page at each step, and logs what the host rule blocks. That's how the Firebase and Apollo Prism hosts were found. The captures hold the person's records: delete them after use.
+
+**Before real use**, sign in with a real account (in a browser that can reach the portals) and compare against the fixtures. In particular, check the Dr Lal sign-in dialog, and the pages Thyrocare and Metropolis show after sign-in. Then correct the recipe and the fixture together.
 
 **The navigator.** Portals without a recipe use the navigator (`navigator.ts`): Claude reading the page as text with numbered elements, acting through narrow tools.
 
@@ -241,7 +262,7 @@ Product menus change often. Where support depends on the plan or isn't confirmed
 - **Legal.**
   - Signing in to a portal on the person's behalf with their own credentials is their choice. But a portal's terms may forbid automated access. Review this source by source, and prefer partnerships or official APIs where a lab offers them.
   - Under India's DPDP Act, LotusPond processes these reports as a data fiduciary with the person's consent, recorded per connection. Whether the Consent Manager rules apply needs advice.
-- **Recipes for more portals:** Redcliffe, Healthians, Agilus and Tata 1mg next. Check the four existing recipes with real accounts first (§5.1).
+- **Recipes for more portals:** Redcliffe, Healthians, Agilus and Tata 1mg next. Check the Dr Lal, Thyrocare and Metropolis recipes with real accounts first (§5.1).
 - **ABDM as a health information user**, to pull ABHA-linked records with a consent artefact instead of a browser.
 - **Wearable and email APIs** (OAuth): Ultrahuman, Oura, Fitbit, Garmin, Withings, LibreView, Gmail.
 - **Several instances.** Several API instances need the queue and questions in a shared store (the database and a pub/sub) instead of memory.
