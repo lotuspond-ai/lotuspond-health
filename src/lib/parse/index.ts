@@ -4,6 +4,7 @@ import { parseCsvText } from './csv.ts';
 import { parseJsonText } from './json.ts';
 import { looksLikeDicom, parseDicomFile } from './dicom.ts';
 import { parseImage } from './image.ts';
+import { OCR_BASE } from './ocr-engine.ts';
 
 export { parseCsvText } from './csv.ts';
 export { parseJsonText } from './json.ts';
@@ -32,7 +33,10 @@ async function sniff(file: File): Promise<'pdf' | 'json' | 'text' | 'dicom' | 'i
 }
 
 /** Parse a user file (PDF, CSV/TSV/TXT, JSON, image, DICOM), dispatching by extension, MIME type, then content. */
-export async function parseFile(file: File): Promise<ParseResult> {
+/** Progress while reading: "Reading the photo…", "Reading page 2 of 3…". */
+export type ParseProgress = (message: string) => void;
+
+export async function parseFile(file: File, onProgress?: ParseProgress): Promise<ParseResult> {
   const name = file.name.toLowerCase();
   const type = (file.type || '').toLowerCase();
   let kind: Awaited<ReturnType<typeof sniff>> = null;
@@ -48,7 +52,13 @@ export async function parseFile(file: File): Promise<ParseResult> {
   switch (kind) {
     case 'pdf': {
       const { parsePdf } = await import('./pdf.ts');
-      return parsePdf(file);
+      const r = await parsePdf(file);
+      // A scanned PDF has no text layer: read its pages as images on the device.
+      if (OCR_BASE && !r.measurements.length && r.warnings.some(w => /no readable text/.test(w))) {
+        const { readScannedPdf } = await import('./ocr-read.ts');
+        return readScannedPdf(file, onProgress);
+      }
+      return r;
     }
     case 'text': {
       if (file.size > MAX_TEXT) return empty('This file is too large to read as a table.');
@@ -63,8 +73,15 @@ export async function parseFile(file: File): Promise<ParseResult> {
     }
     case 'dicom':
       return parseDicomFile(file);
-    case 'image':
+    case 'image': {
+      // A photo may be a lab report (read it) or a scan, an X-ray or a skin photo (keep it as a scan).
+      if (OCR_BASE) {
+        const { readReportPhoto } = await import('./ocr-read.ts');
+        const read = await readReportPhoto(file, onProgress).catch(() => null);
+        if (read) return read;
+      }
       return parseImage(file);
+    }
     default:
       return empty('This file type is not supported. Use a PDF lab report, CSV or JSON export, DICOM (.dcm) or an image.');
   }

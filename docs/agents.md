@@ -23,7 +23,7 @@ On Account, each connection shows who it can see, what it may do and when it was
 | `list_profiles` | read | The profiles shared with this connection: id, name, relationship, age, sex |
 | `get_health_summary` | read | The synthesis (see below). The suggested first call |
 | `get_profile_details` | read | Date of birth, height, weight, BMI, blood type, conditions, medications, allergies, notes |
-| `get_results` | read | Latest value of each marker, with range, trend and direction; filter by body system, out-of-range only, or since a date |
+| `get_results` | read | Latest value of each marker, with its LOINC code, range, trend and direction; filter by body system, out-of-range only, or since a date |
 | `get_marker_history` | read | Every result of one marker (catalogue id, common name or the name on the report) |
 | `list_files` | read | Scans (modality, body area, date) and files (name, type, date). Never file contents or images |
 | `find_lab_tests` | read, lab booking on | Home-collection tests and prices at a pincode |

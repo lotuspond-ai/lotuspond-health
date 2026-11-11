@@ -55,7 +55,7 @@ function renderHtml(html: string, file: string, root: string, siteUrl: string, d
   return renderRegionBlocks(included, file).replaceAll('%SITE_URL%', siteUrl);
 }
 
-const COMPRESSIBLE = /\.(?:html|js|mjs|css|svg|json|txt|xml|wasm|glb|webmanifest)$/i;
+const COMPRESSIBLE = /\.(?:html|js|mjs|css|svg|json|txt|xml|wasm|glb|webmanifest|traineddata)$/i;
 
 /** Write .br and .gz next to every compressible file of 1 KB or more, when they save space. */
 export function precompress(dir: string): { files: number; saved: number } {

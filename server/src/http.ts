@@ -11,6 +11,7 @@ import { findSession, readSessionToken } from './auth/sessions.ts';
 import type { Cell, CellRegistry } from './cells.ts';
 import type { Secrets } from './compliance/secrets.ts';
 import type { Labs } from './lab/runtime.ts';
+import type { ReportExtractor } from './extraction/claude.ts';
 
 export interface Deps {
   /** The default database: non-personal data (directory, partner labs, facility cache). Personal data is in `cells`. */
@@ -23,6 +24,8 @@ export interface Deps {
   secrets: Secrets;
   /** Lab booking, when LAB_PARTNERS switches any partner on (lab/runtime.ts). */
   labs?: Labs;
+  /** The optional Claude read of photographed reports, when set up (extraction/claude.ts). */
+  extractor?: ReportExtractor;
 }
 
 export interface AppEnv {

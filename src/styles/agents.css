@@ -27,3 +27,7 @@
 .texts-notice p { margin: 0; flex: 1 1 240px; font-size: 14px; }
 /* Above the phone tab bar. */
 @media (max-width: 760px) { .texts-notice { bottom: calc(84px + env(safe-area-inset-bottom, 0px)); } }
+/* Upload review: the offer to read a hard-to-read photo with Claude (src/components/AiRead.tsx). */
+.ai-read { border: 1px solid var(--line); border-radius: 12px; background: var(--paper); padding: 12px 14px; margin: 0 0 12px; }
+.ai-read p { margin: 0 0 8px; }
+.ai-read .confirm-check { margin-top: 4px; }

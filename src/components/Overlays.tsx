@@ -1,6 +1,8 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useHealth, getScanBlob } from '../lib/store';
 import { parseFile } from '../lib/parse';
+import { releaseOcr } from '../lib/parse/ocr-engine';
+import { AiReadOffers } from './AiRead';
 import { renderDicom } from '../lib/parse/dicom';
 import { BIOMARKERS, SYSTEM_LABELS } from '../lib/catalog';
 import { ORGAN_BY_ID } from '../anatomy/organs';
@@ -182,7 +184,7 @@ function UploadPanel() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
   const camera = useRef<HTMLInputElement>(null);
-  const close = () => { if (saving) return; setOpen(false); setDraft(null); setBusy(null); setFiles([]); setSaveError(null); };
+  const close = () => { if (saving) return; setOpen(false); setDraft(null); setBusy(null); setFiles([]); setSaveError(null); void releaseOcr(); };
   useEscape(close);
   const who = profile?.relationship === 'self' ? 'your' : `${firstName(profile)}’s`;
 
@@ -208,8 +210,9 @@ function UploadPanel() {
     for (const f of chosen) {
       setBusy(`Reading ${f.name}…`);
       try {
-        const r = await parseFile(f);
+        const r = await parseFile(f, setBusy);
         merged.measurements.push(...r.measurements); merged.scans.push(...r.scans); Object.assign(merged.blobs, r.blobs);
+        if (r.reads?.length) (merged.reads ??= []).push(...r.reads);
         merged.warnings.push(...r.warnings.map(w => `${f.name}: ${w}`)); merged.detectedDate ??= r.detectedDate;
       } catch (e) { merged.warnings.push(`${f.name}: could not be read (${e instanceof Error ? e.message : String(e)}).`); }
     }
@@ -217,6 +220,14 @@ function UploadPanel() {
   }
   const patch = (id: string, p: Partial<Measurement>) => setDraft(d => d && { ...d, measurements: d.measurements.map(m => m.id === id ? { ...m, ...p } : m) });
   const drop = (id: string) => setDraft(d => d && { ...d, measurements: d.measurements.filter(m => m.id !== id) });
+  // Claude's read of one file replaces what the device read from it.
+  const replaceRead = (fileName: string, r: ParseResult) => setDraft(d => d && {
+    ...d,
+    measurements: [...d.measurements.filter(m => m.sourceFile !== fileName), ...r.measurements],
+    warnings: d.warnings.filter(w => !w.startsWith(`${fileName}: `)),
+    detectedDate: d.detectedDate ?? r.detectedDate,
+    reads: [...(d.reads ?? []).filter(x => x.fileName !== fileName), ...(r.reads ?? [])],
+  });
 
   return (
     <div className="scrim" onClick={close}>
@@ -237,11 +248,12 @@ function UploadPanel() {
             </div>
             <input ref={input} type="file" multiple hidden accept={ACCEPT} onChange={e => { const f = takeFiles(e.target); if (f.length) void handle(f); }} />
             <input ref={camera} type="file" hidden accept="image/*" capture="environment" onChange={e => { const f = takeFiles(e.target); if (f.length) void handle(f); }} />
-            <div className="formats"><span>Lab report PDF</span><span>CSV or JSON export</span><span>DICOM (.dcm)</span><span>X-ray or scan photos</span></div>
+            <div className="formats"><span>Lab report PDF</span><span>Photo of a report</span><span>CSV or JSON export</span><span>DICOM (.dcm)</span><span>X-ray or scan photos</span></div>
           </div>
         ) : (
           <>
             {draft.warnings.map(w => <p key={w} className="warn">{w}</p>)}
+            <AiReadOffers draft={draft} files={files} onRead={replaceRead} />
             {draft.measurements.length > 0 && <ReviewTable measurements={draft.measurements} onPatch={patch} onDrop={drop} />}
             {draft.scans.length > 0 && (
               <div className="section" style={{ marginTop: 12 }}><h3>Scans</h3>

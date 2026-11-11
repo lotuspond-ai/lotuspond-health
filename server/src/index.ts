@@ -13,6 +13,7 @@ import { EncryptedFileStore } from './lib/files-encrypted.ts';
 import { purgeExpiredSessions } from './auth/sessions.ts';
 import { purgeExpiredAgentSecrets } from './agents/grants.ts';
 import { createApp } from './app.ts';
+import { claudeExtractor } from './extraction/claude.ts';
 import { createLabs, fakePartner, orangePartner, type Labs } from './lab/runtime.ts';
 import type { PartnerConfig } from './lab/partners/types.ts';
 
@@ -97,7 +98,8 @@ if (config.labs.partners.length) {
   }
 }
 
-const app = createApp({ db: opened.defaultDatabase.db, files: registry.defaultCell.files, config, cells: registry, secrets, labs });
+const extractor = config.aiExtraction.enabled ? claudeExtractor({ model: config.aiExtraction.model }) : undefined;
+const app = createApp({ db: opened.defaultDatabase.db, files: registry.defaultCell.files, config, cells: registry, secrets, labs, extractor });
 const stopLabs = labs?.start();
 const server = serve({ fetch: app.fetch, port: config.port, hostname: config.host }, info => {
   const where = (d: (typeof opened.databases)[number]) => (d.database.kind === 'pglite' ? `PGlite in ${path.dirname(d.filesRoot)}` : 'PostgreSQL');
@@ -108,6 +110,7 @@ const server = serve({ fetch: app.fetch, port: config.port, hostname: config.hos
     console.log(`[api]   ${cell.id} cell: ${regions.length ? regions.join(', ') : 'no regions (directory and shared data)'}; ${where(db)}; files in ${db.filesRoot}${config.fileEncryption ? ', encrypted' : ', NOT encrypted'}`);
   }
   if (config.staticDir) console.log(`[api] serving the app from ${config.staticDir}`);
+  if (extractor) console.log(`[api] reading reports with Claude: on (${config.aiExtraction.model}), only for uploads the person sends`);
   if (labs) console.log(`[api] lab booking: ${[...labs.partners.keys()].join(', ')}${labs.partners.has('fake') ? ` (the simulated lab; orders move a step every ${config.labs.fakeStepMs / 1000} s)` : ''}`);
 });
 

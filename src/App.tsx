@@ -21,6 +21,7 @@ import { isPreview } from './api';
 import { useSession } from './state/session';
 import { authModeFromLocation, siteHref, siteLinkProps } from './site/links';
 import { toast } from './state/toast';
+import { CONSENT_CHANGE_SUMMARY } from '../shared/regions';
 import { errorMessage } from './api';
 import { useUI, VIEWS, type View } from './state/ui';
 import { useLock } from './native/lock';
@@ -133,7 +134,7 @@ function UpdatedTextsNotice() {
   const names = outdated.includes('privacy') ? 'Privacy Policy' : 'Terms';
   return (
     <div className="texts-notice" role="status">
-      <p><b>We updated our {names}.</b> It now explains how AI agents you connect can read the records you choose for them. <a href={siteHref('/privacy/')} {...siteLinkProps}>Read what changed</a></p>
+      <p><b>We updated our {names}.</b> {CONSENT_CHANGE_SUMMARY} <a href={siteHref('/privacy/')} {...siteLinkProps}>Read what changed</a></p>
       <button type="button" className="btn btn--primary" disabled={busy} onClick={async () => {
         setBusy(true);
         try { await accept(); toast.info('Thank you. Your acceptance is recorded on Account.'); } catch (e) { toast.error(errorMessage(e)); setBusy(false); }

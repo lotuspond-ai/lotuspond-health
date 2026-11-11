@@ -30,6 +30,7 @@ export interface BiomarkerDef {
   system: SystemId;
   organs: OrganId[];          // anatomy this marker relates to (first = primary)
   about: string;              // one or two plain-language sentences; no diagnosis
+  loinc?: string;             // LOINC code (shared/loinc.ts), when there is a confident match
   lowerIsBetter?: boolean;
 }
 
@@ -73,6 +74,20 @@ export interface ParseResult {
   blobs: Record<string, Blob>;
   warnings: string[];
   detectedDate: string | null;
+  /** Files read with OCR (photos, scanned PDFs) and how well that went; the review offers a better read when poor. */
+  reads?: FileRead[];
+}
+
+/** How a photographed or scanned report was read on the device. */
+export interface FileRead {
+  fileName: string;
+  method: 'ocr' | 'claude';
+  /** Mean OCR word confidence, 0-100 (OCR only). */
+  confidence?: number;
+  /** Results found. */
+  found: number;
+  /** Few results or low confidence: worth a better read. */
+  poor: boolean;
 }
 
 /* ---------------- accounts, profiles and stored files ---------------- */
@@ -154,7 +169,9 @@ export type ConsentKind = 'terms' | 'privacy' | 'health_data' | 'cross_border' |
   /** The account holder confirmed their right to keep a family member's records (one record per profile). */
   | 'family_profile'
   /** Sharing records with a connected AI agent (one record per connection and change; withdrawn on disconnect). */
-  | 'agent_sharing';
+  | 'agent_sharing'
+  /** Sending one photographed or scanned report to Claude to read it (one record per upload; src/components/AiRead). */
+  | 'ai_extraction';
 
 /** What the account holder confirmed when adding a family member. */
 export type FamilyConfirmation = 'guardian' | 'agreed';
@@ -189,7 +206,8 @@ export type AuditKind =
   | 'account_created' | 'sign_in' | 'sign_in_failed' | 'sign_out' | 'password_changed' | 'sessions_revoked'
   | 'export' | 'profile_deleted' | 'records_deleted' | 'account_deleted' | 'consent_changed' | 'preferences_changed'
   | 'lab_order_created' | 'lab_order_cancelled' | 'lab_results_saved'
-  | 'agent_connected' | 'agent_disconnected' | 'agent_access' | 'agent_wrote';
+  | 'agent_connected' | 'agent_disconnected' | 'agent_access' | 'agent_wrote'
+  | 'report_read_by_ai';
 
 /** The only details an audit event may carry. Deliberately narrow: never names, values, file names or other health data. */
 export interface AuditDetail {
@@ -357,4 +375,19 @@ export interface PublicConfig {
   map: MapSettings | null;
   /** Nearby search (OpenStreetMap places and area search) is available on this server. */
   nearbySearch: boolean;
+  /** The optional Claude read of photographed and scanned reports is set up on this server (docs/report-reading.md). */
+  aiExtraction?: boolean;
 }
+
+/** What the Claude read returns: the rows as printed, for the app's parser to match. */
+export interface AiExtraction {
+  isLabReport: boolean;
+  sampleDate: string | null;
+  results: { name: string; value: string; unit: string; range: string; flag: string }[];
+}
+
+/**
+ * Version of the notice shown before a report is sent to Claude (src/components/AiRead.tsx). A request made under
+ * another version is refused, so every recorded consent names the text the person saw.
+ */
+export const AI_EXTRACTION_NOTICE_VERSION = '2026-11-11';

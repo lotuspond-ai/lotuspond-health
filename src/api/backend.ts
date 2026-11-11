@@ -2,7 +2,7 @@
 // HttpBackend talks to the LotusPond API; BrowserBackend keeps everything in this browser (preview builds).
 import type {
   Account, ActivityEvent, ConsentKind, ConsentRecord, DocumentKind, Measurement, MeasurementInput, Profile, ProfileInput, ProfileRecords,
-  RegisterInput, ScanInput, FamilyConfirmation, ScanItem, ServiceInfo, SessionInfo, StoredDocument,
+  RegisterInput, ScanInput, FamilyConfirmation, AiExtraction, ScanItem, ServiceInfo, SessionInfo, StoredDocument,
   FacilityQuery, FacilitySearchResult, GeoCandidate, GeoReverse, PublicConfig,
 } from '../types';
 import type { AgentConnection, AgentConnectionsInfo, CreateAgentTokenInput, CreatedAgentToken } from '../../shared/agents';
@@ -108,6 +108,12 @@ export interface Backend {
   saveLabResult(profileId: string, resultId: string, measurements: MeasurementInput[]): Promise<LabResultSaved>;
   /** Drop a result without saving anything. */
   dismissLabResult(profileId: string, resultId: string): Promise<LabResultView>;
+
+  /**
+   * Send one photographed or scanned report to Claude to read it (docs/report-reading.md). Only after the person
+   * agreed to the notice for this file; the server records that consent. Needs the LotusPond server.
+   */
+  extractReport(profileId: string, file: Blob, fileName: string): Promise<AiExtraction>;
 
   /* Connected agents (shared/agents.ts): AI agents reading the records over MCP. Needs the LotusPond server. */
   agentConnections(): Promise<AgentConnectionsInfo>;

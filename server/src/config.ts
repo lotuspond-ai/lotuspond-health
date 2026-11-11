@@ -52,6 +52,12 @@ const Env = z.object({
   /** Lab partners for home sample collection, comma-separated. Only 'fake' (the simulated lab) exists so far. */
   LAB_PARTNERS: z.string().optional(),
   LAB_FAKE_STEP_MS: z.coerce.number().int().min(100).max(3_600_000).default(10_000),
+  /**
+   * The optional Claude read of photographed and scanned reports (docs/report-reading.md): on when Anthropic
+   * credentials are set (ANTHROPIC_API_KEY, read by the SDK), unless AI_EXTRACTION=off.
+   */
+  AI_EXTRACTION: z.enum(['on', 'off']).default('on'),
+  AI_EXTRACTION_MODEL: z.string().trim().min(1).default('claude-opus-5-5'),
   /* Orange Health Labs (lab/partners/orange.ts), with LAB_PARTNERS=orange. */
   /** The partner API key Orange Health issues (integrations@orangehealth.in). */
   ORANGE_API_KEY: z.string().trim().min(8).optional(),
@@ -153,6 +159,8 @@ export interface Config {
   facilities: FacilityConfig;
   /** Lab partners switched on (docs/lab-booking-backend.md). */
   labs: { partners: string[]; fakeStepMs: number; orange?: OrangeConfig };
+  /** The Claude read is on (credentials present and not switched off), and its model. */
+  aiExtraction: { enabled: boolean; model: string };
   map: MapConfig;
   servedRegions: DataRegion[];
   /** Settings for each served region. A region with neither databaseUrl nor dataDir is kept in the default cell. */
@@ -284,6 +292,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       timeoutMs: e.GEO_TIMEOUT_MS,
     },
     labs: { partners: labPartners, fakeStepMs: e.LAB_FAKE_STEP_MS, ...(orange ? { orange } : {}) },
+    aiExtraction: { enabled: e.AI_EXTRACTION === 'on' && !!(env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN), model: e.AI_EXTRACTION_MODEL },
     map: {
       pmtilesUrl: e.MAP_PMTILES_URL || undefined,
       styleUrl: e.MAP_STYLE_URL,
