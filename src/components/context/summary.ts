@@ -3,7 +3,7 @@ import { create } from 'zustand';
 import { SYSTEM_LABELS } from '../../lib/catalog';
 import { rankStatus, type Series } from '../../lib/derive';
 import { useUI, VIEWS, type View } from '../../state/ui';
-import type { Measurement, RefRange, Status, SystemId } from '../../types';
+import type { RefRange, Status, SystemId } from '../../types';
 
 export interface StatusCounts { total: number; normal: number; high: number; low: number; unknown: number }
 
@@ -17,7 +17,8 @@ export function rangeText(r: RefRange | null | undefined): string {
   return 'No range';
 }
 
-export const isOut = (s: Status) => s === 'high' || s === 'low';
+export { distanceOutside, isOut } from '../../lib/attention';
+import { distanceOutside, isOut } from '../../lib/attention';
 
 export function statusCounts(series: Series[]): StatusCounts {
   const c: StatusCounts = { total: 0, normal: 0, high: 0, low: 0, unknown: 0 };
@@ -46,16 +47,6 @@ export function groupBySystem(series: Series[]): { system: SystemKey; list: Seri
 /** The status that best sums up a group: any above wins, then any below, then in range, else no range. */
 export function groupStatus(c: StatusCounts): Status {
   return c.high ? 'high' : c.low ? 'low' : c.normal ? 'normal' : 'unknown';
-}
-
-/** How far a value sits outside its range, as a share of the range (0 when inside or unknown). */
-export function distanceOutside(m: Measurement): number {
-  const r = m.range;
-  if (m.value == null || !r) return 0;
-  const span = r.low != null && r.high != null ? r.high - r.low : Math.abs(r.high ?? r.low ?? 1) || 1;
-  if (r.high != null && m.value > r.high) return (m.value - r.high) / span;
-  if (r.low != null && m.value < r.low) return (r.low - m.value) / span;
-  return 0;
 }
 
 /** Latest values outside their range, furthest out first. */

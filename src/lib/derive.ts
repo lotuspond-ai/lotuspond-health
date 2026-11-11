@@ -1,5 +1,5 @@
 import type { BiomarkerDef, Measurement, OrganId, Status, SystemId } from '../types';
-import { BIOMARKERS, findMarker } from './catalog';
+import { BIOMARKERS, findMarker } from './catalog.ts';
 
 export interface Series { key: string; def: BiomarkerDef | null; name: string; points: Measurement[]; latest: Measurement }
 

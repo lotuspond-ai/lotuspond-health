@@ -86,3 +86,15 @@
   .bm2d__mark .landmark:hover .landmark__name, .bm2d__mark .landmark:focus .landmark__name { display: inline; }
   .bm2d__mark .landmark__note { width: min(220px, 60vw); }
 }
+/* Organs with results outside their range glow on the map (paintIssues in BodyMap2D.tsx); the glow breathes slowly. */
+.bm2d__issues { animation: issue-breathe 2.8s ease-in-out infinite; }
+@keyframes issue-breathe { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .bm2d__issues { animation: none; opacity: 0.85; } }
+.stage__legend i.glow { box-shadow: 0 0 8px 1px rgba(240, 160, 60, 0.7); }
+/* Organs with results outside their range: their pin pulses; the others go quiet while anything is outside range. */
+.pin--issue .pin__dot { position: relative; }
+.pin--issue .pin__dot::after { content: ''; position: absolute; inset: -4px; border-radius: 50%; border: 2px solid var(--pin); animation: pin-pulse 2.2s ease-out infinite; pointer-events: none; }
+.pin--issue-far .pin__dot::after { animation-duration: 1.6s; }
+@keyframes pin-pulse { 0% { transform: scale(0.8); opacity: 0.9; } 100% { transform: scale(2.2); opacity: 0; } }
+.pin--quiet:not(.is-hot) { opacity: 0.45; transform: scale(0.8); }
+@media (prefers-reduced-motion: reduce) { .pin--issue .pin__dot::after { animation: none; opacity: 0.6; } }

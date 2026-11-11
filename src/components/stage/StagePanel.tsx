@@ -9,6 +9,7 @@ import { Icon } from '../ui';
 import { BodyMap2D } from '../bodymap2d/BodyMap2D';
 import { Glyph, type GlyphName } from './Glyph';
 import { STATUS_COLOR } from './status';
+import { ISSUE_COLOR, useIssues } from './issues';
 import { useStage, type StageMode } from './stageSettings';
 import '../../styles/stage.css';
 
@@ -102,11 +103,7 @@ function StageOverlay({ mode }: { mode: StageMode }) {
       {organ ? (
         <button className="btn stage__back" onClick={() => selectOrgan(null)}>{Icon.back} Whole body</button>
       ) : (
-        <div className="stage__legend" aria-hidden>
-          <span><i style={{ background: STATUS_COLOR.ok }} />In range</span>
-          <span><i style={{ background: STATUS_COLOR.out }} />Outside</span>
-          <span><i style={{ background: STATUS_COLOR.none }} />No results</span>
-        </div>
+        <IssueLegend />
       )}
       <div className="stage__hint" aria-hidden>
         {in3d
@@ -114,6 +111,19 @@ function StageOverlay({ mode }: { mode: StageMode }) {
           : organ ? <><Glyph name="tap" /><span>details</span></> : <><Glyph name="drag" /><span>turn</span><Glyph name="tap" /><span>open</span></>}
       </div>
     </>
+  );
+}
+
+/** What the glow on the body means; only shown when something glows. */
+function IssueLegend() {
+  const { organs } = useIssues();
+  const levels = new Set(Object.values(organs));
+  if (!levels.size) return <div className="stage__legend" aria-hidden><span><i style={{ background: STATUS_COLOR.ok }} />Nothing outside range</span></div>;
+  return (
+    <div className="stage__legend" aria-hidden>
+      <span><i className="glow" style={{ background: ISSUE_COLOR.out }} />Outside range</span>
+      {levels.has('far') && <span><i className="glow" style={{ background: ISSUE_COLOR.far }} />Far outside</span>}
+    </div>
   );
 }
 

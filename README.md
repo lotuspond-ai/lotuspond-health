@@ -26,7 +26,8 @@ See [docs/agents.md](docs/agents.md) for how agents connect, the tools they get,
   - liver vessels and bile ducts
   - skeleton and diaphragm
 
-  Organs with results get a status dot. Open an organ to fly in, read labelled landmarks, switch to x-ray, or cut a cross-section (front, side or top).
+  Organs with results outside their range glow on the body: amber when outside, coral when far outside (a quarter of the range or more). Their pins pulse, and the healthy organs step back. Open an organ to fly in, read labelled landmarks, switch to x-ray, or cut a cross-section (front, side or top).
+- **Home brief**: beside the body, a few sentences instead of lists: how many results to look at, and for each one its value, its change since the last result, the organ, and a plain next step. Tests that may be due follow, from the profile's conditions. The same rules feed the summary agents read (`shared/synthesis.ts`, `src/lib/attention.ts`), and everything else is one tap away on Biomarkers.
 - **Biomarkers**: latest value of each marker grouped by body system, with its position in the reference range and its trend over time.
 - **Scans**: assign scans to body areas; view with zoom, and brightness/contrast for DICOM.
 - **Files**: every original report and scan, with links to open, download or delete it.
