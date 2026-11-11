@@ -17,6 +17,7 @@ import { ApiError, type Backend, type ScanPatch } from './backend';
 import { needsGuardian } from '../../shared/family';
 import type { AgentConnection, AgentConnectionsInfo, CreatedAgentToken } from '../../shared/agents';
 import type { NotificationList, UndoResult } from '../../shared/notifications';
+import { ASSISTANT_NOTICE_VERSION, type AssistantConsent, type AssistantInfo, type AssistantMessage } from '../../shared/assistant';
 import type { AiExtraction } from '../../shared/types';
 import type { LabCatalog, LabOrderView, LabResultSaved, LabResultView, LabSlot } from '../../shared/lab-bundle';
 
@@ -542,6 +543,13 @@ export class BrowserBackend implements Backend {
   async notifications(): Promise<NotificationList> { return { unread: 0, items: [] }; }
   async markNotificationsRead(): Promise<NotificationList> { return { unread: 0, items: [] }; }
   async undoNotification(): Promise<UndoResult> { throw noAgents(); }
+  // The assistant runs on the LotusPond server; the preview has none.
+  async assistantInfo(): Promise<AssistantInfo> { return { enabled: false, noticeVersion: ASSISTANT_NOTICE_VERSION, consent: null, conversations: [] }; }
+  async agreeToAssistant(): Promise<AssistantConsent> { throw noAgents(); }
+  async withdrawAssistant(): Promise<void> { throw noAgents(); }
+  async assistantConversation(): Promise<{ id: string; profileId: string; title: string; messages: AssistantMessage[] }> { throw noAgents(); }
+  async deleteAssistantConversation(): Promise<void> { throw noAgents(); }
+  async sendToAssistant(): Promise<void> { throw noAgents(); }
   async createAgentToken(): Promise<CreatedAgentToken> { throw noAgents(); }
   async updateAgentConnection(): Promise<AgentConnection> { throw noAgents(); }
   async disconnectAgent(): Promise<void> { throw noAgents(); }

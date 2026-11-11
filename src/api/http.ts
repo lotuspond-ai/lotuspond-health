@@ -2,6 +2,8 @@
 // across sites with token sessions in the iOS and Android apps (see ./appSession.ts).
 import { AI_EXTRACTION_NOTICE_VERSION, type AiExtraction } from '../../shared/types';
 import type { NotificationList, UndoResult } from '../../shared/notifications';
+import { ASSISTANT_NOTICE_VERSION, type AssistantConsent, type AssistantEvent, type AssistantInfo, type AssistantMessage } from '../../shared/assistant';
+import type { AgentCategory } from '../../shared/agents';
 import type { AgentConnection, AgentConnectionsInfo, CreateAgentTokenInput, CreatedAgentToken, UpdateAgentConnectionInput } from '../../shared/agents';
 import type {
   Account, ActivityEvent, FamilyConfirmation, ConsentKind, ConsentRecord, DocumentKind, Measurement, MeasurementInput, Profile, ProfileInput, ProfileRecords,
@@ -236,6 +238,49 @@ export class HttpBackend implements Backend {
   notifications() { return this.request<NotificationList>('GET', '/notifications'); }
   markNotificationsRead(ids?: string[]) { return this.request<NotificationList>('POST', '/notifications/read', ids ? { ids } : {}); }
   undoNotification(id: string) { return this.request<UndoResult>('POST', `/notifications/${id}/undo`, {}); }
+
+  assistantInfo() { return this.request<AssistantInfo>('GET', '/assistant'); }
+  agreeToAssistant(categories: AgentCategory[]) { return this.request<AssistantConsent>('POST', '/assistant/consent', { noticeVersion: ASSISTANT_NOTICE_VERSION, categories }); }
+  withdrawAssistant() { return this.request<void>('DELETE', '/assistant/consent'); }
+  assistantConversation(id: string) { return this.request<{ id: string; profileId: string; title: string; messages: AssistantMessage[] }>('GET', `/assistant/conversations/${id}`); }
+  deleteAssistantConversation(id: string) { return this.request<void>('DELETE', `/assistant/conversations/${id}`); }
+
+  /** The answer streams back as server-sent events, one JSON AssistantEvent each. */
+  async sendToAssistant(input: { profileId: string; conversationId?: string; text: string }, onEvent: (e: AssistantEvent) => void, signal?: AbortSignal) {
+    const init = await this.init('POST');
+    (init.headers as Record<string, string>)['Content-Type'] = 'application/json';
+    (init.headers as Record<string, string>).Accept = 'text/event-stream';
+    init.body = JSON.stringify(input);
+    init.signal = signal;
+    let res: Response;
+    try {
+      res = await fetch(this.base() + '/assistant/messages', init);
+    } catch {
+      if (signal?.aborted) return;
+      throw new ApiError(0, 'network', 'Could not reach the LotusPond server. Check your connection and try again.');
+    }
+    if (!res.ok || !res.body) {
+      let err: { code?: string; message?: string } | undefined;
+      try { err = (await res.json() as { error?: typeof err }).error; } catch { /* not JSON */ }
+      if (res.status === 401) { if (this.app) await this.app.clear(); this.onSessionEnded?.(); }
+      throw new ApiError(res.status, err?.code ?? 'error', err?.message ?? `The server answered ${res.status}. Try again.`);
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let cut: number;
+      while ((cut = buffer.indexOf('\n\n')) >= 0) {
+        const chunk = buffer.slice(0, cut);
+        buffer = buffer.slice(cut + 2);
+        const data = chunk.split('\n').filter(l => l.startsWith('data:')).map(l => l.slice(5).trimStart()).join('\n');
+        if (data) { try { onEvent(JSON.parse(data) as AssistantEvent); } catch { /* a broken event is skipped */ } }
+      }
+    }
+  }
 
   extractReport(pid: string, file: Blob, fileName: string) {
     const form = new FormData();

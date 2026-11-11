@@ -58,6 +58,9 @@ const Env = z.object({
    */
   AI_EXTRACTION: z.enum(['on', 'off']).default('on'),
   AI_EXTRACTION_MODEL: z.string().trim().min(1).default('claude-opus-5-5'),
+  /** LotusPond's assistant (chat in the app): on when Anthropic credentials are set, unless ASSISTANT=off. */
+  ASSISTANT: z.enum(['on', 'off']).default('on'),
+  ASSISTANT_MODEL: z.string().trim().min(1).default('claude-opus-5-5'),
   /* Orange Health Labs (lab/partners/orange.ts), with LAB_PARTNERS=orange. */
   /** The partner API key Orange Health issues (integrations@orangehealth.in). */
   ORANGE_API_KEY: z.string().trim().min(8).optional(),
@@ -161,6 +164,7 @@ export interface Config {
   labs: { partners: string[]; fakeStepMs: number; orange?: OrangeConfig };
   /** The Claude read is on (credentials present and not switched off), and its model. */
   aiExtraction: { enabled: boolean; model: string };
+  assistant: { enabled: boolean; model: string };
   map: MapConfig;
   servedRegions: DataRegion[];
   /** Settings for each served region. A region with neither databaseUrl nor dataDir is kept in the default cell. */
@@ -293,6 +297,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     },
     labs: { partners: labPartners, fakeStepMs: e.LAB_FAKE_STEP_MS, ...(orange ? { orange } : {}) },
     aiExtraction: { enabled: e.AI_EXTRACTION === 'on' && !!(env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN), model: e.AI_EXTRACTION_MODEL },
+    assistant: { enabled: e.ASSISTANT === 'on' && !!(env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN), model: e.ASSISTANT_MODEL },
     map: {
       pmtilesUrl: e.MAP_PMTILES_URL || undefined,
       styleUrl: e.MAP_STYLE_URL,

@@ -60,7 +60,8 @@ export function NotificationBell() {
     const first = window.setTimeout(() => void load(), 0);
     const timer = window.setInterval(tick, POLL_MS);
     document.addEventListener('visibilitychange', tick);
-    return () => { window.clearTimeout(first); window.clearInterval(timer); document.removeEventListener('visibilitychange', tick); };
+    window.addEventListener('lotuspond:notifications', tick);
+    return () => { window.clearTimeout(first); window.clearInterval(timer); document.removeEventListener('visibilitychange', tick); window.removeEventListener('lotuspond:notifications', tick); };
   }, [signedIn, load]);
 
   useEffect(() => {

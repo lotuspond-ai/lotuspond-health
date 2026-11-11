@@ -11,6 +11,7 @@ import { findSession, readSessionToken } from './auth/sessions.ts';
 import type { Cell, CellRegistry } from './cells.ts';
 import type { Secrets } from './compliance/secrets.ts';
 import type { Labs } from './lab/runtime.ts';
+import type { Assistant } from './assistant/agent.ts';
 import type { ReportExtractor } from './extraction/claude.ts';
 
 export interface Deps {
@@ -26,6 +27,8 @@ export interface Deps {
   labs?: Labs;
   /** The optional Claude read of photographed reports, when set up (extraction/claude.ts). */
   extractor?: ReportExtractor;
+  /** LotusPond's assistant (server/src/assistant/), when switched on. */
+  assistant?: Assistant;
 }
 
 export interface AppEnv {

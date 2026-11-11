@@ -16,6 +16,7 @@ import { MarkerCard } from './MarkerCard';
 import { openLabs, sampleDates, showMarkers, statusCounts } from './summary';
 import { useIssues } from '../stage/issues';
 import { testsDue } from '../../lib/attention';
+import { AskBox } from '../chat/AssistantPanel';
 
 type Legacy = Awaited<ReturnType<typeof findLegacyData>>;
 
@@ -172,6 +173,8 @@ function HomeBrief({ series }: { series: Series[] }) {
         {latest ? `Latest report ${formatDate(latest)}` : 'Results without dates'} · {series.length} marker{series.length === 1 ? '' : 's'}
         {inRange ? `, ${inRange} in range` : ''}{scans.length ? ` · ${scans.length} scan${scans.length === 1 ? '' : 's'}` : ''}
       </p>
+
+      <AskBox />
 
       {items.length > 0 && (
         <ol className="brief__items">
