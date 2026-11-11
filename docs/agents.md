@@ -68,6 +68,29 @@ The summary is arithmetic on the person's own results, so every line can be expl
 
 Every response carries the disclaimer that this is information to discuss with a clinician, not a diagnosis.
 
+## Notifications of what agents add
+
+Every time an agent adds something, the person is told in the app:
+- `log_reading` reports the reading;
+- `add_to_profile` reports only the entries that were new, since duplicates are skipped.
+
+Code: `server/src/notifications.ts`, `server/src/routes/notifications.ts`, `shared/notifications.ts`, and `src/components/Notifications.tsx`.
+
+- **The bell.** It sits in the top bar and shows the number of new notifications. Opening it lists the latest 50, for example "Claude added a reading: Systolic blood pressure 138 mmHg (10 Nov) to your records.", and marks them read.
+  - The app checks every minute while it is in view, and at once when it comes back into view.
+  - Something that arrives while the app is open also shows as a toast.
+  - The preview has no agents, so it shows no bell.
+- **Undo.** Each notification has *Undo*:
+  - for a reading, it deletes that reading;
+  - for profile entries, it takes the agent's entries off the lists and keeps anything the person added or changed since.
+
+  Undoing twice changes nothing. Each undo adds an `agent_write_undone` event to Recent activity. *Manage connected agents* opens Account.
+- **API:**
+  - `GET /api/notifications` returns `{ unread, items }`;
+  - `POST /api/notifications/read` takes `{ ids? }`, or marks all as read;
+  - `POST /api/notifications/:id/undo` returns the notification, whether anything was removed, and the profile as it now is.
+- **Storage.** Notifications are kept in the account's data region (the `notifications` table), for 180 days. They are deleted with their profile or the account, and they outlive a disconnected agent, so its additions can still be undone.
+
 ## Protocol and security
 
 - **Transport.** Stateless Streamable HTTP: `POST /mcp` with one JSON-RPC message, answered with JSON. Protocol versions 2025-11-25, 2025-06-18 and 2025-03-26 (batches accepted). `GET` returns 405, since there are no server-initiated messages. Calls are limited to 120 per connection per minute.
@@ -90,5 +113,5 @@ Every response carries the disclaimer that this is information to discuss with a
 ## Not built yet
 
 - Wearable APIs (Oura, Fitbit, Garmin), and ABDM records fetched over the network ([abdm.md](abdm.md); FHIR files exported from ABHA apps can already be uploaded). Readings from Apple Health and Health Connect come in through the apps ([health-import.md](health-import.md)) and reach agents as ordinary results.
-- Notifications to the person when an agent writes, and a weekly digest of agent activity.
+- A weekly digest of agent activity, and email or push delivery of the notifications below (the server has no mail or push provider yet).
 - A listing in the agent directories (Claude connector directory, ChatGPT apps) once the policy and legal review is done.

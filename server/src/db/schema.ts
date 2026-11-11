@@ -3,6 +3,7 @@ import { boolean, date, doublePrecision, index, integer, jsonb, pgTable, real, t
 import type { AuditDetail, AuditKind, ConsentDetail, ConsentKind, RefRange } from '../../../shared/types.ts';
 import type { DataRegion, UnitSystem } from '../../../shared/regions.ts';
 import type { LabResultBundle, OrderStatus } from '../../../shared/lab-bundle.ts';
+import type { NotificationDetail } from '../../../shared/notifications.ts';
 
 const createdAt = () => timestamp('created_at', { withTimezone: true }).notNull().defaultNow();
 const updatedAt = () => timestamp('updated_at', { withTimezone: true }).notNull().defaultNow();
@@ -352,6 +353,23 @@ export const agentTokens = pgTable('agent_tokens', {
   createdAt: createdAt(),
 }, t => [index('agent_tokens_grant_idx').on(t.grantId)]);
 
+/**
+ * What the person is told in the app (shared/notifications.ts): today, each addition a connected agent made. In the
+ * account's cell. connection_id has no foreign key, so a notification outlives a disconnected agent.
+ */
+export const notifications = pgTable('notifications', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  profileId: uuid('profile_id').notNull().references(() => profiles.id, { onDelete: 'cascade' }),
+  kind: text('kind').$type<'agent_write'>().notNull(),
+  connectionId: uuid('connection_id'),
+  agentName: text('agent_name').notNull(),
+  detail: jsonb('detail').$type<NotificationDetail>().notNull(),
+  createdAt: createdAt(),
+  readAt: timestamp('read_at', { withTimezone: true }),
+  undoneAt: timestamp('undone_at', { withTimezone: true }),
+}, t => [index('notifications_user_idx').on(t.userId, t.createdAt)]);
+
 export type UserRow = typeof users.$inferSelect;
 export type ConsentRow = typeof consents.$inferSelect;
 export type AuditEventRow = typeof auditEvents.$inferSelect;
@@ -367,3 +385,4 @@ export type LabResultRow = typeof labResults.$inferSelect;
 export type OAuthClientRow = typeof oauthClients.$inferSelect;
 export type AgentGrantRow = typeof agentGrants.$inferSelect;
 export type AgentTokenRow = typeof agentTokens.$inferSelect;
+export type NotificationRow = typeof notifications.$inferSelect;

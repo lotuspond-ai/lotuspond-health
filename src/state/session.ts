@@ -33,6 +33,8 @@ interface SessionState {
   /** Required consents given for older texts; the app asks to accept the current ones. */
   consentsOutdated: ConsentKind[];
   acceptUpdatedTexts: () => Promise<void>;
+  /** Put an updated profile (from the server) in place, e.g. after undoing an agent's addition. */
+  replaceProfile: (profile: Profile) => void;
   saveProfile: (id: string, patch: Partial<ProfileInput>) => Promise<Profile>;
   deleteProfile: (id: string) => Promise<void>;
   finishOnboarding: () => void;
@@ -129,6 +131,8 @@ export const useSession = create<SessionState>((set, get) => {
       get().switchProfile(profile.id);
       return profile;
     },
+
+    replaceProfile: profile => set(s => ({ profiles: s.profiles.map(p => (p.id === profile.id ? profile : p)) })),
 
     saveProfile: async (id, patch) => {
       const profile = await backend.updateProfile(id, patch);

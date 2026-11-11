@@ -285,6 +285,7 @@ const ACTIVITY_LABEL: Record<AuditKind, string> = {
   agent_disconnected: 'Agent disconnected',
   agent_access: 'Agent read records',
   agent_wrote: 'Agent added to records',
+  agent_write_undone: 'Undid an agent’s addition',
   report_read_by_ai: 'Report read with Claude',
 };
 
