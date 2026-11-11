@@ -110,10 +110,10 @@ describe('record agent', { timeout: 180_000 }, () => {
     assert.equal(info.browser, 'LotusPond’s servers');
     const demo = info.sources.find(s => s.id === DEMO_SOURCE_ID)!;
     assert.equal(demo.availability, 'recipe');
-    // Dr Lal and Thyrocare have recipes; without Claude, portals without one are not offered yet; ABDM and APIs never through the browser.
-    assert.equal(info.sources.find(s => s.id === 'thyrocare')!.availability, 'recipe');
-    assert.equal(info.sources.find(s => s.id === 'drlal')!.availability, 'recipe');
-    assert.equal(info.sources.find(s => s.id === 'metropolis')!.availability, 'unavailable');
+    // Dr Lal, Thyrocare, Metropolis and Apollo 24|7 have recipes; without Claude, portals without one are not offered
+    // yet; ABDM and APIs never through the browser.
+    for (const id of ['drlal', 'thyrocare', 'metropolis', 'apollo']) assert.equal(info.sources.find(s => s.id === id)!.availability, 'recipe', id);
+    assert.equal(info.sources.find(s => s.id === 'redcliffe')!.availability, 'unavailable');
     assert.equal(info.sources.find(s => s.id === 'abha')!.availability, 'unavailable');
     assert.ok(info.sources.find(s => s.id === 'other-lab')!.needsUrl);
     assert.ok(info.sources.length > 40);
@@ -122,7 +122,7 @@ describe('record agent', { timeout: 180_000 }, () => {
   test('signs in with the person’s answers, saves each report once, and checks again without asking', async () => {
     const { c, self } = await account(app);
     assert.equal((await c.error('POST', '/api/records/connections', { sourceId: DEMO_SOURCE_ID, profileId: self.id, noticeVersion: 'old' })).code, 'notice_outdated');
-    assert.equal((await c.error('POST', '/api/records/connections', { sourceId: 'metropolis', profileId: self.id, noticeVersion: RECORD_AGENT_NOTICE_VERSION })).code, 'source_unavailable');
+    assert.equal((await c.error('POST', '/api/records/connections', { sourceId: 'redcliffe', profileId: self.id, noticeVersion: RECORD_AGENT_NOTICE_VERSION })).code, 'source_unavailable');
 
     const made = await c.json<{ connection: RecordConnectionView; run: RecordRunView }>('POST', '/api/records/connections', {
       sourceId: DEMO_SOURCE_ID, profileId: self.id, refreshDays: 30, noticeVersion: RECORD_AGENT_NOTICE_VERSION,

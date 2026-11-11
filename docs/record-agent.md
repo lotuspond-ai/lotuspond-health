@@ -2,7 +2,7 @@
 
 Status: November 2026. The engine, the app's Sources page and the MCP tool are built.
 
-- **Recipes:** Demo Lab, Dr Lal PathLabs and Thyrocare. The Dr Lal and Thyrocare recipes are tested against local copies of their portals, **not yet with real accounts** (§5.1).
+- **Recipes:** Demo Lab, Dr Lal PathLabs, Thyrocare, Metropolis and Apollo 24|7. The four real portals' recipes are tested against local copies of their portals, **not yet with real accounts** (§5.1).
 - **The navigator:** every other portal is reached through Claude, which is off unless Anthropic credentials are set.
 
 The record agent brings a family's reports in from the portals where they live: labs, hospitals, government services, pharmacies and insurers.
@@ -45,7 +45,7 @@ The record agent brings a family's reports in from the portals where they live: 
 
 | `access` | Means | Today |
 | --- | --- | --- |
-| `browser` | The record agent signs in with the person and downloads | Demo Lab, Dr Lal PathLabs, Thyrocare: recipes. All others: navigator (beta), when Claude is set up |
+| `browser` | The record agent signs in with the person and downloads | Demo Lab, Dr Lal PathLabs, Thyrocare, Metropolis, Apollo 24\|7: recipes. All others: navigator (beta), when Claude is set up |
 | `abdm` | ABHA, with an ABDM consent request (LotusPond as a health information user) | Not built. ABHA FHIR exports can be uploaded ([abdm.md](abdm.md)) |
 | `api` | Official APIs with the person's OAuth sign-in (wearables, Gmail) | Not built: needs developer access or partnerships |
 | `app` | Already in LotusPond (Apple Health / Health Connect import, WhatsApp) | Works |
@@ -152,9 +152,9 @@ Recipes are deterministic, fast and cheap, and are the goal for every popular po
 - **Navigator on:** the run carries on with the navigator, on the same page and sign-in.
 - **Navigator off:** the person reads that the portal changed and the agent can't follow it yet.
 
-### 5.1 Dr Lal PathLabs and Thyrocare
+### 5.1 Dr Lal PathLabs, Thyrocare, Metropolis and Apollo 24|7
 
-Both were written from the portals' public pages in November 2026. This session's network could not reach them, so the pages were read through Firecrawl. Neither recipe has run against a real account.
+All four were written from the portals' public pages in November 2026. This session's network could not reach them, so the pages were read through Firecrawl. None of the recipes has run against a real account.
 
 | | Dr Lal PathLabs (`recipes/drlal.ts`) | Thyrocare (`recipes/thyrocare.ts`) |
 | --- | --- | --- |
@@ -165,16 +165,25 @@ Both were written from the portals' public pages in November 2026. This session'
 | Care taken | The page's *Get a Callback* forms also take a mobile number. The recipe types only inside the sign-in dialog, so it never requests a sales call | Terms and other PDFs that aren't reports are skipped |
 | Known guesswork | The dialog's fields are drawn by the site's scripts, which the scrape didn't run. The recipe tries several likely shapes | Its ids are fixed, but the page after sign-in was not seen. Report links are found by their text and address |
 
-`server/test/recipes.test.ts` runs both against local copies (`test/fixtures/lab-portals.ts`) in a real Chromium. It covers:
+| | Metropolis (`recipes/metropolis.ts`) | Apollo 24\|7 (`recipes/apollo247.ts`) |
+| --- | --- | --- |
+| Where | metropolisindia.com account | Health Records (Apollo's personal health record: Apollo Hospitals, Diagnostics, Clinics and 24\|7), from `/guest-health-records` |
+| Sign-in | *Login* (`span.login-text`), then `form#signin`: `#mobile_number`, `#sendOtpBtn`, four OTP boxes `#otp1`–`#otp4`, `#verifyOtpBtn`. The phone layout's own sign-in (`#mobileNumber`, `#getOtpBtn`, `.otp-box`, `#verifyOtpMobBtn`) is used when that is the one shown | *Login Now* or the header's `#loginPopup` opens a dialog: mobile number, then the OTP |
+| Reports | Report links on the page after sign-in, or on its *My Reports* / *Reports* / *Download Report* page | Each kind of record in turn (test reports, prescriptions, hospitalisation, discharge summaries, bills), downloading every report link in it |
+| Care taken | Several lead forms on the page also take a mobile number. The recipe types only into the sign-in form | A tab is opened once even when two labels match it, and brochures are skipped |
+| Known guesswork | The sign-in ids are fixed, but the page after sign-in was not seen: scripts handle it | The sign-in dialog's fields and the records tabs after sign-in were not seen |
+
+`server/test/recipes.test.ts` runs all four against local copies (`test/fixtures/lab-portals.ts`) in a real Chromium. It covers:
 - a wrong code, then the right one;
 - the password and first-visit variants;
 - a kept sign-in with no questions;
 - a scheduled run that never asks;
 - skipped sample and terms PDFs;
-- the callback form left untouched;
+- the callback and lead forms left untouched;
+- each kind of Apollo record collected once;
 - `RecipeDriftError` on a redesigned page.
 
-**Before real use**, sign in with a real account (in a browser that can reach the portals) and compare against the fixtures. In particular, check Dr Lal's sign-in dialog and the page Thyrocare shows after sign-in. Then correct the recipe and the fixture together.
+**Before real use**, sign in with a real account (in a browser that can reach the portals) and compare against the fixtures. In particular, check the Dr Lal and Apollo sign-in dialogs, and the pages Thyrocare, Metropolis and Apollo show after sign-in. Then correct the recipe and the fixture together.
 
 **The navigator.** Portals without a recipe use the navigator (`navigator.ts`): Claude reading the page as text with numbered elements, acting through narrow tools.
 
@@ -232,7 +241,7 @@ Product menus change often. Where support depends on the plan or isn't confirmed
 - **Legal.**
   - Signing in to a portal on the person's behalf with their own credentials is their choice. But a portal's terms may forbid automated access. Review this source by source, and prefer partnerships or official APIs where a lab offers them.
   - Under India's DPDP Act, LotusPond processes these reports as a data fiduciary with the person's consent, recorded per connection. Whether the Consent Manager rules apply needs advice.
-- **Recipes for more portals:** Metropolis, Redcliffe, Healthians and Apollo 24|7 next. Check the Dr Lal and Thyrocare recipes with real accounts first (§5.1).
+- **Recipes for more portals:** Redcliffe, Healthians, Agilus and Tata 1mg next. Check the four existing recipes with real accounts first (§5.1).
 - **ABDM as a health information user**, to pull ABHA-linked records with a consent artefact instead of a browser.
 - **Wearable and email APIs** (OAuth): Ultrahuman, Oura, Fitbit, Garmin, Withings, LibreView, Gmail.
 - **Several instances.** Several API instances need the queue and questions in a shared store (the database and a pub/sub) instead of memory.

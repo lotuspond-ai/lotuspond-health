@@ -32,6 +32,8 @@ import { navigatorRecipe, type NavigatorOptions } from './navigator.ts';
 import { demoRecipe } from './recipes/demo.ts';
 import { drlalRecipe } from './recipes/drlal.ts';
 import { thyrocareRecipe } from './recipes/thyrocare.ts';
+import { metropolisRecipe } from './recipes/metropolis.ts';
+import { apollo247Recipe } from './recipes/apollo247.ts';
 import { RecipeDriftError } from './recipes/kit.ts';
 import { NeedsPersonError, PortalError, REPORT_TYPES, RunStoppedError, sniffType, type Ask, type PortalReport, type Recipe, type RecipeContext } from './recipes/types.ts';
 
@@ -122,7 +124,7 @@ export function createRecordAgent(opts: RecordAgentOptions): RecordAgent {
   const now = opts.now ?? Date.now;
   const questionMs = opts.questionMs ?? QUESTION_MS;
   const resolve = opts.resolve ?? (async (h: string) => (await lookup(h, { all: true })).map(a => a.address));
-  const recipes = new Map<string, Recipe>([demoRecipe, drlalRecipe(), thyrocareRecipe(), ...(opts.recipes ?? [])].map(r => [r.sourceId, r] as const));
+  const recipes = new Map<string, Recipe>([demoRecipe, drlalRecipe(), thyrocareRecipe(), metropolisRecipe(), apollo247Recipe(), ...(opts.recipes ?? [])].map(r => [r.sourceId, r] as const));
   const live = new Map<string, Live>();
   const queue: Job[] = [];
   let running = 0;

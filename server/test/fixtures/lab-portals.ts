@@ -148,3 +148,130 @@ document.querySelectorAll('.report-btn').forEach(b => b.onclick = () => { locati
   app.get('/media/sample-report.pdf', c => c.body(pdf('DR LAL PATHLABS', 'Sample', 'S') as unknown as ArrayBuffer, 200, { 'content-type': 'application/pdf' }));
   return { app, callbacks, otps };
 }
+
+export const METROPOLIS_OTP = '2468';
+export const APOLLO_OTP = '975310';
+
+/**
+ * Metropolis: the sign-in with its real ids (span.login-text, form#signin, #mobile_number, #sendOtpBtn, #otp1-4,
+ * #verifyOtpBtn) and a lead form that also takes a mobile number. The reports page after sign-in is a guess.
+ */
+export function metropolisPortal() {
+  const app = new Hono();
+  const sessions = new Set<string>();
+  const leads: string[] = [];
+  const otps: string[] = [];
+  const signed = (c: Context) => sessions.has(getCookie(c, 'mp') ?? '');
+  const lead = '<form class="lead-form"><label class="modal-form-label">Mobile No</label><input type="tel" class="form-control mobile-validation" name="mobile" placeholder="Mobile Number"><button type="submit">Book Now</button></form>';
+  app.get('/', c => {
+    const header = signed(c)
+      ? '<header><span class="user-name">Hi Asha</span> <a href="/my-reports">My Reports</a></header>'
+      : '<header><a href="#" class="login-btn"><span class="login-text">Login</span></a></header>';
+    return c.html(page('Metropolis Healthcare', `${header}<h1>Home</h1><div class="lsc-card-title">Download Reports</div>${lead}
+<div id="loginModal" style="display:none"><p class="mb-4">View your reports and upcoming health checkups at one place.</p>
+<form class="text-center" id="signin"><label class="modal-form-label ms-1">Mobile No.</label><input type="tel" name="mobile_number" id="mobile_number" placeholder="Enter here"><button type="submit" id="sendOtpBtn">Send OTP</button></form></div>
+<div id="otpModal" style="display:none"><span>OTP Verification</span>
+<input type="text" maxlength="1" id="otp1" class="form-control otp-input"><input type="text" maxlength="1" id="otp2" class="form-control otp-input"><input type="text" maxlength="1" id="otp3" class="form-control otp-input"><input type="text" maxlength="1" id="otp4" class="form-control otp-input">
+<button type="button" id="verifyOtpBtn">Verify</button><p id="otpErr" class="text-danger" style="display:none"></p></div>`, `
+document.querySelector('.lead-form').onsubmit = e => { e.preventDefault(); fetch('/lead', { method: 'POST', body: e.target.mobile.value }); };
+const lt = document.querySelector('.login-text');
+if (lt) lt.onclick = e => { e.preventDefault(); document.getElementById('loginModal').style.display = 'block'; };
+document.getElementById('signin').onsubmit = async e => {
+  e.preventDefault();
+  await fetch('/send-otp', { method: 'POST', body: document.getElementById('mobile_number').value });
+  document.getElementById('loginModal').style.display = 'none';
+  document.getElementById('otpModal').style.display = 'block';
+};
+document.getElementById('verifyOtpBtn').onclick = async () => {
+  const code = [1, 2, 3, 4].map(i => document.getElementById('otp' + i).value).join('');
+  const r = await fetch('/verify-otp', { method: 'POST', body: code });
+  if (r.ok) location.reload(); else { const e = document.getElementById('otpErr'); e.textContent = 'Invalid OTP'; e.style.display = 'block'; }
+};`));
+  });
+  app.post('/lead', async c => { leads.push(await c.req.text()); return c.text('ok'); });
+  app.post('/send-otp', async c => { otps.push(await c.req.text()); return c.text('ok'); });
+  app.post('/verify-otp', async c => {
+    if ((await c.req.text()) !== METROPOLIS_OTP) return c.text('bad', 401);
+    const t = randomBytes(8).toString('hex');
+    sessions.add(t);
+    setCookie(c, 'mp', t, { path: '/', httpOnly: true });
+    return c.text('ok');
+  });
+  app.get('/my-reports', c => {
+    if (!signed(c)) return c.redirect('/');
+    return c.html(page('My Reports', `<h1>My Reports</h1><table>
+<tr><td>VID: 2611054321</td><td>Lipid Profile Maxi</td><td>21/09/2026</td><td><button class="dl" data-id="2611054321">Download</button></td></tr>
+<tr><td>VID: 2607011122</td><td>Vitamin D Total</td><td>03-Jul-2026</td><td><a href="/report/2607011122.pdf">Download</a></td></tr>
+</table><a href="/media/truhealth-brochure.pdf">TruHealth brochure (PDF)</a>`, `
+document.querySelectorAll('.dl').forEach(b => b.onclick = () => { location.href = '/report/' + b.dataset.id + '.pdf?dl=1'; });`));
+  });
+  app.get('/report/:file', c => {
+    if (!signed(c)) return c.text('no', 401);
+    const id = c.req.param('file').replace(/\.pdf$/, '');
+    const h: Record<string, string> = { 'content-type': 'application/pdf' };
+    if (c.req.query('dl')) h['content-disposition'] = `attachment; filename="${id}.pdf"`;
+    return c.body(pdf('METROPOLIS', 'Report', id) as unknown as ArrayBuffer, 200, h);
+  });
+  app.get('/media/truhealth-brochure.pdf', c => c.body(pdf('METROPOLIS', 'Brochure', 'B') as unknown as ArrayBuffer, 200, { 'content-type': 'application/pdf' }));
+  return { app, leads, otps };
+}
+
+/**
+ * Apollo 24|7: /guest-health-records with "Login Now" and the header's #loginPopup (as on the live page); the
+ * sign-in dialog and the records tabs after sign-in are guesses at their shape.
+ */
+export function apolloPortal() {
+  const app = new Hono();
+  const sessions = new Set<string>();
+  const otps: string[] = [];
+  const signed = (c: Context) => sessions.has(getCookie(c, 'ap') ?? '');
+  app.get('/guest-health-records', c => {
+    if (!signed(c)) {
+      return c.html(page('Health Records', `<header><div id="loginPopup" title="Login/SignUp"><span>Login</span></div></header>
+<h3>Sign In <span>To Access Your Health Records</span></h3><button class="phrGuestLogin"><span>Login Now</span></button>`, `
+const open = () => {
+  const d = document.createElement('div'); d.setAttribute('role', 'dialog');
+  d.innerHTML = '<h4>Login / Sign Up</h4><input type="tel" placeholder="Enter your mobile number" maxlength="10"><button type="button" id="cont">Continue</button>';
+  document.body.appendChild(d);
+  d.querySelector('#cont').onclick = async () => {
+    await fetch('/otp/send', { method: 'POST', body: d.querySelector('input').value });
+    d.innerHTML = '<h4>Enter OTP</h4><input type="text" autocomplete="one-time-code" maxlength="6" placeholder="Enter OTP"><button type="button" id="ver">Verify</button><p class="error" style="display:none"></p>';
+    d.querySelector('#ver').onclick = async () => {
+      const r = await fetch('/otp/verify', { method: 'POST', body: d.querySelector('input').value });
+      if (r.ok) location.reload(); else { const e = d.querySelector('.error'); e.textContent = 'Incorrect OTP'; e.style.display = 'block'; }
+    };
+  };
+};
+document.querySelector('.phrGuestLogin').onclick = open;
+document.getElementById('loginPopup').onclick = open;`));
+    }
+    return c.html(page('Health Records', `<header><div id="loginPopup"><span>Asha</span></div></header><h1>Health Records</h1>
+<div role="tablist"><button role="tab" id="t1">Test Reports</button><button role="tab" id="t2">Prescriptions</button><button role="tab" id="t3">Hospitalization</button></div>
+<div id="panel"></div><a href="/prohealth-brochure.pdf">Apollo ProHealth brochure (PDF)</a>`, `
+const panels = {
+  t1: '<div class="record-card"><p>Complete Blood Count (CBC)</p><p>Apollo Diagnostics · 11 Aug 2026</p><a href="/records/LR-881.pdf">Download</a></div><div class="record-card"><p>HbA1c</p><p>02/05/2026</p><button class="dl" data-id="LR-882">Download</button></div>',
+  t2: '<div class="record-card"><p>Dr Mehta, General Physician</p><p>15 Aug 2026</p><a href="/records/RX-12.pdf">Download</a></div>',
+  t3: '<p>No records found</p>',
+};
+const show = id => { document.getElementById('panel').innerHTML = panels[id];
+  document.querySelectorAll('.dl').forEach(b => b.onclick = () => { location.href = '/records/' + b.dataset.id + '.pdf?dl=1'; }); };
+['t1', 't2', 't3'].forEach(id => document.getElementById(id).onclick = () => show(id));`));
+  });
+  app.post('/otp/send', async c => { otps.push(await c.req.text()); return c.text('ok'); });
+  app.post('/otp/verify', async c => {
+    if ((await c.req.text()) !== APOLLO_OTP) return c.text('bad', 401);
+    const t = randomBytes(8).toString('hex');
+    sessions.add(t);
+    setCookie(c, 'ap', t, { path: '/', httpOnly: true });
+    return c.text('ok');
+  });
+  app.get('/records/:file', c => {
+    if (!signed(c)) return c.text('no', 401);
+    const id = c.req.param('file').replace(/\.pdf$/, '');
+    const h: Record<string, string> = { 'content-type': 'application/pdf' };
+    if (c.req.query('dl')) h['content-disposition'] = `attachment; filename="${id}.pdf"`;
+    return c.body(pdf('APOLLO', 'Record', id) as unknown as ArrayBuffer, 200, h);
+  });
+  app.get('/prohealth-brochure.pdf', c => c.body(pdf('APOLLO', 'Brochure', 'B') as unknown as ArrayBuffer, 200, { 'content-type': 'application/pdf' }));
+  return { app, otps };
+}

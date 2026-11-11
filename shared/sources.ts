@@ -91,7 +91,8 @@ export const SOURCES: SourceInfo[] = [
     hosts: ['thyrocare.com'], startUrl: 'https://www.thyrocare.com/', holds: ['Lab reports', 'Aarogyam packages'],
     note: 'Signs in with your mobile number and an OTP (or your Thyrocare password). The first time, Thyrocare may ask for the barcode on a report.' },
   { id: 'metropolis', name: 'Metropolis Healthcare', category: 'lab', regions: IN, access: 'browser', signIn: 'otp',
-    hosts: ['metropolisindia.com'], startUrl: 'https://www.metropolisindia.com/', holds: ['Lab reports', 'Past bookings'] },
+    hosts: ['metropolisindia.com'], startUrl: 'https://www.metropolisindia.com/', holds: ['Lab reports', 'Past bookings'],
+    note: 'Signs in with your mobile number and the 4-digit OTP Metropolis sends, then downloads your reports.' },
   { id: 'agilus', name: 'Agilus Diagnostics (formerly SRL)', category: 'lab', regions: IN, access: 'browser', signIn: 'otp',
     hosts: ['agilusdiagnostics.com'], startUrl: 'https://www.agilusdiagnostics.com/', holds: ['Lab reports'] },
   { id: 'redcliffe', name: 'Redcliffe Labs', category: 'lab', regions: IN, access: 'browser', signIn: 'otp',
@@ -111,8 +112,9 @@ export const SOURCES: SourceInfo[] = [
 
   /* ---------------- hospitals ---------------- */
   { id: 'apollo', name: 'Apollo Hospitals (Apollo 24|7)', category: 'hospital', regions: IN, access: 'browser', signIn: 'otp',
-    hosts: ['apollo247.com', 'apollohospitals.com'], startUrl: 'https://www.apollo247.com/',
-    holds: ['Lab reports', 'Prescriptions', 'Discharge summaries', 'Consultations'] },
+    hosts: ['apollo247.com', 'apollo247.in', 'apollohospitals.com'], startUrl: 'https://www.apollo247.com/guest-health-records',
+    holds: ['Lab reports', 'Prescriptions', 'Discharge summaries', 'Consultations'],
+    note: 'Signs in with your mobile number and OTP, then downloads what Apollo Health Records holds from Apollo Hospitals, Diagnostics, Clinics and 24|7.' },
   { id: 'fortis', name: 'Fortis Healthcare', category: 'hospital', regions: IN, access: 'browser', signIn: 'otp',
     hosts: ['fortishealthcare.com'], startUrl: 'https://www.fortishealthcare.com/', holds: ['Reports', 'Discharge summaries', 'Bills'] },
   { id: 'max', name: 'Max Healthcare', category: 'hospital', regions: IN, access: 'browser', signIn: 'otp',

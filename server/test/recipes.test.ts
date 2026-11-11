@@ -11,9 +11,11 @@ import { sourceById } from '../../shared/sources.ts';
 import { downloadFile, localBrowsers, type StorageState } from '../src/records/browsers.ts';
 import { drlalRecipe } from '../src/records/recipes/drlal.ts';
 import { thyrocareRecipe } from '../src/records/recipes/thyrocare.ts';
+import { metropolisRecipe } from '../src/records/recipes/metropolis.ts';
+import { apollo247Recipe } from '../src/records/recipes/apollo247.ts';
 import { RecipeDriftError } from '../src/records/recipes/kit.ts';
 import { NeedsPersonError, PortalError, type Ask, type PortalReport, type Recipe } from '../src/records/recipes/types.ts';
-import { drlalPortal, DRLAL_OTP, thyrocarePortal, THYROCARE_OTP } from './fixtures/lab-portals.ts';
+import { apolloPortal, APOLLO_OTP, drlalPortal, DRLAL_OTP, metropolisPortal, METROPOLIS_OTP, thyrocarePortal, THYROCARE_OTP } from './fixtures/lab-portals.ts';
 
 const servers: ServerType[] = [];
 async function host(app: Hono): Promise<string> {
@@ -123,5 +125,42 @@ describe('Dr Lal PathLabs recipe', { timeout: 120_000 }, () => {
   test('a site without the sign-in it expects ends in RecipeDriftError, for the navigator to take over', async () => {
     const empty = await host(new Hono().get('*', c => c.html('<html><body><h1>A new look</h1></body></html>')));
     await assert.rejects(run(drlalRecipe(empty), 'drlal', { answers: [] }), RecipeDriftError);
+  });
+});
+
+describe('Metropolis recipe', { timeout: 120_000 }, () => {
+  test('signs in with form#signin and the four OTP boxes (never the lead form), then downloads from My Reports', async () => {
+    const portal = metropolisPortal();
+    const origin = await host(portal.app);
+    const r = await run(metropolisRecipe(origin), 'metropolis', { answers: ['9876543210', '1111', METROPOLIS_OTP] });
+    assert.deepEqual(r.asked.map(q => q.kind), ['phone', 'otp', 'otp']);
+    assert.deepEqual(portal.leads, [], 'the lead form was not used');
+    assert.deepEqual(portal.otps, ['9876543210']);
+    assert.equal(r.reports.length, 2, 'the brochure is skipped');
+    assert.ok(r.reports.every(isPdf));
+    assert.deepEqual(r.reports.map(x => x.date), ['2026-09-21', '2026-07-03']);
+    assert.ok(r.reports[0].key.includes('2611054321'), r.reports[0].key);
+
+    const again = await run(metropolisRecipe(origin), 'metropolis', { state: r.state, identifier: r.remembered, schedule: true });
+    assert.equal(again.asked.length, 0);
+    assert.deepEqual(again.reports.map(x => x.key), r.reports.map(x => x.key));
+  });
+});
+
+describe('Apollo 24|7 recipe', { timeout: 120_000 }, () => {
+  test('signs in from Health Records and downloads each kind of record, skipping the brochure', async () => {
+    const portal = apolloPortal();
+    const origin = await host(portal.app);
+    const r = await run(apollo247Recipe(origin), 'apollo', { answers: ['+91 91234 56789', APOLLO_OTP] });
+    assert.deepEqual(r.asked.map(q => q.kind), ['phone', 'otp']);
+    assert.deepEqual(portal.otps, ['9123456789']);
+    assert.equal(r.reports.length, 3);
+    assert.ok(r.reports.every(isPdf));
+    assert.deepEqual(r.reports.map(x => x.date), ['2026-08-11', '2026-05-02', '2026-08-15']);
+    assert.match(r.reports[2].title, /^Prescriptions: /);
+
+    const again = await run(apollo247Recipe(origin), 'apollo', { state: r.state, identifier: r.remembered, schedule: true });
+    assert.equal(again.asked.length, 0);
+    assert.deepEqual(again.reports.map(x => x.key), r.reports.map(x => x.key));
   });
 });

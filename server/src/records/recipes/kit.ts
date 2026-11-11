@@ -4,7 +4,7 @@
 // changed, and the record agent hands the run to the navigator when it is on (service.ts).
 import { readFile } from 'node:fs/promises';
 import type { Locator, Page } from 'playwright-core';
-import { PortalError, type RecipeContext } from './types.ts';
+import { PortalError, REPORT_TYPES, sniffType, type RecipeContext } from './types.ts';
 
 /** The portal no longer looks the way the recipe expects. */
 export class RecipeDriftError extends Error {}
@@ -123,8 +123,9 @@ export async function reportLinks(page: Page): Promise<ReportLink[]> {
     const el = candidates.nth(i);
     if (!(await el.isVisible().catch(() => false))) continue;
     const text = (await el.innerText().catch(() => '')).replace(/\s+/g, ' ').trim();
-    // Sample and brochure PDFs on marketing pages are not the person's.
+    // Sample and brochure PDFs on marketing pages are not the person's, and "My Reports" is a menu, not a report.
     if (/sample|brochure|terms|policy|certificate|accreditation/i.test(text)) continue;
+    if (/^(my |all |view all |download )?(test |lab |health )?reports$/i.test(text)) continue;
     const href = await el.getAttribute('href').catch(() => null);
     const row = el.locator(`xpath=ancestor::*[self::tr or self::li or contains(translate(@class,'CARDORE','cardore'),'card') or contains(translate(@class,'CARDORE','cardore'),'order') or contains(translate(@class,'REPORT','report'),'report')][1]`);
     const rowText = ((await row.count().catch(() => 0)) ? await row.first().innerText().catch(() => '') : text).replace(/\s+/g, ' ').trim();
@@ -146,7 +147,42 @@ export async function collectReports(ctx: RecipeContext, labName: string, links:
     await ctx.step(`Downloading report ${i + 1} of ${links.length}`);
     const file = await downloadFrom(ctx, l.el);
     if (!file?.bytes.byteLength) continue;
+    // A link that led to a web page (a menu, a viewer) rather than a file is not a report.
+    if (!REPORT_TYPES[sniffType(file.bytes, file.contentType)]) continue;
     reports.push({ key: l.key, title: l.title, date: l.date, fileName: `${labName} ${l.title}${l.date ? ` ${l.date}` : ''}`, contentType: file.contentType, bytes: file.bytes });
   }
   return reports;
+}
+
+/**
+ * The visible dialog or panel that holds one of `fields` (a sign-in, usually), skipping containers that match
+ * `exclude` (lead and callback forms that also take a mobile number). Waits up to the time given.
+ */
+export async function findDialogWith(page: Page, dialogs: string[], fields: string[], exclude?: string, timeoutMs = 10_000): Promise<{ box: Locator; field: Locator } | null> {
+  const end = Date.now() + timeoutMs;
+  do {
+    for (const d of dialogs) {
+      const boxes = page.locator(d);
+      const n = Math.min(await boxes.count().catch(() => 0), 8);
+      for (let i = 0; i < n; i++) {
+        const box = boxes.nth(i);
+        if (!(await box.isVisible().catch(() => false))) continue;
+        if (exclude && await box.locator(exclude).count().catch(() => 0)) continue;
+        const field = await firstVisible(box, fields, 200);
+        if (field) return { box, field };
+      }
+    }
+    await new Promise(r => setTimeout(r, 300));
+  } while (Date.now() < end);
+  return null;
+}
+
+/** Mobile number fields, in the order portals usually mark them. */
+export const PHONE_FIELDS = ['input[type=tel]', 'input[placeholder*="mobile" i]', 'input[name*="mobile" i]', 'input[name*="phone" i]', 'input[maxlength="10"]'];
+/** Containers a sign-in usually opens in. */
+export const DIALOGS = ['[role=dialog]', '[aria-modal="true"]', '.modal.show', '[class*="modal" i]:visible', '[class*="login" i]:visible', '[class*="drawer" i]:visible', '[class*="sidebar" i]:visible'];
+
+/** The 10-digit Indian mobile number from what the person typed (with or without +91, spaces or dashes). */
+export function tenDigits(v: string): string {
+  return v.replace(/\D/g, '').slice(-10);
 }

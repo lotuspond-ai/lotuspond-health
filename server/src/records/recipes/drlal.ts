@@ -13,13 +13,10 @@
 // shapes, and anything missing ends the recipe with RecipeDriftError for the navigator to take over.
 import type { Locator, Page } from 'playwright-core';
 import { PortalError, type PortalReport, type Recipe, type RecipeContext } from './types.ts';
-import { collectReports, fillCode, firstVisible, mustFind, RecipeDriftError, reportLinks, visibleError } from './kit.ts';
+import { collectReports, DIALOGS, fillCode, findDialogWith, firstVisible, mustFind, PHONE_FIELDS, RecipeDriftError, reportLinks, tenDigits, visibleError } from './kit.ts';
 
 export const DRLAL_ORIGIN = 'https://www.lalpathlabs.com';
 
-/** Where the sign-in lives: a dialog or panel, never the callback forms. */
-const DIALOGS = ['[role=dialog]', '[aria-modal="true"]', '.modal.show', '[class*="modal" i]:visible', '[class*="login" i]:visible', '[class*="drawer" i]:visible', '[class*="sidebar" i]:visible'];
-const PHONE = ['input[type=tel]', 'input[placeholder*="mobile" i]', 'input[name*="mobile" i]', 'input[name*="phone" i]', 'input[maxlength="10"]'];
 const SEND = ['button:has-text("Send OTP")', 'button:has-text("Get OTP")', 'button:has-text("Request OTP")', 'button:has-text("Continue")', 'button:has-text("Proceed")', 'button:has-text("Login")', 'button[type=submit]'];
 const VERIFY = ['button:has-text("Verify")', 'button:has-text("Submit")', 'button:has-text("Login")', 'button:has-text("Continue")', 'button:has-text("Proceed")', 'button[type=submit]'];
 const CODE = ['input[autocomplete="one-time-code"]', 'input[placeholder*="otp" i]', 'input[name*="otp" i]', 'input[id*="otp" i]', 'input[maxlength="4"]', 'input[maxlength="6"]'];
@@ -30,20 +27,10 @@ async function signedIn(page: Page): Promise<boolean> {
   return !guest;
 }
 
-/** The sign-in dialog holding the mobile number field (not a callback form). */
-async function loginDialog(page: Page): Promise<{ box: Locator; phone: Locator } | null> {
-  for (const d of DIALOGS) {
-    const boxes = page.locator(d);
-    const n = Math.min(await boxes.count().catch(() => 0), 6);
-    for (let i = 0; i < n; i++) {
-      const box = boxes.nth(i);
-      if (!(await box.isVisible().catch(() => false))) continue;
-      if (await box.locator('.consultation-form, :text("Get a Callback")').count().catch(() => 0)) continue;
-      const phone = await firstVisible(box, PHONE, 300);
-      if (phone) return { box, phone };
-    }
-  }
-  return null;
+/** The sign-in dialog holding the mobile number field (never a callback form). */
+async function loginDialog(page: Page, timeoutMs = 300): Promise<{ box: Locator; phone: Locator } | null> {
+  const found = await findDialogWith(page, DIALOGS, PHONE_FIELDS, '.consultation-form, :text("Get a Callback")', timeoutMs);
+  return found && { box: found.box, phone: found.field };
 }
 
 async function signIn(ctx: RecipeContext): Promise<void> {
@@ -53,15 +40,11 @@ async function signIn(ctx: RecipeContext): Promise<void> {
   if (!found) {
     const opener = await mustFind(page, ['button.msb-user', 'button:has-text("Login / Sign Up")', 'a:has-text("Login")', 'button:has-text("Login")'], 'the Login / Sign Up button');
     await opener.click();
-    const end = Date.now() + 10_000;
-    while (!found && Date.now() < end) {
-      found = await loginDialog(page);
-      if (!found) await page.waitForTimeout(300);
-    }
+    found = await loginDialog(page, 10_000);
   }
   if (!found) throw new RecipeDriftError('The Dr Lal sign-in did not open');
   const { box, phone: phoneField } = found;
-  const phone = (ctx.identifier ?? await ctx.ask({ kind: 'phone', label: 'Mobile number registered with Dr Lal PathLabs' })).replace(/\D/g, '').slice(-10);
+  const phone = tenDigits(ctx.identifier ?? await ctx.ask({ kind: 'phone', label: 'Mobile number registered with Dr Lal PathLabs' }));
   if (phone.length !== 10) throw new PortalError('Dr Lal PathLabs needs a 10-digit mobile number.');
   await phoneField.fill(phone);
   await (await mustFind(box, SEND, 'the button that sends the OTP')).click();
