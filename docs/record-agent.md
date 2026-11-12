@@ -7,6 +7,7 @@ Status: November 2026. The engine, the app's Sources page and the MCP tool are b
   - The Dr Lal, Thyrocare and Metropolis recipes are tested against local copies of their portals, **not yet with real accounts** (§5.1).
 - **The navigator:** every other portal is reached through Claude, which is off unless Anthropic credentials are set.
 - **Withings, through its API** (`server/src/records/api/withings.ts`, §5.3): the person signs in on Withings' own page, and each check brings in one value per day from their scale, blood pressure monitor, thermometer or oximeter. It is on when `WITHINGS_CLIENT_ID` and `WITHINGS_CLIENT_SECRET` are set, and is not yet tried with a real Withings account.
+- **Oura and Ultrahuman, through their APIs** (`server/src/records/api/oura.ts`, `ultrahuman.ts`, §5.4): the same sign-in on the provider's page, with one value per day for resting heart rate, SpO2 and breathing rate during sleep, and Ultrahuman M1 glucose once Ultrahuman grants that scope. They are on when `OURA_CLIENT_ID`/`OURA_CLIENT_SECRET` or `ULTRAHUMAN_CLIENT_ID`/`ULTRAHUMAN_CLIENT_SECRET` are set, and are not yet tried with real accounts.
 - **ABHA, with no browser:** through Eka Care's ABDM Connect (`server/src/records/abdm/`, docs/abdm.md). The same runs and questions: an OTP to sign in, the ABHA consent PIN to approve LotusPond's consent request. The records come in as FHIR files. It is on when `EKA_CLIENT_ID` and `EKA_CLIENT_SECRET` are set, and is waiting on LotusPond's ABDM Connect onboarding.
 
 The record agent brings a family's reports in from the portals where they live: labs, hospitals, government services, pharmacies and insurers.
@@ -22,7 +23,7 @@ The record agent brings a family's reports in from the portals where they live: 
 | `server/src/records/browsers.ts` | Where the browsers run: local Chromium, any CDP service, Browserbase |
 | `server/src/records/recipes/` | Recipes: the known steps for one portal (`demo.ts` is the pattern) |
 | `server/src/records/navigator.ts` | Claude finding its way around a portal without a recipe |
-| `server/src/records/api/` | Sources reached through their own APIs: the fetcher types, and Withings (OAuth) |
+| `server/src/records/api/` | Sources reached through their own APIs: the fetcher types, standard OAuth 2 daily sources (`oauth2.ts`), daily vitals → FHIR (`vitals.ts`), Withings, Oura, Ultrahuman |
 | `server/src/records/abdm/` | ABHA through Eka Care's ABDM Connect: the client, the steps, the webhook at `/hooks/eka` |
 | `server/src/records/demo-portal.ts` | The pretend lab portal at `/demo-portal` (development and tests) |
 | `server/src/records/routes.ts` | `/api/records` |
@@ -253,6 +254,35 @@ Not done:
 - Withings' webhooks (`notify`), which would need signed requests.
 - The mobile apps: the callback lands in the browser, not the app.
 - A real Withings account.
+
+### 5.4 Oura and Ultrahuman (official APIs, OAuth)
+
+Both use standard OAuth 2 (authorization code with the client secret, single-use refresh tokens), so they share `records/api/oauth2.ts`:
+- the sign-in page and callback, as for Withings (§5.3);
+- a token refreshed when it has run out, with the rotated refresh token sealed at once;
+- each check reads from the day after the last day with data, up to yesterday in the person's time zone, so a ring that syncs late still brings its days in;
+- the days become one FHIR file of vital-sign Observations through `records/api/vitals.ts`. Withings uses it too.
+
+| | Oura | Ultrahuman |
+| --- | --- | --- |
+| Developer account | Self-serve at cloud.ouraring.com (API applications). Oura limits a new app's users until it approves it | Self-serve at vision.ultrahuman.com (OAuth applications). The `cgm_data` scope is granted on request |
+| Redirect URI | `PUBLIC_URL/records/oauth/oura/callback` | `PUBLIC_URL/records/oauth/ultrahuman/callback` |
+| Scopes asked | `daily heartrate spo2` | `ring_data`, plus `cgm_data` with `ULTRAHUMAN_CGM=on` |
+| Read | `GET /v2/usercollection/sleep` and `/daily_spo2` (date range, paged by `next_token`) | `GET /api/partners/v1/user_data/metrics?date=` (one call per day) |
+| Resting heart rate | The night's main sleep (`long_sleep`, else the longest): `lowest_heart_rate`, which Oura's app calls resting heart rate | `sleep_rhr`, else the last `night_rhr` value |
+| SpO2 | `spo2_percentage.average` | `Sleep.spo2.value` (Ultrahuman marks it beta) |
+| Breathing rate | `average_breath` | `Sleep.respiratory_graph.gist_object.avg` |
+| Glucose | none | `average_glucose` (the day's mean, M1 sensor) |
+| First check | A year | 90 days (90 calls) |
+| Errors | 401: connect again; 403: the Oura membership has lapsed; 429: try later | 401: connect again; 429: try later |
+
+Not read: sleep, readiness and recovery scores, HRV, skin temperature and Ultrahuman's estimated HbA1c. They are not values a clinician records, or LotusPond has no marker for them.
+
+Tests: `server/test/oura-ultrahuman.test.ts` runs against copies of both APIs. `tools/test-parsers.mjs` checks that the app reads such a file into the vitals markers.
+
+Assumed, and to be checked with real accounts:
+- The shape of Ultrahuman's CGM summary entries (`object.value`), which its samples don't show.
+- Whether Oura's `lowest_heart_rate` is what people expect as resting heart rate.
 
 ## 6. Trying it
 

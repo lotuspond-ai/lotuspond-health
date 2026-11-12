@@ -124,6 +124,13 @@ const Env = z.object({
      PUBLIC_URL/records/oauth/withings/callback in the Withings developer dashboard. */
   WITHINGS_CLIENT_ID: z.string().trim().min(8).optional(),
   WITHINGS_CLIENT_SECRET: z.string().trim().min(8).optional(),
+  /* Oura and Ultrahuman, the same way: redirect URIs PUBLIC_URL/records/oauth/oura/callback and
+     PUBLIC_URL/records/oauth/ultrahuman/callback. Ultrahuman grants CGM data on request: ULTRAHUMAN_CGM=on once it has. */
+  OURA_CLIENT_ID: z.string().trim().min(8).optional(),
+  OURA_CLIENT_SECRET: z.string().trim().min(8).optional(),
+  ULTRAHUMAN_CLIENT_ID: z.string().trim().min(8).optional(),
+  ULTRAHUMAN_CLIENT_SECRET: z.string().trim().min(8).optional(),
+  ULTRAHUMAN_CGM: z.enum(['on', 'off']).default('off'),
   /** The key Eka signs webhooks with; the webhook at /hooks/eka is served only when it is set. */
   EKA_WEBHOOK_SIGNING_KEY: z.string().trim().min(16).optional(),
   OVERPASS_URL: z.string().url().default('https://overpass-api.de/api/interpreter'),
@@ -199,6 +206,8 @@ export interface RecordAgentConfig {
   eka?: { apiUrl: string; clientId: string; clientSecret: string; hiu?: { clinicId: string; doctorOid: string }; webhookSigningKey?: string };
   /** Withings, when its client is set; `redirectUri` is where its sign-in page sends people back. */
   withings?: { clientId: string; clientSecret: string; redirectUri: string };
+  oura?: { clientId: string; clientSecret: string; redirectUri: string };
+  ultrahuman?: { clientId: string; clientSecret: string; redirectUri: string; cgm: boolean };
 }
 
 export interface CellConfig {
@@ -336,11 +345,18 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       } : {}),
     };
     if (!!e.EKA_CLIENT_ID !== !!e.EKA_CLIENT_SECRET) throw new Error('Invalid configuration: EKA_CLIENT_ID and EKA_CLIENT_SECRET go together.');
-    if (!!e.WITHINGS_CLIENT_ID !== !!e.WITHINGS_CLIENT_SECRET) throw new Error('Invalid configuration: WITHINGS_CLIENT_ID and WITHINGS_CLIENT_SECRET go together.');
-    if (e.WITHINGS_CLIENT_ID && e.WITHINGS_CLIENT_SECRET) {
-      if (!e.PUBLIC_URL) throw new Error('Invalid configuration: Withings needs PUBLIC_URL, for the address its sign-in page sends people back to.');
-      records.withings = { clientId: e.WITHINGS_CLIENT_ID, clientSecret: e.WITHINGS_CLIENT_SECRET, redirectUri: `${new URL(e.PUBLIC_URL).origin}/records/oauth/withings/callback` };
-    }
+    const oauthClient = (name: string, id: string | undefined, secret: string | undefined, source: string) => {
+      if (!!id !== !!secret) throw new Error(`Invalid configuration: ${name}_CLIENT_ID and ${name}_CLIENT_SECRET go together.`);
+      if (!id || !secret) return undefined;
+      if (!e.PUBLIC_URL) throw new Error(`Invalid configuration: ${name} needs PUBLIC_URL, for the address its sign-in page sends people back to.`);
+      return { clientId: id, clientSecret: secret, redirectUri: `${new URL(e.PUBLIC_URL).origin}/records/oauth/${source}/callback` };
+    };
+    const withings = oauthClient('WITHINGS', e.WITHINGS_CLIENT_ID, e.WITHINGS_CLIENT_SECRET, 'withings');
+    const oura = oauthClient('OURA', e.OURA_CLIENT_ID, e.OURA_CLIENT_SECRET, 'oura');
+    const ultrahuman = oauthClient('ULTRAHUMAN', e.ULTRAHUMAN_CLIENT_ID, e.ULTRAHUMAN_CLIENT_SECRET, 'ultrahuman');
+    if (withings) records.withings = withings;
+    if (oura) records.oura = oura;
+    if (ultrahuman) records.ultrahuman = { ...ultrahuman, cgm: e.ULTRAHUMAN_CGM === 'on' };
   }
   const cellVar = (r: DataRegion, name: string) => (e as unknown as Record<string, string | undefined>)[`CELL_${r.toUpperCase()}_${name}`];
   const servedRegions = parseRegions(e.SERVED_REGIONS);

@@ -663,6 +663,12 @@ section('fhir');
     '2026-11-01 body_fat 18.2 %', '2026-11-01 body_weight 72.5 kg', '2026-11-01 bp_diastolic 84 mmHg', '2026-11-01 bp_systolic 128 mmHg',
     '2026-11-01 resting_heart_rate 71 bpm', '2026-11-02 body_temperature 36.8 °C', '2026-11-02 spo2 97 %',
   ]), JSON.stringify(wdRows));
+  // Ultrahuman / Oura daily values (server/src/records/api/vitals.ts): breathing rate and sensor glucose too.
+  const ud = f.parseFhir(JSON.parse(readFileSync(join(fixtures, 'fhir/ultrahuman-daily.json'), 'utf8')), 'ultrahuman.json');
+  const udRows = ud.measurements.map(m => `${m.markerId} ${m.value} ${m.unit}`).sort();
+  check('fhir: ring and CGM daily values become the vitals markers', eq(udRows, [
+    'glucose_meter 104 mg/dL', 'respiratory_rate 14 breaths/min', 'resting_heart_rate 56 bpm', 'spo2 97 %',
+  ]), JSON.stringify(udRows));
   const pdfOnly = JSON.parse(readFileSync(join(fixtures, 'fhir/pdf-only-report.json'), 'utf8'));
   const att = f.fhirAttachments(pdfOnly);
   check('fhir: PDF in presentedForm found', att.length === 1 && att[0].contentType === 'application/pdf' && att[0].title === 'Lipid profile.pdf' && att[0].data.length > 1000);

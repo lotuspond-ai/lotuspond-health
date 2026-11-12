@@ -24,6 +24,8 @@ import { demoPortal } from './records/demo-portal.ts';
 import { createEka } from './records/abdm/eka.ts';
 import { abhaFetcher } from './records/abdm/abha.ts';
 import { withingsFetcher } from './records/api/withings.ts';
+import { ouraFetcher } from './records/api/oura.ts';
+import { ultrahumanFetcher } from './records/api/ultrahuman.ts';
 
 // This file runs from server/src (tsx) or server/dist (bundle); both are one level below server/.
 const serverRoot = fileURLToPath(new URL('..', import.meta.url));
@@ -114,7 +116,11 @@ const records = config.records
   ? createRecordAgent({
     cells: registry, secrets, config: config.records, browsers: browserProvider(config.records.browser), selfUrl: `http://127.0.0.1:${config.port}`,
     maxBytes: config.maxUploadBytes, ...(config.records.navigator ? { navigator: { model: config.records.navigator.model } } : {}),
-    ...(config.records.withings ? { apis: [withingsFetcher(config.records.withings)] } : {}),
+    apis: [
+      ...(config.records.withings ? [withingsFetcher(config.records.withings)] : []),
+      ...(config.records.oura ? [ouraFetcher(config.records.oura)] : []),
+      ...(config.records.ultrahuman ? [ultrahumanFetcher(config.records.ultrahuman, { cgm: config.records.ultrahuman.cgm })] : []),
+    ],
     ...(config.records.eka ? { abdm: abhaFetcher({ eka: createEka(config.records.eka), ...(config.records.eka.hiu ? { hiu: config.records.eka.hiu } : {}) }) } : {}),
   })
   : undefined;

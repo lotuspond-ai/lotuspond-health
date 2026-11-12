@@ -25,6 +25,7 @@ import { DiskFileStore } from '../src/lib/files.ts';
 import { localBrowsers } from '../src/records/browsers.ts';
 import { createRecordAgent, type RecordAgent } from '../src/records/service.ts';
 import { dailyReadings, dayIn, withingsFetcher } from '../src/records/api/withings.ts';
+import { VITALS } from '../src/records/api/vitals.ts';
 import { makeClient, registration } from './helpers.ts';
 
 const migrations = fileURLToPath(new URL('../drizzle', import.meta.url));
@@ -137,7 +138,7 @@ describe('Withings', { timeout: 60_000 }, () => {
     assert.equal(dayIn(at('2026-11-01T20:00:00Z'), 'Asia/Kolkata'), '2026-11-02');
     assert.equal(dayIn(at('2026-11-01T20:00:00Z'), 'Not/AZone'), '2026-11-02', 'an unknown zone falls back to India');
     const rows = dailyReadings(withings.state.groups, 'Asia/Kolkata', '2026-11-11');
-    assert.deepEqual(rows.map(r => [r.day, r.name, r.value, r.readings]), [
+    assert.deepEqual(rows.map(r => [r.day, VITALS[r.marker].name, r.value, r.readings]), [
       ['2026-11-01', 'Body fat', 18.2, 1],
       ['2026-11-01', 'Body weight', 72.5, 2],
       ['2026-11-01', 'Diastolic blood pressure', 84, 1],

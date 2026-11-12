@@ -18,6 +18,7 @@
 import { createHash } from 'node:crypto';
 import { NeedsPersonError, PortalError, type PortalReport } from '../recipes/types.ts';
 import type { ApiContext, OAuthFetcher } from './types.ts';
+import { dailyMeans, dayIn, vitalsReport, type DailyValue, type VitalMarker } from './vitals.ts';
 
 export const WITHINGS_AUTHORIZE_URL = 'https://account.withings.com/oauth2_user/authorize2';
 export const WITHINGS_API_URL = 'https://wbsapi.withings.net';
@@ -35,21 +36,13 @@ export interface WithingsOptions {
 
 interface Tokens { userid: string; access: string; refresh: string; expiresAt: number; /** The last day already read (yyyy-mm-dd). */ lastDay?: string }
 
-/**
- * The measure types read, the marker each becomes (by its catalogue name, which the FHIR reader matches), LOINC and
- * UCUM for the Observation, plausible bounds (readings outside are device or unit errors) and decimals.
- */
-const TYPES: Record<number, { name: string; loinc: string; unit: string; ucum: string; bounds: [number, number]; decimals: number }> = {
-  1: { name: 'Body weight', loinc: '29463-7', unit: 'kg', ucum: 'kg', bounds: [1, 650], decimals: 1 },
-  6: { name: 'Body fat', loinc: '41982-0', unit: '%', ucum: '%', bounds: [1, 75], decimals: 1 },
-  10: { name: 'Systolic blood pressure', loinc: '8480-6', unit: 'mmHg', ucum: 'mm[Hg]', bounds: [50, 300], decimals: 0 },
-  9: { name: 'Diastolic blood pressure', loinc: '8462-4', unit: 'mmHg', ucum: 'mm[Hg]', bounds: [30, 200], decimals: 0 },
+/** The Withings measure types read, and the vitals marker each becomes. */
+const TYPES: Record<number, VitalMarker> = {
+  1: 'body_weight', 6: 'body_fat', 10: 'bp_systolic', 9: 'bp_diastolic',
   // Heart pulse from a blood pressure monitor or scale, taken at rest.
-  11: { name: 'Resting heart rate', loinc: '40443-4', unit: 'bpm', ucum: '/min', bounds: [20, 250], decimals: 0 },
-  54: { name: 'Oxygen saturation (SpO2)', loinc: '59408-5', unit: '%', ucum: '%', bounds: [50, 100], decimals: 0 },
-  71: { name: 'Body temperature', loinc: '8310-5', unit: '°C', ucum: 'Cel', bounds: [30, 45], decimals: 1 },
+  11: 'resting_heart_rate', 54: 'spo2', 71: 'body_temperature',
   // Type 12 is "Temperature": older thermometers report body temperature with it.
-  12: { name: 'Body temperature', loinc: '8310-5', unit: '°C', ucum: 'Cel', bounds: [30, 45], decimals: 1 },
+  12: 'body_temperature',
 };
 const MEASTYPES = Object.keys(TYPES).join(',');
 /** How far back the first check reads. */
@@ -64,57 +57,23 @@ export class WithingsError extends Error {
   constructor(status: number, message: string, http = false) { super(message); this.status = status; this.http = http; }
 }
 
-/** The calendar day of a unix time in a time zone (Withings gives the person's), yyyy-mm-dd. */
-export function dayIn(unixSeconds: number, timeZone: string): string {
-  let tz = timeZone;
-  try { new Intl.DateTimeFormat('en-CA', { timeZone: tz }); } catch { tz = 'Asia/Kolkata'; }
-  return new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(unixSeconds * 1000));
-}
+export { dayIn };
 
 interface Group { date: number; category?: number; measures: { value: number; type: number; unit: number }[] }
 
 /** Measurement groups → one value per marker per day (the mean of the day's readings), oldest first; not today. */
-export function dailyReadings(groups: Group[], timeZone: string, today: string): { name: string; type: number; day: string; value: number; readings: number }[] {
-  const sums = new Map<string, { type: number; day: string; total: number; n: number }>();
+export function dailyReadings(groups: Group[], timeZone: string, today: string): DailyValue[] {
+  const readings: { marker: VitalMarker; day: string; value: number }[] = [];
   for (const g of groups) {
     if (g.category !== undefined && g.category !== 1) continue; // 2 = the person's goals, not measurements
     const day = dayIn(g.date, timeZone);
     if (day >= today) continue;
     for (const m of g.measures ?? []) {
-      const t = TYPES[m.type];
-      if (!t || !Number.isFinite(m.value) || !Number.isFinite(m.unit)) continue;
-      const v = m.value * 10 ** m.unit;
-      if (v < t.bounds[0] || v > t.bounds[1]) continue;
-      const key = `${t.name}\u0000${day}`;
-      const s = sums.get(key) ?? { type: m.type, day, total: 0, n: 0 };
-      s.total += v; s.n++;
-      sums.set(key, s);
+      const marker = TYPES[m.type];
+      if (marker && Number.isFinite(m.value) && Number.isFinite(m.unit)) readings.push({ marker, day, value: m.value * 10 ** m.unit });
     }
   }
-  return [...sums.values()]
-    .map(s => { const t = TYPES[s.type]; const f = 10 ** t.decimals; return { name: t.name, type: s.type, day: s.day, value: Math.round((s.total / s.n) * f) / f, readings: s.n }; })
-    .sort((a, b) => a.day.localeCompare(b.day) || a.name.localeCompare(b.name));
-}
-
-/** Daily values as a FHIR R4 collection Bundle of Observations (what the app's FHIR reader takes). */
-export function readingsBundle(rows: ReturnType<typeof dailyReadings>, from: string, to: string): Record<string, unknown> {
-  return {
-    resourceType: 'Bundle', type: 'collection', id: `withings-${from}-${to}`, timestamp: new Date().toISOString(),
-    entry: rows.map(r => {
-      const t = TYPES[r.type];
-      return {
-        resource: {
-          resourceType: 'Observation', status: 'final',
-          category: [{ coding: [{ system: 'http://terminology.hl7.org/CodeSystem/observation-category', code: 'vital-signs' }] }],
-          code: { coding: [{ system: 'http://loinc.org', code: t.loinc, display: t.name }], text: t.name },
-          effectiveDateTime: r.day,
-          valueQuantity: { value: r.value, unit: t.unit, system: 'http://unitsofmeasure.org', code: t.ucum },
-          device: { display: 'Withings' },
-          note: [{ text: r.readings === 1 ? '1 reading' : `Mean of ${r.readings} readings that day` }],
-        },
-      };
-    }),
-  };
+  return dailyMeans(readings);
 }
 
 export function withingsFetcher(o: WithingsOptions): OAuthFetcher {
@@ -204,19 +163,12 @@ export function withingsFetcher(o: WithingsOptions): OAuthFetcher {
 
       const today = dayIn(nowS, timezone);
       const rows = dailyReadings(groups, timezone, today).filter(r => !t!.lastDay || r.day > t!.lastDay);
-      if (!rows.length) return [];
-      const from = rows[0].day, to = rows[rows.length - 1].day;
-      const bytes = new Uint8Array(Buffer.from(JSON.stringify(readingsBundle(rows, from, to)), 'utf8'));
-      const days = new Set(rows.map(r => r.day)).size;
+      const report = vitalsReport(rows, 'Withings');
+      if (!report) return [];
       // Next time, read only the days after these.
-      t = { ...t, lastDay: to };
+      t = { ...t, lastDay: rows[rows.length - 1].day };
       ctx.keep(JSON.stringify(t), ref(t.userid));
-      const key = createHash('sha256').update(JSON.stringify(rows)).digest('hex');
-      return [{
-        key, title: `Withings measurements, ${from === to ? from : `${from} to ${to}`}`, date: to,
-        fileName: `Withings ${from === to ? from : `${from} to ${to}`} (${days} day${days === 1 ? '' : 's'})`,
-        contentType: 'application/fhir+json', bytes,
-      }];
+      return [report];
     },
   };
 }
