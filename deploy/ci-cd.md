@@ -1,5 +1,34 @@
 # Automatic deploys from GitHub
 
+There are two ways to deploy every commit on `main`. Production currently uses the first: the server pulls by itself.
+
+## Production today: the server pulls `main`
+
+[`auto-deploy.sh`](auto-deploy.sh) runs on the server every 5 minutes from a systemd timer ([`systemd/`](systemd/)). It fetches `origin/main` with the server's read-only deploy key. When `main` has a commit the server isn't running, it passes it to [`remote-deploy.sh`](remote-deploy.sh), which checks it out, rebuilds, restarts and waits for the health check. It needs no GitHub Actions minutes, no GitHub secrets and no inbound SSH key, so it keeps working when Actions jobs can't start (for example, while the organization has no billing set up).
+
+**Nothing checks a commit before it goes live:** no lint, typecheck or tests run first. Merge to `main` only through reviewed pull requests, and run `npm run lint`, `npm run typecheck` and `npm test` before merging.
+
+Install once, in the server's browser SSH, as `ubuntu`:
+
+```bash
+cd /opt/lotuspond-health && git pull --ff-only origin main
+```
+
+```bash
+sudo /opt/lotuspond-health/deploy/install-auto-deploy.sh
+```
+
+| Task | Command on the server |
+| --- | --- |
+| Follow deploys | `journalctl -u lotuspond-auto-deploy -f` |
+| Deploy now | `/opt/lotuspond-health/deploy/auto-deploy.sh` |
+| Pause | `sudo systemctl disable --now lotuspond-auto-deploy.timer` |
+| Resume | `sudo systemctl enable --now lotuspond-auto-deploy.timer` |
+
+A commit that fails to deploy is tried only once. The timer waits for the next commit on `main`, or you can run `deploy/remote-deploy.sh <sha>` by hand. To roll back, revert on `main`: the server deploys the revert within a few minutes. Turn the timer off before switching to the GitHub Actions route below, so both don't deploy at once.
+
+## With GitHub Actions: checks first, then SSH
+
 [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml) runs on every push to `main` and `development`:
 
 1. **Checks:** `npm ci`, lint, typecheck and the full test suite. A failure stops the deploy.
@@ -13,7 +42,7 @@
 
 An environment without `DEPLOY_HOST` is skipped with a notice, so staging stays off until it has a server. Deploys to one server never overlap: a newer push waits for the running deploy.
 
-## Set up production (once)
+## Set up the GitHub Actions route (once)
 
 The server must already be running by hand: [`aws-lightsail.md`](aws-lightsail.md) through step 4, with `deploy/.env` in place and the repository cloned with its deploy key.
 
