@@ -123,6 +123,10 @@
 @keyframes glow-breathe { 0%, 100% { transform: translate(-50%, -50%) scale(1); } 50% { transform: translate(-50%, -50%) scale(1.14); opacity: 0.78; } }
 @media (prefers-reduced-motion: reduce) { .bm2d__glow.is-out, .bm2d__glow.is-far { animation: none; } }
 
+/* Pin buttons stay for keyboard and screen-reader use but show only while focused from the keyboard. */
+.bm2d__pins--glow .bm2d__pin { opacity: 0; }
+.bm2d__pins--glow .bm2d__pin:focus-within:has(:focus-visible) { opacity: 1; }
+.bm2d__pins--glow .pin__label { display: none; } /* the hover tag names the organ */
 .grades { position: absolute; left: 20px; top: 78px; z-index: 3; max-height: calc(100% - 150px); overflow-y: auto; scrollbar-width: none; }
 .grades ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
 .grade {
@@ -142,8 +146,12 @@
 .grade__name { white-space: nowrap; }
 .stage__legend i.halo { background: var(--c); box-shadow: 0 0 9px 2px var(--c); }
 .grades__key { margin: 10px 0 0 6px; color: #6f908d; font-size: 11.5px; line-height: 1.5; }
+/* Compact layout (COMPACT, src/lib/useMedia.ts): keep the column above the results sheet (--cover,
+   src/styles/mobile.css) and the legend; it scrolls when it is short. */
+@media (max-width: 760px) {
+  .grades { max-height: calc(100% - var(--cover, 0px) - 120px); }
+}
 @media (max-width: 640px) {
-  /* Above the results sheet (--cover, src/styles/mobile.css) and the legend; the column scrolls when it is short. */
   .grades { left: 8px; top: 56px; max-height: calc(100% - var(--cover, 0px) - 104px); }
   .grades ul { gap: 0; }
   .grade { padding: 2px; }

@@ -11,6 +11,7 @@ import { Glyph } from '../stage/Glyph';
 import { ORGAN_SYSTEMS, PINNED, STATUS_COLOR, pinLabel, pinState } from '../stage/status';
 import { ISSUE_COLOR, ISSUE_RGB, pinIssueClass, useIssues } from '../stage/issues';
 import { useStage } from '../stage/stageSettings';
+import { useOrganLevels } from '../stage/grades';
 import type { IssueLevel } from '../../lib/attention';
 import { ASPECT, ID_ORGAN, MANIFEST, ORGAN_INDEX, bodymapUrl, loadIdMap, preload, type Density, type IdMap } from './manifest';
 import '../../styles/stage.css';
@@ -116,19 +117,17 @@ function paintIssues(canvas: HTMLCanvasElement, m: IdMap, levels: Map<number, Is
  * colours otherwise, in place of pins and the painted issue layer. Halos sit at the organ's pin and take its size
  * from its outline in this view; regions spread over the body (the heart and its vessels) keep to a circle.
  */
-function Glows({ view, summary, issues, activeSystem }: {
+function Glows({ view, activeSystem }: {
   view: (typeof MANIFEST.angles)[number];
-  summary: ReturnType<typeof organSummary>;
-  issues: Partial<Record<OrganId, IssueLevel>>;
   activeSystem: ReturnType<typeof useHealth.getState>['activeSystem'];
 }) {
+  const levels = useOrganLevels();
   return (
     <div className="bm2d__glows" aria-hidden>
       {PINNED.map(o => {
-        const p = view.pins[o.id], b = view.boxes[o.id], s = summary[o.id];
-        if (!p || !b || !s?.total) return null;
+        const p = view.pins[o.id], b = view.boxes[o.id], lv = levels[o.id];
+        if (!p || !b || lv === undefined) return null;
         if (activeSystem && !ORGAN_SYSTEMS[o.id]?.has(activeSystem)) return null;
-        const lv = issues[o.id];
         const spread = (b[2] - b[0]) * (b[3] - b[1]) > SPREAD;
         // Box sides are shares of the image's width and height; the halo is a bit larger than the organ.
         const w = spread ? AREA_R * 2.8 : Math.min(0.3, Math.max(0.12, (b[2] - b[0]) * 1.5));
@@ -149,6 +148,7 @@ const GLOW_OK: [number, number, number] = [95, 191, 149];
 function Turntable({ angle, setAngle, density }: { angle: number; setAngle: (a: number) => void; density: Density }) {
   const hovered = useUI(s => s.hovered), setHovered = useUI(s => s.setHovered);
   const glow = useStage(s => s.glow);
+  // The glow view hides pins and labels, but keeps the pin buttons for the keyboard and screen readers.
   const labels = useUI(s => s.layers.labels) && !glow;
   const activeSystem = useHealth(s => s.activeSystem);
   const selectOrgan = useHealth(s => s.selectOrgan);
@@ -270,10 +270,10 @@ function Turntable({ angle, setAngle, density }: { angle: number; setAngle: (a: 
           onAnimationEnd={() => setUnder(null)} fetchPriority="high" />
         <canvas ref={issueLayer} className="bm2d__overlay bm2d__issues" width={iw} height={ih} aria-hidden />
         {glow && <><div className="bm2d__tint" aria-hidden /><div className="bm2d__veil" aria-hidden /></>}
-        {glow && <Glows view={view} summary={summary} issues={issues} activeSystem={activeSystem} />}
+        {glow && <Glows view={view} activeSystem={activeSystem} />}
         <canvas ref={overlay} className="bm2d__overlay" width={iw} height={ih} aria-hidden />
-        {labels && (
-          <div className="bm2d__pins">
+        {(labels || glow) && (
+          <div className={`bm2d__pins${glow ? ' bm2d__pins--glow' : ''}`}>
             {PINNED.map(o => {
               const p = view.pins[o.id];
               if (!p) return null;

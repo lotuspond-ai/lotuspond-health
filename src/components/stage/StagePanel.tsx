@@ -98,7 +98,7 @@ function StageOverlay({ mode }: { mode: StageMode }) {
           {in3d && !organ && <Chip on={layers.skin} onClick={() => toggleLayer('skin')} icon="skin" label="Skin" />}
           {in3d && (!organ || organ.id === 'marrow') && <Chip on={layers.skeleton} onClick={() => toggleLayer('skeleton')} icon="bone" label="Skeleton" />}
           {!in3d && !organ && <Chip on={glow} onClick={() => setGlow(!glow)} icon="glow" label="Glow view" title="Glow view: soft halos and a grade per body system" />}
-          {!(glow && !in3d) && <Chip on={layers.labels} onClick={() => toggleLayer('labels')} icon="tag" label="Labels" title="Result dots and labels" />}
+          {!(glow && !in3d && !organ) && <Chip on={layers.labels} onClick={() => toggleLayer('labels')} icon="tag" label="Labels" title="Result dots and labels" />}
           {in3d && <Chip on={studio} onClick={() => setStudio(!studio)} icon="sun" label="Studio light"
             title={held ? 'Studio light: paused to keep this device smooth' : 'Studio light: water reflections and glow'} extra={held ? <i className="chip__held" /> : null} />}
         </div>
