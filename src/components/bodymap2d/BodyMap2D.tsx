@@ -10,6 +10,8 @@ import { warmCache } from '../../sw-register';
 import { Glyph } from '../stage/Glyph';
 import { ORGAN_SYSTEMS, PINNED, STATUS_COLOR, pinLabel, pinState } from '../stage/status';
 import { ISSUE_COLOR, ISSUE_RGB, pinIssueClass, useIssues } from '../stage/issues';
+import { useStage } from '../stage/stageSettings';
+import { useOrganLevels } from '../stage/grades';
 import type { IssueLevel } from '../../lib/attention';
 import { ASPECT, ID_ORGAN, MANIFEST, ORGAN_INDEX, bodymapUrl, loadIdMap, preload, type Density, type IdMap } from './manifest';
 import '../../styles/stage.css';
@@ -110,9 +112,44 @@ function paintIssues(canvas: HTMLCanvasElement, m: IdMap, levels: Map<number, Is
   g.putImageData(img, 0, 0);
 }
 
+/**
+ * The "Glow" look: a soft halo on each organ that has results, green when they are all in range and in the issue
+ * colours otherwise, in place of pins and the painted issue layer. Halos sit at the organ's pin and take its size
+ * from its outline in this view; regions spread over the body (the heart and its vessels) keep to a circle.
+ */
+function Glows({ view, activeSystem }: {
+  view: (typeof MANIFEST.angles)[number];
+  activeSystem: ReturnType<typeof useHealth.getState>['activeSystem'];
+}) {
+  const levels = useOrganLevels();
+  return (
+    <div className="bm2d__glows" aria-hidden>
+      {PINNED.map(o => {
+        const p = view.pins[o.id], b = view.boxes[o.id], lv = levels[o.id];
+        if (!p || !b || lv === undefined) return null;
+        if (activeSystem && !ORGAN_SYSTEMS[o.id]?.has(activeSystem)) return null;
+        const spread = (b[2] - b[0]) * (b[3] - b[1]) > SPREAD;
+        // Box sides are shares of the image's width and height; the halo is a bit larger than the organ.
+        const w = spread ? AREA_R * 2.8 : Math.min(0.3, Math.max(0.12, (b[2] - b[0]) * 1.5));
+        const h = spread ? AREA_R * 2.8 * ASPECT : Math.min(0.22, Math.max(0.08, (b[3] - b[1]) * 1.35));
+        const rgb = lv ? ISSUE_RGB[lv] : GLOW_OK;
+        return (
+          <i key={o.id} className={`bm2d__glow${lv ? ` is-${lv}` : ''}${p[2] < -0.045 ? ' is-back' : ''}`}
+            style={{ left: `${p[0] * 100}%`, top: `${p[1] * 100}%`, width: `${w * 100}%`, height: `${h * 100}%`, ['--rgb' as string]: rgb.join(',') }} />
+        );
+      })}
+    </div>
+  );
+}
+
+/** In-range green of the glow look (the "In range" pin colour). */
+const GLOW_OK: [number, number, number] = [95, 191, 149];
+
 function Turntable({ angle, setAngle, density }: { angle: number; setAngle: (a: number) => void; density: Density }) {
   const hovered = useUI(s => s.hovered), setHovered = useUI(s => s.setHovered);
-  const labels = useUI(s => s.layers.labels);
+  const glow = useStage(s => s.glow);
+  // The glow view hides pins and labels, but keeps the pin buttons for the keyboard and screen readers.
+  const labels = useUI(s => s.layers.labels) && !glow;
   const activeSystem = useHealth(s => s.activeSystem);
   const selectOrgan = useHealth(s => s.selectOrgan);
   const measurements = useHealth(s => s.measurements);
@@ -158,16 +195,16 @@ function Turntable({ angle, setAngle, density }: { angle: number; setAngle: (a: 
     const hot = hovered ? ORGAN_INDEX[hovered] ?? 0 : 0;
     // A chosen body system dims everything else; otherwise, when results are outside range, the healthy organs step
     // back a little so the glowing ones stand out.
-    const calm = !activeSystem && Object.keys(issues).length > 0;
+    const calm = !glow && !activeSystem && Object.keys(issues).length > 0;
     const dim = activeSystem ? new Set(ID_ORGAN.flatMap((o, i) => (o && !ORGAN_SYSTEMS[o]?.has(activeSystem) ? [i] : [])))
       : calm ? new Set(ID_ORGAN.flatMap((o, i) => (o && o !== 'skin' && !issues[o] ? [i] : []))) : null;
-    if (idMap) paintOverlay(overlay.current, idMap, hot, dim, activeSystem ? 165 : 70);
-  }, [idMap, hovered, activeSystem, issues]);
+    if (idMap) paintOverlay(overlay.current, idMap, hot, dim, activeSystem ? (glow ? 120 : 165) : 70);
+  }, [idMap, hovered, activeSystem, issues, glow]);
 
   useEffect(() => {
     if (!issueLayer.current || !idMap) return;
     // A chosen body system takes over the highlighting.
-    const levels = new Map<number, IssueLevel>(activeSystem ? [] : Object.entries(issues).map(([o, lv]) => [ORGAN_INDEX[o as OrganId] ?? 0, lv as IssueLevel]));
+    const levels = new Map<number, IssueLevel>(activeSystem || glow ? [] : Object.entries(issues).map(([o, lv]) => [ORGAN_INDEX[o as OrganId] ?? 0, lv as IssueLevel]));
     levels.delete(0);
     const view = MANIFEST.angles[shown], areas = new Map<number, Area>();
     for (const o of Object.keys(issues) as OrganId[]) {
@@ -175,7 +212,7 @@ function Turntable({ angle, setAngle, density }: { angle: number; setAngle: (a: 
       if (b && p && (b[2] - b[0]) * (b[3] - b[1]) > SPREAD) areas.set(ORGAN_INDEX[o] ?? 0, { x: p[0], y: p[1], r: AREA_R });
     }
     paintIssues(issueLayer.current, idMap, levels, areas);
-  }, [idMap, issues, activeSystem, shown]);
+  }, [idMap, issues, activeSystem, shown, glow]);
 
   const organAt = async (clientX: number, clientY: number, wait: boolean): Promise<OrganId | null> => {
     const m = idMap ?? (wait ? await loadIdMap(shown).catch(() => null) : null);
@@ -232,9 +269,11 @@ function Turntable({ angle, setAngle, density }: { angle: number; setAngle: (a: 
         <img key={shown} className="bm2d__img bm2d__img--in" src={imageUrl(shown, density)} alt="" draggable={false}
           onAnimationEnd={() => setUnder(null)} fetchPriority="high" />
         <canvas ref={issueLayer} className="bm2d__overlay bm2d__issues" width={iw} height={ih} aria-hidden />
+        {glow && <><div className="bm2d__tint" aria-hidden /><div className="bm2d__veil" aria-hidden /></>}
+        {glow && <Glows view={view} activeSystem={activeSystem} />}
         <canvas ref={overlay} className="bm2d__overlay" width={iw} height={ih} aria-hidden />
-        {labels && (
-          <div className="bm2d__pins">
+        {(labels || glow) && (
+          <div className={`bm2d__pins${glow ? ' bm2d__pins--glow' : ''}`}>
             {PINNED.map(o => {
               const p = view.pins[o.id];
               if (!p) return null;
@@ -309,6 +348,7 @@ export function BodyMap2D() {
   const [angle, setAngle] = useState(0);
   const selected = useHealth(s => s.selectedOrgan);
   const close = selected && selected !== 'skin' && MANIFEST.closeups[selected] ? selected : null;
+  const glow = useStage(s => s.glow);
 
   // Once the first view is up, let the service worker keep every image of this size for next time (and offline).
   useEffect(() => {
@@ -321,7 +361,7 @@ export function BodyMap2D() {
   }, [density]);
 
   return (
-    <div ref={root} className="bm2d" style={{ ['--ar' as string]: ASPECT, background: MANIFEST.background }}>
+    <div ref={root} className={`bm2d${glow && !close ? ' bm2d--glow' : ''}`} style={{ ['--ar' as string]: ASPECT, ['--bg' as string]: MANIFEST.background, background: MANIFEST.background }}>
       {close ? <CloseUp key={close} organ={close} density={density} /> : <Turntable angle={angle} setAngle={setAngle} density={density} />}
     </div>
   );
