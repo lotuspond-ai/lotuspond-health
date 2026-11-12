@@ -25,7 +25,7 @@ sudo /opt/lotuspond-health/deploy/install-auto-deploy.sh
 | Pause | `sudo systemctl disable --now lotuspond-auto-deploy.timer` |
 | Resume | `sudo systemctl enable --now lotuspond-auto-deploy.timer` |
 
-A commit that fails to deploy is tried only once. The timer waits for the next commit on `main`, or you can run `deploy/remote-deploy.sh <sha>` by hand. To roll back, revert on `main`: the server deploys the revert within a few minutes. Turn the timer off before switching to the GitHub Actions route below, so both don't deploy at once.
+The script remembers the last commit it deployed in `~/.lotuspond-deployed`. A `git pull` alone deploys nothing, so the timer still deploys the pulled commit. A deploy run by hand with `remote-deploy.sh` isn't recorded, so the timer then deploys `main` once more. A commit that fails to deploy is tried only once. The timer waits for the next commit on `main`, or you can run `deploy/remote-deploy.sh <sha>` by hand. To roll back, revert on `main`: the server deploys the revert within a few minutes. Turn the timer off before switching to the GitHub Actions route below, so both don't deploy at once.
 
 ## With GitHub Actions: checks first, then SSH
 
