@@ -32,6 +32,8 @@ export interface SourceInfo {
   startUrl?: string;
   /** Shown under the name, e.g. what to expect or why it is not available yet. */
   note?: string;
+  /** Shown instead of `note` once the source can be connected on this server (how connecting works). */
+  readyNote?: string;
 }
 
 export const SOURCE_CATEGORY_TEXT: Record<SourceCategory, { title: string; detail: string }> = {
@@ -61,7 +63,8 @@ export const SOURCES: SourceInfo[] = [
   /* ---------------- government ---------------- */
   { id: 'abha', name: 'ABHA (Ayushman Bharat Health Account)', category: 'government', regions: IN, access: 'abdm', signIn: 'abha',
     holds: ['Records linked by hospitals, labs and government programmes', 'Prescriptions', 'Discharge summaries', 'Vaccinations'],
-    note: 'Sign in with your ABHA (an OTP), approve LotusPond’s consent request with your ABHA PIN, and the records hospitals and labs linked to it come in as FHIR files to review.' },
+    note: 'Needs ABHA to be set up on this LotusPond server (through Eka Care’s ABDM Connect). Until then, export FHIR records from your ABHA app and upload them.',
+    readyNote: 'Sign in with your ABHA (an OTP), approve LotusPond’s consent request with your ABHA PIN, and the records hospitals and labs linked to it come in as FHIR files to review.' },
   { id: 'digilocker', name: 'DigiLocker', category: 'government', regions: IN, access: 'browser', signIn: 'otp',
     hosts: ['digilocker.gov.in', 'meripehchaan.gov.in'], startUrl: 'https://www.digilocker.gov.in/',
     holds: ['Vaccination certificates', 'Health insurance documents issued to DigiLocker', 'Disability and other certificates'] },
@@ -171,7 +174,7 @@ export const SOURCES: SourceInfo[] = [
   { id: 'garmin', name: 'Garmin', category: 'wearable', regions: ALL, access: 'api', signIn: 'oauth', holds: ['Steps', 'Sleep', 'Heart rate'] },
   { id: 'withings', name: 'Withings', category: 'wearable', regions: ALL, access: 'api', signIn: 'oauth',
     holds: ['Weight and body fat', 'Blood pressure and pulse', 'SpO2', 'Body temperature'],
-    note: 'Sign in on Withings’ own page. Each check brings in one value per day from your scale, blood pressure monitor, thermometer or oximeter, to review like a report.' },
+    readyNote: 'Sign in on Withings’ own page. Each check brings in one value per day from your scale, blood pressure monitor, thermometer or oximeter, to review like a report.' },
   { id: 'libre', name: 'FreeStyle Libre (LibreView)', category: 'wearable', regions: ALL, access: 'api', signIn: 'oauth', holds: ['Continuous glucose'] },
 
   /* ---------------- messages and email ---------------- */

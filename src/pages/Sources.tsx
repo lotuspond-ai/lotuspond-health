@@ -91,7 +91,8 @@ export default function SourcesPage() {
               <li key={s.id} className="sources__card">
                 <div className="sources__card-head"><b>{s.name}</b><span className={`sources__badge sources__badge--${b.tone}`}>{b.text}</span></div>
                 <small>{s.holds.join(' · ')}</small>
-                <small className="note">{s.availability === 'navigator' ? 'Claude finds its way around this portal with you. It is new; check what it saves.' : s.note ?? SOURCE_ACCESS_TEXT[s.access]}</small>
+                <small className="note">{s.availability === 'navigator' ? 'Claude finds its way around this portal with you. It is new; check what it saves.'
+                  : (s.availability !== 'unavailable' && s.readyNote) || s.note || SOURCE_ACCESS_TEXT[s.access]}</small>
                 {canConnect && <button type="button" className="btn btn--small btn--primary" onClick={() => setConnecting(s)}>Connect</button>}
               </li>
             );

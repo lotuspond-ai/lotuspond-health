@@ -388,6 +388,14 @@ check('PDF units never contain digits-only tokens', pdf.measurements.every(m => 
   check('method after value', m2('iron')?.valueText === '62' && m2('iron')?.unit === 'µg/dL' && m2('iron')?.rangeText === '65 - 175', `${m2('iron')?.unit} | ${m2('iron')?.rangeText}`);
   check('plasma suffix', m2('glucose_fasting')?.valueText === '98');
   check('note lines skipped', more.length === 4, more.map(r => r.match.def.id).join(','));
+  // A method column after the range (Apollo's Lp(a) and thyroid rows): not part of the range.
+  const tail = findRows([
+    mk(540, [['LIPOPROTEIN a (Lp-a) , SERUM', 40], ['5.29', 150], ['mg/dL', 190], ['<75', 230], ['Immunoturbidimetric', 280]]),
+    mk(526, [['TSH', 40], ['3.413', 150], ['µIU/mL', 190], ['0.35-4.75', 230], ['CLIA', 280]]),
+  ]);
+  const t2 = id => tail.find(x => x.match.def.id === id);
+  check('method after range: Lp(a)', t2('lpa')?.rangeText === '<75', t2('lpa')?.rangeText);
+  check('method after range: TSH', t2('tsh')?.rangeText === '0.35-4.75', t2('tsh')?.rangeText);
 }
 
 // Second layout: method column, per-word text items, separate flag column, multi-line ranges, urine section.

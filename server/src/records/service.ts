@@ -414,7 +414,11 @@ export function createRecordAgent(opts: RecordAgentOptions): RecordAgent {
       const id = randomUUID();
       const storageKey = `${conn.profileId}/${id}`;
       const base = r.fileName.replace(/\.[a-z0-9]{2,4}$/i, '').replace(/[^\w .()&,-]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 110) || `${source.name} report`;
-      const fileName = `${base}.${ext}`;
+      // Two reports from one lab on one day get the same name: number the later ones, "… (2).pdf".
+      const names = [`${base}.${ext}`, ...Array.from({ length: 49 }, (_, i) => `${base} (${i + 2}).${ext}`)];
+      const taken = new Set((await cell.db.select({ fileName: documents.fileName }).from(documents)
+        .where(and(eq(documents.profileId, conn.profileId), inArray(documents.fileName, names)))).map(d => d.fileName));
+      const fileName = names.find(n => !taken.has(n)) ?? `${base} (${id.slice(0, 8)}).${ext}`;
       await cell.files.put(storageKey, r.bytes);
       try {
         await cell.db.insert(documents).values({ id, profileId: conn.profileId, storageKey, kind: 'report', fileName, contentType, sizeBytes: r.bytes.byteLength, sha256 });

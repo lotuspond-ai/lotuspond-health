@@ -248,6 +248,19 @@ describe('record agent', { timeout: 180_000 }, () => {
     assert.match(r.error ?? '', /has changed its website/);
   });
 
+  test('two reports with the same name are both saved, the second numbered', async () => {
+    const pdf = (s: string) => new Uint8Array(Buffer.from(`%PDF-1.4\n% ${s}\n%%EOF\n`));
+    const twins = setup({ recipes: [{ sourceId: DEMO_SOURCE_ID, run: async () => [1, 2, 3].map(i => ({
+      key: `twin-${i}`, title: 'Lab Report', date: '2026-09-01', fileName: 'Lab Report SL NIZAMABAD 2026-09-01.pdf', contentType: 'application/pdf', bytes: pdf(`report ${i}`),
+    })) }] });
+    const { c, self } = await account(twins.app);
+    const made = await c.json<{ run: RecordRunView }>('POST', '/api/records/connections', { sourceId: DEMO_SOURCE_ID, profileId: self.id, noticeVersion: RECORD_AGENT_NOTICE_VERSION }, 201);
+    await twins.agent.idle();
+    const r = await c.json<RecordRunView>('GET', `/api/records/runs/${made.run.id}`);
+    assert.equal(r.saved, 3, r.error ?? '');
+    assert.deepEqual(r.documents.map(d => d.fileName), ['Lab Report SL NIZAMABAD 2026-09-01.pdf', 'Lab Report SL NIZAMABAD 2026-09-01 (2).pdf', 'Lab Report SL NIZAMABAD 2026-09-01 (3).pdf']);
+  });
+
   test('portal addresses must be public https sites', async () => {
     const withClaude = setup({ navigator: { client: new Anthropic({ apiKey: 'sk-ant-test' }) }, resolve: async h => (h === 'reports.example-lab.in' ? ['203.0.113.10'] : h === 'sneaky.example' ? ['10.0.0.5'] : []) });
     const { c, self } = await account(withClaude.app);
