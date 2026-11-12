@@ -8,6 +8,29 @@ This is the India server from [`README.md`](README.md) (`SERVED_REGIONS=in`) on 
 
 Steps 1 and 2 can be done in one go. Open [AWS CloudShell](https://console.aws.amazon.com/cloudshell/home?region=ap-south-1) (the terminal in the AWS console, already signed in), paste the contents of [`aws-lightsail-create.sh`](aws-lightsail-create.sh), and press Enter. It creates the instance with the first-boot script, daily automatic snapshots, a static IP and the firewall rules, then prints the IPv4 and IPv6 addresses for step 3. Running it again skips what already exists.
 
+## CloudFormation route: steps 1, 2 and 4 in one stack
+
+This is how the production server was created (stack `lotuspond-health-in`). [`aws-lightsail.cfn.yaml`](aws-lightsail.cfn.yaml) describes the same instance, snapshots, static IP and firewall as the steps below. [`aws-lightsail-firstboot.sh`](aws-lightsail-firstboot.sh) does step 4 by itself once the server can reach the repository. From a clone of this repository in CloudShell:
+
+```bash
+ACME_EMAIL=ops@lotuspond.ai bash deploy/aws-lightsail-cfn.sh
+```
+
+The script makes a new read-only deploy key and passes it to the stack inside the first-boot script, as a hidden (`NoEcho`) parameter. It prints the public key and the server's addresses. Then:
+
+1. **Add the deploy key** on GitHub: repository **Settings → Deploy keys → Add deploy key**, with **Allow write access** off. If GitHub says deploy keys are disabled, an organization owner turns them on first: organization **Settings → Member privileges → Deploy keys → Enabled**. That setting applies to every repository in the organization.
+2. **DNS** as in step 3.
+3. **Wait.** The server tries the clone every minute for up to 12 hours. Once it works, the server creates `deploy/.env` with fresh secrets (`SERVED_REGIONS=in`, `ACME_EMAIL` and `GEO_CONTACT_EMAIL` from the script) and runs `docker compose up -d --build`. `https://health.lotuspond.ai/api/health` answers a few minutes later. The log is `/var/log/lotuspond-firstboot.log`.
+4. **Back up `deploy/.env`** (browser SSH: `cat /opt/lotuspond-health/deploy/.env`). Add `GRIEVANCE_CONTACT` and `DPO_CONTACT` to it, then run `docker compose up -d` in `deploy/`.
+
+Mumbai has its own bundle IDs: the 4 GB plan is `medium_3_1` there, and `medium_3_0` does not exist. To change the plan or firewall later, edit the template and update the stack, keeping the hidden parameter:
+
+```bash
+aws cloudformation update-stack --region ap-south-1 --stack-name lotuspond-health-in --template-body file://deploy/aws-lightsail.cfn.yaml --parameters ParameterKey=UserData,UsePreviousValue=true
+```
+
+CloudFormation does not support changing `BundleId`, `BlueprintId` or `AvailabilityZone` on an existing instance. Move to a larger plan from a snapshot instead (see "When to grow"). Ports, snapshots and tags update in place.
+
 ## 1. Create the instance
 
 In the [Lightsail console](https://lightsail.aws.amazon.com/), choose **Create instance**:
