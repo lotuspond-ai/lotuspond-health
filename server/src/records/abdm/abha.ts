@@ -169,25 +169,29 @@ export function abhaFetcher(o: AbhaOptions): ApiFetcher {
         period: { from: '1990-01-01T00:00:00Z', to: new Date(at).toISOString(), expiry: new Date(at + year).toISOString() },
       },
     });
-    // The request lands in the person's own consent inbox. Ours: one that carries the id the create call returned, or
-    // else the only request that arrived since the inbox was read just before. Two new ones, and it is not clear.
+    // The request lands in the person's own consent inbox. A candidate: the one new request that carries the id the
+    // create call returned, or else the only request that arrived since the inbox was read just before.
     const ours = new Set([created?.consent_init_id, created?.consent_request_id, created?.id].filter((x): x is string => !!x));
     const fresh = (await inbox()).filter(r => !earlier.has(r.id) && (!r.created_at || Date.parse(r.created_at) >= at - 5 * 60_000));
     const tagged = fresh.filter(r => [r.consent_init_id, r.consent_request_id, r.request_id].some(x => !!x && ours.has(x)));
     const mine = tagged.length === 1 ? tagged[0] : !tagged.length && fresh.length === 1 ? fresh[0] : undefined;
     if (!mine) return false;
+    const byId = tagged.length === 1;
     const pin = await eka.call<{ exist?: boolean }>('/abdm/v1/consents/pin/exists', { oid: s.oid });
     if (pin.exist === false) return false;
     type Detail = {
       hi_types?: string[]; duration?: { from: string; to: string }; erase_at?: string; providers?: { hip: { id: string; name?: string }; care_contexts?: { id: string; display?: string }[] }[];
-      purpose?: string | { text?: string; code?: string }; hiu?: { clinic_id?: string };
+      purpose?: string | { text?: string; code?: string }; hiu?: { clinic_id?: string; id?: string };
     };
     const d = await eka.call<Detail>('/abdm/v1/request', { oid: s.oid, query: { id: mine.id, type: 'consent', status: 'requested' } });
-    // When the request says what it is for and who asks, it must be LotusPond's: Self Requested (ABDM code PATRQT),
-    // from LotusPond's clinic at Eka.
+    // It must be LotusPond's: Self Requested (ABDM code PATRQT), from LotusPond's clinic at Eka. A request tied to the
+    // create call by its id only has to not say otherwise; one found only by arriving alone must say so itself. A
+    // request that does not show both is left to the person's ABHA app, which shows who asks: never approved here.
     const purpose = typeof d.purpose === 'string' ? d.purpose : d.purpose?.text ?? d.purpose?.code;
-    if (purpose && !/self|PATRQT/i.test(purpose)) return false;
-    if (d.hiu?.clinic_id && d.hiu.clinic_id !== hiu.clinicId) return false;
+    const clinic = d.hiu?.clinic_id ?? d.hiu?.id;
+    const purposeOk = purpose ? /self|PATRQT/i.test(purpose) : byId;
+    const clinicOk = clinic ? clinic === hiu.clinicId : byId;
+    if (!purposeOk || !clinicOk) return false;
     const providers: NonNullable<Detail['providers']> = d.providers?.length ? d.providers : hips.map(id => ({ hip: { id }, care_contexts: [] }));
     const names = [...new Set(providers.map(p => p.hip.name ?? p.hip.id))];
     for (let attempt = 0; ; attempt++) {

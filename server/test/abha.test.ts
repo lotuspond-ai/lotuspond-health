@@ -47,6 +47,8 @@ function fakeEka() {
       'HIP-B': [{ care_context_id: 'cc-b1', display: 'Complete Blood Count', created_at: '2026-10-21T06:30:00Z', status: null as string | null }],
     } as Record<string, { care_context_id: string; display: string; created_at: string; status: string | null }[]>,
     inbox: [] as { id: string; created_at: string }[],
+    // What a consent request's details show: LotusPond's purpose and clinic, or neither (the shape is not confirmed live).
+    detail: 'ours' as 'ours' | 'bare',
   };
   const err = (code: number, message: string, abdm?: string) => ({ code, error: message, ...(abdm ? { source_error: { code: abdm, message } } : {}) });
   const app = new Hono();
@@ -106,6 +108,7 @@ function fakeEka() {
   app.get('/abdm/v1/requests', c => c.json({ consents: c.req.query('status') === 'requested' ? state.inbox : [], subscriptions: [], authorizations: [] }));
   app.get('/abdm/v1/consents/pin/exists', c => c.json({ exist: true }));
   app.get('/abdm/v1/request', c => c.json({
+    ...(state.detail === 'ours' ? { purpose: { code: 'PATRQT', text: 'Self Requested' }, hiu: { clinic_id: 'clinic-1' } } : {}),
     hi_types: ['DiagnosticReport'], duration: { from: '1990-01-01T00:00:00Z', to: '2026-11-11T00:00:00Z' }, erase_at: '2027-11-11T00:00:00Z',
     providers: [{ hip: { id: 'HIP-B', name: 'City Diagnostics' }, care_contexts: [{ id: 'cc-b1', display: 'Complete Blood Count' }] }], id: c.req.query('id'),
   }));
@@ -312,6 +315,20 @@ describe('ABHA through Eka Care', { timeout: 120_000 }, () => {
     assert.equal(after[0].lastRun!.trigger, 'schedule');
     assert.equal(after[0].lastRun!.saved, 1);
     assert.equal(after[0].reportsSaved, 3);
+
+    // A new record with no consent, and the request's details do not say who asks: the PIN is not asked for and
+    // nothing is approved here; the person is told to approve it in their ABHA app.
+    eka.state.contexts['HIP-B'].push({ care_context_id: 'cc-b2', display: 'HbA1c', created_at: '2026-11-11T07:00:00Z', status: null });
+    eka.state.detail = 'bare';
+    const bare = await c.json<RecordRunView>('POST', `/api/records/connections/${connection.id}/run`, undefined, 201);
+    const b = await endOf(c, bare.id);
+    assert.equal(b.status, 'succeeded', b.error ?? '');
+    assert.match(b.note ?? '', /Approve the request in your ABHA app/);
+    assert.equal(eka.state.consents.length, 2, 'LotusPond raised a second request');
+    assert.equal(eka.state.approved.length, 1, 'but did not approve it');
+    eka.state.detail = 'ours';
+    eka.state.inbox = [];
+    eka.state.contexts['HIP-B'] = eka.state.contexts['HIP-B'].filter(x => x.care_context_id !== 'cc-b2');
 
     // A scheduled check after the session ended asks nobody: the connection waits for the person.
     eka.state.loggedIn = false;
