@@ -114,7 +114,7 @@ export function gmailFetcher(client: OAuthClient, opts: { apiUrl?: string; autho
   return {
     sourceId: 'gmail',
     authorizeUrl: state => session.authorizeUrl(state),
-    exchange: code => session.exchange(code),
+    exchange: (code, state) => session.exchange(code, state),
     async run(ctx) {
       const s = await session.signIn(ctx);
       const base = `${api}/gmail/v1/users/me`;
@@ -169,7 +169,7 @@ export function outlookFetcher(client: OAuthClient, opts: { apiUrl?: string; aut
   return {
     sourceId: 'outlook',
     authorizeUrl: state => session.authorizeUrl(state),
-    exchange: code => session.exchange(code),
+    exchange: (code, state) => session.exchange(code, state),
     async run(ctx) {
       const s = await session.signIn(ctx);
       return check(ctx, 'Outlook', s, now(), async since => {

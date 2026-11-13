@@ -9,6 +9,7 @@ Status: November 2026. The engine, the app's Sources page and the MCP tool are b
 - **Withings, through its API** (`server/src/records/api/withings.ts`, §5.3): the person signs in on Withings' own page, and each check brings in one value per day from their scale, blood pressure monitor, thermometer or oximeter. It is on when `WITHINGS_CLIENT_ID` and `WITHINGS_CLIENT_SECRET` are set, and is not yet tried with a real Withings account.
 - **Oura and Ultrahuman, through their APIs** (`server/src/records/api/oura.ts`, `ultrahuman.ts`, §5.4): the same sign-in on the provider's page, with one value per day for resting heart rate, SpO2 and breathing rate during sleep, and Ultrahuman M1 glucose once Ultrahuman grants that scope. They are on when `OURA_CLIENT_ID`/`OURA_CLIENT_SECRET` or `ULTRAHUMAN_CLIENT_ID`/`ULTRAHUMAN_CLIENT_SECRET` are set, and are not yet tried with real accounts.
 - **Gmail and Outlook, through their APIs** (`server/src/records/api/mail.ts`, §5.5): read-only sign-in on Google's or Microsoft's page; each check saves the PDF reports from health emails (known lab, hospital and pharmacy senders, or subjects naming a lab report, prescription or discharge summary), never the emails. On when `GMAIL_CLIENT_ID`/`GMAIL_CLIENT_SECRET` or `OUTLOOK_CLIENT_ID`/`OUTLOOK_CLIENT_SECRET` are set; not yet tried with real mailboxes.
+- **DigiLocker, through its Authorized Partner API** (`server/src/records/api/digilocker.ts`, §5.6), when `DIGILOCKER_CLIENT_ID`/`DIGILOCKER_CLIENT_SECRET` are set; otherwise DigiLocker stays a browser source. Only health documents are brought in, and each check starts on DigiLocker's page. Needs LotusPond's registration as a DigiLocker Requester; not yet run against the real service.
 - **ABHA, with no browser:** through Eka Care's ABDM Connect (`server/src/records/abdm/`, docs/abdm.md). The same runs and questions: an OTP to sign in, the ABHA consent PIN to approve LotusPond's consent request. The records come in as FHIR files. It is on when `EKA_CLIENT_ID` and `EKA_CLIENT_SECRET` are set, and is waiting on LotusPond's ABDM Connect onboarding.
 
 The record agent brings a family's reports in from the portals where they live: labs, hospitals, government services, pharmacies and insurers.
@@ -311,6 +312,27 @@ Setting up:
 - **Redirect URIs:** `PUBLIC_URL/records/oauth/gmail/callback` and `PUBLIC_URL/records/oauth/outlook/callback`.
 
 Tests: `server/test/mail.test.ts` runs against copies of the Gmail API and Graph.
+
+### 5.6 DigiLocker (Authorized Partner API, OAuth)
+
+DigiLocker's partner API is run by NeGD, with Meri Pehchaan sign-in. It follows the *Authorized Partner API Specification v2.0* (September 2022). When it is configured it takes over from the browser for the `digilocker` source: a source's own API wins over its browser access.
+
+1. **Sign-in.** `GET /public/oauth2/1/authorize` with `scope=openid` and PKCE (S256). The code verifier is an HMAC of the one-time state under the client secret, so nothing extra is stored. The token comes from `POST /public/oauth2/2/token` with the `code_verifier`.
+2. **One hour, no refresh.** Version 2.0 removed refresh tokens, and an access token lasts 3600 seconds. So DigiLocker is a one-time source (`oneTime` on the fetcher, shown to the app on the source):
+   - connecting, and Check now, always open DigiLocker's page;
+   - there is no schedule: `refreshDays` is kept empty, a schedule is refused with `no_schedule`, and Check now answers `oauth_needed`, which the app turns into the redirect.
+3. **Which documents.**
+   - **Issued** (`GET /public/oauth2/2/files/issued`): only health ones, by type, name or issuer. That covers vaccination certificates, health insurance and mediclaim policies, Ayushman / PM-JAY and ABHA cards, disability (UDID) certificates, CGHS and ESIC cards. Only PDFs are taken.
+   - **Uploaded** (`GET /public/oauth2/1/files/[id]`, two folder levels down): files whose names say they are medical (report, lab, scan, prescription, discharge, …).
+   - **Never:** identity and other documents (Aadhaar, PAN, licences, voter ID, passport, ration card, mark sheets, vehicle, income, caste, birth certificates). An identity word in the name always wins.
+4. **Integrity.** Each file (`GET /public/oauth2/1/file/{uri}`) comes with an `hmac` header: Base64 HMAC-SHA256 of the bytes under the client secret. It is checked before saving, and files that fail are not saved; the run notes how many.
+
+**Getting access.** Register LotusPond as a DigiLocker *Requester* on DigiLocker's partner portal (see digilocker.gov.in → Partners → Requesters; the API is listed on API Setu). This is not self-serve. Then:
+- register the redirect URI `PUBLIC_URL/records/oauth/digilocker/callback`;
+- set `DIGILOCKER_CLIENT_ID` and `DIGILOCKER_CLIENT_SECRET`;
+- set `DIGILOCKER_API_URL` if DigiLocker gives a sandbox address.
+
+Tests: `server/test/digilocker.test.ts` runs against a copy of the API. It covers PKCE (a wrong verifier is refused), the document filter (identity documents and bills never downloaded), a tampered file not saved, and the one-time behaviour.
 
 ## 6. Trying it
 

@@ -138,6 +138,12 @@ const Env = z.object({
   GMAIL_CLIENT_SECRET: z.string().trim().min(8).optional(),
   OUTLOOK_CLIENT_ID: z.string().trim().min(8).optional(),
   OUTLOOK_CLIENT_SECRET: z.string().trim().min(8).optional(),
+  /* DigiLocker's Authorized Partner (Requester) API: credentials from DigiLocker's partner portal once LotusPond is
+     registered as a Requester. Redirect URI PUBLIC_URL/records/oauth/digilocker/callback. DIGILOCKER_API_URL points at
+     a sandbox when DigiLocker gives one. */
+  DIGILOCKER_CLIENT_ID: z.string().trim().min(4).optional(),
+  DIGILOCKER_CLIENT_SECRET: z.string().trim().min(8).optional(),
+  DIGILOCKER_API_URL: z.string().url().default('https://digilocker.meripehchaan.gov.in'),
   /** The key Eka signs webhooks with; the webhook at /hooks/eka is served only when it is set. */
   EKA_WEBHOOK_SIGNING_KEY: z.string().trim().min(16).optional(),
   OVERPASS_URL: z.string().url().default('https://overpass-api.de/api/interpreter'),
@@ -223,6 +229,7 @@ export interface RecordAgentConfig {
   ultrahuman?: { clientId: string; clientSecret: string; redirectUri: string; cgm: boolean };
   gmail?: { clientId: string; clientSecret: string; redirectUri: string };
   outlook?: { clientId: string; clientSecret: string; redirectUri: string };
+  digilocker?: { clientId: string; clientSecret: string; redirectUri: string; apiUrl: string };
 }
 
 export interface CellConfig {
@@ -377,6 +384,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     const outlook = oauthClient('OUTLOOK', e.OUTLOOK_CLIENT_ID, e.OUTLOOK_CLIENT_SECRET, 'outlook');
     if (gmail) records.gmail = gmail;
     if (outlook) records.outlook = outlook;
+    const digilocker = oauthClient('DIGILOCKER', e.DIGILOCKER_CLIENT_ID, e.DIGILOCKER_CLIENT_SECRET, 'digilocker');
+    if (digilocker) records.digilocker = { ...digilocker, apiUrl: e.DIGILOCKER_API_URL.replace(/\/$/, '') };
   }
   const cellVar = (r: DataRegion, name: string) => (e as unknown as Record<string, string | undefined>)[`CELL_${r.toUpperCase()}_${name}`];
   const servedRegions = parseRegions(e.SERVED_REGIONS);

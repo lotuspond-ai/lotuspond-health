@@ -67,7 +67,8 @@ export const SOURCES: SourceInfo[] = [
     readyNote: 'Sign in with your ABHA (an OTP), approve LotusPond’s consent request with your ABHA PIN, and the records hospitals and labs linked to it come in as FHIR files to review.' },
   { id: 'digilocker', name: 'DigiLocker', category: 'government', regions: IN, access: 'browser', signIn: 'otp',
     hosts: ['digilocker.gov.in', 'meripehchaan.gov.in'], startUrl: 'https://www.digilocker.gov.in/',
-    holds: ['Vaccination certificates', 'Health insurance documents issued to DigiLocker', 'Disability and other certificates'] },
+    holds: ['Vaccination certificates', 'Health insurance documents issued to DigiLocker', 'Disability and other certificates'],
+    readyNote: 'Approve on DigiLocker’s own page each time. LotusPond brings in only health documents: vaccination certificates, health insurance policies, Ayushman and ABHA cards, disability certificates and the medical files you uploaded. Never Aadhaar, PAN or other identity documents.' },
   { id: 'pmjay', name: 'Ayushman Bharat PM-JAY', category: 'government', regions: IN, access: 'browser', signIn: 'otp',
     hosts: ['beneficiary.nha.gov.in', 'pmjay.gov.in'], startUrl: 'https://beneficiary.nha.gov.in/',
     holds: ['Ayushman card', 'Family members on the card', 'Hospital treatment history'] },
@@ -214,6 +215,8 @@ export interface SourceView extends SourceInfo {
   availability: SourceAvailability;
   /** Sources without a fixed address ("another lab"): the person gives the portal's address. */
   needsUrl: boolean;
+  /** Every check starts on the provider's page (no refresh token: DigiLocker), so there is no schedule. */
+  oneTime?: boolean;
 }
 
 export interface SourcesInfo {
@@ -225,7 +228,7 @@ export interface SourcesInfo {
   sources: SourceView[];
 }
 
-export const RECORD_AGENT_NOTICE_VERSION = '2026-11-13';
+export const RECORD_AGENT_NOTICE_VERSION = '2026-11-13.2';
 
 export type RecordConnectionStatus = 'active' | 'needs_sign_in' | 'paused';
 export type RecordRunStatus = 'queued' | 'running' | 'waiting' | 'succeeded' | 'failed' | 'cancelled';
