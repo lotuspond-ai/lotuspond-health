@@ -271,9 +271,14 @@ function ConnectDialog({ source, info, onClose }: { source: SourceView; info: So
             <ul className="sources__notice">
               {source.availability === 'api' ? (<>
                 <li>You sign in on {source.name}’s own page and choose what to share. LotusPond never sees your {source.name} password.</li>
-                <li>LotusPond reads your measurements through {source.name}’s official API, one value per day, and never writes anything back.</li>
+                {source.category === 'inbox' ? (<>
+                  <li>LotusPond asks for read-only access. It looks only at emails from labs, hospitals and pharmacies, or whose subject names a lab report, test result, prescription or discharge summary.</li>
+                  <li>From those it saves the PDF reports. It does not read or keep the emails themselves, and skips bills and invoices.</li>
+                </>) : (
+                  <li>LotusPond reads your measurements through {source.name}’s official API, one value per day, and never writes anything back.</li>
+                )}
                 <li>It keeps the sign-in, encrypted, to check again on the schedule you choose. Disconnect to forget it; you can also remove LotusPond in your {source.name} account.</li>
-                <li>New readings are saved to Files. They join your records only after you check them.</li>
+                <li>{source.category === 'inbox' ? 'New reports' : 'New readings'} are saved to Files. They join your records only after you check them.</li>
               </>) : source.availability === 'abdm' ? (<>
                 <li>LotusPond signs in to your ABHA through Eka Care, which connects apps to ABDM. There is no browser: it asks you here for your ABHA address or number and the OTP ABDM sends.</li>
                 <li>It asks ABDM for your consent to read the records hospitals and labs linked to your ABHA, and you approve it here with your ABHA consent PIN (or in your ABHA app). It never keeps codes or PINs.</li>

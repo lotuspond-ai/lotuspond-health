@@ -8,6 +8,7 @@ Status: November 2026. The engine, the app's Sources page and the MCP tool are b
 - **The navigator:** every other portal is reached through Claude, which is off unless Anthropic credentials are set.
 - **Withings, through its API** (`server/src/records/api/withings.ts`, §5.3): the person signs in on Withings' own page, and each check brings in one value per day from their scale, blood pressure monitor, thermometer or oximeter. It is on when `WITHINGS_CLIENT_ID` and `WITHINGS_CLIENT_SECRET` are set, and is not yet tried with a real Withings account.
 - **Oura and Ultrahuman, through their APIs** (`server/src/records/api/oura.ts`, `ultrahuman.ts`, §5.4): the same sign-in on the provider's page, with one value per day for resting heart rate, SpO2 and breathing rate during sleep, and Ultrahuman M1 glucose once Ultrahuman grants that scope. They are on when `OURA_CLIENT_ID`/`OURA_CLIENT_SECRET` or `ULTRAHUMAN_CLIENT_ID`/`ULTRAHUMAN_CLIENT_SECRET` are set, and are not yet tried with real accounts.
+- **Gmail and Outlook, through their APIs** (`server/src/records/api/mail.ts`, §5.5): read-only sign-in on Google's or Microsoft's page; each check saves the PDF reports from health emails (known lab, hospital and pharmacy senders, or subjects naming a lab report, prescription or discharge summary), never the emails. On when `GMAIL_CLIENT_ID`/`GMAIL_CLIENT_SECRET` or `OUTLOOK_CLIENT_ID`/`OUTLOOK_CLIENT_SECRET` are set; not yet tried with real mailboxes.
 - **ABHA, with no browser:** through Eka Care's ABDM Connect (`server/src/records/abdm/`, docs/abdm.md). The same runs and questions: an OTP to sign in, the ABHA consent PIN to approve LotusPond's consent request. The records come in as FHIR files. It is on when `EKA_CLIENT_ID` and `EKA_CLIENT_SECRET` are set, and is waiting on LotusPond's ABDM Connect onboarding.
 
 The record agent brings a family's reports in from the portals where they live: labs, hospitals, government services, pharmacies and insurers.
@@ -283,6 +284,33 @@ Tests: `server/test/oura-ultrahuman.test.ts` runs against copies of both APIs. `
 Assumed, and to be checked with real accounts:
 - The shape of Ultrahuman's CGM summary entries (`object.value`), which its samples don't show.
 - Whether Oura's `lowest_heart_rate` is what people expect as resting heart rate.
+
+### 5.5 Gmail and Outlook (official APIs, OAuth)
+
+Many Indian labs email the report as a PDF. The email sources bring those PDFs in, touching as little mail as they can:
+
+1. **Sign-in.** On Google's or Microsoft's page, with read-only mail access:
+   - Gmail: scope `gmail.readonly`, with `access_type=offline` and `prompt=consent`, without which Google sends no refresh token;
+   - Outlook: `offline_access Mail.Read`, for personal and work accounts.
+   
+   The shared `oauthSession()` in `records/api/oauth2.ts` handles both. Google keeps the same refresh token, which is kept as it is; Microsoft rotates it, and the new one is kept at once.
+2. **Which emails.** Emails with attachments received since the last check (a day of overlap; a year back the first time), at most 200 per check. Only health emails are opened further:
+   - a sender on a known lab, hospital, pharmacy or health-app domain (`HEALTH_SENDER_DOMAINS`, subdomains included, look-alikes not);
+   - or a subject naming a lab, test, diagnostic, scan or health-check report or result, a discharge summary, a prescription, or "report is ready".
+   
+   Gmail's own search does a first pass (`has:attachment filename:pdf after:… {from:… OR subject:…}`), and the same rule is applied again to each email.
+3. **Which attachments.** PDFs only, not invoices, receipts, bills, brochures or price lists, within the upload size limit. Each is saved once:
+   - Gmail: keyed by message id and part, because Gmail's attachment ids change between requests;
+   - Outlook: keyed by message and attachment id; only file attachments, not attached emails.
+4. **Never kept.** Email bodies, other emails, and other attachments.
+5. **Password-protected PDFs.** These are common: Indian labs often use the name and date of birth as the password. They are saved, and the run notes how many there were.
+
+Setting up:
+- **Gmail:** a Google Cloud OAuth client with the Gmail API on. `gmail.readonly` is a restricted scope: until Google verifies LotusPond and a third-party security assessment is passed, the app works only for up to 100 test users added in the Google Cloud console.
+- **Outlook:** a Microsoft Entra app registration for "accounts in any organisation and personal Microsoft accounts", with the delegated Graph permission `Mail.Read`. A work account's administrator may have to allow it.
+- **Redirect URIs:** `PUBLIC_URL/records/oauth/gmail/callback` and `PUBLIC_URL/records/oauth/outlook/callback`.
+
+Tests: `server/test/mail.test.ts` runs against copies of the Gmail API and Graph.
 
 ## 6. Trying it
 
