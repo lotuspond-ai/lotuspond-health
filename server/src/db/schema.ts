@@ -4,6 +4,7 @@ import type { AuditDetail, AuditKind, ConsentDetail, ConsentKind, RefRange } fro
 import type { DataRegion, UnitSystem } from '../../../shared/regions.ts';
 import type { LabResultBundle, OrderStatus } from '../../../shared/lab-bundle.ts';
 import type { NotificationDetail } from '../../../shared/notifications.ts';
+import type { RecordQuestion } from '../../../shared/sources.ts';
 
 const createdAt = () => timestamp('created_at', { withTimezone: true }).notNull().defaultNow();
 const updatedAt = () => timestamp('updated_at', { withTimezone: true }).notNull().defaultNow();
@@ -441,6 +442,68 @@ export const whatsappInbound = pgTable('whatsapp_inbound', {
   receivedAt: timestamp('received_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
+/* ---------- the record agent (shared/sources.ts, server/src/records/) ---------- */
+
+/**
+ * A source (portal) the person asked the record agent to fetch from, for one profile. Kept in the account's cell.
+ * The portal's sign-in (cookies and local storage, Playwright's storage state) is sealed with the cell's file key, so
+ * the agent can check again later without asking; passwords and OTPs are never stored.
+ */
+export const recordConnections = pgTable('record_connections', {
+  id: uuid('id').primaryKey(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  profileId: uuid('profile_id').notNull().references(() => profiles.id, { onDelete: 'cascade' }),
+  sourceId: text('source_id').notNull(),
+  status: text('status').$type<'active' | 'needs_sign_in' | 'paused'>().notNull().default('active'),
+  /** The portal address, for sources without a fixed one ("another lab"); empty for the others. */
+  portalUrl: text('portal_url').notNull().default(''),
+  /** The phone number or user name the portal knows the person by, sealed (records/sealed.ts), base64. */
+  identifierCt: text('identifier_ct'),
+  /** The portal's sign-in as Playwright storage state, sealed, base64. */
+  sessionCt: text('session_ct'),
+  /** For sources reached through an API: a hash of the person's id there (ABHA: their Eka id), so webhooks find it. */
+  externalRef: text('external_ref'),
+  refreshDays: integer('refresh_days'),
+  nextRunAt: timestamp('next_run_at', { withTimezone: true }),
+  lastSuccessAt: timestamp('last_success_at', { withTimezone: true }),
+  consentVersion: text('consent_version').notNull(),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, t => [
+  uniqueIndex('record_connections_key').on(t.userId, t.profileId, t.sourceId, t.portalUrl),
+  index('record_connections_due_idx').on(t.status, t.nextRunAt),
+  index('record_connections_external_idx').on(t.externalRef),
+]);
+
+/** One visit of the agent to a portal: started by the person or by the schedule. */
+export const recordRuns = pgTable('record_runs', {
+  id: uuid('id').primaryKey(),
+  connectionId: uuid('connection_id').notNull().references(() => recordConnections.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  status: text('status').$type<'queued' | 'running' | 'waiting' | 'succeeded' | 'failed' | 'cancelled'>().notNull(),
+  trigger: text('trigger').$type<'person' | 'schedule'>().notNull(),
+  step: text('step'),
+  /** What the agent is waiting for (never the answer). */
+  question: jsonb('question').$type<RecordQuestion>(),
+  found: integer('found').notNull().default(0),
+  saved: integer('saved').notNull().default(0),
+  documentIds: jsonb('document_ids').$type<string[]>().notNull().default([]),
+  error: text('error'),
+  /** How a run ended, for the person, when it is not an error ("Approve the request in your ABHA app"). */
+  note: text('note'),
+  startedAt: timestamp('started_at', { withTimezone: true }).notNull(),
+  finishedAt: timestamp('finished_at', { withTimezone: true }),
+}, t => [index('record_runs_connection_idx').on(t.connectionId, t.startedAt), index('record_runs_status_idx').on(t.status)]);
+
+/** Reports already brought in from a connection, so checking again saves only new ones. */
+export const recordItems = pgTable('record_items', {
+  connectionId: uuid('connection_id').notNull().references(() => recordConnections.id, { onDelete: 'cascade' }),
+  /** A hash of the portal's own id for the report (or of its contents). */
+  itemKey: text('item_key').notNull(),
+  documentId: uuid('document_id').references(() => documents.id, { onDelete: 'set null' }),
+  createdAt: createdAt(),
+}, t => [uniqueIndex('record_items_key').on(t.connectionId, t.itemKey)]);
+
 export type UserRow = typeof users.$inferSelect;
 export type ConsentRow = typeof consents.$inferSelect;
 export type AuditEventRow = typeof auditEvents.$inferSelect;
@@ -460,3 +523,5 @@ export type NotificationRow = typeof notifications.$inferSelect;
 export type AssistantConversationRow = typeof assistantConversations.$inferSelect;
 export type AssistantMessageRow = typeof assistantMessages.$inferSelect;
 export type WhatsAppLinkRow = typeof whatsappLinks.$inferSelect;
+export type RecordConnectionRow = typeof recordConnections.$inferSelect;
+export type RecordRunRow = typeof recordRuns.$inferSelect;

@@ -13,6 +13,7 @@ There is one address for every agent: `https://<server>/mcp` (the `PUBLIC_URL` s
 | Claude Code | `claude mcp add --transport http lotuspond https://<server>/mcp`, then `/mcp` to sign in. |
 | Cursor, VS Code, other MCP clients | Add a remote (HTTP / Streamable HTTP) server with the address. |
 | Agents without OAuth | Account → Connected agents → Create an access token. Send it as `Authorization: Bearer lpt_…`. The panel shows a ready-made `mcpServers` JSON block. |
+| Everything else | Account → Connected agents → *Connect an agent* lists steps for each agent (`shared/agent-directory.ts`): Le Chat, Copilot Studio, Codex CLI, Gemini CLI, Windsurf, the Claude, OpenAI and xAI APIs, n8n and others. Assistants without custom connectors (the Gemini and Grok apps, Meta AI) get *Copy summary*: the health summary as text to paste. |
 
 On Account, each connection shows who it can see, which kinds of data, what it may do, when it was last used and when it expires. *Change* edits all of these, and *Disconnect* stops the connection at once. Recent activity records each connection, disconnection and write, and a read at most once an hour per connection.
 
@@ -26,6 +27,7 @@ On Account, each connection shows who it can see, which kinds of data, what it m
 | `get_results` | read | results | Latest value of each marker, with its LOINC code, range, trend and direction; filter by body system, out-of-range only, or since a date |
 | `get_marker_history` | read | results | Every result of one marker (catalogue id, common name or the name on the report) |
 | `list_files` | read | files | Scans (modality, body area, date) and files (name, type, date). Never file contents or images |
+| `list_record_sources` | read | files | The portals the record agent fetches this profile's reports from, when each was last checked and how many reports it brought in ([record-agent.md](record-agent.md)) |
 | `find_lab_tests` | read, lab booking on | labs | Home-collection tests and prices at a pincode |
 | `list_lab_orders` | read, lab booking on | labs | A profile's bookings and their status |
 | `propose_lab_booking` | read, lab booking on | labs | Checks the tests are offered and returns a link (`/app?book=…&profile=…&pincode=…#labs`). The person reviews it, picks a visit and confirms in the app. Nothing is booked or paid by the agent |

@@ -3,14 +3,15 @@
 //
 // Results are summary-first: agents get values, ranges, dates and trends, never file contents, scan images or contact
 // details. Text that came from uploaded files (test names) is data and is described as such to the agent.
-import { and, asc, desc, eq, inArray } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNotNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { AGENT_CATEGORY_TEXT, type AgentCategory, type AgentScope } from '../../../shared/agents.ts';
 import type { Measurement, Profile, Status } from '../../../shared/types.ts';
 import { findMarker, matchMarkerName, normalizeName, SYSTEM_LABELS } from '../../../shared/catalog.ts';
 import type { Cell } from '../cells.ts';
 import type { Db } from '../db/client.ts';
-import { documents, measurements, profiles, scans, type AgentGrantRow, type UserRow } from '../db/schema.ts';
+import { documents, measurements, profiles, recordConnections, recordItems, scans, type AgentGrantRow, type UserRow } from '../db/schema.ts';
+import { SOURCE_CATEGORY_TEXT, sourceById } from '../../../shared/sources.ts';
 import type { Deps } from '../http.ts';
 import { relationshipOrder } from '../routes/profiles.ts';
 import { toDocument, toMeasurement, toProfile, toScan } from '../serialize.ts';
@@ -224,6 +225,37 @@ export const TOOLS: Tool[] = [
         scans: r.scans.map(s => ({ id: s.id, modality: s.modality ?? null, bodyArea: s.bodyPart ?? s.organ ?? null, date: s.date, note: s.note ?? null })),
         files: r.documents.map(d => ({ id: d.id, name: d.fileName, type: d.contentType, kind: d.kind, sizeBytes: d.sizeBytes, addedAt: d.createdAt })),
         openInApp: `${ctx.appUrl}#files`,
+      };
+    },
+  }),
+
+  tool({
+    name: 'list_record_sources',
+    title: 'Where the records come from',
+    description: 'The portals the record agent fetches this profile\'s reports from (labs, hospitals, government services, insurers), when each was last checked and how many reports it brought in. Use it to tell how complete and recent the records are; new reports appear in list_files and, once the person reviews them, in get_results.',
+    scope: 'health:read',
+    category: 'files',
+    input: z.object({ profile_id: ProfileArg }),
+    async run(ctx, args) {
+      const p = await profileFor(ctx, args.profile_id);
+      const rows = await ctx.cell.db.select().from(recordConnections).where(and(eq(recordConnections.userId, ctx.user.id), eq(recordConnections.profileId, p.id)));
+      const saved = rows.length
+        ? await ctx.cell.db.select({ id: recordItems.connectionId, n: sql<number>`count(*)::int` }).from(recordItems)
+          .where(and(inArray(recordItems.connectionId, rows.map(r => r.id)), isNotNull(recordItems.documentId))).groupBy(recordItems.connectionId)
+        : [];
+      return {
+        profile: { id: p.id, name: p.displayName },
+        sources: rows.map(r => {
+          const s = sourceById(r.sourceId);
+          return {
+            source: s?.name ?? r.sourceId, kind: s ? SOURCE_CATEGORY_TEXT[s.category].title : null, holds: s?.holds ?? [],
+            status: r.status === 'needs_sign_in' ? 'needs the person to sign in again' : r.status,
+            lastChecked: r.lastSuccessAt?.toISOString() ?? null, nextCheck: r.nextRunAt?.toISOString() ?? null,
+            reportsBroughtIn: Number(saved.find(x => x.id === r.id)?.n ?? 0),
+          };
+        }),
+        addMore: `${ctx.appUrl}#sources`,
+        note: rows.length ? 'Reports the agent brings in wait for the person to review them before their values join the results.' : 'No sources connected. The person can connect labs, hospitals and government portals in the app under Sources.',
       };
     },
   }),

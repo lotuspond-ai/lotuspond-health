@@ -23,6 +23,10 @@ services:
       context: ..
       args:
         SITE_URL: https://${DOMAIN:-health.lotuspond.ai}
+        # on: include Chromium for the record agent's local browser (RECORD_AGENT=on, RECORD_BROWSER=local).
+        RECORD_BROWSER_CHROMIUM: ${RECORD_BROWSER_CHROMIUM:-off}
+    # Chromium needs more shared memory than Docker's 64 MB default.
+    shm_size: 512mb
     # Optional settings (contacts, geocoder contact, extra cells…) come from deploy/.env; see .env.example.
     env_file: .env
     environment:

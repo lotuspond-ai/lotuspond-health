@@ -388,6 +388,14 @@ check('PDF units never contain digits-only tokens', pdf.measurements.every(m => 
   check('method after value', m2('iron')?.valueText === '62' && m2('iron')?.unit === 'µg/dL' && m2('iron')?.rangeText === '65 - 175', `${m2('iron')?.unit} | ${m2('iron')?.rangeText}`);
   check('plasma suffix', m2('glucose_fasting')?.valueText === '98');
   check('note lines skipped', more.length === 4, more.map(r => r.match.def.id).join(','));
+  // A method column after the range (Apollo's Lp(a) and thyroid rows): not part of the range.
+  const tail = findRows([
+    mk(540, [['LIPOPROTEIN a (Lp-a) , SERUM', 40], ['5.29', 150], ['mg/dL', 190], ['<75', 230], ['Immunoturbidimetric', 280]]),
+    mk(526, [['TSH', 40], ['3.413', 150], ['µIU/mL', 190], ['0.35-4.75', 230], ['CLIA', 280]]),
+  ]);
+  const t2 = id => tail.find(x => x.match.def.id === id);
+  check('method after range: Lp(a)', t2('lpa')?.rangeText === '<75', t2('lpa')?.rangeText);
+  check('method after range: TSH', t2('tsh')?.rangeText === '0.35-4.75', t2('tsh')?.rangeText);
 }
 
 // Second layout: method column, per-word text items, separate flag column, multi-line ranges, urine section.
@@ -648,6 +656,19 @@ section('fhir');
   check('fhir: 11 rows', r.measurements.length === 11, String(r.measurements.length));
   const single = parseJsonText(JSON.stringify({ resourceType: 'Observation', status: 'final', code: { coding: [{ system: 'http://loinc.org', code: '2093-3' }] }, valueQuantity: { value: 5.2, unit: 'mmol/L' }, effectiveDateTime: '2026-01-05' }), 'obs.json');
   check('fhir: single Observation, name from LOINC, mmol/L converted', single.measurements[0]?.markerId === 'total_cholesterol' && Math.round(single.measurements[0].value) === 201, JSON.stringify(single.measurements[0]));
+  // Withings daily values as the record agent saves them (server/src/records/api/withings.ts readingsBundle).
+  const wd = f.parseFhir(JSON.parse(readFileSync(join(fixtures, 'fhir/withings-daily.json'), 'utf8')), 'withings.json');
+  const wdRows = wd.measurements.map(m => `${m.date} ${m.markerId} ${m.value} ${m.unit}`).sort();
+  check('fhir: Withings daily vitals become the vitals markers', eq(wdRows, [
+    '2026-11-01 body_fat 18.2 %', '2026-11-01 body_weight 72.5 kg', '2026-11-01 bp_diastolic 84 mmHg', '2026-11-01 bp_systolic 128 mmHg',
+    '2026-11-01 resting_heart_rate 71 bpm', '2026-11-02 body_temperature 36.8 °C', '2026-11-02 spo2 97 %',
+  ]), JSON.stringify(wdRows));
+  // Ultrahuman / Oura daily values (server/src/records/api/vitals.ts): breathing rate and sensor glucose too.
+  const ud = f.parseFhir(JSON.parse(readFileSync(join(fixtures, 'fhir/ultrahuman-daily.json'), 'utf8')), 'ultrahuman.json');
+  const udRows = ud.measurements.map(m => `${m.markerId} ${m.value} ${m.unit}`).sort();
+  check('fhir: ring and CGM daily values become the vitals markers', eq(udRows, [
+    'glucose_meter 104 mg/dL', 'respiratory_rate 14 breaths/min', 'resting_heart_rate 56 bpm', 'spo2 97 %',
+  ]), JSON.stringify(udRows));
   const pdfOnly = JSON.parse(readFileSync(join(fixtures, 'fhir/pdf-only-report.json'), 'utf8'));
   const att = f.fhirAttachments(pdfOnly);
   check('fhir: PDF in presentedForm found', att.length === 1 && att[0].contentType === 'application/pdf' && att[0].title === 'Lipid profile.pdf' && att[0].data.length > 1000);

@@ -105,7 +105,7 @@ const NOT_ROW_START = /^(?:method|note|notes|comments?|interpretation|remarks?|s
 const RANGE_WORD = /^(?:to|and|or|upto|up|male|female|men|women|m|f|adults?|child(?:ren)?|desirable|optimal|normal|near|borderline|high|low|very|deficien\w*|insufficien\w*|sufficien\w*|toxic\w*|non|pre|diabetic|average|risk|negative|nil|absent|less|more|than|below|above|ref\w*|range|interval|bio\w*|years?|yrs?)\b/i;
 
 /** Test-method words that labs print in a column next to the name (Thyrocare/Apollo style). */
-const METHOD_TAIL = /(?:^|(?<=[\s)\]]))(?:c\.?\s?l\.?\s?i\.?\s?a\.?|e\.?\s?c\.?\s?l\.?\s?i\.?\s?a\.?|h\.?\s?p\.?\s?l\.?\s?c\.?|photometry|spectrophotometry|calculated|calculation|derived|computed|hexokinase|god[-\s]?pod|i\.?\s?s\.?\s?e\.?(?:\s*-?\s*(?:in)?direct)?|immunoturbidimetry|turbidimetry|nephelometry|immunoassay|elisa|enzymatic|colorimetric|kinetic|dipstick|microscopy|visual|flow\s*cytometry|impedance|automated|westergren|ifcc|jaffe|uricase|bromocresol\s*green|biuret|diazo)\s*$/i;
+const METHOD_TAIL = /(?:^|(?<=[\s)\]]))(?:c\.?\s?l\.?\s?i\.?\s?a\.?|e\.?\s?c\.?\s?l\.?\s?i\.?\s?a\.?|h\.?\s?p\.?\s?l\.?\s?c\.?|photometry|spectrophotometry|calculated|calculation|derived|computed|hexokinase|god[-\s]?pod|i\.?\s?s\.?\s?e\.?(?:\s*-?\s*(?:in)?direct)?|immunoturbidimetr(?:y|ic)|turbidimetr(?:y|ic)|nephelometr(?:y|ic)|chemiluminescen(?:ce|t)|immunoassay|elisa|enzymatic|colorimetric|kinetic|dipstick|microscopy|visual|flow\s*cytometry|impedance|automated|westergren|ifcc|jaffe|uricase|bromocresol\s*green|biuret|diazo)\s*$/i;
 
 /** Remove a trailing method column from a test name: "IRON PHOTOMETRY" → "IRON". */
 export function stripMethod(name: string): string {
@@ -219,7 +219,8 @@ function parseSegment(tokens: Token[], ctx: MatchContext, line: Line): { row: Pa
     && !/^(?:to|and|upto|up|or|male|female|men|women|adults?|desirable|optimal|normal|borderline|high|low|deficien|insufficien|sufficien|toxic|non|pre|diabetic|average|risk|negative|nil)/i.test(x.t)
     && !!matchMarkerDetailed(rangeT.slice(i).map(y => y.t).join(' ').replace(/\s+[\d<>].*$/, '')));
   if (stop > 0) rangeT = rangeT.slice(0, stop);
-  const rangeText = rangeT.map(x => x.t).join(' ').trim();
+  // A method column printed after the range ("<75 Immunoturbidimetric", "0.35-4.75 CLIA") is not part of it.
+  const rangeText = stripMethod(rangeT.map(x => x.t).join(' ').trim());
   return { row: { match, name, valueText, unit, rangeText, flag, rangeX: rangeT[0]?.x0 ?? null, line }, remainder };
 }
 

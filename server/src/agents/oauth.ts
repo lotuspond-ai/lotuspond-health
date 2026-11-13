@@ -52,7 +52,7 @@ export type MetadataFetcher = (url: string) => Promise<unknown>;
 export interface OAuthOptions { fetchClientMetadata?: MetadataFetcher }
 
 const PRIVATE_V4 = [/^10\./, /^127\./, /^169\.254\./, /^172\.(1[6-9]|2\d|3[01])\./, /^192\.168\./, /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./, /^0\./];
-function isPrivateAddress(ip: string): boolean {
+export function isPrivateAddress(ip: string): boolean {
   if (isIP(ip) === 4) return PRIVATE_V4.some(r => r.test(ip));
   const v = ip.toLowerCase();
   return v === '::1' || v === '::' || v.startsWith('fc') || v.startsWith('fd') || v.startsWith('fe80') || v.startsWith('::ffff:');

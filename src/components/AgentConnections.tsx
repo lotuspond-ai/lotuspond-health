@@ -12,6 +12,7 @@ import {
 import { ConfirmButton, Field } from './forms';
 import { useAssistant } from '../state/assistant';
 import { WhatsAppSettings } from './WhatsAppSettings';
+import { AgentDirectory } from './AgentDirectory';
 import '../styles/agents.css';
 
 const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString(undefined, { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : 'Never');
@@ -52,16 +53,8 @@ export function AgentConnectionsPanel() {
           </div>
         </div>
       )}
-      <details className="agents__how">
-        <summary>How to connect</summary>
-        <ul>
-          <li><b>Claude</b> (claude.ai, desktop and mobile): Settings, Connectors, Add custom connector, paste the address. You sign in here and choose profiles.</li>
-          <li><b>ChatGPT</b>: Settings, Apps and connectors, Create (developer mode), paste the address, OAuth. Availability depends on your ChatGPT plan.</li>
-          <li><b>Claude Code, Cursor, VS Code and other MCP clients</b>: add a remote (HTTP) MCP server with the address; it opens this sign-in.</li>
-          <li><b>Agents that take a token</b> (scripts, self-hosted agents, older clients): create an access token below and send it as <code>Authorization: Bearer</code>.</li>
-        </ul>
-        <p className="note">An agent's company receives what it reads, under its own privacy terms. Share only the profiles it needs.</p>
-      </details>
+      {mcpUrl && <AgentDirectory mcpUrl={mcpUrl} />}
+      <p className="note">An agent’s company receives what it reads, under its own privacy terms. Share only the profiles it needs.</p>
 
       {list && list.length === 0 && <p className="note">No agents connected yet.</p>}
       {list && list.length > 0 && (

@@ -19,7 +19,7 @@ export async function listConsents(db: Db, userId: string): Promise<ConsentRecor
 }
 
 /** Consents given per profile or per connection rather than once for the account. */
-export const PER_ITEM_CONSENTS: readonly ConsentKind[] = ['family_profile', 'agent_sharing', 'ai_extraction', 'assistant', 'whatsapp'];
+export const PER_ITEM_CONSENTS: readonly ConsentKind[] = ['family_profile', 'agent_sharing', 'ai_extraction', 'assistant', 'whatsapp', 'record_agent'];
 
 /** The latest decision for each account-wide kind (per-item kinds are left out: each has many). */
 export function currentConsents(records: ConsentRecord[]): Partial<Record<ConsentKind, ConsentRecord>> {

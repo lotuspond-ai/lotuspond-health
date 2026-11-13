@@ -26,6 +26,9 @@ import { cloudApiClient, type WhatsAppClient } from './whatsapp/client.ts';
 import { extractionRoutes } from './extraction/routes.ts';
 import { mcpRoutes } from './agents/mcp.ts';
 import { oauthRoutes, type OAuthOptions } from './agents/oauth.ts';
+import { recordOAuthRoutes, recordRoutes } from './records/routes.ts';
+import { ekaWebhookRoutes } from './records/abdm/webhook.ts';
+import { DEMO_PORTAL_PATH, type DemoPortal } from './records/demo-portal.ts';
 
 const UNSAFE = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
@@ -67,6 +70,8 @@ export interface AppOptions {
   oauth?: OAuthOptions;
   /** WhatsApp: a client other than the Cloud API (tests), and a way to reach the service once it exists. */
   whatsapp?: { client?: WhatsAppClient; onService?: (s: WhatsAppService) => void };
+  /** The pretend lab portal for the record agent (development and tests), served at /demo-portal. */
+  demoPortal?: DemoPortal;
 }
 
 export function createApp(input: DepsInput, opts: AppOptions = {}): Hono<AppEnv> {
@@ -148,6 +153,7 @@ export function createApp(input: DepsInput, opts: AppOptions = {}): Hono<AppEnv>
   app.route('/api/notifications', notificationRoutes(deps));
   app.route('/api/assistant', assistantRoutes(deps, deps.assistant));
   app.route('/api/whatsapp', whatsappRoutes(deps, wa));
+  app.route('/api/records', recordRoutes(deps, deps.records));
   if (deps.extractor) app.route('/api/profiles/:pid/extract', extractionRoutes(deps, deps.extractor));
   app.route('/api/profiles', profileRoutes(deps));
   app.route('/api/facilities', facilityRoutes(deps));
@@ -186,6 +192,11 @@ export function createApp(input: DepsInput, opts: AppOptions = {}): Hono<AppEnv>
   // Lab partner webhooks: server to server, so outside /api (no browser checks, no CORS).
   if (deps.labs) app.route('/hooks', hookRoutes(deps, deps.labs));
   if (wa) app.route('/hooks/whatsapp', whatsappHookRoutes(wa));
+  if (deps.records) app.route('/records/oauth', recordOAuthRoutes(deps.records, config.allowedOrigins[0] ?? config.publicUrl ?? ''));
+  const ekaKey = config.records?.eka?.webhookSigningKey;
+  if (deps.records && ekaKey) { const records = deps.records; app.route('/hooks/eka', ekaWebhookRoutes({ signingKey: ekaKey, wake: ref => records.wake(ref) })); }
+  // A pretend portal for the record agent's browsers; its own pages, so outside /api and the app's policy.
+  if (opts.demoPortal && config.env !== 'production') app.route(DEMO_PORTAL_PATH, opts.demoPortal.app);
 
   if (config.staticDir && fs.existsSync(path.join(config.staticDir, 'index.html'))) serveSite(app, config.staticDir, appCsp);
 
