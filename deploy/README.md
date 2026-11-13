@@ -91,11 +91,7 @@ docker compose up -d --build
 
 ## 7. Backups
 
-`./backup.sh` writes a database dump and an archive of the uploaded files (still encrypted) to `deploy/backups/`, and keeps 14 days. Run it nightly and copy the folder off the server. For example, in `crontab -e`:
-
-```
-30 2 * * * /path/to/lotuspond-health/deploy/backup.sh >> /var/log/lotuspond-backup.log 2>&1
-```
+`./backup.sh` writes a database dump and an archive of the uploaded files (still encrypted) to `deploy/backups/`, and keeps 14 days. `sudo ./install-backup.sh` runs it every night from a systemd timer (log: `journalctl -u lotuspond-backup`). With `BACKUP_S3_URI` and `BACKUP_AGE_RECIPIENT` in `.env`, each night's dump, files and `.env` are also encrypted with age and uploaded to S3; on AWS, see [`aws-lightsail.md`](aws-lightsail.md), section 5. Without them, copy `deploy/backups/` off the server yourself.
 
 To restore a database dump into a fresh stack:
 
