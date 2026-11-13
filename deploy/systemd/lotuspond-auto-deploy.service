@@ -1,0 +1,15 @@
+# Deploys the newest commit on origin/main if it is not running yet. Started by lotuspond-auto-deploy.timer.
+# Installed by deploy/install-auto-deploy.sh; see deploy/ci-cd.md.
+[Unit]
+Description=LotusPond Health: deploy new commits on main
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+ExecStart=/opt/lotuspond-health/deploy/auto-deploy.sh
+# A rebuild takes several minutes on the 4 GB plan.
+TimeoutStartSec=45min
+Nice=10
