@@ -12,7 +12,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
-import { and, desc, eq, inArray, isNotNull, lte, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, isNull, lte, sql } from 'drizzle-orm';
 import {
   DEMO_SOURCE, DEMO_SOURCE_ID, maskIdentifier, RECORD_AGENT_NOTICE_VERSION, SOURCES, sourceById,
   type RecordConnectionView, type RecordQuestion, type RecordRunView, type SourceAvailability, type SourceInfo, type SourceView,
@@ -72,6 +72,8 @@ export interface RecordAgentOptions {
   questionMs?: number;
   /** Resolve a portal's host (tests). */
   resolve?: (host: string) => Promise<string[]>;
+  /** New reports saved per run (default 50; tests). */
+  maxReports?: number;
 }
 
 export interface ConnectInput {
@@ -171,6 +173,7 @@ export function createRecordAgent(opts: RecordAgentOptions): RecordAgent {
     if (s.access === 'abdm') return apis.has(s.id) ? 'abdm' : 'unavailable';
     if (s.access === 'api') return apis.has(s.id) ? 'api' : 'unavailable';
     if (s.access !== 'browser') return 'unavailable';
+    if (!s.startUrl && s.id !== DEMO_SOURCE_ID && !opts.config.typedPortals) return 'unavailable';
     if (recipes.has(s.id)) return 'recipe';
     return opts.navigator ? 'navigator' : 'unavailable';
   }
@@ -299,6 +302,8 @@ export function createRecordAgent(opts: RecordAgentOptions): RecordAgent {
         };
         reports = await race(api.run(ctx));
       } else {
+        // A typed address saved before typed portals were turned off for this browser is not opened either.
+        if (conn.portalUrl && !opts.config.typedPortals) throw new PortalError('Portals added by address need a browser off LotusPond’s servers, which this server does not use. Upload the reports instead.');
         const { startUrl, allowHosts } = placeOf(source, conn.portalUrl);
         session = await opts.browsers.open({ allowHosts, ...(storage ? { storageState: JSON.parse(storage) as StorageState } : {}) });
         const page = await session.context.newPage();
@@ -330,7 +335,7 @@ export function createRecordAgent(opts: RecordAgentOptions): RecordAgent {
         }));
       }
       await setRun(cell, job.runId, { step: 'Saving new reports', found: reports.length });
-      const saved = await saveReports(cell, job, conn, source, reports.slice(0, MAX_REPORTS));
+      const saved = await saveReports(cell, job, conn, source, reports, opts.maxReports ?? MAX_REPORTS);
       if (session) {
         const state = await session.close();
         session = null;
@@ -370,6 +375,16 @@ export function createRecordAgent(opts: RecordAgentOptions): RecordAgent {
           error: e instanceof PortalError ? e.message : `Something went wrong on ${source.name}. Try again later; if it keeps happening, the portal may have changed.`,
         });
       }
+      // tick() cleared nextRunAt when it started a scheduled run; only success sets it again. Other than a sign-in that
+      // ended (the person must act), keep checking: after a failure try again within a day, after a cancel at the usual
+      // time. A connection that already has a next time (a run the person started) is left alone.
+      if (!(e instanceof NeedsPersonError) && conn.refreshDays) {
+        // The same test as above: a run the person stopped, not one that timed out or went unanswered.
+        const cancelled = (e instanceof RunStoppedError || l.abort.signal.aborted) && (e instanceof RunStoppedError ? e.message : 'Cancelled.') === 'Cancelled.';
+        const wait = cancelled ? conn.refreshDays * DAY : Math.min(DAY, conn.refreshDays * DAY);
+        await cell.db.update(recordConnections).set({ nextRunAt: new Date(now() + wait) })
+          .where(and(eq(recordConnections.id, conn.id), eq(recordConnections.status, 'active'), isNull(recordConnections.nextRunAt))).catch(() => {});
+      }
     } finally {
       clearTimeout(timeout);
       if (l.waiter) { clearTimeout(l.waiter.timer); l.waiter = undefined; }
@@ -394,10 +409,15 @@ export function createRecordAgent(opts: RecordAgentOptions): RecordAgent {
     return answer;
   }
 
-  /** Save the reports this connection has not brought in before. Returns the new documents' ids. */
-  async function saveReports(cell: Cell, job: Job, conn: RecordConnectionRow, source: SourceInfo, reports: PortalReport[]): Promise<string[]> {
+  /**
+   * Save the reports this connection has not brought in before, at most `limit` new ones per run. Returns the new
+   * documents' ids. The limit counts only new reports, so a source that lists everything on every check (ABHA) still
+   * reaches the reports after the first `limit` on later runs.
+   */
+  async function saveReports(cell: Cell, job: Job, conn: RecordConnectionRow, source: SourceInfo, reports: PortalReport[], limit: number): Promise<string[]> {
     const saved: string[] = [];
     for (const r of reports) {
+      if (saved.length >= limit) break;
       const contentType = sniffType(r.bytes, r.contentType);
       const ext = REPORT_TYPES[contentType];
       if (!ext || !r.bytes.byteLength) continue;
@@ -419,11 +439,12 @@ export function createRecordAgent(opts: RecordAgentOptions): RecordAgent {
       const taken = new Set((await cell.db.select({ fileName: documents.fileName }).from(documents)
         .where(and(eq(documents.profileId, conn.profileId), inArray(documents.fileName, names)))).map(d => d.fileName));
       const fileName = names.find(n => !taken.has(n)) ?? `${base} (${id.slice(0, 8)}).${ext}`;
-      await cell.files.put(storageKey, r.bytes);
+      // If storing the file or its document fails, forget the item too, so the next run tries this report again.
       try {
+        await cell.files.put(storageKey, r.bytes);
         await cell.db.insert(documents).values({ id, profileId: conn.profileId, storageKey, kind: 'report', fileName, contentType, sizeBytes: r.bytes.byteLength, sha256 });
       } catch (e) {
-        await cell.files.delete(storageKey);
+        await cell.files.delete(storageKey).catch(() => {});
         await cell.db.delete(recordItems).where(and(eq(recordItems.connectionId, conn.id), eq(recordItems.itemKey, itemKey)));
         throw e;
       }

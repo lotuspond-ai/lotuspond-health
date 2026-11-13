@@ -16,7 +16,7 @@
 // Written from Withings' API reference (November 2026) and tested against a copy of it (test/withings.test.ts); not
 // yet run against a real Withings account.
 import { createHash } from 'node:crypto';
-import { NeedsPersonError, PortalError, type PortalReport } from '../recipes/types.ts';
+import { NeedsPersonError, PortalError, RunStoppedError, type PortalReport } from '../recipes/types.ts';
 import type { ApiContext, OAuthFetcher } from './types.ts';
 import { dailyMeans, dayIn, vitalsReport, type DailyValue, type VitalMarker } from './vitals.ts';
 
@@ -81,12 +81,12 @@ export function withingsFetcher(o: WithingsOptions): OAuthFetcher {
   const now = o.now ?? Date.now;
   const api = (o.apiUrl ?? WITHINGS_API_URL).replace(/\/+$/, '');
 
-  async function call<T>(path: string, params: Record<string, string>, access?: string): Promise<T> {
+  async function call<T>(path: string, params: Record<string, string>, access?: string, stop?: AbortSignal): Promise<T> {
     const res = await f(`${api}${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded', ...(access ? { Authorization: `Bearer ${access}` } : {}) },
       body: new URLSearchParams(params).toString(),
-      signal: AbortSignal.timeout(30_000),
+      signal: stop ? AbortSignal.any([stop, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000),
     });
     const json = await res.json().catch(() => null) as { status?: number; body?: T; error?: string } | null;
     if (!res.ok || !json) throw new WithingsError(res.status, `Withings answered ${res.status}`, true);
@@ -146,11 +146,13 @@ export function withingsFetcher(o: WithingsOptions): OAuthFetcher {
       let offset: number | undefined;
       for (let page = 0; page < MAX_PAGES; page++) {
         let body: { timezone?: string; measuregrps?: Group[]; more?: number | boolean; offset?: number };
+        if (ctx.signal.aborted) throw new RunStoppedError('Cancelled.');
         try {
           body = await call('/measure', {
             action: 'getmeas', meastypes: MEASTYPES, category: '1', startdate: String(since), enddate: String(nowS), ...(offset ? { offset: String(offset) } : {}),
-          }, t.access);
+          }, t.access, ctx.signal);
         } catch (e) {
+          if (ctx.signal.aborted) throw new RunStoppedError('Cancelled.');
           if (e instanceof WithingsError && !e.http && e.status === 401) throw new NeedsPersonError('Connect Withings again');
           if (e instanceof WithingsError && !e.http && e.status === 601) throw new PortalError('Withings is limiting requests right now. LotusPond will try again later.');
           throw new PortalError('Withings is not answering right now. Try again later.');

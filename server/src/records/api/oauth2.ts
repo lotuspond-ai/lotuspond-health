@@ -2,7 +2,7 @@
 // daily values: Oura, Ultrahuman. The person signs in on the provider's page; each check refreshes the token when it
 // has run out (keeping the new refresh token at once: these providers accept each one only once), reads the days
 // after the last day already read, up to yesterday in the person's time zone, and saves them as one FHIR file.
-import { NeedsPersonError, PortalError, type PortalReport } from '../recipes/types.ts';
+import { NeedsPersonError, PortalError, RunStoppedError, type PortalReport } from '../recipes/types.ts';
 import type { ApiContext, OAuthFetcher } from './types.ts';
 import { addDays, dayIn, vitalsReport, type DailyValue } from './vitals.ts';
 
@@ -85,11 +85,14 @@ export function dailyOAuthFetcher(def: DailyOAuthSource, client: OAuthClient, op
       }
       const tokens = t;
 
+      // Stop, Disconnect and the run's deadline abort ctx.signal: no request is sent after that, and one in flight ends.
       const get = async (url: string): Promise<unknown> => {
+        if (ctx.signal.aborted) throw new RunStoppedError('Cancelled.');
         let res: Response;
         try {
-          res = await f(url, { headers: { Authorization: `Bearer ${tokens.access}`, Accept: 'application/json', 'User-Agent': 'LotusPondHealth/1.0' }, signal: AbortSignal.timeout(30_000) });
+          res = await f(url, { headers: { Authorization: `Bearer ${tokens.access}`, Accept: 'application/json', 'User-Agent': 'LotusPondHealth/1.0' }, signal: AbortSignal.any([ctx.signal, AbortSignal.timeout(30_000)]) });
         } catch {
+          if (ctx.signal.aborted) throw new RunStoppedError('Cancelled.');
           throw new PortalError(`${def.device} is not answering right now. Try again later.`);
         }
         if (res.status === 401) throw new NeedsPersonError(`Connect ${def.device} again`);

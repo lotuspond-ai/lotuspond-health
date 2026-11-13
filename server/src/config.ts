@@ -198,6 +198,12 @@ export interface RecordAgentConfig {
     | { kind: 'browserbase'; apiKey: string; projectId: string; apiUrl: string };
   concurrency: number;
   demoPortal: boolean;
+  /**
+   * Whether people may type a portal's address ("another lab"). Its owner controls the address's DNS, so a browser on
+   * this server could be pointed at our own network; in production that needs a browser off our servers (cdp or
+   * browserbase). Portals LotusPond lists have fixed hosts and work with any browser.
+   */
+  typedPortals: boolean;
   /** Claude's model for the navigator, when it is on. */
   navigator: { model: string } | undefined;
   /** Development only: where each step's screenshot and page are saved. */
@@ -334,6 +340,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
           : { kind: 'local', ...(e.RECORD_BROWSER_EXECUTABLE ? { executablePath: e.RECORD_BROWSER_EXECUTABLE } : {}) },
       concurrency: e.RECORD_CONCURRENCY,
       demoPortal,
+      typedPortals: b !== 'local' || e.NODE_ENV !== 'production',
       navigator: e.RECORD_NAVIGATOR === 'on' && !!(env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN) ? { model: e.RECORD_NAVIGATOR_MODEL } : undefined,
       ...(e.RECORD_DEBUG_DIR ? { debugDir: e.RECORD_DEBUG_DIR } : {}),
       ...(e.EKA_CLIENT_ID && e.EKA_CLIENT_SECRET ? {

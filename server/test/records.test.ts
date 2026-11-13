@@ -26,6 +26,7 @@ import { localBrowsers, hostAllowed } from '../src/records/browsers.ts';
 import { DEMO_OTP, DEMO_PORTAL_PATH, demoPortal, type DemoPortal } from '../src/records/demo-portal.ts';
 import { navigatorRecipe } from '../src/records/navigator.ts';
 import { RecipeDriftError } from '../src/records/recipes/kit.ts';
+import { PortalError } from '../src/records/recipes/types.ts';
 import { createRecordAgent, type RecordAgent } from '../src/records/service.ts';
 import { makeClient, registration, type TestClient } from './helpers.ts';
 
@@ -59,13 +60,14 @@ after(async () => {
 function setup(extra: Partial<Parameters<typeof createRecordAgent>[0]> = {}) {
   const config = loadConfig({ NODE_ENV: 'test', TRUST_PROXY: 'true' });
   const files = new DiskFileStore(filesDir);
-  const cells = singleCell(database.db, files);
+  // A test may bring its own cells (a file store that fails); the app and the agent share them.
+  const cells = extra.cells ?? singleCell(database.db, files);
   const secrets = ephemeralSecrets();
   const agent = createRecordAgent({
     cells, secrets, config: config.records!, browsers: localBrowsers(), selfUrl, maxBytes: config.maxUploadBytes,
     questionMs: 20_000, now: () => clock, ...extra,
   });
-  const app = createApp({ db: database.db, files, config, cells, secrets, records: agent });
+  const app = createApp({ db: database.db, files: cells.defaultCell.files, config, cells, secrets, records: agent });
   return { app, agent };
 }
 
@@ -248,6 +250,45 @@ describe('record agent', { timeout: 180_000 }, () => {
     assert.match(r.error ?? '', /has changed its website/);
   });
 
+  test('later runs reach reports past the per-run limit; a failed save or scheduled check is tried again', async () => {
+    const pdf = (s: string) => new Uint8Array(Buffer.from(`%PDF-1.4\n% ${s}\n%%EOF\n`));
+    let portalDown = false;
+    let diskFull = false;
+    // The portal lists all five reports on every check, like ABHA.
+    const recipe = { sourceId: DEMO_SOURCE_ID, run: async () => {
+      if (portalDown) throw new PortalError('The lab’s website is not answering.');
+      return [1, 2, 3, 4, 5].map(i => ({ key: `r-${i}`, title: `Report ${i}`, date: '2026-10-01', fileName: `Report ${i}.pdf`, contentType: 'application/pdf', bytes: pdf(`limit ${i}`) }));
+    } };
+    const files = new DiskFileStore(filesDir);
+    const flaky = Object.assign(Object.create(files) as DiskFileStore, {
+      put: async (key: string, bytes: Uint8Array) => { if (diskFull) { diskFull = false; throw new Error('no space left on device'); } return files.put(key, bytes); },
+    });
+    const t = setup({ recipes: [recipe], maxReports: 2, cells: singleCell(database.db, flaky) });
+    const { c, self } = await account(t.app);
+    const made = await c.json<{ connection: RecordConnectionView; run: RecordRunView }>('POST', '/api/records/connections', { sourceId: DEMO_SOURCE_ID, profileId: self.id, refreshDays: 30, noticeVersion: RECORD_AGENT_NOTICE_VERSION }, 201);
+    await t.agent.idle();
+    const run = async () => {
+      const r = await c.json<RecordRunView>('POST', `/api/records/connections/${made.connection.id}/run`, undefined, 201);
+      await t.agent.idle();
+      return c.json<RecordRunView>('GET', `/api/records/runs/${r.id}`);
+    };
+    const names = (r: RecordRunView) => r.documents.map(d => d.fileName);
+    assert.deepEqual(names(await c.json<RecordRunView>('GET', `/api/records/runs/${made.run.id}`)), ['Report 1.pdf', 'Report 2.pdf']);
+    diskFull = true;
+    assert.equal((await run()).status, 'failed', 'storing report 3 failed');
+    assert.deepEqual(names(await run()), ['Report 3.pdf', 'Report 4.pdf'], 'report 3 is not lost, and the limit counts new reports only');
+    assert.deepEqual(names(await run()), ['Report 5.pdf']);
+
+    // A scheduled check that fails keeps the connection on its schedule: tried again within a day.
+    portalDown = true;
+    await database.db.update(recordConnections).set({ nextRunAt: new Date(clock - 1000) }).where(eq(recordConnections.id, made.connection.id));
+    await t.agent.tick();
+    await t.agent.idle();
+    const [conn] = await database.db.select().from(recordConnections).where(eq(recordConnections.id, made.connection.id));
+    assert.equal(conn.status, 'active');
+    assert.equal(conn.nextRunAt?.getTime(), clock + 24 * 60 * 60_000);
+  });
+
   test('two reports with the same name are both saved, the second numbered', async () => {
     const pdf = (s: string) => new Uint8Array(Buffer.from(`%PDF-1.4\n% ${s}\n%%EOF\n`));
     const twins = setup({ recipes: [{ sourceId: DEMO_SOURCE_ID, run: async () => [1, 2, 3].map(i => ({
@@ -269,6 +310,21 @@ describe('record agent', { timeout: 180_000 }, () => {
     for (const bad of ['http://reports.example-lab.in', 'https://127.0.0.1/', 'https://localhost/', 'https://sneaky.example/', 'https://nowhere.example/', 'not a url']) {
       assert.equal((await post(bad)).code, 'invalid_portal', bad);
     }
+  });
+
+  test('in production, typed portal addresses need a browser off this server', async () => {
+    const prod = (env: Record<string, string>) => loadConfig({ NODE_ENV: 'production', TRUST_PROXY: 'true', RECORD_AGENT: 'on', ...env }).records!;
+    assert.equal(prod({}).typedPortals, false, 'a local browser could be pointed at our own network');
+    assert.equal(prod({ RECORD_BROWSER: 'cdp', RECORD_BROWSER_CDP_URL: 'wss://connect.example.com/?apiKey=k' }).typedPortals, true);
+    const base = loadConfig({ NODE_ENV: 'test', TRUST_PROXY: 'true' }).records!;
+    assert.equal(base.typedPortals, true);
+    const local = setup({ config: { ...base, typedPortals: false }, navigator: { client: new Anthropic({ apiKey: 'sk-ant-test' }) }, resolve: async () => ['203.0.113.10'] });
+    const { c, self } = await account(local.app);
+    const info = await c.json<SourcesInfo>('GET', '/api/records');
+    assert.equal(info.sources.find(s => s.id === 'other-lab')!.availability, 'unavailable');
+    assert.equal(info.sources.find(s => s.id === DEMO_SOURCE_ID)!.availability, 'recipe', 'listed portals still work');
+    const refused = await c.error('POST', '/api/records/connections', { sourceId: 'other-lab', profileId: self.id, portalUrl: 'https://reports.example-lab.in/', noticeVersion: RECORD_AGENT_NOTICE_VERSION });
+    assert.equal(refused.code, 'source_unavailable');
   });
 });
 

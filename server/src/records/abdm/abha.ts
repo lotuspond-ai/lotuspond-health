@@ -151,9 +151,15 @@ export function abhaFetcher(o: AbhaOptions): ApiFetcher {
    */
   async function requestConsent(ctx: ApiContext, s: AbhaSession, hiu: AbhaHiu, hips: string[]): Promise<boolean> {
     await ctx.step('Asking ABDM for your consent to fetch the records');
+    // The person's inbox can hold requests from other health information users too. Approving one of those with the
+    // PIN the person gives for LotusPond would share their records with someone else, so LotusPond approves only a
+    // request it can tell is its own; otherwise the person approves it in their ABHA app, which shows who asks.
+    type Req = { id: string; created_at?: string; consent_init_id?: string; consent_request_id?: string; request_id?: string };
+    const inbox = async () => (await eka.call<{ consents?: Req[] | null }>('/abdm/v1/requests', { oid: s.oid, query: { status: 'requested', type: 'consent' } })).consents ?? [];
+    const earlier = new Set((await inbox()).map(r => r.id));
     const at = now();
     const year = 365 * 24 * 60 * 60_000;
-    await eka.call('/abdm/v1/consents/create', {
+    const created = await eka.call<{ consent_init_id?: string; consent_request_id?: string; id?: string } | null>('/abdm/v1/consents/create', {
       oid: s.oid,
       body: {
         patient: { health_id: s.abhaAddress, oid: s.oid },
@@ -163,16 +169,25 @@ export function abhaFetcher(o: AbhaOptions): ApiFetcher {
         period: { from: '1990-01-01T00:00:00Z', to: new Date(at).toISOString(), expiry: new Date(at + year).toISOString() },
       },
     });
-    // The request lands in the person's own consent inbox; find the one just made.
-    type Req = { id: string; created_at?: string };
-    const inbox = await eka.call<{ consents?: Req[] | null }>('/abdm/v1/requests', { oid: s.oid, query: { status: 'requested', type: 'consent' } });
-    const mine = (inbox.consents ?? []).filter(r => !r.created_at || Date.parse(r.created_at) >= at - 5 * 60_000)
-      .sort((a, b) => Date.parse(b.created_at ?? '') - Date.parse(a.created_at ?? ''))[0];
+    // The request lands in the person's own consent inbox. Ours: one that carries the id the create call returned, or
+    // else the only request that arrived since the inbox was read just before. Two new ones, and it is not clear.
+    const ours = new Set([created?.consent_init_id, created?.consent_request_id, created?.id].filter((x): x is string => !!x));
+    const fresh = (await inbox()).filter(r => !earlier.has(r.id) && (!r.created_at || Date.parse(r.created_at) >= at - 5 * 60_000));
+    const tagged = fresh.filter(r => [r.consent_init_id, r.consent_request_id, r.request_id].some(x => !!x && ours.has(x)));
+    const mine = tagged.length === 1 ? tagged[0] : !tagged.length && fresh.length === 1 ? fresh[0] : undefined;
     if (!mine) return false;
     const pin = await eka.call<{ exist?: boolean }>('/abdm/v1/consents/pin/exists', { oid: s.oid });
     if (pin.exist === false) return false;
-    type Detail = { hi_types?: string[]; duration?: { from: string; to: string }; erase_at?: string; providers?: { hip: { id: string; name?: string }; care_contexts?: { id: string; display?: string }[] }[] };
+    type Detail = {
+      hi_types?: string[]; duration?: { from: string; to: string }; erase_at?: string; providers?: { hip: { id: string; name?: string }; care_contexts?: { id: string; display?: string }[] }[];
+      purpose?: string | { text?: string; code?: string }; hiu?: { clinic_id?: string };
+    };
     const d = await eka.call<Detail>('/abdm/v1/request', { oid: s.oid, query: { id: mine.id, type: 'consent', status: 'requested' } });
+    // When the request says what it is for and who asks, it must be LotusPond's: Self Requested (ABDM code PATRQT),
+    // from LotusPond's clinic at Eka.
+    const purpose = typeof d.purpose === 'string' ? d.purpose : d.purpose?.text ?? d.purpose?.code;
+    if (purpose && !/self|PATRQT/i.test(purpose)) return false;
+    if (d.hiu?.clinic_id && d.hiu.clinic_id !== hiu.clinicId) return false;
     const providers: NonNullable<Detail['providers']> = d.providers?.length ? d.providers : hips.map(id => ({ hip: { id }, care_contexts: [] }));
     const names = [...new Set(providers.map(p => p.hip.name ?? p.hip.id))];
     for (let attempt = 0; ; attempt++) {

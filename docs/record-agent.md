@@ -115,7 +115,7 @@ Whatever the provider:
 - **Downloads.** Downloads follow the same rule, redirects included, and are size-limited (`MAX_UPLOAD_MB`).
 - **Service workers** are blocked, so nothing can fetch around that rule.
 - **Settings.** Locale en-IN, time zone Asia/Kolkata.
-- **Portal addresses** the person types ("another lab") must be https, a host name rather than an IP address, and resolve only to public addresses. Otherwise our own network could be reached through a local browser.
+- **Portal addresses** the person types ("another lab") must be https, a host name rather than an IP address, and resolve only to public addresses. That is checked when the person connects, but the address's owner controls its DNS and its subdomains: a subdomain could later point at our own network. So in production, typed addresses are offered only with a browser off our servers (`cdp` or `browserbase`); with `local` the "another lab" source shows as not available, and a typed address saved earlier is not opened. Portals LotusPond lists have fixed hosts and work with any browser (`typedPortals` in `server/src/config.ts`).
 
 ## 4. API
 

@@ -236,6 +236,9 @@ describe('ABHA through Eka Care', { timeout: 120_000 }, () => {
     assert.equal(sources.sources.find(s => s.id === 'abha')!.availability, 'abdm');
     assert.equal(sources.sources.find(s => s.id === 'abha')!.needsUrl, false);
     eka.state.loggedIn = false;
+    // Another health information user's request waits in the person's inbox, dated after LotusPond's will be: the PIN
+    // the person gives for LotusPond must never approve it.
+    eka.state.inbox.push({ id: 'other-hiu', created_at: new Date(Date.now() + 60_000).toISOString() });
 
     const { connection, run } = await c.json<{ connection: RecordConnectionView; run: RecordRunView }>('POST', '/api/records/connections',
       { sourceId: 'abha', profileId: info.profiles[0].id, refreshDays: 30, noticeVersion: RECORD_AGENT_NOTICE_VERSION }, 201);
@@ -272,6 +275,9 @@ describe('ABHA through Eka Care', { timeout: 120_000 }, () => {
     assert.ok(consent.record_types.includes('DiagnosticReport'));
     const approved = eka.state.approved[0] as { id: string; consent_artefacts: { hip_id: string; access_mode: string }[] };
     assert.equal(approved.id, 'req-1');
+    assert.equal(eka.state.approved.length, 1);
+    assert.ok(eka.state.inbox.some(r => r.id === 'other-hiu'), 'the other request is left for the person');
+    eka.state.inbox = eka.state.inbox.filter(r => r.id !== 'other-hiu');
     assert.deepEqual(approved.consent_artefacts.map(a => [a.hip_id, a.access_mode]), [['HIP-B', 'view']]);
 
     // The connection keeps the person's ABHA address (masked here) and the webhook reference, not the OTP or PIN.

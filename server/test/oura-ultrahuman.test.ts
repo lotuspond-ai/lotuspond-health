@@ -12,7 +12,7 @@ import type { AddressInfo } from 'node:net';
 import { Hono } from 'hono';
 import { serve, type ServerType } from '@hono/node-server';
 import { eq } from 'drizzle-orm';
-import { RECORD_AGENT_NOTICE_VERSION, type RecordConnectionView, type RecordRunView, type SourcesInfo } from '../../shared/sources.ts';
+import { RECORD_AGENT_NOTICE_VERSION, sourceById, type RecordConnectionView, type RecordRunView, type SourcesInfo } from '../../shared/sources.ts';
 import type { SessionInfo } from '../../shared/types.ts';
 import { createApp } from '../src/app.ts';
 import { singleCell } from '../src/cells.ts';
@@ -25,6 +25,8 @@ import { localBrowsers } from '../src/records/browsers.ts';
 import { createRecordAgent, type RecordAgent } from '../src/records/service.ts';
 import { ouraDaily, ouraFetcher } from '../src/records/api/oura.ts';
 import { ultrahumanDay, ultrahumanFetcher } from '../src/records/api/ultrahuman.ts';
+import type { ApiContext } from '../src/records/api/types.ts';
+import { RunStoppedError } from '../src/records/recipes/types.ts';
 import { makeClient, registration, type TestClient } from './helpers.ts';
 
 const migrations = fileURLToPath(new URL('../drizzle', import.meta.url));
@@ -271,5 +273,28 @@ describe('Oura and Ultrahuman', { timeout: 60_000 }, () => {
     assert.deepEqual(uh.state.calls, ['2026-11-12'], 'read again, since it had no data last time');
     assert.equal(r3.saved, 1);
     assert.deepEqual(await bundleOf(r3.documents[0].id), ['2026-11-12 40443-4 55']);
+  });
+});
+
+describe('stopping a device API check', () => {
+  test('no request is sent after the run is stopped, and one in flight ends', async () => {
+    const stop = new AbortController();
+    const urls: string[] = [];
+    // Ultrahuman reads one day per request; the person presses Stop during the first one.
+    const slow: typeof fetch = async (input, init) => {
+      urls.push(String(input));
+      stop.abort();
+      await new Promise(r => setTimeout(r, 20));
+      if (init?.signal?.aborted) throw new DOMException('The operation was aborted.', 'AbortError');
+      return new Response(JSON.stringify({ data: { metric_data: [] } }), { status: 200, headers: { 'content-type': 'application/json' } });
+    };
+    const now = () => Date.parse('2026-11-12T12:00:00Z');
+    const uh = ultrahumanFetcher({ clientId: 'c', clientSecret: 's', redirectUri: 'https://lotuspond.example/records/oauth/ultrahuman/callback' }, { apiUrl: 'https://uh.example', fetch: slow, now });
+    const ctx: ApiContext = {
+      source: sourceById('ultrahuman')!, identifier: null, session: JSON.stringify({ access: 'a', refresh: 'r', expiresAt: now() + 3_600_000 }),
+      ask: async () => '', remember() {}, keep() {}, step: async () => {}, note() {}, signal: stop.signal, maxBytes: 1_000_000,
+    };
+    await assert.rejects(uh.run(ctx), RunStoppedError);
+    assert.equal(urls.length, 1, 'the other days are not requested');
   });
 });
