@@ -169,7 +169,7 @@ export function withingsFetcher(o: WithingsOptions): OAuthFetcher {
       if (!report) return [];
       // Next time, read only the days after these.
       t = { ...t, lastDay: rows[rows.length - 1].day };
-      ctx.keep(JSON.stringify(t), ref(t.userid));
+      ctx.progress(JSON.stringify(t), ref(t.userid));
       return [report];
     },
   };

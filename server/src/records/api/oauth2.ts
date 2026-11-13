@@ -112,7 +112,7 @@ export function dailyOAuthFetcher(def: DailyOAuthSource, client: OAuthClient, op
       const kept = rows.filter(r => r.day >= from && r.day <= yesterday && (!tokens.lastDay || r.day > tokens.lastDay));
       // Next time, read from the day after the last day with data: a ring that syncs late still brings its days in.
       const lastDay = kept.reduce<string | undefined>((m, r) => (!m || r.day > m ? r.day : m), tokens.lastDay);
-      ctx.keep(JSON.stringify({ ...tokens, ...(lastDay ? { lastDay } : {}), ...(timeZone ? { timeZone } : {}) }));
+      ctx.progress(JSON.stringify({ ...tokens, ...(lastDay ? { lastDay } : {}), ...(timeZone ? { timeZone } : {}) }));
       const report = vitalsReport(kept, def.device);
       return report ? [report] : [];
     },

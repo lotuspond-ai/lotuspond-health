@@ -114,10 +114,16 @@ after(async () => {
   fs.rmSync(filesDir, { recursive: true, force: true });
 });
 
+// Set to make the next file write fail (a full disk).
+let diskFull = false;
+
 function setup() {
   const config = loadConfig({ NODE_ENV: 'test', TRUST_PROXY: 'true', PUBLIC_URL: 'https://health.example', WITHINGS_CLIENT_ID: 'withings-client', WITHINGS_CLIENT_SECRET: 'withings-secret' });
   assert.equal(config.records!.withings!.redirectUri, 'https://health.example/records/oauth/withings/callback');
-  const files = new DiskFileStore(filesDir);
+  const disk = new DiskFileStore(filesDir);
+  const files = Object.assign(Object.create(disk) as DiskFileStore, {
+    put: async (key: string, bytes: Uint8Array) => { if (diskFull) { diskFull = false; throw new Error('no space left on device'); } return disk.put(key, bytes); },
+  });
   const cells = singleCell(database.db, files);
   const secrets = ephemeralSecrets();
   const agent = createRecordAgent({
@@ -203,7 +209,12 @@ describe('Withings', { timeout: 60_000 }, () => {
     ]);
 
     // Next day, after the access token has expired: refreshed (the rotated token kept), and only 11 Nov comes in.
+    // The first try cannot store the file: 11 Nov is not lost, and the refreshed token is still kept.
     clock += 24 * 3600_000;
+    diskFull = true;
+    const failed = await c.json<RecordRunView>('POST', `/api/records/connections/${conn.id}/run`, {}, 201);
+    await agent.idle();
+    assert.equal((await c.json<RecordRunView>('GET', `/api/records/runs/${failed.id}`)).status, 'failed');
     const run2 = await c.json<RecordRunView>('POST', `/api/records/connections/${conn.id}/run`, {}, 201);
     await agent.idle();
     const r2 = await c.json<RecordRunView>('GET', `/api/records/runs/${run2.id}`);

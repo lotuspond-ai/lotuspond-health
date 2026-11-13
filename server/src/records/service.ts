@@ -285,6 +285,8 @@ export function createRecordAgent(opts: RecordAgentOptions): RecordAgent {
     let failCapture: () => Promise<void> = async () => {};
     // The sign-in to keep (sealed): an API source's own, or the browser's storage state; and its webhook reference.
     let kept: { session: string; ref?: string } | null = null;
+    // An API source's read cursor: kept only after the reports are saved.
+    let progress: { session: string; ref?: string } | null = null;
     let note: string | null = null;
     const keepSignIn = (k: { session: string; ref?: string } | null) => (k ? {
       sessionCt: seal(cell, k.session, `session:${conn.id}`), ...(k.ref ? { externalRef: k.ref } : {}),
@@ -298,6 +300,7 @@ export function createRecordAgent(opts: RecordAgentOptions): RecordAgent {
           step: async text => { await setRun(cell, job.runId, { step: text.slice(0, 120) }); },
           ask: q => ask(cell, job, l, q),
           keep: (s, ref) => { kept = { session: s, ...(ref ? { ref } : {}) }; },
+          progress: (s, ref) => { progress = { session: s, ...(ref ? { ref } : {}) }; },
           note: text => { note = text.slice(0, 200); },
         };
         reports = await race(api.run(ctx));
@@ -336,6 +339,7 @@ export function createRecordAgent(opts: RecordAgentOptions): RecordAgent {
       }
       await setRun(cell, job.runId, { step: 'Saving new reports', found: reports.length });
       const saved = await saveReports(cell, job, conn, source, reports, opts.maxReports ?? MAX_REPORTS);
+      if (progress) kept = progress;
       if (session) {
         const state = await session.close();
         session = null;

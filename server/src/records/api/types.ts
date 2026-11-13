@@ -12,6 +12,11 @@ export interface ApiContext {
   remember(identifier: string): void;
   /** Keep this sign-in, even if the run fails later; `ref` lets webhooks about the person find the connection. */
   keep(session: string, ref?: string): void;
+  /**
+   * Keep this sign-in with how far the check read (a day cursor), but only once the reports it returns are saved: a
+   * run that fails to save them reads the same days again next time. Credentials refreshed earlier still go to keep().
+   */
+  progress(session: string, ref?: string): void;
   step(text: string): Promise<void>;
   /** A line for the person about how the run ended ("Approve the request in your ABHA app"). */
   note(text: string): void;
