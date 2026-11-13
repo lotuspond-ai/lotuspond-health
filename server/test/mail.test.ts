@@ -55,7 +55,7 @@ function tokens(clientId: string, rotate: boolean) {
   return { s, handler, authed };
 }
 
-type Mail = { id: string; from: string; subject: string; at: number; files: { name: string; type: string; bytes: Buffer }[] };
+type Mail = { id: string; from: string; subject: string; at: number; files: { name: string; type: string; bytes: Buffer; inline?: boolean }[] };
 const MAILS: Mail[] = [
   { id: 'm1', from: 'Thyrocare <reports@mail.thyrocare.com>', subject: 'Your Aarogyam report', at: clock - 40 * DAY,
     files: [{ name: 'TC823411_Report.pdf', type: 'application/pdf', bytes: pdf('thyrocare report') }, { name: 'Invoice_TC823411.pdf', type: 'application/pdf', bytes: pdf('invoice') }] },
@@ -63,11 +63,12 @@ const MAILS: Mail[] = [
   { id: 'm3', from: 'Ravi <ravi@example.com>', subject: 'Lab report for mom', at: clock - 20 * DAY, files: [{ name: 'CBC.pdf', type: 'application/pdf', bytes: pdf('cbc') }, { name: 'photo.jpg', type: 'image/jpeg', bytes: Buffer.from('jpeg') }] },
   { id: 'm4', from: 'Dr Lal PathLabs <noreply@lalpathlabs.com>', subject: 'Report ready', at: clock - 10 * DAY, files: [{ name: 'DL55012345.pdf', type: 'application/pdf', bytes: pdf('drlal', true) }] },
   { id: 'm5', from: 'Old Lab <x@lalpathlabs.com>', subject: 'Report from 2024', at: clock - 400 * DAY, files: [{ name: 'old.pdf', type: 'application/pdf', bytes: pdf('old') }] },
+  { id: 'm7', from: 'Clinic <desk@smallclinic.example>', subject: 'Scan report', at: clock - 5 * DAY, files: [{ name: 'USG_abdomen.pdf', type: 'application/pdf', bytes: pdf('usg'), inline: true }] },
 ];
 
 function fakeGmail(mails: Mail[]) {
   const t = tokens('gmail-client-id', false);
-  const state = { queries: [] as string[], attachmentCalls: 0 };
+  const state = { queries: [] as string[], attachmentCalls: 0, requests: [] as string[] };
   const app = new Hono();
   app.post('/token', t.handler);
   app.use('/gmail/*', async (c, next) => (t.authed(c) ? next() : c.json({ error: { code: 401 } }, 401)));
@@ -82,10 +83,27 @@ function fakeGmail(mails: Mail[]) {
   });
   app.get('/gmail/v1/users/me/messages/:id', c => {
     const m = mails.find(x => x.id === c.req.param('id'))!;
-    assert.equal(c.req.query('format'), 'full');
-    // Fresh attachment ids on every request, as Gmail does.
-    const parts = m.files.map((f, i) => ({ partId: String(i + 1), filename: f.name, mimeType: f.type, body: { attachmentId: `${m.id}-${i}-${Math.random().toString(36).slice(2)}`, size: f.bytes.length } }));
-    return c.json({ id: m.id, internalDate: String(m.at), payload: { mimeType: 'multipart/mixed', headers: [{ name: 'From', value: m.from }, { name: 'Subject', value: m.subject }], parts: [{ partId: '0', mimeType: 'text/plain', filename: '', body: { size: 10, data: 'aGk' } }, ...parts] } });
+    const format = c.req.query('format');
+    const fields = c.req.query('fields');
+    const headers = [{ name: 'From', value: m.from }, { name: 'Subject', value: m.subject }];
+    if (format === 'metadata') {
+      state.requests.push(`${m.id}:metadata`);
+      return c.json({ id: m.id, internalDate: String(m.at), payload: { headers } });
+    }
+    assert.equal(format, 'full');
+    // Fresh attachment ids on every request, as Gmail does; an inline file carries its bytes in body.data.
+    const parts = m.files.map((f, i) => ({ partId: String(i + 1), filename: f.name, mimeType: f.type,
+      body: f.inline ? { size: f.bytes.length, data: f.bytes.toString('base64url') } : { attachmentId: `${m.id}-${i}-${Math.random().toString(36).slice(2)}`, size: f.bytes.length } }));
+    const tree = { mimeType: 'multipart/mixed', headers, parts: [{ partId: '0', mimeType: 'text/plain', filename: '', body: { size: 10, data: 'aGk' } }, ...parts] };
+    if (fields) {
+      // Gmail's partial response: no body data anywhere.
+      assert.ok(!fields.includes('data'), fields);
+      state.requests.push(`${m.id}:parts`);
+      const strip = (p: Record<string, unknown>): Record<string, unknown> => ({ ...p, headers: undefined, body: { ...(p.body as object), data: undefined }, ...(p.parts ? { parts: (p.parts as Record<string, unknown>[]).map(strip) } : {}) });
+      return c.json({ id: m.id, payload: strip(tree) });
+    }
+    state.requests.push(`${m.id}:body`);
+    return c.json({ id: m.id, internalDate: String(m.at), payload: tree });
   });
   app.get('/gmail/v1/users/me/messages/:id/attachments/:att', c => {
     state.attachmentCalls++;
@@ -106,12 +124,12 @@ function fakeGraph(mails: Mail[]) {
   app.get('/v1.0/me/messages', c => {
     const filter = c.req.query('$filter')!;
     state.filters.push(filter);
-    assert.equal(c.req.query('$orderby'), 'receivedDateTime desc');
+    assert.equal(c.req.query('$orderby'), 'receivedDateTime asc');
     const since = Date.parse(/receivedDateTime ge (\S+)/.exec(filter)![1]);
-    const hits = mails.filter(m => m.at >= since).sort((a, b) => b.at - a.at);
+    const hits = mails.filter(m => m.at >= since).sort((a, b) => a.at - b.at);
     const skip = Number(c.req.query('$skip') ?? 0);
     const page = hits.slice(skip, skip + 2).map(m => ({ id: `AAMk-${m.id}`, subject: m.subject, receivedDateTime: new Date(m.at).toISOString(), from: { emailAddress: { address: /<([^>]+)>/.exec(m.from)?.[1] ?? m.from, name: 'x' } } }));
-    const next = skip + 2 < hits.length ? `${base}/v1.0/me/messages?${new URLSearchParams({ $filter: filter, $orderby: 'receivedDateTime desc', $skip: String(skip + 2) })}` : undefined;
+    const next = skip + 2 < hits.length ? `${base}/v1.0/me/messages?${new URLSearchParams({ $filter: filter, $orderby: 'receivedDateTime asc', $skip: String(skip + 2) })}` : undefined;
     return c.json({ value: page, ...(next ? { '@odata.nextLink': next } : {}) });
   });
   app.get('/v1.0/me/messages/:id/attachments', c => {
@@ -153,7 +171,7 @@ after(async () => {
   fs.rmSync(filesDir, { recursive: true, force: true });
 });
 
-function setup() {
+function setup(maxReports?: number) {
   const config = loadConfig({
     NODE_ENV: 'test', TRUST_PROXY: 'true', PUBLIC_URL: 'https://health.example',
     GMAIL_CLIENT_ID: 'gmail-client-id', GMAIL_CLIENT_SECRET: 'mail-secret-123', OUTLOOK_CLIENT_ID: 'outlook-client-id', OUTLOOK_CLIENT_SECRET: 'mail-secret-123',
@@ -164,7 +182,7 @@ function setup() {
   const secrets = ephemeralSecrets();
   const now = () => clock;
   const agent = createRecordAgent({
-    cells, secrets, config: r, browsers: localBrowsers(), selfUrl: 'http://127.0.0.1:1', maxBytes: config.maxUploadBytes, now,
+    cells, secrets, config: r, browsers: localBrowsers(), selfUrl: 'http://127.0.0.1:1', maxBytes: config.maxUploadBytes, now, ...(maxReports ? { maxReports } : {}),
     apis: [
       gmailFetcher(r.gmail!, { apiUrl: gmailUrl, tokenUrl: `${gmailUrl}/token`, authorizeUrl: 'https://accounts.google.example/o/oauth2/v2/auth', now }),
       outlookFetcher(r.outlook!, { apiUrl: graphUrl, tokenUrl: `${graphUrl}/common/oauth2/v2.0/token`, authorizeUrl: 'https://login.microsoftonline.example/common/oauth2/v2.0/authorize', now }),
@@ -202,6 +220,8 @@ describe('email sources', { timeout: 60_000 }, () => {
     assert.ok(isHealthEmail('clinic@example.com', 'Discharge summary - Asha'));
     assert.ok(isHealthEmail('lab@example.com', 'Your reports are ready'));
     assert.ok(!isHealthEmail('boss@work.example', 'Expense report Q3'));
+    for (const s of ['Scan report', 'Radiology report', 'Blood results', 'X-ray report', 'Health check-up report']) assert.ok(isHealthEmail('a@b.example', s), s);
+    assert.ok(!isHealthEmail('a@b.example', 'Latest test of the app'));
     assert.ok(!isHealthEmail('news@notthyrocare.com', 'Offers'), 'not a lookalike domain');
     assert.ok(isRecordPdf('Report.PDF', 'application/octet-stream', 100, 1000));
     assert.ok(!isRecordPdf('Invoice_123.pdf', 'application/pdf', 100, 1000));
@@ -222,8 +242,12 @@ describe('email sources', { timeout: 60_000 }, () => {
 
     const r = conn.lastRun!;
     assert.equal(r.status, 'succeeded', r.error ?? '');
-    assert.deepEqual(r.documents.map(d => d.fileName).sort(), ['CBC.pdf', 'DL55012345.pdf', 'TC823411_Report.pdf'], 'no invoice, no order, no photo, nothing older than a year');
+    assert.deepEqual(r.documents.map(d => d.fileName).sort(), ['CBC.pdf', 'DL55012345.pdf', 'TC823411_Report.pdf', 'USG_abdomen.pdf'], 'no invoice, no order, no photo, nothing older than a year; the inline PDF too');
     assert.match(r.note ?? '', /1 of the reports are password-protected/);
+    // Only headers decide; the part tree comes without body data; a body is fetched only for the inline PDF.
+    assert.ok(gmail.state.requests.includes('m2:metadata') && !gmail.state.requests.some(x => x.startsWith('m2:') && x !== 'm2:metadata'), 'the order email is never opened further');
+    assert.deepEqual(gmail.state.requests.filter(x => x.endsWith(':body')), ['m7:body']);
+    assert.ok(gmail.state.queries[0].includes('"scan report"') && gmail.state.queries[0].includes('"blood results"'), 'the search covers every subject the rule accepts');
     assert.ok(gmail.state.queries[0].includes(`after:${Math.floor((clock - 365 * DAY) / 1000)}`));
 
     // Two hours later the token has run out: Google refreshes without a new refresh token, and the old one is kept.
@@ -247,7 +271,7 @@ describe('email sources', { timeout: 60_000 }, () => {
     assert.equal(auth.searchParams.get('scope'), 'offline_access Mail.Read');
     const r = conn.lastRun!;
     assert.equal(r.status, 'succeeded', r.error ?? '');
-    assert.deepEqual(r.documents.map(d => d.fileName).sort(), ['CBC.pdf', 'DL55012345.pdf', 'TC823411_Report.pdf']);
+    assert.deepEqual(r.documents.map(d => d.fileName).sort(), ['CBC.pdf', 'DL55012345.pdf', 'TC823411_Report.pdf', 'USG_abdomen.pdf']);
     assert.match(graph.state.filters[0], /^receivedDateTime ge \S+ and hasAttachments eq true$/);
 
     clock += 2 * 3600_000;
@@ -257,5 +281,22 @@ describe('email sources', { timeout: 60_000 }, () => {
     assert.equal(graph.tokens.refreshes.length, 2);
     assert.notEqual(graph.tokens.refreshes[1].refresh_token, graph.tokens.refreshes[0].refresh_token, 'the rotated refresh token was kept');
     assert.equal(graph.tokens.refreshes[0].scope, 'offline_access Mail.Read', 'Microsoft gets the scopes again');
+  });
+
+  test('a backlog larger than one check comes in over several checks, oldest first, nothing skipped', async () => {
+    const small = setup(2);
+    graph.tokens.codes.add('good-code');
+    const c = makeClient(small.app);
+    const info = await c.json<SessionInfo>('POST', '/api/auth/register', registration(`backlog-${Date.now()}@example.com`), 201);
+    const { conn } = await connect(small.app, small.agent, c, info.profiles[0].id, 'outlook');
+    const r1 = conn.lastRun!;
+    assert.deepEqual(r1.documents.map(d => d.fileName), ['TC823411_Report.pdf', 'CBC.pdf'], 'the two oldest');
+    assert.match(r1.note ?? '', /more emails to look at/);
+    const r2 = await checkNow(c, small.agent, conn.id);
+    assert.deepEqual(r2.documents.map(d => d.fileName), ['DL55012345.pdf', 'USG_abdomen.pdf']);
+    const r3 = await checkNow(c, small.agent, conn.id);
+    assert.equal(r3.saved, 0);
+    assert.ok(!/more emails/.test(r3.note ?? ''));
+    await small.agent.idle();
   });
 });

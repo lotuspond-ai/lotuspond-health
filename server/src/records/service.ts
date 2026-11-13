@@ -298,6 +298,12 @@ export function createRecordAgent(opts: RecordAgentOptions): RecordAgent {
       if (api) {
         const ctx: ApiContext = {
           source, identifier, session: storage, signal: l.abort.signal, maxBytes: opts.maxBytes, remember,
+          maxReports: opts.maxReports ?? MAX_REPORTS,
+          alreadySaved: async key => {
+            const itemKey = createHash('sha256').update(`${source.id}\u0000${key}`).digest('hex');
+            const [hit] = await cell.db.select({ k: recordItems.itemKey }).from(recordItems).where(and(eq(recordItems.connectionId, conn.id), eq(recordItems.itemKey, itemKey))).limit(1);
+            return !!hit;
+          },
           step: async text => { await setRun(cell, job.runId, { step: text.slice(0, 120) }); },
           ask: q => ask(cell, job, l, q),
           keep: (s, ref) => { kept = { session: s, ...(ref ? { ref } : {}) }; },

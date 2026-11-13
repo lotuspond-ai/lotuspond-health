@@ -293,6 +293,7 @@ describe('stopping a device API check', () => {
     const ctx: ApiContext = {
       source: sourceById('ultrahuman')!, identifier: null, session: JSON.stringify({ access: 'a', refresh: 'r', expiresAt: now() + 3_600_000 }),
       ask: async () => '', remember() {}, keep() {}, progress() {}, step: async () => {}, note() {}, signal: stop.signal, maxBytes: 1_000_000,
+      maxReports: 50, alreadySaved: async () => false,
     };
     await assert.rejects(uh.run(ctx), RunStoppedError);
     assert.equal(urls.length, 1, 'the other days are not requested');

@@ -109,7 +109,7 @@ after(async () => {
   fs.rmSync(filesDir, { recursive: true, force: true });
 });
 
-function setup() {
+function setup(maxReports?: number) {
   const config = loadConfig({ NODE_ENV: 'test', TRUST_PROXY: 'true', PUBLIC_URL: 'https://health.example', DIGILOCKER_CLIENT_ID: 'DLCLIENT', DIGILOCKER_CLIENT_SECRET: SECRET, DIGILOCKER_API_URL: apiUrl });
   const r = config.records!;
   assert.equal(r.digilocker!.redirectUri, 'https://health.example/records/oauth/digilocker/callback');
@@ -117,7 +117,7 @@ function setup() {
   const cells = singleCell(database.db, files);
   const secrets = ephemeralSecrets();
   const agent = createRecordAgent({
-    cells, secrets, config: r, browsers: localBrowsers(), selfUrl: 'http://127.0.0.1:1', maxBytes: config.maxUploadBytes,
+    cells, secrets, config: r, browsers: localBrowsers(), selfUrl: 'http://127.0.0.1:1', maxBytes: config.maxUploadBytes, ...(maxReports ? { maxReports } : {}),
     apis: [digilockerFetcher(r.digilocker!, { apiUrl: r.digilocker!.apiUrl })],
   });
   return { app: createApp({ db: database.db, files, config, cells, secrets, records: agent }), agent };
@@ -139,6 +139,13 @@ describe('DigiLocker', { timeout: 60_000 }, () => {
     assert.ok(isHealthUpload({ type: 'file', uri: 'u', name: 'MRI brain.pdf' }));
     assert.ok(!isHealthUpload({ type: 'file', uri: 'u', name: 'Electricity bill.pdf' }));
     assert.ok(!isHealthUpload({ type: 'file', uri: 'u', name: 'Aadhaar report.pdf' }), 'identity wins over the word "report"');
+    // Not health, though they contain "ct", "test" or "insurance".
+    assert.ok(!isHealthUpload({ type: 'file', uri: 'u', name: 'contract.pdf' }));
+    assert.ok(!isHealthUpload({ type: 'file', uri: 'u', name: 'latest bank statement.pdf' }));
+    assert.ok(!isHealthIssued({ description: 'Life Insurance Policy', issuer: 'LIC' }));
+    assert.ok(!isHealthIssued({ description: 'Motor Insurance Policy', issuer: 'ICICI Lombard' }));
+    assert.ok(isHealthUpload({ type: 'file', uri: 'u', name: 'Blood_test_report.pdf' }));
+    assert.ok(isHealthUpload({ type: 'file', uri: 'u', name: 'CT scan report.pdf' }));
     const b = new Uint8Array(Buffer.from('abc'));
     assert.ok(hmacOk(b, createHmac('sha256', SECRET).update(b).digest('base64'), SECRET));
     assert.ok(!hmacOk(b, createHmac('sha256', 'other').update(b).digest('base64'), SECRET));
@@ -202,5 +209,31 @@ describe('DigiLocker', { timeout: 60_000 }, () => {
     dl.state.challenges.set('code-3', challenge);
     const bad = await app.request(`/records/oauth/digilocker/callback?state=${new URL(third.authorizeUrl!).searchParams.get('state')}&code=code-3`);
     assert.equal(bad.status, 400);
+  });
+
+  test('more health documents than one check saves: the rest come in on the next approval, none downloaded twice', async () => {
+    const small = setup(2);
+    const c = makeClient(small.app);
+    const info = await c.json<SessionInfo>('POST', '/api/auth/register', registration(`dl-small-${Date.now()}@example.com`), 201);
+    const approve = async (code: string) => {
+      const r = await c.json<{ authorizeUrl?: string }>('POST', '/api/records/connections', { sourceId: 'digilocker', profileId: info.profiles[0].id, refreshDays: null, noticeVersion: RECORD_AGENT_NOTICE_VERSION }, 201);
+      const auth = new URL(r.authorizeUrl!);
+      dl.state.challenges.set(code, auth.searchParams.get('code_challenge')!);
+      assert.equal((await small.app.request(`/records/oauth/digilocker/callback?state=${auth.searchParams.get('state')}&code=${code}`)).status, 302);
+      await sleep(20);
+      await small.agent.idle();
+      return (await c.json<RecordConnectionView[]>('GET', '/api/records/connections'))[0].lastRun!;
+    };
+    dl.state.downloads = [];
+    const first = await approve('small-1');
+    assert.equal(first.saved, 2);
+    assert.match(first.note ?? '', /more health documents/);
+    const before = dl.state.downloads.length;
+    const second = await approve('small-2');
+    assert.equal(second.saved, 2, 'the next two; the tampered X-ray is not saved');
+    assert.ok(!dl.state.downloads.slice(before).some(u => /VACER|HLPOL/.test(u)), 'documents already saved are not downloaded again');
+    const third = await approve('small-3');
+    assert.equal(third.saved, 0);
+    await small.agent.idle();
   });
 });

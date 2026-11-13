@@ -22,6 +22,10 @@ export interface ApiContext {
   note(text: string): void;
   signal: AbortSignal;
   maxBytes: number;
+  /** New reports one check saves, at most: a source with more should return the oldest and resume next time. */
+  maxReports: number;
+  /** Whether a report with this key was already brought in on this connection (skip downloading it again). */
+  alreadySaved(key: string): Promise<boolean>;
 }
 
 export interface ApiFetcher {

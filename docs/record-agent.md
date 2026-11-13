@@ -295,16 +295,20 @@ Many Indian labs email the report as a PDF. The email sources bring those PDFs i
    - Outlook: `offline_access Mail.Read`, for personal and work accounts.
    
    The shared `oauthSession()` in `records/api/oauth2.ts` handles both. Google keeps the same refresh token, which is kept as it is; Microsoft rotates it, and the new one is kept at once.
-2. **Which emails.** Emails with attachments received since the last check (a day of overlap; a year back the first time), at most 200 per check. Only health emails are opened further:
+2. **Which emails.** Emails with attachments received since the last check (a day of overlap; a year back the first time), worked through **oldest first**. Only health emails are opened further:
    - a sender on a known lab, hospital, pharmacy or health-app domain (`HEALTH_SENDER_DOMAINS`, subdomains included, look-alikes not);
-   - or a subject naming a lab, test, diagnostic, scan or health-check report or result, a discharge summary, a prescription, or "report is ready".
+   - or a subject naming a lab, test, blood, diagnostic, scan, X-ray, MRI, radiology or health-check report or result, a discharge summary, a prescription, or "report is ready".
    
-   Gmail's own search does a first pass (`has:attachment filename:pdf after:… {from:… OR subject:…}`), and the same rule is applied again to each email.
-3. **Which attachments.** PDFs only, not invoices, receipts, bills, brochures or price lists, within the upload size limit. Each is saved once:
+   One list (`HEALTH_SUBJECT_PHRASES`) makes both that rule and Gmail's own search (`has:attachment filename:pdf after:… {from:… OR subject:(…)}`), so the search never drops a subject the rule accepts.
+3. **Only headers decide.**
+   - Gmail: `format=metadata` (From, Subject, date) for every email. Only for a health email is the part tree read, and then without body data (`format=full&fields=…`). The one exception is a PDF Gmail carries inline instead of as an attachment: then that health email is fetched whole and only that part is kept.
+   - Outlook: `$select=id,subject,from,receivedDateTime`.
+4. **Which attachments.** PDFs only, not invoices, receipts, bills, brochures or price lists, within the upload size limit, and not already saved (they are not downloaded again):
    - Gmail: keyed by message id and part, because Gmail's attachment ids change between requests;
    - Outlook: keyed by message and attachment id; only file attachments, not attached emails.
-4. **Never kept.** Email bodies, other emails, and other attachments.
-5. **Password-protected PDFs.** These are common: Indian labs often use the name and date of birth as the password. They are saved, and the run notes how many there were.
+5. **Limits and resuming.** A check stops at the agent's report limit (50) or after 200 emails. It moves the cursor only to the last email it finished, and says there is more, so a large backlog comes in over several checks with nothing skipped. The cursor is kept only once the reports are saved.
+6. **Never kept.** Email bodies, other emails, and other attachments.
+7. **Password-protected PDFs.** These are common: Indian labs often use the name and date of birth as the password. They are saved, and the run notes how many there were.
 
 Setting up:
 - **Gmail:** a Google Cloud OAuth client with the Gmail API on. `gmail.readonly` is a restricted scope: until Google verifies LotusPond and a third-party security assessment is passed, the app works only for up to 100 test users added in the Google Cloud console.
@@ -323,9 +327,11 @@ DigiLocker's partner API is run by NeGD, with Meri Pehchaan sign-in. It follows 
    - there is no schedule: `refreshDays` is kept empty, a schedule is refused with `no_schedule`, and Check now answers `oauth_needed`, which the app turns into the redirect.
 3. **Which documents.**
    - **Issued** (`GET /public/oauth2/2/files/issued`): only health ones, by type, name or issuer. That covers vaccination certificates, health insurance and mediclaim policies, Ayushman / PM-JAY and ABHA cards, disability (UDID) certificates, CGHS and ESIC cards. Only PDFs are taken.
-   - **Uploaded** (`GET /public/oauth2/1/files/[id]`, two folder levels down): files whose names say they are medical (report, lab, scan, prescription, discharge, …).
+   - **Uploaded** (`GET /public/oauth2/1/files/[id]`, two folder levels down): files whose names say they are medical, matched as whole words (a lab, blood, scan or X-ray report or result, a prescription, a discharge summary, an MRI, …). "contract.pdf" or "latest bank statement" don't match.
+   - Issued insurance counts only when it is health insurance or mediclaim, not life or motor insurance.
    - **Never:** identity and other documents (Aadhaar, PAN, licences, voter ID, passport, ration card, mark sheets, vehicle, income, caste, birth certificates). An identity word in the name always wins.
-4. **Integrity.** Each file (`GET /public/oauth2/1/file/{uri}`) comes with an `hmac` header: Base64 HMAC-SHA256 of the bytes under the client secret. It is checked before saving, and files that fail are not saved; the run notes how many.
+4. **Limits and resuming.** Documents already saved are not downloaded again, and an approval saves at most the agent's report limit. An account with more health documents brings the rest in on the next approval, and the run says so.
+5. **Integrity.** Each file (`GET /public/oauth2/1/file/{uri}`) comes with an `hmac` header: Base64 HMAC-SHA256 of the bytes under the client secret. It is checked before saving, and files that fail are not saved; the run notes how many.
 
 **Getting access.** Register LotusPond as a DigiLocker *Requester* on DigiLocker's partner portal (see digilocker.gov.in → Partners → Requesters; the API is listed on API Setu). This is not self-serve. Then:
 - register the redirect URI `PUBLIC_URL/records/oauth/digilocker/callback`;

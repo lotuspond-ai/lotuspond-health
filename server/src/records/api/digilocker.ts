@@ -21,7 +21,7 @@
 // (test/digilocker.test.ts). LotusPond needs to be registered as a DigiLocker Requester (partners.digitallocker.gov.in);
 // it has not been run against the real service.
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { PortalError, type PortalReport } from '../recipes/types.ts';
+import type { PortalReport } from '../recipes/types.ts';
 import { oauthSession, type OAuthClient, type Tokens } from './oauth2.ts';
 import type { OAuthFetcher } from './types.ts';
 
@@ -30,9 +30,9 @@ export const DIGILOCKER_URL = 'https://digilocker.meripehchaan.gov.in';
 interface Item { name?: string; type?: string; id?: string; date?: string; mime?: unknown; uri?: string; doctype?: string; description?: string; issuerid?: string; issuer?: string }
 
 /** Issued document types and issuers that hold health records. */
-const HEALTH_ISSUED = /vaccin|covid|immuni[sz]ation|health|insurance|mediclaim|ayushman|pm-?jay|abha|disab|udid|medical|hospital|discharge|cghs|esic|e-?pehchan|blood/i;
+const HEALTH_ISSUED = /\b(?:vaccin\w*|covid(?:-?19)?|immuni[sz]ation|ayushman|pm-?jay|abha|udid|disability|cghs|esic|e-?pehchan|mediclaim|health\s+(?:insurance|card|policy|certificate|id)|medical\s+(?:certificate|insurance|report)|discharge\s+summary)\b/i
 /** Uploaded file names that say they are medical. */
-const HEALTH_UPLOAD = /report|lab|test|blood|scan|x-?ray|mri|ct\b|ultrasound|ecg|prescription|discharge|medical|health|hospital|clinic|vaccin|doctor|dr\.?\s|pathology|diagnos/i;
+const HEALTH_UPLOAD = /\b(?:(?:lab|test|blood|scan|x-?ray|mri|ct|ultrasound|usg|ecg|echo|pathology|radiology|diagnostic|medical|health|thyroid|lipid|cbc|hba1c|urine|sugar)\s*-?\s*(?:reports?|results?|tests?)|prescriptions?|discharge\s+summary|medical|vaccin\w*|x-?ray|mri|ultrasound|ecg|pathology|radiology|biopsy)\b/i
 /** Never these, whatever their names say. */
 const IDENTITY = /aadhaa?r|\bpan\b|driving\s*licen|voter|passport|ration|mark\s*sheet|marksheet|degree|certificate\s+of\s+(?:class|board)|vehicle|registration\s+certificate|fitness\s+certificate|income|caste|domicile|birth/i;
 
@@ -42,7 +42,9 @@ export function isHealthIssued(i: Item): boolean {
 }
 
 export function isHealthUpload(i: Item): boolean {
-  return i.type === 'file' && !!i.uri && !IDENTITY.test(i.name ?? '') && HEALTH_UPLOAD.test(i.name ?? '');
+  // "Blood_test_report.pdf" reads as "Blood test report pdf".
+  const name = (i.name ?? '').replace(/[_.]+/g, ' ');
+  return i.type === 'file' && !!i.uri && !IDENTITY.test(name) && HEALTH_UPLOAD.test(name);
 }
 
 /** The hmac header DigiLocker sends: Base64 HMAC-SHA256 of the file under the client secret. */
@@ -89,21 +91,27 @@ export function digilockerFetcher(client: OAuthClient, opts: { apiUrl?: string; 
 
       const out: PortalReport[] = [];
       let tampered = 0;
-      for (const { item, issued: isIssued } of wanted.slice(0, 50)) {
+      // Already-saved documents are not downloaded again, and a check saves at most the agent's limit: an account with
+      // more health documents brings the rest in on the next check.
+      let more = false;
+      for (const { item, issued: isIssued } of wanted.slice(0, 1000)) {
+        if (ctx.signal.aborted) break;
         if (isIssued && item.mime !== undefined && !wantsPdf(item.mime)) continue;
+        const key = `digilocker:${item.uri!.trim()}`;
+        if (await ctx.alreadySaved(key)) continue;
+        if (out.length >= ctx.maxReports) { more = true; break; }
         const file = await s.getFile(`${base}/public/oauth2/1/file/${encodeURIComponent(item.uri!.trim())}`, ctx.maxBytes);
         // Integrity: a file whose hmac does not match is not saved.
         if (!hmacOk(file.bytes, file.headers.get('hmac'), client.clientSecret)) { tampered++; continue; }
         const title = (item.description || item.name || 'DigiLocker document').trim();
         out.push({
-          key: `digilocker:${item.uri!.trim()}`, title: item.issuer ? `${title} (${item.issuer})` : title, date: day(item.date),
+          key, title: item.issuer ? `${title} (${item.issuer})` : title, date: day(item.date),
           fileName: `DigiLocker ${item.name ?? title}`.trim(), contentType: file.contentType, bytes: file.bytes,
         });
       }
-      if (tampered) {
-        if (!out.length) throw new PortalError('DigiLocker’s documents did not pass the integrity check, so none were saved. Try again later.');
-        ctx.note(`${tampered} document${tampered === 1 ? '' : 's'} did not pass DigiLocker’s integrity check and ${tampered === 1 ? 'was' : 'were'} not saved.`);
-      }
+      if (more) ctx.note('There are more health documents in your DigiLocker: choose Check now again to bring in the rest.');
+      // Documents that fail the integrity check are left out and noted (the others, saved now or before, stand).
+      if (tampered) ctx.note(`${tampered} document${tampered === 1 ? '' : 's'} did not pass DigiLocker’s integrity check and ${tampered === 1 ? 'was' : 'were'} not saved.${more ? ' There are more health documents: choose Check now again to bring in the rest.' : ''}`);
       return out;
     },
   };
