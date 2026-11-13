@@ -105,7 +105,7 @@ Every run opens a **new browser**. Nothing is shared between runs except the sig
 
 | Setting | What | When |
 | --- | --- | --- |
-| `local` (default) | Chromium on the API server (Playwright), launched per run and closed after | Development; small deployments. The server needs Chromium (Playwright's, or `RECORD_BROWSER_EXECUTABLE`) |
+| `local` (default) | Chromium on the API server (Playwright), launched per run and closed after | Development; small deployments. The server needs Chromium: in Docker, build with `RECORD_BROWSER_CHROMIUM=on` (§8.1), or point `RECORD_BROWSER_EXECUTABLE` at another one |
 | `cdp` | Any hosted browser that gives a Chrome DevTools Protocol address with its key: Steel, Browserless, Hyperbrowser, Anchor, or your own | Production: browsers off our servers, each session isolated by the provider. `RECORD_BROWSER_CDP_URL=wss://…` |
 | `browserbase` | A Browserbase session created per run (`POST /v1/sessions`), released at the end | Production, with `BROWSERBASE_API_KEY` and `BROWSERBASE_PROJECT_ID`. Written from Browserbase's API reference, **not yet run against the live service** |
 
@@ -323,8 +323,18 @@ Product menus change often. Where support depends on the plan or isn't confirmed
   - Signing in to a portal on the person's behalf with their own credentials is their choice. But a portal's terms may forbid automated access. Review this source by source, and prefer partnerships or official APIs where a lab offers them.
   - Under India's DPDP Act, LotusPond processes these reports as a data fiduciary with the person's consent, recorded per connection. Whether the Consent Manager rules apply needs advice.
 - **Recipes for more portals:** Redcliffe, Healthians, Agilus and Tata 1mg next. Check the Dr Lal, Thyrocare and Metropolis recipes with real accounts first (§5.1).
-- **ABDM as a health information user**, to pull ABHA-linked records with a consent artefact instead of a browser.
-- **Wearable and email APIs** (OAuth): Ultrahuman, Oura, Fitbit, Garmin, Withings, LibreView, Gmail.
-- **Several instances.** Several API instances need the queue and questions in a shared store (the database and a pub/sub) instead of memory.
+- **ABHA through Eka's ABDM Connect** is built (`docs/abdm.md`) but its consent flow has not run live: it needs Eka's `clinic_id` and `d_oid`, a production facility, and webhook registration with its signing key.
+- **Withings, Oura and Ultrahuman** are built (§5.3, §5.4) but have not run with real accounts. Still to add: Fitbit, Garmin, LibreView, Gmail.
+- **Several instances.** Runs and questions live in process memory, so the agent works on one API instance (production runs one). Several instances need the queue and questions in a shared store (the database and a pub/sub).
 - **Captchas.** The agent asks the person to type them; image captchas need the screenshot shown in the question (not built).
 - **Live view.** Hosted browsers (Browserbase, Steel) offer a live view URL. Embedding it would let a person sign in directly in the agent's browser on portals that defeat the question flow.
+
+### 8.1 Turning it on in production
+
+It is off in production until `RECORD_AGENT=on`. Merging and deploying the code changes nothing for users: the tables are created, the Sources page says the agent is not switched on, and `/hooks/eka` and `/demo-portal` answer 404.
+
+1. **Browser.** For `RECORD_BROWSER=local`, set `RECORD_BROWSER_CHROMIUM=on` in `deploy/.env` so the image includes Chromium's headless shell and its libraries (a few hundred MB), at the version `playwright-core` expects. The app container gets 512 MB of shared memory for it. With `cdp` or `browserbase`, leave it off.
+2. **Switch on.** Set `RECORD_AGENT=on` in `deploy/.env`, plus the settings of any API sources (`EKA_*`, `WITHINGS_*`, `OURA_*`, `ULTRAHUMAN_*`; `server/.env.example`), then `docker compose up -d --build` in `deploy/`.
+3. **Check.** Sign in, open Files → Sources, and connect one source you hold an account with. `RECORD_DEMO_PORTAL` and `RECORD_DEBUG_DIR` are refused in production.
+
+Before switching on for real users: the legal review per portal (above) and a live run of each recipe you list.
