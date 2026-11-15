@@ -107,36 +107,98 @@ The first build takes several minutes on this plan.
 
 ## 5. Off-server backups in S3 (Mumbai)
 
-Lightsail snapshots cover a lost instance. For a copy outside the instance, sync `deploy/backups/` to S3:
+Lightsail's daily snapshot covers a lost instance, but it lives in the same account and region as the server. The nightly backup also puts an encrypted copy in S3:
 
-1. In the AWS console, create an S3 bucket in **Asia Pacific (Mumbai), ap-south-1**, with public access blocked and default encryption on. Add a lifecycle rule that expires objects after, for example, 30 days.
-2. In IAM, create a user for this server only, with a policy that allows `s3:ListBucket` on the bucket and `s3:PutObject` on its objects. Create an access key for it.
-3. On the server, put the key in `~/.aws/credentials` (readable only by you) and the region in `~/.aws/config`:
+- the database dump;
+- the uploaded files (already encrypted with `FILE_ENCRYPTION_KEY`);
+- `deploy/.env`, so the secrets survive the server.
 
-   ```
-   [default]
-   aws_access_key_id = …
-   aws_secret_access_key = …
-   ```
+Each file is encrypted with [age](https://age-encryption.org) to a public key before it leaves the server. The server cannot read its own backups; only the private key, kept offline, can. The server's AWS key may only add new objects: it cannot list, read or delete them.
 
-   ```
-   [default]
-   region = ap-south-1
-   ```
+**1. Make the backup key, on your own computer** (not the server):
 
-4. Run the nightly backup with `BACKUP_S3_URI` set (`crontab -e`):
+```bash
+age-keygen -o lotuspond-backup-key.txt
+```
 
-   ```
-   30 2 * * * BACKUP_S3_URI=s3://your-bucket/health /opt/lotuspond-health/deploy/backup.sh >> $HOME/lotuspond-backup.log 2>&1
-   ```
+Keep `lotuspond-backup-key.txt` in a password manager or another offline place, and keep a second copy somewhere else. Without it no backup can be restored. The line `# public key: age1…` is the recipient for step 3.
 
-The database dump holds the records unencrypted (uploaded files stay encrypted), which is why the bucket must be private and in India.
+**2. Create the bucket and the writer**, in AWS CloudShell in **Asia Pacific (Mumbai)**, signed in as an administrator (not the root user; see section 7):
+
+```bash
+git clone https://github.com/lotuspond-ai/lotuspond-health.git && cd lotuspond-health
+aws cloudformation deploy --region ap-south-1 --stack-name lotuspond-health-backups \
+  --template-file deploy/aws-backup-bucket.cfn.yaml --capabilities CAPABILITY_NAMED_IAM
+aws cloudformation describe-stacks --region ap-south-1 --stack-name lotuspond-health-backups --query 'Stacks[0].Outputs'
+```
+
+The stack (`deploy/aws-backup-bucket.cfn.yaml`) creates:
+
+- a bucket `lotuspond-health-backups-<account id>` in Mumbai: public access blocked, encrypted, versioned, HTTPS only, backups expiring after 35 days (`RetentionDays`);
+- an IAM user `lotuspond-health-backup-writer` that may only add objects under `health/`.
+
+It refuses to run in any other region. Then, in the IAM console, open that user and create an access key (use case: *Application running outside AWS*).
+
+**3. Configure the server.** Over SSH (the Lightsail console's browser SSH works):
+
+```bash
+mkdir -p ~/.aws && chmod 700 ~/.aws
+printf '[default]\nregion = ap-south-1\n' > ~/.aws/config
+install -m 600 /dev/null ~/.aws/credentials && nano ~/.aws/credentials
+```
+
+Paste the key into the editor (typing it into a command would leave it in the shell history):
+
+```
+[default]
+aws_access_key_id = AKIA…
+aws_secret_access_key = …
+```
+
+Then add the two settings and turn the timer on:
+
+```bash
+cd /opt/lotuspond-health/deploy
+printf 'BACKUP_S3_URI=%s\nBACKUP_AGE_RECIPIENT=%s\n' 's3://lotuspond-health-backups-<account id>/health' 'age1…' >> .env
+sudo ./install-backup.sh
+sudo systemctl start lotuspond-backup && journalctl -u lotuspond-backup --no-pager | tail
+```
+
+`install-backup.sh` installs age and a systemd timer that runs `deploy/backup.sh` every night at 20:30 UTC (02:00 in India), half an hour before the snapshot. The log should end with "Encrypted copies uploaded". If `BACKUP_S3_URI` is set without a valid `BACKUP_AGE_RECIPIENT`, the backup fails rather than upload anything unencrypted.
+
+**Restore**, on a computer with the private key and AWS access to the bucket:
+
+```bash
+aws s3 cp s3://lotuspond-health-backups-<account id>/health/db-YYYYMMDD-HHMMSS.dump.age .
+age -d -i lotuspond-backup-key.txt -o db.dump db-YYYYMMDD-HHMMSS.dump.age
+```
+
+Do the same for `files-….tgz.age` and `env-….age`. Then restore the dump as in [`README.md`](README.md), section 7, unpack the files archive into the app's `/data` volume, and use the `.env` on the new server. Try a restore once, on a scratch instance, before relying on it.
 
 ## 6. Updates
 
 ```bash
 cd /opt/lotuspond-health && git pull && cd deploy && docker compose up -d --build
 ```
+
+## 7. Before real users: account and compliance
+
+- **Stop using the root user.** The account was set up and the stack created with the AWS root user. Turn on MFA for root, then create an everyday administrator with IAM Identity Center:
+  1. In the console, open **IAM Identity Center** and choose **Enable**.
+  2. Under **Users**, add yourself.
+  3. Under **Permission sets**, create one from the predefined **AdministratorAccess** policy.
+  4. Under **AWS accounts**, assign that user and permission set to this account.
+  5. Sign in through the AWS access portal URL Identity Center shows. Lock the root user away and use it only for the few tasks that need it.
+
+  For the AWS CLI, `aws configure sso` uses the same sign-in.
+- **Grievance and data-protection contacts.** India's DPDP Act needs a published grievance contact. Add both to `deploy/.env`, then `docker compose up -d` in `deploy/` (the Account page shows them):
+
+  ```
+  GRIEVANCE_CONTACT=Name, Grievance Officer, grievance@lotuspond.ai
+  DPO_CONTACT=Data Protection Officer, dpo@lotuspond.ai
+  ```
+
+- **A copy of `deploy/.env` off the server.** The nightly backup (section 5) uploads it encrypted. Also keep a copy of `DIRECTORY_SECRET` and `FILE_ENCRYPTION_KEY` with the backup key: without them neither the server nor a restore can read the files.
 
 ## When to grow
 

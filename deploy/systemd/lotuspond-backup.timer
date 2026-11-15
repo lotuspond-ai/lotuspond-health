@@ -1,0 +1,12 @@
+# 20:30 UTC (02:00 in India), half an hour before Lightsail's automatic snapshot at 21:00 UTC. A night missed while
+# the server was off runs at the next boot.
+[Unit]
+Description=LotusPond Health: back up every night
+
+[Timer]
+OnCalendar=*-*-* 20:30:00 UTC
+Persistent=true
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target

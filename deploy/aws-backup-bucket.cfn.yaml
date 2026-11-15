@@ -1,0 +1,108 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  LotusPond Health off-server backups in Mumbai - a private, versioned S3 bucket and an IAM user that may only add
+  new objects under its prefix. The server encrypts every backup with age before upload (deploy/backup.sh).
+  See deploy/aws-lightsail.md, section 5.
+
+Parameters:
+  Prefix:
+    Type: String
+    Default: health
+    AllowedPattern: '[a-z0-9-]+'
+    Description: Folder in the bucket the server writes to.
+  RetentionDays:
+    Type: Number
+    Default: 35
+    MinValue: 7
+    Description: Days a backup is kept before S3 deletes it.
+
+Rules:
+  MumbaiOnly:
+    Assertions:
+      - Assert: !Equals [!Ref 'AWS::Region', ap-south-1]
+        AssertDescription: Health records stay in India. Create this stack in Asia Pacific (Mumbai), ap-south-1.
+
+Resources:
+  BackupBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub 'lotuspond-health-backups-${AWS::AccountId}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      # Versions keep a backup if something writes over its name; the writer cannot delete either way.
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-backups
+            Status: Enabled
+            Prefix: !Sub '${Prefix}/'
+            ExpirationInDays: !Ref RetentionDays
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 7
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 2
+      Tags:
+        - Key: project
+          Value: lotuspond-health
+
+  BackupBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref BackupBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !GetAtt BackupBucket.Arn
+              - !Sub '${BackupBucket.Arn}/*'
+            Condition:
+              Bool:
+                'aws:SecureTransport': 'false'
+
+  # The server's identity: add objects under the prefix, nothing else (no list, read or delete). Create its access
+  # key in the IAM console after the stack is up, so the secret never sits in CloudFormation.
+  BackupWriter:
+    Type: AWS::IAM::User
+    Properties:
+      UserName: lotuspond-health-backup-writer
+      Tags:
+        - Key: project
+          Value: lotuspond-health
+      Policies:
+        - PolicyName: write-backups-only
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: AddBackups
+                Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:AbortMultipartUpload
+                Resource: !Sub '${BackupBucket.Arn}/${Prefix}/*'
+
+Outputs:
+  BucketName:
+    Value: !Ref BackupBucket
+  BackupS3Uri:
+    Description: BACKUP_S3_URI for deploy/.env on the server.
+    Value: !Sub 's3://${BackupBucket}/${Prefix}'
+  WriterUser:
+    Description: Create an access key for this user in the IAM console, for ~/.aws/credentials on the server.
+    Value: !Ref BackupWriter
