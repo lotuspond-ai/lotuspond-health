@@ -56,6 +56,7 @@
   </head>
   <body>
     <!-- @include header -->
+    <!-- @include agent-logos -->
     <main id="main">
       <section class="hero" aria-labelledby="hero-title">
         <div class="wrap hero__copy">
@@ -70,6 +71,10 @@
               <a class="button button--ghost" href="/login">Sign in</a>
             </div>
             <p class="hero__note"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></svg>Stored in your region and never sold. LotusPond explains results; it does not diagnose.</p>
+            <a class="hero__agents" href="#agents">
+              <span class="hero__agents-logos" aria-hidden="true"><svg><use href="#ag-claude" /></svg><svg><use href="#ag-openai" /></svg><svg><use href="#ag-gemini" /></svg><svg class="mark-exact"><use href="#ag-grok" /></svg><svg><use href="#ag-muse" /></svg></span>
+              <span><b>Connect your AI.</b> Claude, ChatGPT, Gemini, Grok, Muse and other agents can read the records you choose.</span>
+            </a>
           </div>
         </div>
         <div class="hero__visual">
@@ -93,6 +98,44 @@
               <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2" /><circle cx="9" cy="9.5" r="1.6" /><path d="M20 15l-4.5-4.5L6 20" /></svg>Reports you upload</li>
             </ul>
           </div>
+        </div>
+      </section>
+
+      <section class="section agents" id="agents" aria-labelledby="agents-title">
+        <div class="wrap">
+          <div class="section__head">
+            <div>
+              <p class="eyebrow">Works with your AI</p>
+              <h2 class="title" id="agents-title">Ask your own AI <em>about your health.</em></h2>
+            </div>
+            <p>Connect the assistant you already use. It reads the records you choose (results, trends, conditions and medications) and explains them in your words. You can disconnect it at any time.</p>
+          </div>
+          <!-- Each entry and its steps follow shared/agent-directory.ts; keep the two in step. -->
+          <ul class="agent-grid" aria-label="AI agents you can connect">
+            <li><svg aria-hidden="true"><use href="#ag-claude" /></svg><b>Claude</b><span>Settings, Connectors, Add custom connector</span></li>
+            <li><svg aria-hidden="true"><use href="#ag-openai" /></svg><b>ChatGPT</b><span>A developer mode connector, on plans that offer one</span></li>
+            <li><svg aria-hidden="true"><use href="#ag-gemini" /></svg><b>Gemini</b><span>Gemini CLI connects directly; in the Gemini app, paste a summary</span></li>
+            <li><svg class="mark-exact" aria-hidden="true"><use href="#ag-grok" /></svg><b>Grok</b><span>grok.com, Connectors, New connector, Custom</span></li>
+            <li><svg class="mark-exact" aria-hidden="true"><use href="#ag-grokbot" /></svg><b>Grok Bot</b><span>Ask a Bot to add a remote MCP server, with an access token</span></li>
+            <li><svg aria-hidden="true"><use href="#ag-muse" /></svg><b>Muse</b><span>Ask Muse to create a custom connector, with an access token</span></li>
+            <li><svg aria-hidden="true"><use href="#ag-mistral" /></svg><b>Le Chat</b><span>A custom MCP connector, on plans that offer one</span></li>
+            <li><svg aria-hidden="true"><use href="#ag-copilot" /></svg><b>GitHub Copilot in VS Code</b><span>MCP: Add Server, then HTTP</span></li>
+            <li><svg aria-hidden="true"><use href="#ag-cursor" /></svg><b>Cursor</b><span>Settings, MCP, Add new MCP server</span></li>
+            <li><svg aria-hidden="true"><use href="#ag-windsurf" /></svg><b>Windsurf</b><span>Add the address to its MCP settings</span></li>
+            <li class="agent-grid__wide"><svg aria-hidden="true"><use href="#ag-mcp" /></svg><b>Any MCP client</b><span>Claude Code, Codex CLI, Grok Build, Muse Code, Goose, Zed and your own agents</span></li>
+          </ul>
+          <div class="connect">
+            <ol class="connect__steps">
+              <li><b>Create your account</b><span>Add your reports, or start with sample data.</span></li>
+              <li><b>Paste one address into your agent</b><code>%SITE_URL%/mcp</code></li>
+              <li><b>Choose what it may see</b><span>Whose records, which kinds of data, and whether it may add readings. Change or remove it on Account.</span></li>
+            </ol>
+            <div class="connect__cta">
+              <a class="button button--primary" href="/signup">Create free account <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" /></svg></a>
+              <p>Account, Connected agents has the steps for each agent, and access tokens for agents that cannot sign in.</p>
+            </div>
+          </div>
+          <p class="agents__fine">Agents see summaries only, never your files or scan images, and they cannot book or pay for anything. Grok Bot, Muse and agents that cannot sign in use an access token made on Account. The Gemini app and Meta AI do not take connectors yet: copy a summary of your records from Account and paste it in. LotusPond is not affiliated with or endorsed by these companies; their names and logos are trademarks of their owners.</p>
         </div>
       </section>
 
@@ -274,7 +317,7 @@
             </details>
             <details>
               <summary>Which AI agents work with LotusPond?</summary>
-              <div><p>Any agent that supports the Model Context Protocol (MCP): Claude, ChatGPT, Le Chat, Claude Code, Cursor and others connect with one address and sign in to LotusPond. Assistants without custom connectors, such as the Gemini or Grok apps, can be given a summary to paste. Agents never book or pay by themselves: a booking they propose waits for you to confirm it in LotusPond.</p></div>
+              <div><p>Any agent that supports the Model Context Protocol (MCP). Claude, ChatGPT, Grok, Le Chat, Gemini CLI, Cursor, VS Code and others connect with one address, <code>%SITE_URL%/mcp</code>, and open a LotusPond sign-in, where you choose whose records the agent may see, which kinds of data, whether it may add readings, and for how long. Grok Bot and Muse connect with an access token you make on Account. ChatGPT, Grok and Le Chat offer custom connectors on some plans only.</p><p>Assistants without custom connectors, such as the Gemini app, can be given a summary to paste. Every connection is listed on Account and can be disconnected at once. Agents never book or pay by themselves: a booking they propose waits for you to confirm it in LotusPond.</p></div>
             </details>
             <details>
               <summary>What files can I upload?</summary>
