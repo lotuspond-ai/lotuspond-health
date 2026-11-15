@@ -1,10 +1,15 @@
-# One LotusPond account (proposed)
+# One LotusPond account
 
-Status: **proposed on 2026-11-16, not built.** The decision is recorded in the LotusPond Works repository:
+Status: **accepted on 2026-11-16, not built yet.** The decision is recorded in the LotusPond Works repository:
 - [ADR-0018, one LotusPond account for Health and Works](https://github.com/lotuspond-ai/lotuspond/blob/main/docs/architecture/0018-one-lotuspond-account.md);
 - [ADR-0019, databases, tenancy and placement](https://github.com/lotuspond-ai/lotuspond/blob/main/docs/architecture/0019-database-tenancy-and-placement.md).
 
 The links work once [lotuspond-ai/lotuspond#49](https://github.com/lotuspond-ai/lotuspond/pull/49) is merged. This page says what the decision changes for Health.
+
+## Settled by the owner, 2026-11-16
+
+- **Health opens in India only at first.** Health sign-up accepts only people resident in India. Their accounts and records are kept in the India cell. The other cells stay in the code and open later by configuration.
+- **Domains.** Accounts is at `accounts.lotuspond.ai`, Health stays at `health.lotuspond.ai`, and hosted Works is at `works.lotuspond.ai`.
 
 ## What changes
 
