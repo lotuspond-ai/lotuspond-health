@@ -2,13 +2,11 @@
 // Accounts and records are kept in the viewer's browser (VITE_BACKEND=browser). Only the app is built (`--mode
 // artifact`): the host has no server routes and passes only a #hash into the page, so the app opens sign-in, or
 // sign-up with #signup, and its website links (Privacy, Terms, home) go to the live site in a new tab.
-// The model ships as base64 text, raw ESC bytes in scripts are escaped, and index.html is body-only.
+// Raw ESC bytes in scripts are escaped, and index.html is body-only.
 import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 const out = 'dist-artifact';
-execSync(`npx vite build --mode artifact --outDir ${out} --emptyOutDir`, { stdio: 'inherit', env: { ...process.env, VITE_MODEL_PATH: 'models/anatomy.b64.txt', VITE_BACKEND: 'browser' } });
-fs.writeFileSync(`${out}/models/anatomy.b64.txt`, fs.readFileSync('public/models/anatomy.glb').toString('base64'));
-fs.rmSync(`${out}/models/anatomy.glb`);
+execSync(`npx vite build --mode artifact --outDir ${out} --emptyOutDir`, { stdio: 'inherit', env: { ...process.env, VITE_BACKEND: 'browser' } });
 // Website imagery from public/site is not used by the app, and the preview never registers the service worker.
 fs.rmSync(`${out}/site`, { recursive: true, force: true });
 fs.rmSync(`${out}/sw.js`, { force: true });

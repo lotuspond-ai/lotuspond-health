@@ -4,15 +4,15 @@
     <!-- @include meta -->
     <meta name="theme-color" content="#9caf88" />
     <link rel="stylesheet" href="/src/site/home.css" />
-    <title>LotusPond Health: your health records, mapped to your body</title>
-    <meta name="description" content="Keep lab reports and scans for you and your family in one place, and see every result on a 3D map of the body. Records are stored in your region and never sold." />
+    <title>LotusPond Health: your family’s health records, ready for any AI agent</title>
+    <meta name="description" content="Your family’s health records from labs, hospitals, ABHA and your devices, in one place and ready for any AI agent you choose. Records are stored in your region and never sold." />
     <link rel="canonical" href="%SITE_URL%/" />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="%SITE_URL%/" />
-    <meta property="og:title" content="LotusPond Health: your health records, mapped to your body" />
-    <meta property="og:description" content="Keep lab reports and scans for you and your family in one place, and see every result on the organ it relates to." />
-    <meta name="twitter:title" content="LotusPond Health: your health records, mapped to your body" />
-    <meta name="twitter:description" content="Keep lab reports and scans for you and your family in one place, and see every result on the organ it relates to." />
+    <meta property="og:title" content="LotusPond Health: your family’s health records, ready for any AI agent" />
+    <meta property="og:description" content="Bring your family’s reports in from labs, hospitals, ABHA and your devices, and use them with Claude, ChatGPT or any AI agent you choose. You decide who sees what." />
+    <meta name="twitter:title" content="LotusPond Health: your family’s health records, ready for any AI agent" />
+    <meta name="twitter:description" content="Bring your family’s reports in from labs, hospitals, ABHA and your devices, and use them with Claude, ChatGPT or any AI agent you choose. You decide who sees what." />
     <script type="application/ld+json">
       {
         "@context": "https://schema.org",
@@ -43,10 +43,10 @@
             "@id": "%SITE_URL%/#app",
             "name": "LotusPond Health",
             "url": "%SITE_URL%/",
-            "description": "A personal health record for you and your family. Upload lab reports and scans and see each result on a 3D model of the body. LotusPond explains results; it does not diagnose.",
+            "description": "Your family’s health records from labs, hospitals, ABHA and your devices, ready for any AI agent you choose. LotusPond explains results; it does not diagnose.",
             "applicationCategory": "HealthApplication",
             "operatingSystem": "Web browser",
-            "browserRequirements": "Requires JavaScript and WebGL",
+            "browserRequirements": "Requires JavaScript",
             "isAccessibleForFree": true,
             "image": "%SITE_URL%/site/og.png",
             "screenshot": "%SITE_URL%/site/body-map-1600.webp",
@@ -61,10 +61,12 @@
          off-white sheets, one pine chapter, pine as the ink, and tomato spent once per view and never on sage.
          On the field the main action is the ink button and the underline is off-white. The page runs no JavaScript. -->
     <a class="home-skip" href="#main">Skip to content</a>
+    <!-- @include agent-logos -->
     <header class="home-nav">
       <div class="home-wrap home-nav-in">
         <a class="home-wordmark" href="/" aria-label="LotusPond Health home">LotusPond <b>Health</b><i aria-hidden="true"></i></a>
         <nav class="home-nav-links" aria-label="Main">
+          <a href="#agents">Your AI</a>
           <a href="#features">What it does</a>
           <a href="#how">How it works</a>
           <a href="#labs">Find a lab</a>
@@ -83,23 +85,27 @@
         <div class="home-wrap">
           <div class="home-hero-grid">
             <div>
-              <p class="home-kicker"><b>LotusPond Health</b> <span>Personal health records for you and your family</span></p>
-              <h1 class="home-d-xl" id="hero-title">Your health records, mapped to your <span class="home-u home-u-draw">body.<svg viewBox="0 0 200 20" preserveAspectRatio="none" aria-hidden="true" focusable="false"><path pathLength="1" d="M3 12C38 4 86 17 128 9s52-3 69 2" /></svg></span></h1>
+              <p class="home-kicker"><b>LotusPond Health</b> <span>Health records for families</span></p>
+              <h1 class="home-d-xl" id="hero-title">Your family’s health records, ready for any AI <span class="home-u home-u-draw">agent.<svg viewBox="0 0 200 20" preserveAspectRatio="none" aria-hidden="true" focusable="false"><path pathLength="1" d="M3 12C38 4 86 17 128 9s52-3 69 2" /></svg></span></h1>
             </div>
             <div class="home-hero-side">
-              <p class="home-lede">Keep lab reports and scans for you and your family in one place. LotusPond reads each file and places every result on the organ it relates to, with a note in plain language.</p>
+              <p class="home-lede">LotusPond brings your reports in from labs, hospitals, ABHA and your devices, keeps them for each person in your family, and lets Claude, ChatGPT or any agent you choose use them. You decide whose records each agent sees.</p>
               <div class="home-cta">
                 <a class="home-btn home-btn-ink" href="/signup">Create free account <span aria-hidden="true">→</span></a>
                 <a class="home-btn home-btn-light" href="/login">Sign in</a>
               </div>
               <p class="home-note">Stored in your region and never sold. LotusPond explains results; it does not diagnose.</p>
+              <a class="home-agents-link" href="#agents">
+                <span class="home-agents-logos" aria-hidden="true"><svg><use href="#ag-claude" /></svg><svg><use href="#ag-openai" /></svg><svg><use href="#ag-gemini" /></svg><svg class="mark-exact"><use href="#ag-grok" /></svg><svg><use href="#ag-muse" /></svg></span>
+                <span><b>Connect your AI.</b> Claude, ChatGPT, Gemini, Grok, Muse and other agents can read the records you choose.</span>
+              </a>
             </div>
           </div>
           <figure class="home-product">
             <div class="home-window">
               <div class="home-window-bar" aria-hidden="true"><i></i><i></i><i></i><span>health.lotuspond.ai/app</span></div>
               <img src="/site/body-map-1600.webp" srcset="/site/body-map-960.webp 960w, /site/body-map-1600.webp 1600w, /site/body-map-2160.webp 2160w" sizes="(min-width: 1280px) 1200px, 92vw" width="1600" height="1000" fetchpriority="high"
-                alt="The LotusPond body map: a 3D model of the body with dots on the brain, thyroid, heart, liver, spleen and bone marrow where results relate, beside a list of results worth a closer look." />
+                alt="The LotusPond body map: a figure of the body with dots on the brain, thyroid, heart, liver, spleen and bone marrow where results relate, beside a list of results worth a closer look." />
             </div>
             <div class="home-phone">
               <img src="/site/phone-body-390.webp" srcset="/site/phone-body-390.webp 390w, /site/phone-body-585.webp 585w" sizes="(min-width: 1300px) 232px, (min-width: 640px) 18vw, 104px" width="390" height="844" loading="lazy" decoding="async"
@@ -110,11 +116,46 @@
         </div>
       </section>
 
+      <section class="home-sheet" id="agents" aria-labelledby="agents-title">
+        <div class="home-wrap">
+          <div class="home-head">
+            <h2 class="home-d-lg" id="agents-title">Ask your own AI about your <span class="home-u">health.<svg viewBox="0 0 200 20" preserveAspectRatio="none" aria-hidden="true" focusable="false"><path pathLength="1" d="M3 12C38 4 86 17 128 9s52-3 69 2" /></svg></span></h2>
+            <p class="home-lede">Connect the assistant you already use. It reads the records you choose (results, trends, conditions and medications) and explains them in your words. You can disconnect it at any time.</p>
+          </div>
+          <!-- Each entry and its steps follow shared/agent-directory.ts; keep the two in step. -->
+          <ul class="home-agents" aria-label="AI agents you can connect">
+            <li><svg aria-hidden="true"><use href="#ag-claude" /></svg><b>Claude</b><span>Settings, Connectors, Add custom connector</span></li>
+            <li><svg aria-hidden="true"><use href="#ag-openai" /></svg><b>ChatGPT</b><span>A developer mode connector, on plans that offer one</span></li>
+            <li><svg aria-hidden="true"><use href="#ag-gemini" /></svg><b>Gemini</b><span>Gemini CLI connects directly; in the Gemini app, paste a summary</span></li>
+            <li><svg class="mark-exact" aria-hidden="true"><use href="#ag-grok" /></svg><b>Grok</b><span>grok.com, Connectors, New connector, Custom</span></li>
+            <li><svg class="mark-exact" aria-hidden="true"><use href="#ag-grokbot" /></svg><b>Grok Bot</b><span>Ask a Bot to add a remote MCP server, with an access token</span></li>
+            <li><svg aria-hidden="true"><use href="#ag-muse" /></svg><b>Muse</b><span>Ask Muse to create a custom connector, with an access token</span></li>
+            <li><svg aria-hidden="true"><use href="#ag-mistral" /></svg><b>Le Chat</b><span>A custom MCP connector, on plans that offer one</span></li>
+            <li><svg aria-hidden="true"><use href="#ag-copilot" /></svg><b>GitHub Copilot in VS Code</b><span>MCP: Add Server, then HTTP</span></li>
+            <li><svg aria-hidden="true"><use href="#ag-cursor" /></svg><b>Cursor</b><span>Settings, MCP, Add new MCP server</span></li>
+            <li><svg aria-hidden="true"><use href="#ag-windsurf" /></svg><b>Windsurf</b><span>Add the address to its MCP settings</span></li>
+            <li class="home-agents-wide"><svg aria-hidden="true"><use href="#ag-mcp" /></svg><b>Any MCP client</b><span>Claude Code, Codex CLI, Grok Build, Muse Code, Goose, Zed and your own agents</span></li>
+          </ul>
+          <div class="home-connect">
+            <ol class="home-steps home-connect-steps">
+              <li><h3 class="home-d-sm">Create your account</h3><p>Add your reports, or start with sample data.</p></li>
+              <li><h3 class="home-d-sm">Paste one address into your agent</h3><code>%SITE_URL%/mcp</code></li>
+              <li><h3 class="home-d-sm">Choose what it may see</h3><p>Whose records, which kinds of data, and whether it may add readings. Change or remove it on Account.</p></li>
+            </ol>
+            <div class="home-connect-cta">
+              <a class="home-btn home-btn-ink" href="/signup">Create free account <span aria-hidden="true">→</span></a>
+              <p>Account, Connected agents has the steps for each agent, and access tokens for agents that cannot sign in.</p>
+            </div>
+          </div>
+          <p class="home-fine home-agents-fine">Agents see summaries only, never your files or scan images, and they cannot book or pay for anything. Grok Bot, Muse and agents that cannot sign in use an access token made on Account. The Gemini app and Meta AI do not take connectors yet: copy a summary of your records from Account and paste it in. LotusPond is not affiliated with or endorsed by these companies; their names and logos are trademarks of their owners.</p>
+        </div>
+      </section>
+
       <section class="home-sheet" id="features" aria-labelledby="features-title">
         <div class="home-wrap">
           <div class="home-head">
-            <h2 class="home-d-lg" id="features-title">Every result, in its place.</h2>
-            <p class="home-lede">A lab report is a list of numbers. LotusPond connects each one to the part of the body it describes, so you can see your health at a glance and in detail.</p>
+            <h2 class="home-d-lg" id="features-title">Your records, clear and complete.</h2>
+            <p class="home-lede">Every report becomes results you can follow over time, for each person in your family, with the original kept. A simple map of the body shows where each result belongs.</p>
           </div>
           <div class="home-tiles">
             <article class="home-tile home-tile-organ">
@@ -124,7 +165,7 @@
               </div>
               <div class="home-tile-text">
                 <h3 class="home-d-sm">Open any organ</h3>
-                <p>Fly in to the heart, lungs, kidneys or brain, read labelled landmarks, and look inside with x-ray and cross-sections. Results that relate to the organ sit beside it.</p>
+                <p>Open the heart, lungs, kidneys or brain for a close-up with labelled landmarks. Results that relate to the organ sit beside it.</p>
               </div>
             </article>
             <article class="home-tile home-tile-history">
@@ -165,13 +206,13 @@
       <section class="home-band" aria-labelledby="formats-title">
         <div class="home-wrap home-band-grid">
           <div>
-            <h2 class="home-d-lg" id="formats-title">It reads the files you already have.</h2>
-            <p class="home-lede">Files are read in your browser, and every value is shown for you to check before it is saved. The original file is kept with your records.</p>
-            <ul class="home-chips" aria-label="Files LotusPond reads">
-              <li>Lab report PDFs</li>
-              <li>CSV and JSON exports</li>
-              <li>DICOM scans</li>
-              <li>Photos of scans</li>
+            <h2 class="home-d-lg" id="formats-title">It brings in the records you already have.</h2>
+            <p class="home-lede">Connect a lab, hospital, ABHA, DigiLocker or a device, and LotusPond fetches your reports. Or upload a PDF or photo: every value is shown for you to check before it is saved, and the original is kept with your records.</p>
+            <ul class="home-chips" aria-label="Where LotusPond brings records in from">
+              <li>Labs and hospitals</li>
+              <li>ABHA and DigiLocker</li>
+              <li>Devices and wearables</li>
+              <li>Reports you upload</li>
             </ul>
           </div>
           <img class="home-illo" src="/src/site/illustrations/records-into-one.svg" alt="" width="480" height="360" loading="lazy" decoding="async" />
@@ -181,21 +222,21 @@
       <section class="home-sheet" id="how" aria-labelledby="how-title">
         <div class="home-wrap">
           <div class="home-head">
-            <h2 class="home-d-lg" id="how-title">Three steps to your first map.</h2>
-            <p class="home-lede">There is nothing to install. LotusPond runs in your browser on a computer, tablet or phone.</p>
+            <h2 class="home-d-lg" id="how-title">Your records, with any agent.</h2>
+            <p class="home-lede">Nothing to install. LotusPond runs in your browser and in the iPhone and Android apps.</p>
           </div>
           <ol class="home-steps">
             <li>
-              <h3 class="home-d-sm">Create your account</h3>
-              <p>Sign up with your email and choose your country. Your records are kept in the region that serves it.</p>
+              <h3 class="home-d-sm">Bring in your records</h3>
+              <p>Connect a lab, hospital, ABHA, DigiLocker or a device, and LotusPond fetches your reports. Or upload a PDF or photo; you check every value before it is saved.</p>
             </li>
             <li>
-              <h3 class="home-d-sm">Add a report or scan</h3>
-              <p>Upload a lab report PDF, a CSV or JSON export, a DICOM file or a photo. You check every value before it is saved.</p>
+              <h3 class="home-d-sm">Use them with your AI</h3>
+              <p>Add LotusPond to Claude, ChatGPT or any agent that speaks MCP, with one address. Ask about your results, add readings, or plan a test.</p>
             </li>
             <li>
-              <h3 class="home-d-sm">See it on your body</h3>
-              <p>Each result appears on the organ it relates to, with its range, its history and a note in plain language.</p>
+              <h3 class="home-d-sm">Stay in control</h3>
+              <p>Choose whose records each agent sees, which kinds, and for how long. Every agent read and write shows in your activity, and you can disconnect at once.</p>
             </li>
           </ol>
         </div>
@@ -285,6 +326,10 @@
               <div><p>No. LotusPond explains results; it does not diagnose. It shows each value next to its reference range with a short note in plain language.</p><p>A single result outside its range is common and is not a diagnosis. Talk to a doctor about what your results mean for you.</p></div>
             </details>
             <details>
+              <summary>Which AI agents work with LotusPond?</summary>
+              <div><p>Any agent that supports the Model Context Protocol (MCP). Claude, ChatGPT, Grok, Le Chat, Gemini CLI, Cursor, VS Code and others connect with one address, <code>%SITE_URL%/mcp</code>, and open a LotusPond sign-in, where you choose whose records the agent may see, which kinds of data, whether it may add readings, and for how long. Grok Bot and Muse connect with an access token you make on Account. ChatGPT, Grok and Le Chat offer custom connectors on some plans only.</p><p>Assistants without custom connectors, such as the Gemini app, can be given a summary to paste. Every connection is listed on Account and can be disconnected at once. Agents never book or pay by themselves: a booking they propose waits for you to confirm it in LotusPond.</p></div>
+            </details>
+            <details>
               <summary>What files can I upload?</summary>
               <div><p>Lab report PDFs that contain text, CSV and JSON exports, DICOM files (.dcm) and photos of scans. Files are read in your browser, and every value is shown for you to check before it is saved. The original file is kept with your records.</p></div>
             </details>
@@ -314,8 +359,8 @@
 
       <section class="home-close" aria-labelledby="closing-title">
         <div class="home-wrap">
-          <h2 class="home-d-xl" id="closing-title">Start your record. See where it <span class="home-u">leads.<svg viewBox="0 0 200 20" preserveAspectRatio="none" aria-hidden="true" focusable="false"><path pathLength="1" d="M3 12C38 4 86 17 128 9s52-3 69 2" /></svg></span></h2>
-          <p class="home-lede">Create a free account, add your first report, and see where each result belongs.</p>
+          <h2 class="home-d-xl" id="closing-title">Start your record. Use it <span class="home-u">anywhere.<svg viewBox="0 0 200 20" preserveAspectRatio="none" aria-hidden="true" focusable="false"><path pathLength="1" d="M3 12C38 4 86 17 128 9s52-3 69 2" /></svg></span></h2>
+          <p class="home-lede">Create a free account, bring in your first report, and connect the agent you already use.</p>
           <div class="home-cta">
             <a class="home-btn home-btn-ink" href="/signup">Create free account <span aria-hidden="true">→</span></a>
             <a class="home-btn home-btn-light" href="/login">Sign in</a>
@@ -329,7 +374,7 @@
       <div class="home-wrap home-foot">
         <div class="home-foot-about">
           <a class="home-wordmark" href="/" aria-label="LotusPond Health home">LotusPond <b>Health</b><i aria-hidden="true"></i></a>
-          <p>Lab reports and scans for you and your family, explained on a map of the body. LotusPond explains results; it does not diagnose.</p>
+          <p>Your family’s health records, from labs, hospitals, ABHA and your devices, ready for any AI agent you choose. LotusPond explains results; it does not diagnose.</p>
           <p>A product of <a href="https://lotuspond.ai" rel="noopener">LotusPond</a></p>
         </div>
         <nav aria-label="Product">
@@ -337,6 +382,7 @@
           <ul>
             <li><a href="/signup">Create free account</a></li>
             <li><a href="/login">Sign in</a></li>
+            <li><a href="#agents">Connect your AI</a></li>
             <li><a href="#how">How it works</a></li>
             <li><a href="#labs">Find a lab</a></li>
             <li><a href="#faq">FAQ</a></li>

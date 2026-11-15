@@ -72,7 +72,7 @@ export const useSession = create<SessionState>((set, get) => {
   function reset(notice: string | null = null) {
     set({ status: 'signed-out', account: null, profiles: [], activeId: null, onboarding: false, notice, consentsOutdated: [] });
     void useHealth.getState().openProfile(null);
-    useUI.getState().setView('body');
+    useUI.getState().setView('home');
     leaveApp();
   }
 

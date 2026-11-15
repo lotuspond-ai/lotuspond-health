@@ -257,6 +257,49 @@ html { scroll-padding-top: calc(var(--header, 72px) + 16px); }
   .home-steps { grid-template-columns: minmax(0, 1fr); }
 }
 
+/* Your AI: the agents strip on the field, the agent grid and the connect steps on a sheet.
+   Brand marks are drawn in pine; the xAI marks keep their exact black. */
+.sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+.home-agents-link {
+  display: flex; align-items: center; gap: 14px; max-width: 46ch; margin-top: 22px; padding: 12px 18px 12px 14px;
+  border-radius: var(--r-md); background: var(--off-white); color: var(--pine-900); font-size: 15px; line-height: 1.4; text-decoration: none;
+}
+.home-agents-link b { font-weight: 700; text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; }
+.home-agents-link:hover { box-shadow: var(--shadow-card); }
+.home-agents-logos { display: flex; flex: none; }
+.home-agents-logos svg { width: 30px; height: 30px; margin-left: -6px; padding: 6px; border-radius: 50%; background: var(--white); box-shadow: 0 0 0 1.5px var(--off-white); fill: var(--pine-900); }
+.home-agents-logos svg:first-child { margin-left: 0; }
+.home-agents { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-top: clamp(40px, 5vw, 72px); padding: 0; list-style: none; }
+.home-agents li { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 2px 14px; align-items: center; padding: 18px 20px; border-radius: var(--r-md); background: var(--surface-tint); }
+.home-agents svg { grid-row: span 2; width: 44px; height: 44px; padding: 10px; border-radius: 12px; background: var(--white); fill: var(--pine-900); }
+.home-agents b { font: 600 19px/1.2 var(--font-display); letter-spacing: -0.01em; }
+.home-agents span { color: var(--ink-muted); font-size: 14px; line-height: 1.4; }
+.home-agents-wide { grid-column: span 2; }
+.home-agents svg.mark-exact, .home-agents-logos svg.mark-exact { fill: #000; }
+.home-connect {
+  display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 1fr); gap: 32px 48px; align-items: end;
+  margin-top: 16px; padding: clamp(24px, 3.4vw, 40px); border: 1.5px solid var(--line); border-radius: var(--r-lg);
+}
+.home-connect .home-connect-steps { margin-top: 0; gap: 24px; }
+.home-connect code, .home-faq code { font: 500 0.88em/1.4 ui-monospace, 'SF Mono', Menlo, Consolas, monospace; overflow-wrap: anywhere; }
+.home-connect code { display: block; padding: 8px 12px; border-radius: var(--r-sm); background: var(--surface-tint); color: var(--pine-900); user-select: all; }
+.home-connect-cta p { margin-top: 14px; color: var(--ink-muted); font-size: 14.5px; }
+.home-agents-fine { max-width: 76ch; margin-top: 24px; }
+@media (max-width: 1100px) {
+  .home-agents { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .home-agents-wide { grid-column: span 2; }
+}
+@media (max-width: 900px) {
+  .home-agents { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .home-connect { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 560px) {
+  .home-agents { grid-template-columns: minmax(0, 1fr); }
+  .home-agents-wide { grid-column: auto; }
+  .home-agents li { padding: 14px 16px; }
+  .home-agents-link { flex-direction: column; align-items: flex-start; gap: 10px; }
+}
+
 /* Find a lab */
 .home-labs { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: 40px 72px; align-items: center; }
 .home-labs .home-lede { margin-top: 24px; color: var(--ink-muted); }

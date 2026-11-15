@@ -140,6 +140,38 @@ p, li { text-wrap: pretty; }
 .formats li:first-child { color: var(--foam); font-weight: 600; }
 .formats svg { width: 20px; height: 20px; color: var(--lotus-light); }
 
+/* ---------- your AI (connected agents) ---------- */
+.sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+/* Brand marks are drawn in one ink colour at one size, never larger than the LotusPond wordmark. */
+.hero__agents { display: flex; align-items: center; gap: 14px; margin-top: 22px; padding: 12px 18px 12px 14px; max-width: 46ch; border-radius: 18px; background: var(--paper); box-shadow: inset 0 0 0 1px var(--line); font-size: 14.5px; line-height: 1.4; color: var(--ink-2); }
+.hero__agents:hover { box-shadow: inset 0 0 0 1px var(--reed); }
+.hero__agents { text-decoration: none; }
+.hero__agents b { color: var(--ink); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
+.hero__agents:focus-visible { outline: 2px solid var(--lotus-deep); outline-offset: 3px; }
+.hero__agents-logos { display: flex; flex: none; }
+.hero__agents-logos svg { width: 30px; height: 30px; padding: 6px; margin-left: -6px; border-radius: 50%; background: var(--paper); box-shadow: 0 0 0 1px var(--line); fill: var(--ink); }
+.hero__agents-logos svg:first-child { margin-left: 0; }
+.agents { background: var(--paper); border-bottom: 1px solid var(--line); }
+.agent-grid { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+.agent-grid li { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 2px 14px; align-items: center; padding: 18px 20px; border-radius: 18px; background: var(--mist); box-shadow: inset 0 0 0 1px var(--line); }
+.agent-grid svg { grid-row: span 2; width: 44px; height: 44px; padding: 10px; border-radius: 14px; background: var(--paper); box-shadow: inset 0 0 0 1px var(--line); fill: var(--ink); }
+.agent-grid b { font: 500 21px/1.15 var(--serif); letter-spacing: -0.01em; }
+.agent-grid span { font-size: 14px; line-height: 1.4; color: var(--ink-2); }
+.agent-grid__wide { grid-column: span 2; }
+/* xAI asks for its marks unaltered: black, not the ink colour. */
+.agent-grid svg.mark-exact, .hero__agents-logos svg.mark-exact { fill: #000; }
+.connect { margin-top: 20px; display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 1fr); gap: 28px 48px; align-items: center; padding: clamp(24px, 3.4vw, 40px); border-radius: 26px; background: var(--pond); color: var(--foam); }
+.connect__steps { list-style: none; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr) minmax(0, 1fr); gap: 20px 28px; counter-reset: step; }
+.connect__steps li { counter-increment: step; border-top: 1px solid var(--pond-line); padding-top: 16px; min-width: 0; }
+.connect__steps li::before { content: counter(step); display: block; font: italic 400 34px/1 var(--serif); color: var(--lotus-light); margin-bottom: 10px; }
+.connect__steps b { display: block; font-weight: 600; }
+.connect__steps span { display: block; margin-top: 6px; font-size: 14.5px; color: var(--foam-2); }
+.connect__steps code, .faq__list code { font: 500 14px/1.4 ui-monospace, 'SF Mono', Menlo, Consolas, monospace; overflow-wrap: anywhere; }
+.connect__steps code { display: block; font-size: 13px; margin-top: 8px; padding: 8px 12px; border-radius: 10px; background: var(--pond-2); box-shadow: inset 0 0 0 1px var(--pond-line); color: var(--foam); user-select: all; }
+.faq__list code { padding: 1px 6px; border-radius: 6px; background: var(--mist-2); }
+.connect__cta p { margin-top: 14px; font-size: 14px; color: var(--foam-2); }
+.agents__fine { margin-top: 22px; font-size: 13.5px; color: var(--ink-2); max-width: 90ch; }
+
 /* ---------- what it does ---------- */
 .tiles { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 20px; }
 .tile { display: flex; flex-direction: column; border-radius: 26px; overflow: hidden; background: var(--paper); box-shadow: inset 0 0 0 1px var(--line); }
@@ -314,6 +346,8 @@ code { font: 0.88em/1.4 ui-monospace, 'SF Mono', Menlo, Consolas, monospace; bac
 @media (max-width: 1080px) {
   .masthead__nav { display: none; }
   .regions, .promises { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .agent-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .connect { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 900px) {
   .hero__copy, .section__head, .labs, .faq { grid-template-columns: minmax(0, 1fr); }
@@ -349,6 +383,10 @@ code { font: 0.88em/1.4 ui-monospace, 'SF Mono', Menlo, Consolas, monospace; bac
   .tile--family .tile__media { padding: 0 22px; }
   .regions, .promises { grid-template-columns: minmax(0, 1fr); }
   .region h3 { margin-top: 18px; }
+  .agent-grid, .connect__steps { grid-template-columns: minmax(0, 1fr); }
+  .agent-grid__wide { grid-column: auto; }
+  .agent-grid li { padding: 14px 16px; }
+  .hero__agents { align-items: flex-start; flex-direction: column; gap: 10px; }
   .faq__list summary { font-size: 20px; padding-right: 44px; }
   .faq__list details > div { padding-right: 0; }
   .finder__list { position: relative; left: auto; bottom: auto; width: auto; margin: -56px 12px 12px; }

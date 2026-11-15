@@ -58,9 +58,10 @@ export const AGENT_DIRECTORY: AgentDirectoryEntry[] = [
     steps: ['In your agent: Tools, Add a tool, Model Context Protocol.', 'Give {url}, authentication OAuth 2.0 (dynamic discovery), or an API key with a LotusPond access token.'],
     note: 'Copilot Studio agents (work accounts). The consumer Copilot app has no custom connectors: use the summary below.' },
   { id: 'gemini', name: 'Gemini', maker: 'Google', group: 'assistants', kind: 'paste',
-    steps: ['The Gemini app does not take custom MCP connectors today. Copy the summary below and paste it into your chat.', 'Gemini CLI and Gemini Enterprise can connect directly: see Gemini CLI.'] },
-  { id: 'grok', name: 'Grok', maker: 'xAI', group: 'assistants', kind: 'paste',
-    steps: ['The Grok app does not take custom connectors today. Copy the summary below and paste it into your chat.', 'With the xAI API you can connect directly: see Grok API.'] },
+    steps: ['The Gemini app does not take custom MCP connectors today. Copy the summary below and paste it into your chat.', 'Gemini CLI can connect directly: see Gemini CLI.'] },
+  { id: 'grok', name: 'Grok', maker: 'xAI', group: 'assistants', kind: 'connector',
+    steps: ['On grok.com: Connectors, New connector, Custom.', 'Paste {url} and add it; Grok opens the LotusPond sign-in, where you choose what it may see.'],
+    note: 'Custom connectors depend on your Grok plan; on Grok Business an admin adds the connector for the team first.' },
   { id: 'meta-ai', name: 'Meta AI', maker: 'Meta', group: 'assistants', kind: 'paste',
     steps: ['Meta AI (in its app, WhatsApp, Instagram and Messenger) has no custom connectors that we know of. Copy the summary below and paste it in.'] },
   { id: 'perplexity', name: 'Perplexity', maker: 'Perplexity', group: 'assistants', kind: 'paste',
@@ -123,6 +124,11 @@ url = "{url}"`, note: 'Needs a recent Codex version with remote (HTTP) MCP serve
     steps: ['Use the tool’s MCP client step with {url} and a LotusPond access token as a Bearer header.', 'Keep a write permission off unless the workflow must add readings.'] },
 
   /* ---------------- personal and self-hosted agents ---------------- */
+  { id: 'grok-bot', name: 'Grok Bot', maker: 'xAI', group: 'personal', kind: 'config', token: true,
+    steps: ['Create an access token below.', 'Ask a Bot: "Add a custom remote MCP server named LotusPond Health, URL {url}, with the HTTP header Authorization: Bearer {token}".', 'Check the approval card Grok Bot shows (name, URL and header), then save.'] },
+  { id: 'muse', name: 'Muse', maker: 'Meta', group: 'personal', kind: 'config', token: true,
+    steps: ['Create an access token below.', 'Ask Muse: "Create a custom connector for the LotusPond Health MCP server at {url}, using Streamable HTTP and the header Authorization: Bearer".', 'Enter the token when Muse asks for it in its secure prompt.', 'Muse Code: add {url} to mcp_servers in ~/.config/muse/settings.json with the same header.'],
+    note: 'Muse is rolling out in the US. Meta does not review custom connectors; Muse writes its own for each service.' },
   { id: 'personal', name: 'Your own or personal agent', maker: 'You', group: 'personal', kind: 'config', token: true,
     steps: ['Any agent framework with an MCP client (OpenAI Agents SDK, Claude Agent SDK, LangChain, LlamaIndex, OpenClaw and others).', 'Create an access token below and connect to {url} with Authorization: Bearer.'],
     snippet: `{

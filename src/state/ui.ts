@@ -1,31 +1,25 @@
 import { create } from 'zustand';
 import type { OrganId } from '../types';
 
-export type View = 'body' | 'markers' | 'scans' | 'files' | 'sources' | 'profile' | 'account' | 'labs';
-export const VIEWS: View[] = ['body', 'markers', 'scans', 'files', 'sources', 'profile', 'account', 'labs'];
-export type SectionAxis = 'coronal' | 'sagittal' | 'transverse';
-export type Quality = 'high' | 'fast';
+export type View = 'home' | 'body' | 'markers' | 'scans' | 'files' | 'sources' | 'agents' | 'profile' | 'account' | 'labs';
+export const VIEWS: View[] = ['home', 'body', 'markers', 'scans', 'files', 'sources', 'agents', 'profile', 'account', 'labs'];
+/** The views under Records: results, the body map, scans and files. */
+export const RECORD_VIEWS: View[] = ['markers', 'body', 'scans', 'files'];
 
 interface UIState {
   view: View;
   hovered: OrganId | null;
-  layers: { skin: boolean; skeleton: boolean; labels: boolean };
-  xray: boolean;
-  section: { on: boolean; axis: SectionAxis; depth: number };
-  quality: Quality;
+  layers: { labels: boolean };
   uploadOpen: boolean;
   /** A saved file to read in the upload review (a report sent on WhatsApp, or Read results in Files). */
   review: ReviewTarget | null;
   addProfileOpen: boolean;
   scanOpen: string | null;
-  /** Pixels of the 3D stage covered by the phone bottom sheet; the camera re-centres on the visible part. */
+  /** Pixels of the body map covered by the phone bottom sheet; the map re-centres on the visible part. */
   stageInset: number;
   setView: (v: View) => void;
   setHovered: (o: OrganId | null) => void;
   toggleLayer: (k: keyof UIState['layers']) => void;
-  setXray: (v: boolean) => void;
-  setSection: (p: Partial<UIState['section']>) => void;
-  setQuality: (q: Quality) => void;
   setUploadOpen: (v: boolean) => void;
   openReview: (r: ReviewTarget) => void;
   setAddProfileOpen: (v: boolean) => void;
@@ -47,15 +41,10 @@ export function readReviewLink(): ReviewTarget | null {
   return { profileId, documentId };
 }
 
-const lowPower = typeof navigator !== 'undefined' && ((navigator.hardwareConcurrency ?? 8) <= 4 || /Mobi|Android/i.test(navigator.userAgent));
-
 export const useUI = create<UIState>(set => ({
-  view: 'body',
+  view: 'home',
   hovered: null,
-  layers: { skin: true, skeleton: true, labels: true },
-  xray: false,
-  section: { on: false, axis: 'coronal', depth: 0.5 },
-  quality: lowPower ? 'fast' : 'high',
+  layers: { labels: true },
   uploadOpen: false,
   review: null,
   addProfileOpen: false,
@@ -67,9 +56,6 @@ export const useUI = create<UIState>(set => ({
   },
   setHovered: hovered => set({ hovered }),
   toggleLayer: k => set(s => ({ layers: { ...s.layers, [k]: !s.layers[k] } })),
-  setXray: xray => set({ xray }),
-  setSection: p => set(s => ({ section: { ...s.section, ...p } })),
-  setQuality: quality => set({ quality }),
   setUploadOpen: uploadOpen => set(uploadOpen ? { uploadOpen } : { uploadOpen, review: null }),
   openReview: review => set({ review, uploadOpen: true }),
   setAddProfileOpen: addProfileOpen => set({ addProfileOpen }),

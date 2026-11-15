@@ -8,9 +8,7 @@
 .stage-labels { z-index: 2; }
 
 /* ---------- 3D layer ---------- */
-.stage3d { position: absolute; inset: 0; }
-.stage3d[data-off] { visibility: hidden; pointer-events: none; }
-.stage3d__wait, .bm2d__wait { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); }
+.bm2d__wait { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); }
 
 /* ---------- 2D body map ---------- */
 .bm2d { position: absolute; inset: 0; display: grid; place-items: center; overflow: hidden; }
@@ -51,29 +49,18 @@
 
 /* ---------- overlay controls ---------- */
 .stage__tools { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; max-width: none; }
-.modes { display: inline-flex; padding: 3px; border-radius: 999px; background: #0f2f33cc; border: 1px solid #2b5458; backdrop-filter: blur(6px); }
-.modes button { display: inline-flex; align-items: center; gap: 6px; border: 0; background: none; color: #b9d6d2; padding: 6px 12px; border-radius: 999px; font-size: 13px; font-weight: 600; white-space: nowrap; }
-.modes button:hover { color: #fff; }
-.modes button[aria-pressed='true'] { background: #e6f3f1; color: var(--pond); }
-.modes .glyph { width: 16px; height: 16px; flex: none; }
 .stage__chips { display: flex; gap: 6px; }
 .chip--icon { position: relative; width: 36px; height: 36px; padding: 0; display: inline-grid; place-items: center; }
 .chip--icon .glyph { width: 18px; height: 18px; }
-.chip__held { position: absolute; top: 4px; right: 4px; width: 7px; height: 7px; border-radius: 50%; background: var(--pollen-bright); }
 .stage__legend span { display: inline-flex; align-items: center; }
 .stage__hint { display: flex; align-items: center; gap: 5px; }
 .stage__hint .glyph { width: 16px; height: 16px; }
 .stage__hint span + .glyph { margin-left: 8px; }
 
-@media (max-width: 860px) {
-  .modes__long { display: none; }
-}
 @media (max-width: 640px) {
   .stage__title { max-width: calc(100% - 132px); }
   .stage__tools { top: 12px; bottom: auto; right: 12px; max-width: none; }
   .stage__chips { flex-direction: column; }
-  .modes button { padding: 7px 10px; }
-  .modes button > span { display: none; }
   .stage__back { bottom: 14px; left: 14px; }
   .stage__legend { gap: 9px; font-size: 11px; }
   .stage__legend i { margin-right: 4px; }
