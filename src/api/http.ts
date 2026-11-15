@@ -1,7 +1,14 @@
 // Backend that talks to the LotusPond API: on the same origin (/api) with cookie sessions on the website, or
 // across sites with token sessions in the iOS and Android apps (see ./appSession.ts).
+import { AI_EXTRACTION_NOTICE_VERSION, type AiExtraction } from '../../shared/types';
+import type { NotificationList, UndoResult } from '../../shared/notifications';
+import { ASSISTANT_NOTICE_VERSION, type AssistantConsent, type AssistantEvent, type AssistantInfo, type AssistantMessage } from '../../shared/assistant';
+import { WHATSAPP_NOTICE_VERSION, type WhatsAppInfo, type WhatsAppLink, type WhatsAppLinkStart } from '../../shared/whatsapp';
+import { RECORD_AGENT_NOTICE_VERSION, type RecordConnectionView, type RecordRunView, type SourcesInfo } from '../../shared/sources';
+import type { AgentCategory } from '../../shared/agents';
+import type { AgentConnection, AgentConnectionsInfo, CreateAgentTokenInput, CreatedAgentToken, UpdateAgentConnectionInput } from '../../shared/agents';
 import type {
-  Account, ActivityEvent, ConsentKind, ConsentRecord, DocumentKind, Measurement, MeasurementInput, Profile, ProfileInput, ProfileRecords,
+  Account, ActivityEvent, FamilyConfirmation, ConsentKind, ConsentRecord, DocumentKind, Measurement, MeasurementInput, Profile, ProfileInput, ProfileRecords,
   RegisterInput, ScanInput, ScanItem, ServiceInfo, SessionInfo, StoredDocument,
 } from '../types';
 import type { FacilityQuery, FacilitySearchResult, GeoCandidate, GeoReverse, PublicConfig } from '../types';
@@ -9,6 +16,7 @@ import { roundCoord } from '../../shared/facilities';
 import { countryPolicy } from '../../shared/regions';
 import { ApiError, type Backend, type ScanPatch } from './backend';
 import type { AppSession, Region } from './appSession';
+import type { LabBookingInput, LabCatalog, LabOrderView, LabResultSaved, LabResultView, LabSlot } from '../../shared/lab-bundle';
 
 const BASE = '/api';
 
@@ -37,8 +45,9 @@ export class HttpBackend implements Backend {
     return { method, credentials: 'omit', headers: this.app.headers() };
   }
 
-  private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  private async request<T>(method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<T> {
     const init = await this.init(method);
+    Object.assign(init.headers as Record<string, string>, headers);
     if (body instanceof FormData) init.body = body;
     else if (body !== undefined) {
       init.body = JSON.stringify(body);
@@ -123,7 +132,7 @@ export class HttpBackend implements Backend {
   setConsent(kind: ConsentKind, granted: boolean) { return this.request<ConsentRecord[]>('PATCH', '/auth/consents', { kind, granted }); }
   activity() { return this.request<ActivityEvent[]>('GET', '/auth/activity'); }
 
-  createProfile(input: ProfileInput) { return this.request<Profile>('POST', '/profiles', input); }
+  createProfile(input: ProfileInput, confirmation: FamilyConfirmation) { return this.request<Profile>('POST', '/profiles', { ...input, confirmation }); }
   updateProfile(id: string, patch: Partial<ProfileInput>) { return this.request<Profile>('PATCH', `/profiles/${id}`, patch); }
   deleteProfile(id: string) { return this.request<void>('DELETE', `/profiles/${id}`); }
 
@@ -187,7 +196,116 @@ export class HttpBackend implements Backend {
     return this.request<FacilitySearchResult>('GET', `/facilities?${params}`);
   }
   searchPlaces(q: string) { return this.request<GeoCandidate[]>('GET', `/geo/search?${new URLSearchParams({ q })}`); }
+
+  labCatalog(pincode: string) { return this.request<LabCatalog>('GET', `/lab/catalog?${new URLSearchParams({ pincode })}`); }
+  async labSlots(q: { partner: string; pincode: string; date: string; items: string[] }) {
+    const params = new URLSearchParams({ partner: q.partner, pincode: q.pincode, date: q.date, items: q.items.join(',') });
+    return (await this.request<{ slots: LabSlot[] }>('GET', `/lab/slots?${params}`)).slots;
+  }
+  async labOrders(pid: string) { return (await this.request<{ orders: LabOrderView[] }>('GET', `/profiles/${pid}/lab-orders`)).orders; }
+  async labOrder(pid: string, id: string) { return (await this.request<{ order: LabOrderView }>('GET', `/profiles/${pid}/lab-orders/${id}`)).order; }
+  async bookLab(pid: string, input: LabBookingInput, idempotencyKey: string) {
+    return (await this.request<{ order: LabOrderView }>('POST', `/profiles/${pid}/lab-orders`, input, { 'Idempotency-Key': idempotencyKey })).order;
+  }
+  async cancelLabOrder(pid: string, id: string, reason?: string) {
+    return (await this.request<{ order: LabOrderView }>('POST', `/profiles/${pid}/lab-orders/${id}/cancel`, reason ? { reason } : {})).order;
+  }
+  async labOrderSlots(pid: string, id: string, date: string) {
+    return (await this.request<{ slots: LabSlot[] }>('GET', `/profiles/${pid}/lab-orders/${id}/slots?${new URLSearchParams({ date })}`)).slots;
+  }
+  async rescheduleLabOrder(pid: string, id: string, slot: LabSlot) {
+    return (await this.request<{ order: LabOrderView }>('POST', `/profiles/${pid}/lab-orders/${id}/reschedule`, { slot })).order;
+  }
+  async labResults(pid: string) { return (await this.request<{ results: LabResultView[] }>('GET', `/profiles/${pid}/lab-results`)).results; }
+  labReportUrl(pid: string, rid: string) { return this.app ? null : `${BASE}/profiles/${pid}/lab-results/${rid}/report`; }
+  async labReport(pid: string, rid: string) {
+    const res = await this.fetchFile(`/profiles/${pid}/lab-results/${rid}/report`);
+    if (!res.ok) throw new ApiError(res.status, 'file', res.status === 404 ? 'The lab report was not found.' : 'The lab report could not be loaded.');
+    return res.blob();
+  }
+  saveLabResult(pid: string, rid: string, measurements: MeasurementInput[]) {
+    return this.request<LabResultSaved>('POST', `/profiles/${pid}/lab-results/${rid}/save`, { measurements });
+  }
+  async dismissLabResult(pid: string, rid: string) {
+    return (await this.request<{ result: LabResultView }>('POST', `/profiles/${pid}/lab-results/${rid}/dismiss`, {})).result;
+  }
   reversePlace(lat: number, lon: number) {
     return this.request<GeoReverse>('GET', `/geo/reverse?${new URLSearchParams({ lat: roundCoord(lat).toFixed(2), lon: roundCoord(lon).toFixed(2) })}`);
+  }
+
+  agentConnections() { return this.request<AgentConnectionsInfo>('GET', '/agents'); }
+  createAgentToken(input: CreateAgentTokenInput) { return this.request<CreatedAgentToken>('POST', '/agents/tokens', input); }
+  updateAgentConnection(id: string, patch: UpdateAgentConnectionInput) { return this.request<AgentConnection>('PATCH', `/agents/${id}`, patch); }
+  disconnectAgent(id: string) { return this.request<void>('DELETE', `/agents/${id}`); }
+  notifications() { return this.request<NotificationList>('GET', '/notifications'); }
+  markNotificationsRead(ids?: string[]) { return this.request<NotificationList>('POST', '/notifications/read', ids ? { ids } : {}); }
+  undoNotification(id: string) { return this.request<UndoResult>('POST', `/notifications/${id}/undo`, {}); }
+
+  assistantInfo() { return this.request<AssistantInfo>('GET', '/assistant'); }
+  agreeToAssistant(categories: AgentCategory[]) { return this.request<AssistantConsent>('POST', '/assistant/consent', { noticeVersion: ASSISTANT_NOTICE_VERSION, categories }); }
+  withdrawAssistant() { return this.request<void>('DELETE', '/assistant/consent'); }
+  assistantConversation(id: string) { return this.request<{ id: string; profileId: string; title: string; channel?: 'whatsapp'; messages: AssistantMessage[] }>('GET', `/assistant/conversations/${id}`); }
+  deleteAssistantConversation(id: string) { return this.request<void>('DELETE', `/assistant/conversations/${id}`); }
+
+  whatsappInfo() { return this.request<WhatsAppInfo>('GET', '/whatsapp'); }
+  startWhatsAppLink() { return this.request<WhatsAppLinkStart>('POST', '/whatsapp/link', { noticeVersion: WHATSAPP_NOTICE_VERSION }); }
+  setWhatsAppProfile(profileId: string) { return this.request<WhatsAppLink>('PATCH', '/whatsapp/link', { profileId }); }
+  unlinkWhatsApp() { return this.request<void>('DELETE', '/whatsapp/link'); }
+
+  recordSources() { return this.request<SourcesInfo>('GET', '/records'); }
+  recordConnections() { return this.request<RecordConnectionView[]>('GET', '/records/connections'); }
+  connectRecordSource(input: { sourceId: string; profileId: string; portalUrl?: string; refreshDays: number | null }) {
+    return this.request<{ connection: RecordConnectionView; run: RecordRunView | null; authorizeUrl?: string }>('POST', '/records/connections', { ...input, noticeVersion: RECORD_AGENT_NOTICE_VERSION });
+  }
+  updateRecordConnection(id: string, patch: { refreshDays: number | null }) { return this.request<RecordConnectionView>('PATCH', `/records/connections/${id}`, patch); }
+  runRecordConnection(id: string) { return this.request<RecordRunView>('POST', `/records/connections/${id}/run`, {}); }
+  disconnectRecordSource(id: string) { return this.request<void>('DELETE', `/records/connections/${id}`); }
+  recordRun(id: string) { return this.request<RecordRunView>('GET', `/records/runs/${id}`); }
+  answerRecordRun(id: string, answer: string) { return this.request<RecordRunView>('POST', `/records/runs/${id}/answer`, { answer }); }
+  cancelRecordRun(id: string) { return this.request<RecordRunView>('POST', `/records/runs/${id}/cancel`, {}); }
+
+  /** The answer streams back as server-sent events, one JSON AssistantEvent each. */
+  async sendToAssistant(input: { profileId: string; conversationId?: string; text: string }, onEvent: (e: AssistantEvent) => void, signal?: AbortSignal) {
+    const init = await this.init('POST');
+    (init.headers as Record<string, string>)['Content-Type'] = 'application/json';
+    (init.headers as Record<string, string>).Accept = 'text/event-stream';
+    init.body = JSON.stringify(input);
+    init.signal = signal;
+    let res: Response;
+    try {
+      res = await fetch(this.base() + '/assistant/messages', init);
+    } catch {
+      if (signal?.aborted) return;
+      throw new ApiError(0, 'network', 'Could not reach the LotusPond server. Check your connection and try again.');
+    }
+    if (!res.ok || !res.body) {
+      let err: { code?: string; message?: string } | undefined;
+      try { err = (await res.json() as { error?: typeof err }).error; } catch { /* not JSON */ }
+      if (res.status === 401) { if (this.app) await this.app.clear(); this.onSessionEnded?.(); }
+      throw new ApiError(res.status, err?.code ?? 'error', err?.message ?? `The server answered ${res.status}. Try again.`);
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let cut: number;
+      while ((cut = buffer.indexOf('\n\n')) >= 0) {
+        const chunk = buffer.slice(0, cut);
+        buffer = buffer.slice(cut + 2);
+        const data = chunk.split('\n').filter(l => l.startsWith('data:')).map(l => l.slice(5).trimStart()).join('\n');
+        if (data) { try { onEvent(JSON.parse(data) as AssistantEvent); } catch { /* a broken event is skipped */ } }
+      }
+    }
+  }
+
+  extractReport(pid: string, file: Blob, fileName: string) {
+    const form = new FormData();
+    form.append('file', file, fileName);
+    form.append('consent', 'accepted');
+    form.append('noticeVersion', AI_EXTRACTION_NOTICE_VERSION);
+    return this.request<AiExtraction>('POST', `/profiles/${pid}/extract`, form);
   }
 }

@@ -105,3 +105,77 @@
   .bm2d__mark .landmark:hover .landmark__name, .bm2d__mark .landmark:focus .landmark__name { display: inline; }
   .bm2d__mark .landmark__note { width: min(220px, 60vw); }
 }
+/* Organs with results outside their range glow on the map (paintIssues in BodyMap2D.tsx); the glow breathes slowly. */
+.bm2d__issues { animation: issue-breathe 2.8s ease-in-out infinite; }
+@keyframes issue-breathe { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .bm2d__issues { animation: none; opacity: 0.85; } }
+.stage__legend i.glow { box-shadow: 0 0 8px 1px rgba(240, 160, 60, 0.7); }
+/* Organs with results outside their range: their pin pulses; the others go quiet while anything is outside range. */
+.pin--issue .pin__dot { position: relative; }
+.pin--issue .pin__dot::after { content: ''; position: absolute; inset: -4px; border-radius: 50%; border: 2px solid var(--pin); animation: pin-pulse 2.2s ease-out infinite; pointer-events: none; }
+.pin--issue-far .pin__dot::after { animation-duration: 1.6s; }
+@keyframes pin-pulse { 0% { transform: scale(0.8); opacity: 0.9; } 100% { transform: scale(2.2); opacity: 0; } }
+.pin--quiet:not(.is-hot) { opacity: 0.45; transform: scale(0.8); }
+@media (prefers-reduced-motion: reduce) { .pin--issue .pin__dot::after { animation: none; opacity: 0.6; } }
+
+/* ---------- glow view: a quiet figure, soft halos per organ, a grade per body system ---------- */
+/* The anatomy steps back: a colour layer turns it into tints of the stage's teal, and a veil in the same colour,
+   thicker towards the feet, dims it. Both leave the image's background (already that colour) unchanged; filtering
+   the image instead would shift it away from the stage's. */
+.bm2d__tint { position: absolute; inset: 0; pointer-events: none; background: var(--bg); mix-blend-mode: color; opacity: 0.88; }
+.bm2d__veil {
+  position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(to bottom, color-mix(in srgb, var(--bg) 45%, transparent) 0 66%, var(--bg) 97%);
+}
+.bm2d__glows { position: absolute; inset: 0; pointer-events: none; mix-blend-mode: screen; }
+.bm2d__glow {
+  position: absolute; transform: translate(-50%, -50%); border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(var(--rgb), 0.85), rgba(var(--rgb), 0.38) 48%, rgba(var(--rgb), 0) 100%);
+  filter: blur(6px); opacity: 0.8;
+}
+.bm2d__glow.is-out, .bm2d__glow.is-far {
+  scale: 1.3; background: radial-gradient(closest-side, rgba(var(--rgb), 1), rgba(var(--rgb), 0.55) 45%, rgba(var(--rgb), 0) 100%);
+}
+.bm2d__glow.is-out, .bm2d__glow.is-far { opacity: 1; animation: glow-breathe 3.2s ease-in-out infinite; }
+.bm2d__glow.is-far { animation-duration: 2.4s; }
+.bm2d__glow.is-back { opacity: 0.4; }
+@keyframes glow-breathe { 0%, 100% { transform: translate(-50%, -50%) scale(1); } 50% { transform: translate(-50%, -50%) scale(1.14); opacity: 0.78; } }
+@media (prefers-reduced-motion: reduce) { .bm2d__glow.is-out, .bm2d__glow.is-far { animation: none; } }
+
+/* Pin buttons stay for keyboard and screen-reader use but show only while focused from the keyboard. */
+.bm2d__pins--glow .bm2d__pin { opacity: 0; }
+.bm2d__pins--glow .bm2d__pin:focus-within:has(:focus-visible) { opacity: 1; }
+.bm2d__pins--glow .pin__label { display: none; } /* the hover tag names the organ */
+.grades { position: absolute; left: 20px; top: 78px; z-index: 3; max-height: calc(100% - 150px); overflow-y: auto; scrollbar-width: none; }
+.grades ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.grade {
+  display: flex; align-items: center; gap: 10px; border: 0; background: none; color: #b9d6d2; padding: 4px 12px 4px 4px;
+  border-radius: 999px; font: inherit; font-size: 13.5px; text-align: left; cursor: pointer;
+}
+.grade:hover { color: #fff; background: #ffffff0d; }
+.grade[aria-pressed='true'] { background: #e6f3f1; color: var(--pond); }
+.grade.is-empty { color: #6f908d; }
+.grade__ring { position: relative; flex: none; width: 28px; height: 28px; display: grid; place-items: center; }
+.grade__ring svg { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); }
+.grade__track { fill: none; stroke: #ffffff1f; stroke-width: 2.6; }
+.grade__fill { fill: none; stroke: var(--grade); stroke-width: 2.6; stroke-linecap: round; }
+.grade[aria-pressed='true'] .grade__track { stroke: #0c25281f; }
+.grade__ring b { font-size: 12px; font-weight: 700; color: var(--grade); }
+.grade[aria-pressed='true'] .grade__ring b { color: var(--pond); }
+.grade__name { white-space: nowrap; }
+.stage__legend i.halo { background: var(--c); box-shadow: 0 0 9px 2px var(--c); }
+.grades__key { margin: 10px 0 0 6px; color: #6f908d; font-size: 11.5px; line-height: 1.5; }
+/* Compact layout (COMPACT, src/lib/useMedia.ts): keep the column above the results sheet (--cover,
+   src/styles/mobile.css) and the legend; it scrolls when it is short. */
+@media (max-width: 760px) {
+  .grades { max-height: calc(100% - var(--cover, 0px) - 120px); }
+}
+@media (max-width: 640px) {
+  .grades { left: 8px; top: 56px; max-height: calc(100% - var(--cover, 0px) - 104px); }
+  .grades ul { gap: 0; }
+  .grade { padding: 2px; }
+  .grade__ring { width: 24px; height: 24px; }
+  .grade__ring b { font-size: 11px; }
+  .grade__name, .grades__key { display: none; }
+  .grade[aria-pressed='true'] .grade__name { display: inline; padding-right: 6px; }
+}

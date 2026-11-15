@@ -1,0 +1,1 @@
+ALTER TABLE "consents" ADD COLUMN "detail" jsonb;

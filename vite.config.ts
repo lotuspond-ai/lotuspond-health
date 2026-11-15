@@ -4,6 +4,7 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { DEFAULT_SITE_URL } from './shared/site.ts'
 import { normalizeSiteUrl, site, siteInputs } from './tools/site/vite-plugin.ts'
+import { ocrAssets } from './tools/ocr-assets.ts'
 
 // Content hash of each body model, appended to its URL so caches (and the service worker) fetch it again only when it
 // changes. Computed here so it can never go stale.
@@ -30,7 +31,8 @@ export default defineConfig(({ mode }) => {
   return {
     base: artifact ? './' : '/',
     appType: 'mpa',
-    plugins: [react(), site({ siteUrl, artifact })],
+    // On-device report reading: everywhere but the server-less preview (mode 'artifact').
+    plugins: [react(), site({ siteUrl, artifact }), ocrAssets({ enabled: mode !== 'artifact', base: artifact ? './' : '/' })],
     define: { __SITE_URL__: JSON.stringify(siteUrl), __MODEL_SHA__: JSON.stringify(modelHashes()) },
     build: {
       chunkSizeWarningLimit: 2500,

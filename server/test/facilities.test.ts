@@ -384,7 +384,7 @@ describe('home area on the profile', () => {
     assert.equal(me.profiles[0].locality, 'Indiranagar, Bengaluru');
     const cleared = await c.json<Profile>('PATCH', `/api/profiles/${self.id}`, { country: null, locality: null, postalCode: null, latitude: null, longitude: null });
     assert.deepEqual([cleared.country, cleared.locality, cleared.latitude, cleared.longitude], [null, null, null, null]);
-    const family = await c.json<Profile>('POST', '/api/profiles', { displayName: 'Mira', relationship: 'child', locality: 'Koramangala', latitude: 12.935, longitude: 77.6245 }, 201);
+    const family = await c.json<Profile>('POST', '/api/profiles', { displayName: 'Mira', relationship: 'child', confirmation: 'guardian', locality: 'Koramangala', latitude: 12.935, longitude: 77.6245 }, 201);
     assert.deepEqual([family.latitude, family.longitude], [12.94, 77.62]);
   });
 

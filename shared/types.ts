@@ -7,7 +7,7 @@ export type OrganId =
 
 /** Body systems used to group biomarkers in the UI. */
 export type SystemId =
-  | 'heart' | 'metabolic' | 'liver' | 'kidney' | 'blood' | 'thyroid' | 'nutrition' | 'inflammation' | 'hormones' | 'urine';
+  | 'heart' | 'metabolic' | 'liver' | 'kidney' | 'blood' | 'thyroid' | 'nutrition' | 'inflammation' | 'hormones' | 'urine' | 'vitals';
 
 export type Status = 'low' | 'normal' | 'high' | 'unknown';
 
@@ -30,6 +30,7 @@ export interface BiomarkerDef {
   system: SystemId;
   organs: OrganId[];          // anatomy this marker relates to (first = primary)
   about: string;              // one or two plain-language sentences; no diagnosis
+  loinc?: string;             // LOINC code (shared/loinc.ts), when there is a confident match
   lowerIsBetter?: boolean;
 }
 
@@ -73,6 +74,22 @@ export interface ParseResult {
   blobs: Record<string, Blob>;
   warnings: string[];
   detectedDate: string | null;
+  /** Files read with OCR (photos, scanned PDFs) and how well that went; the review offers a better read when poor. */
+  reads?: FileRead[];
+  /** Plain information for the review, such as what an import from Apple Health covered. */
+  notes?: string[];
+}
+
+/** How a photographed or scanned report was read on the device. */
+export interface FileRead {
+  fileName: string;
+  method: 'ocr' | 'claude';
+  /** Mean OCR word confidence, 0-100 (OCR only). */
+  confidence?: number;
+  /** Results found. */
+  found: number;
+  /** Few results or low confidence: worth a better read. */
+  poor: boolean;
 }
 
 /* ---------------- accounts, profiles and stored files ---------------- */
@@ -143,12 +160,47 @@ export interface ProfileRecords {
 export interface SessionInfo {
   account: Account;
   profiles: Profile[];
+  /** Required consents given for older texts (the Terms or Privacy Policy changed): the app asks to accept the new ones. */
+  consentsOutdated?: ConsentKind[];
 }
 
 /* ---------------- consent, activity and sign-up ---------------- */
 
 /** What a person agreed to. `cross_border` applies where records are stored outside their country. */
-export type ConsentKind = 'terms' | 'privacy' | 'health_data' | 'cross_border' | 'marketing';
+export type ConsentKind = 'terms' | 'privacy' | 'health_data' | 'cross_border' | 'marketing'
+  /** The account holder confirmed their right to keep a family member's records (one record per profile). */
+  | 'family_profile'
+  /** Sharing records with a connected AI agent (one record per connection and change; withdrawn on disconnect). */
+  | 'agent_sharing'
+  /** Sending one photographed or scanned report to Claude to read it (one record per upload; src/components/AiRead). */
+  | 'ai_extraction'
+  /** Talking with LotusPond's assistant, which sends the parts of the records it needs to Anthropic (shared/assistant.ts). */
+  | 'assistant'
+  /** Talking with the assistant on WhatsApp from a linked number (shared/whatsapp.ts); withdrawn when unlinked. */
+  | 'whatsapp'
+  /** The record agent fetching from one source for one profile (shared/sources.ts); withdrawn on disconnect. */
+  | 'record_agent';
+
+/** What the account holder confirmed when adding a family member. */
+export type FamilyConfirmation = 'guardian' | 'agreed';
+
+/** What a per-item consent (family_profile, agent_sharing) applied to. Ids, names and permissions only, never health data. */
+export interface ConsentDetail {
+  profileId?: string;
+  relationship?: string;
+  confirmation?: FamilyConfirmation;
+  connectionId?: string;
+  /** The agent's name as shown on the connection screen. */
+  agent?: string;
+  profileIds?: string[];
+  scopes?: string[];
+  /** Kinds of data shared with an agent (shared/agents.ts AgentCategory). */
+  categories?: string[];
+  /** When the agent connection stops, if it was given an expiry. */
+  expiresAt?: string | null;
+  /** For record_agent: the source (shared/sources.ts) the agent fetches from. */
+  source?: string;
+}
 
 /** One consent decision. Decisions are never edited; a change adds a new record. */
 export interface ConsentRecord {
@@ -159,12 +211,18 @@ export interface ConsentRecord {
   createdAt: string;
   /** Country of residence at the time. */
   country: string | null;
+  /** For family_profile and agent_sharing: which profile or connection it applies to. */
+  detail?: ConsentDetail | null;
 }
 
 /** Account events kept in the audit log and shown as "Recent activity". */
 export type AuditKind =
   | 'account_created' | 'sign_in' | 'sign_in_failed' | 'sign_out' | 'password_changed' | 'sessions_revoked'
-  | 'export' | 'profile_deleted' | 'records_deleted' | 'account_deleted' | 'consent_changed' | 'preferences_changed';
+  | 'export' | 'profile_deleted' | 'records_deleted' | 'account_deleted' | 'consent_changed' | 'preferences_changed'
+  | 'lab_order_created' | 'lab_order_cancelled' | 'lab_results_saved'
+  | 'agent_connected' | 'agent_disconnected' | 'agent_access' | 'agent_wrote' | 'agent_write_undone' | 'assistant_chat'
+  | 'report_read_by_ai' | 'whatsapp_linked' | 'whatsapp_unlinked' | 'whatsapp_report'
+  | 'records_source_connected' | 'records_source_disconnected' | 'records_fetched';
 
 /** The only details an audit event may carry. Deliberately narrow: never names, values, file names or other health data. */
 export interface AuditDetail {
@@ -173,6 +231,8 @@ export interface AuditDetail {
   unitSystem?: 'conventional' | 'si';
   /** Opaque id of the profile acted on. */
   profileId?: string;
+  /** Opaque id of the agent connection (shared/agents.ts) that acted. */
+  connectionId?: string;
 }
 
 export interface ActivityEvent {
@@ -330,4 +390,19 @@ export interface PublicConfig {
   map: MapSettings | null;
   /** Nearby search (OpenStreetMap places and area search) is available on this server. */
   nearbySearch: boolean;
+  /** The optional Claude read of photographed and scanned reports is set up on this server (docs/report-reading.md). */
+  aiExtraction?: boolean;
 }
+
+/** What the Claude read returns: the rows as printed, for the app's parser to match. */
+export interface AiExtraction {
+  isLabReport: boolean;
+  sampleDate: string | null;
+  results: { name: string; value: string; unit: string; range: string; flag: string }[];
+}
+
+/**
+ * Version of the notice shown before a report is sent to Claude (src/components/AiRead.tsx). A request made under
+ * another version is refused, so every recorded consent names the text the person saw.
+ */
+export const AI_EXTRACTION_NOTICE_VERSION = '2026-11-11';

@@ -301,7 +301,7 @@ describe('audit log', () => {
     const ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:142.0) Gecko/20100101 Firefox/142.0';
     const c = client({ userAgent: ua, ip: '203.0.113.42' });
     const p = await signUp('IN', c, { displayName: 'Meera Krishnan' });
-    const kid = await c.json<{ id: string }>('POST', '/api/profiles', { displayName: 'Anaya Krishnan', relationship: 'child', conditions: ['Asthma'] }, 201);
+    const kid = await c.json<{ id: string }>('POST', '/api/profiles', { displayName: 'Anaya Krishnan', relationship: 'child', confirmation: 'guardian', conditions: ['Asthma'] }, 201);
     await c.json('POST', `/api/profiles/${p.self.id}/measurements`, { measurements: [measurement({ rawName: 'Haemoglobin A1c', value: 9.7, valueText: '9.7' })] }, 201);
     await upload(c, p.self.id, 'diabetes-clinic-report.pdf', new TextEncoder().encode('%PDF secret'));
     assert.equal((await c.call('GET', `/api/profiles/${p.self.id}/export`)).status, 200);

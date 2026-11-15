@@ -89,7 +89,7 @@ describe('mobile apps', () => {
     const { token } = await appSignUp();
     const list = await fromApp('GET', '/api/profiles', { token });
     assert.equal(list.status, 200);
-    const created = await fromApp('POST', '/api/profiles', { token, body: { displayName: 'Mira', relationship: 'child' } });
+    const created = await fromApp('POST', '/api/profiles', { token, body: { displayName: 'Mira', relationship: 'child', confirmation: 'guardian' } });
     assert.equal(created.status, 201, await created.clone().text());
     const kid = await created.json() as Profile;
     const patched = await fromApp('PATCH', `/api/profiles/${kid.id}`, { token, body: { heightCm: 118 } });

@@ -152,7 +152,7 @@ describe('accounts', () => {
 
   it('blocks changes sent from another site', async () => {
     const { c } = await signUp();
-    const res = await c.call('POST', '/api/profiles', { displayName: 'Kid', relationship: 'child' }, { 'sec-fetch-site': 'cross-site', origin: 'https://evil.example' });
+    const res = await c.call('POST', '/api/profiles', { displayName: 'Kid', relationship: 'child', confirmation: 'guardian' }, { 'sec-fetch-site': 'cross-site', origin: 'https://evil.example' });
     assert.equal(res.status, 403);
     const legacy = await app.request('/api/profiles', {
       method: 'POST', body: JSON.stringify({ displayName: 'Kid' }),
@@ -173,7 +173,7 @@ describe('accounts', () => {
 describe('profiles', () => {
   it('creates, updates and lists family profiles', async () => {
     const { c } = await signUp();
-    const kid = await c.json<Profile>('POST', '/api/profiles', { displayName: 'Mira', relationship: 'child', dateOfBirth: '2019-05-02', sex: 'female' }, 201);
+    const kid = await c.json<Profile>('POST', '/api/profiles', { displayName: 'Mira', relationship: 'child', confirmation: 'guardian', dateOfBirth: '2019-05-02', sex: 'female' }, 201);
     assert.equal(kid.relationship, 'child');
     const updated = await c.json<Profile>('PATCH', `/api/profiles/${kid.id}`, { heightCm: 118, allergies: ['Peanuts', 'Peanuts', 'Penicillin'] });
     assert.equal(updated.heightCm, 118);
@@ -186,14 +186,14 @@ describe('profiles', () => {
     const { c, self } = await signUp();
     assert.equal((await c.call('PATCH', `/api/profiles/${self.id}`, { dateOfBirth: '2999-01-01' })).status, 400);
     assert.equal((await c.call('PATCH', `/api/profiles/${self.id}`, { heightCm: 900 })).status, 400);
-    assert.equal((await c.call('PATCH', `/api/profiles/${self.id}`, { relationship: 'child' })).status, 400);
+    assert.equal((await c.call('PATCH', `/api/profiles/${self.id}`, { relationship: 'child', confirmation: 'guardian' })).status, 400);
     assert.equal((await c.call('POST', '/api/profiles', { displayName: 'Me again', relationship: 'self' })).status, 400);
   });
 
   it('keeps the own profile and removes family profiles', async () => {
     const { c, self } = await signUp();
     assert.equal((await c.call('DELETE', `/api/profiles/${self.id}`)).status, 409);
-    const kid = await c.json<Profile>('POST', '/api/profiles', { displayName: 'Mira', relationship: 'child' }, 201);
+    const kid = await c.json<Profile>('POST', '/api/profiles', { displayName: 'Mira', relationship: 'child', confirmation: 'guardian' }, 201);
     await c.json('DELETE', `/api/profiles/${kid.id}`, undefined, 204);
     assert.equal((await c.call('GET', `/api/profiles/${kid.id}`)).status, 404);
   });

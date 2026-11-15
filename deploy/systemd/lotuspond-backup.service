@@ -1,0 +1,16 @@
+# Nightly backup: database dump and files archive in deploy/backups/, plus encrypted copies in S3 when
+# BACKUP_S3_URI and BACKUP_AGE_RECIPIENT are set. Started by lotuspond-backup.timer; installed by
+# deploy/install-backup.sh. Log: journalctl -u lotuspond-backup
+[Unit]
+Description=LotusPond Health: nightly backup
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+ExecStart=/opt/lotuspond-health/deploy/backup.sh
+TimeoutStartSec=2h
+Nice=10
+IOSchedulingClass=idle

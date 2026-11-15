@@ -16,6 +16,15 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 COPY server/package.json server/
 RUN npm ci --omit=dev --workspace server && npm cache clean --force
+# The record agent's local browser (RECORD_BROWSER=local). Off by default: it adds Chromium's headless shell and its
+# system libraries (a few hundred MB). Build with RECORD_BROWSER_CHROMIUM=on to include it, at the exact version
+# playwright-core expects. Not needed with RECORD_BROWSER=cdp or browserbase, or with RECORD_AGENT off.
+ARG RECORD_BROWSER_CHROMIUM=off
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN if [ "$RECORD_BROWSER_CHROMIUM" = "on" ]; then \
+      node node_modules/playwright-core/cli.js install --with-deps --only-shell chromium \
+      && rm -rf /var/lib/apt/lists/* && chmod -R a+rX /ms-playwright; \
+    fi
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/server/dist ./server/dist
 COPY server/drizzle ./server/drizzle

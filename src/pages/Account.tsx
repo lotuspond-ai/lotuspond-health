@@ -3,6 +3,8 @@ import { backend, errorMessage, isPreview } from '../api';
 import { useSession } from '../state/session';
 import { toast } from '../state/toast';
 import { formatDate } from '../lib/derive';
+import { AGENT_CATEGORY_TEXT, type AgentCategory } from '../../shared/agents';
+import { sourceById } from '../../shared/sources';
 import { UNIT_SYSTEM_LABEL } from '../lib/units';
 import { LIMITS } from '../../shared/constants';
 import { countryInSentence, countryName, countryPolicy, storageSentence, type UnitSystem } from '../../shared/regions';
@@ -10,6 +12,7 @@ import type { ActivityEvent, AuditKind, ConsentKind, ConsentRecord, Profile } fr
 import { ConfirmButton, Field } from '../components/forms';
 import { AppLockSettings } from '../components/AppLock';
 import { siteHref, siteLinkProps } from '../site/links';
+import { AgentConnectionsPanel } from '../components/AgentConnections';
 import '../styles/compliance.css';
 
 const focusDeletePassword = () => document.querySelector<HTMLInputElement>('#delete-account input[type=password]')?.focus();
@@ -34,8 +37,9 @@ export default function AccountPage() {
         </section>
         <AppLockSettings />
         <ResidencyPanel />
+        {!isPreview && <AgentConnectionsPanel />}
         <UnitsPanel onChange={reload} />
-        <ConsentsPanel consents={consents} failed={failed} onChange={reload} />
+        <ConsentsPanel consents={consents} failed={failed} onChange={reload} profiles={profiles} />
         <ActivityPanel activity={activity} failed={failed} profiles={profiles} />
         {!isPreview && <ContactsPanel />}
         <PasswordPanel onChange={reload} />
@@ -151,17 +155,44 @@ const CONSENT_LABEL: Record<ConsentKind, string> = {
   health_data: 'Processing your health data',
   cross_border: 'Storing records outside your country',
   marketing: 'Product emails',
+  family_profile: 'Keeping a family member\'s records',
+  agent_sharing: 'Sharing with an AI agent',
+  ai_extraction: 'Reading a report with Claude',
+  assistant: 'Using the LotusPond assistant',
+  whatsapp: 'Talking with the assistant on WhatsApp',
+  record_agent: 'Fetching records with the record agent',
 };
+
+/** Which profile or agent a per-item consent was for, as the history shows it. */
+function consentSubject(r: ConsentRecord, profiles: Profile[]): string | null {
+  const d = r.detail;
+  if (!d) return null;
+  const name = (id: string) => profiles.find(p => p.id === id)?.displayName ?? 'a removed profile';
+  if (r.kind === 'ai_extraction' && d.profileId) return `A report for ${name(d.profileId)}`;
+  if (r.kind === 'record_agent' && d.source) return `${sourceById(d.source)?.name ?? d.source}${d.profileId ? ` for ${name(d.profileId)}` : ''}`;
+  if (r.kind === 'family_profile' && d.profileId) return `${name(d.profileId)}${d.confirmation === 'guardian' ? ' (as parent or guardian)' : ''}`;
+  if (r.kind === 'assistant' && r.granted && d.categories) {
+    return `Sees ${d.categories.length ? d.categories.map(k => AGENT_CATEGORY_TEXT[k as AgentCategory]?.title.toLowerCase()).filter(Boolean).join(', ') : 'the basics only'}`;
+  }
+  if (r.kind === 'agent_sharing') {
+    const kinds = d.categories ? (d.categories.length ? d.categories.map(k => AGENT_CATEGORY_TEXT[k as AgentCategory]?.title.toLowerCase()).filter(Boolean).join(', ') : 'the basics only') : null;
+    return [d.agent, d.profileIds?.length ? `sees ${d.profileIds.map(name).join(', ')}` : null, kinds, d.scopes?.includes('health:write') ? 'may add records' : null,
+      d.expiresAt ? `until ${formatDate(d.expiresAt.slice(0, 10))}` : null].filter(Boolean).join(' · ');
+  }
+  return null;
+}
 const CONSENT_ORDER: ConsentKind[] = ['health_data', 'cross_border', 'terms', 'privacy', 'marketing'];
 
 /** "Given", "Withdrawn" (after an earlier yes) or "Declined" (never given). Records are newest first. */
 function decisionWord(records: ConsentRecord[], i: number): string {
   const r = records[i];
   if (r.granted) return 'Given';
-  return records.slice(i + 1).some(o => o.kind === r.kind && o.granted) ? 'Withdrawn' : 'Declined';
+  // Per-item consents (a profile, an agent) are withdrawn for that item, not the kind.
+  const item = (x: ConsentRecord) => x.detail?.connectionId ?? x.detail?.profileId ?? null;
+  return records.slice(i + 1).some(o => o.kind === r.kind && item(o) === item(r) && o.granted) ? 'Withdrawn' : 'Declined';
 }
 
-function ConsentsPanel({ consents, failed, onChange }: { consents: ConsentRecord[] | null; failed: boolean; onChange: () => void }) {
+function ConsentsPanel({ consents, failed, onChange, profiles }: { consents: ConsentRecord[] | null; failed: boolean; onChange: () => void; profiles: Profile[] }) {
   const [busy, setBusy] = useState(false);
   const [explain, setExplain] = useState<ConsentKind | null>(null);
   const latest = new Map<ConsentKind, ConsentRecord>();
@@ -228,7 +259,7 @@ function ConsentsPanel({ consents, failed, onChange }: { consents: ConsentRecord
                   <tbody>
                     {consents.map((r, i) => (
                       <tr key={`${r.kind}-${r.createdAt}-${i}`}>
-                        <td>{dateTime(r.createdAt)}</td><td>{CONSENT_LABEL[r.kind]}</td><td>{decisionWord(consents, i)}</td><td>{r.version}</td><td>{r.country ?? '—'}</td>
+                        <td>{dateTime(r.createdAt)}</td><td>{CONSENT_LABEL[r.kind]}{consentSubject(r, profiles) && <><br /><small>{consentSubject(r, profiles)}</small></>}</td><td>{decisionWord(consents, i)}</td><td>{r.version}</td><td>{r.country ?? '—'}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -257,6 +288,22 @@ const ACTIVITY_LABEL: Record<AuditKind, string> = {
   account_deleted: 'Account deleted',
   consent_changed: 'Consent changed',
   preferences_changed: 'Units changed',
+  lab_order_created: 'Lab test booked',
+  lab_order_cancelled: 'Lab test booking cancelled',
+  lab_results_saved: 'Lab results added',
+  agent_connected: 'Agent connected',
+  agent_disconnected: 'Agent disconnected',
+  agent_access: 'Agent read records',
+  agent_wrote: 'Agent added to records',
+  agent_write_undone: 'Undid an agent’s addition',
+  report_read_by_ai: 'Report read with Claude',
+  assistant_chat: 'Started a chat with the assistant',
+  whatsapp_linked: 'Linked a WhatsApp number',
+  whatsapp_unlinked: 'Unlinked WhatsApp',
+  whatsapp_report: 'Sent a report on WhatsApp',
+  records_source_connected: 'Connected a record source',
+  records_source_disconnected: 'Disconnected a record source',
+  records_fetched: 'The record agent brought in reports',
 };
 
 function describe(e: ActivityEvent, profiles: Profile[]): string | null {

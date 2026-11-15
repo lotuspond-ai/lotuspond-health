@@ -10,6 +10,10 @@ import { badRequest, unauthorized } from './lib/errors.ts';
 import { findSession, readSessionToken } from './auth/sessions.ts';
 import type { Cell, CellRegistry } from './cells.ts';
 import type { Secrets } from './compliance/secrets.ts';
+import type { Labs } from './lab/runtime.ts';
+import type { Assistant } from './assistant/agent.ts';
+import type { ReportExtractor } from './extraction/claude.ts';
+import type { RecordAgent } from './records/service.ts';
 
 export interface Deps {
   /** The default database: non-personal data (directory, partner labs, facility cache). Personal data is in `cells`. */
@@ -20,6 +24,14 @@ export interface Deps {
   /** Where each region's accounts and records are kept. */
   cells: CellRegistry;
   secrets: Secrets;
+  /** Lab booking, when LAB_PARTNERS switches any partner on (lab/runtime.ts). */
+  labs?: Labs;
+  /** The optional Claude read of photographed reports, when set up (extraction/claude.ts). */
+  extractor?: ReportExtractor;
+  /** LotusPond's assistant (server/src/assistant/), when switched on. */
+  assistant?: Assistant;
+  /** The record agent (server/src/records/), when RECORD_AGENT is on. */
+  records?: RecordAgent;
 }
 
 export interface AppEnv {

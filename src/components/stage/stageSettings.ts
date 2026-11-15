@@ -19,14 +19,14 @@ export type Tier = 0 | 1 | 2 | 3;
 const KEY = 'lotuspond.stage';
 
 /** bodies: per profile id, the body chosen on this device instead of following the profile's sex. */
-interface Stored { mode?: StageMode; studio?: boolean; bodies?: Record<string, Body> }
+interface Stored { mode?: StageMode; studio?: boolean; glow?: boolean; bodies?: Record<string, Body> }
 
 function load(): Stored {
   try {
     const v = JSON.parse(localStorage.getItem(KEY) ?? '{}') as Stored;
     const bodies: Record<string, Body> = {};
     if (v.bodies && typeof v.bodies === 'object') for (const [id, b] of Object.entries(v.bodies)) if (isBody(b)) bodies[id] = b;
-    return { mode: v.mode === '3d' ? '3d' : 'map', studio: v.studio === true, bodies };
+    return { mode: v.mode === '3d' ? '3d' : 'map', studio: v.studio === true, glow: v.glow !== false, bodies };
   } catch { return {}; }
 }
 
@@ -42,6 +42,8 @@ interface StageSettings {
   mode: StageMode;
   /** "Studio light": reflective floor and effects, when the device keeps up. */
   studio: boolean;
+  /** "Glow" look of the body map (the default): a quiet figure with soft halos per organ and a grade per body system. */
+  glow: boolean;
   /** Current tier, set by the 3D stage. */
   tier: Tier;
   /** Highest tier the device has kept up with; the stage does not climb above it again. */
@@ -53,6 +55,7 @@ interface StageSettings {
   /** Drop the choices kept for these profiles (deleted profiles, or a deleted account's). */
   forgetBodies: (profileIds: string[]) => void;
   setStudio: (on: boolean) => void;
+  setGlow: (on: boolean) => void;
   setTier: (t: Tier, ceiling?: Tier) => void;
 }
 
@@ -73,14 +76,15 @@ export const useStage = create<StageSettings>((set, get) => {
     const bodies = { ...(load().bodies ?? get().bodies) };
     change?.(bodies);
     set({ bodies });
-    const { mode, studio } = get();
-    save({ mode, studio, bodies });
+    const { mode, studio, glow } = get();
+    save({ mode, studio, glow, bodies });
   };
   // a choice made in another tab applies here too
   if (typeof window !== 'undefined') window.addEventListener('storage', e => { if (e.key === KEY) set({ bodies: load().bodies ?? {} }); });
   return {
     mode: stored.mode ?? 'map',
     studio: stored.studio ?? false,
+    glow: stored.glow ?? true,
     tier: startTier(stored.studio ?? false),
     ceiling: 3,
     bodies: stored.bodies ?? {},
@@ -90,6 +94,7 @@ export const useStage = create<StageSettings>((set, get) => {
       set({ studio, tier: Math.min(startTier(studio), studio ? 3 : ceiling) as Tier });
       persist();
     },
+    setGlow: glow => { set({ glow }); persist(); },
     setBody: (profileId, choice) => persist(bodies => { if (choice === 'profile') delete bodies[profileId]; else bodies[profileId] = choice; }),
     forgetBodies: profileIds => persist(bodies => { for (const id of profileIds) delete bodies[id]; }),
     setTier: (tier, ceiling) => set(s => ({ tier, ceiling: ceiling ?? s.ceiling })),

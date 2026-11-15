@@ -22,6 +22,83 @@
       "when": 1793701330296,
       "tag": "0002_compliance_cells",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1793712774021,
+      "tag": "0003_lab_orders",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1793716462423,
+      "tag": "0004_lab_results",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1794339396295,
+      "tag": "0005_agents",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1794343538612,
+      "tag": "0006_consent_detail",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1794345634791,
+      "tag": "0007_lab_partner_token",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1794397770817,
+      "tag": "0008_agent_categories",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1794399877717,
+      "tag": "0009_notifications",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1794405059656,
+      "tag": "0010_assistant",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1794409189897,
+      "tag": "0011_whatsapp",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1794425975882,
+      "tag": "0012_record_agent",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1794434407156,
+      "tag": "0013_abha",
+      "breakpoints": true
     }
   ]
 }

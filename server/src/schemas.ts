@@ -92,7 +92,11 @@ const profileFields = {
   ...profileLocationFields,
 };
 
-export const ProfileCreateBody = z.object(profileFields).partial().required({ displayName: true }).refine(pairedCoordinates, PAIRED);
+export const ProfileCreateBody = z.object({
+  ...profileFields,
+  /** What the account holder confirmed (shared/family.ts); recorded as a family_profile consent. */
+  confirmation: z.enum(['guardian', 'agreed'], { error: 'Confirm that you may keep this person\'s records.' }),
+}).partial().required({ displayName: true, confirmation: true }).refine(pairedCoordinates, PAIRED);
 export const ProfilePatchBody = z.object(profileFields).partial().refine(pairedCoordinates, PAIRED);
 
 /* ---------------- records ---------------- */

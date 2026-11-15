@@ -1,0 +1,91 @@
+/* Account, Connected agents (src/components/AgentConnections.tsx), and the consent prompts (family members, updated texts). */
+.btn--small { padding: 5px 10px; font-size: 13px; }
+.agents__url { display: grid; gap: 4px; margin: 4px 0 12px; }
+.agents__copy { display: flex; gap: 8px; align-items: center; min-width: 0; }
+.agents__copy code { flex: 1; min-width: 0; overflow-wrap: anywhere; background: var(--mist); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; font-size: 13px; }
+.agents__how { margin: 4px 0 14px; }
+.agents__how summary { cursor: pointer; font-weight: 600; }
+.agents__how ul { margin: 8px 0; padding-left: 18px; display: grid; gap: 6px; }
+.agents__list { list-style: none; margin: 0 0 12px; padding: 0; }
+.agents__list li { display: flex; gap: 12px; justify-content: space-between; align-items: flex-start; padding: 10px 0; border-top: 1px solid var(--line); }
+.agents__list li > div { display: grid; gap: 2px; min-width: 0; }
+.agents__list small, .agents__choices small { display: block; color: var(--ink-2); overflow-wrap: anywhere; }
+.agents__form, .agents__made { border-top: 1px solid var(--line); padding-top: 12px; margin-top: 4px; }
+.agents__form h3, .agents__made h3 { font-size: 15px; margin: 0 0 8px; }
+.agents__choices { border: 0; padding: 0; margin: 12px 0; display: grid; gap: 6px; }
+.agents__choices legend { font-weight: 600; margin-bottom: 4px; }
+.agents__choices label { display: flex; gap: 8px; align-items: flex-start; }
+.agents__choices input { margin-top: 3px; }
+.agents__pre { background: var(--mist); border: 1px solid var(--line); border-radius: 8px; padding: 10px; font-size: 12.5px; overflow-x: auto; max-width: 100%; white-space: pre; }
+.agent-proposal { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; border: 1px solid var(--line); background: var(--paper); border-radius: 12px; padding: 12px 14px; margin-bottom: 14px; }
+.agent-proposal p { margin: 0; }
+/* Add a family member: what the account holder confirms (shared/family.ts). */
+.confirm-check { display: flex; gap: 10px; align-items: flex-start; margin: 14px 0 4px; font-size: 14px; }
+.confirm-check input { margin-top: 3px; flex: none; }
+/* The Terms or Privacy Policy changed: accept the current texts (App.tsx UpdatedTextsNotice). */
+.texts-notice { position: fixed; z-index: 40; left: 50%; transform: translateX(-50%); bottom: 20px; width: min(640px, calc(100% - 32px)); display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; padding: 12px 14px; border: 1px solid var(--line); border-radius: 14px; background: var(--paper); box-shadow: var(--shadow-float); }
+.texts-notice p { margin: 0; flex: 1 1 240px; font-size: 14px; }
+/* Above the phone tab bar. */
+@media (max-width: 760px) { .texts-notice { bottom: calc(84px + env(safe-area-inset-bottom, 0px)); } }
+/* Upload review: the offer to read a hard-to-read photo with Claude (src/components/AiRead.tsx). */
+.ai-read { border: 1px solid var(--line); border-radius: 12px; background: var(--paper); padding: 12px 14px; margin: 0 0 12px; }
+.ai-read p { margin: 0 0 8px; }
+.ai-read .confirm-check { margin-top: 4px; }
+/* Upload dialog: import from Apple Health or Health Connect (src/components/HealthImport.tsx). */
+.health-import .lede { margin: 0 0 12px; }
+.health-import__kinds { border: 1px solid var(--line); border-radius: 12px; padding: 4px 14px 12px; margin: 0 0 12px; display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); column-gap: 16px; }
+.health-import__kinds legend { padding: 0 6px; font-weight: 600; font-size: 14px; }
+.health-import__kinds .confirm-check { margin: 10px 0 0; }
+.health-import__period { display: flex; gap: 10px; align-items: center; font-size: 14px; margin: 0 0 8px; }
+.review__note { margin: 0 0 10px; font-size: 14px; }
+.agents__row-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; flex: none; }
+.agents__edit { margin-top: 8px; }
+.agents__choices > small { margin-bottom: 2px; }
+/* The bell in the top bar: what connected agents added (src/components/Notifications.tsx). */
+.notif { position: relative; }
+.notif__trigger { position: relative; display: grid; place-items: center; width: 38px; height: 38px; border: 1px solid var(--line); background: var(--paper); border-radius: 999px; color: var(--ink); }
+.notif__trigger svg { width: 19px; height: 19px; }
+.notif__count { position: absolute; top: -4px; right: -4px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: var(--accent, #c2556e); color: #fff; font-size: 11px; font-weight: 700; line-height: 18px; text-align: center; }
+.notif__panel { position: absolute; right: 0; top: calc(100% + 8px); z-index: 30; width: min(360px, calc(100vw - 32px)); max-height: min(70vh, 560px); overflow: auto; background: var(--paper); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow-float); padding: 8px; }
+.notif__panel ul { list-style: none; margin: 0; padding: 0; }
+.notif__panel li { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; align-items: center; padding: 10px 8px; border-top: 1px solid var(--line); }
+.notif__panel li p { margin: 0; font-size: 14px; grid-column: 1; overflow-wrap: anywhere; }
+.notif__panel li small { color: var(--ink-2); grid-column: 1; }
+.notif__panel li .notif__actions { grid-column: 2; grid-row: 1 / span 2; display: flex; flex-direction: column; gap: 6px; align-items: stretch; }
+.notif__panel li.is-undone p { color: var(--ink-2); text-decoration: line-through; }
+.notif__empty { margin: 4px 8px 10px; }
+@media (max-width: 760px) { .notif__panel { position: fixed; left: 16px; right: 16px; top: calc(64px + env(safe-area-inset-top, 0px)); width: auto; } }
+.agents__assistant { display: flex; flex-wrap: wrap; gap: 8px 12px; justify-content: space-between; align-items: flex-start; padding: 10px 0 12px; border-bottom: 1px solid var(--line); margin-bottom: 8px; }
+.agents__assistant > div:first-child { display: grid; gap: 2px; min-width: 0; }
+.agents__assistant small { color: var(--ink-2); }
+.agents__assistant .agents__edit { flex-basis: 100%; }
+
+/* WhatsApp (WhatsAppSettings) */
+.agents__whatsapp .wa-notice ul { margin: 6px 0 10px; padding-left: 18px; display: grid; gap: 4px; color: var(--ink-2); font-size: 13px; }
+.agents__whatsapp .wa-code { display: grid; gap: 8px; justify-items: start; }
+.agents__whatsapp .wa-wait { display: flex; align-items: center; gap: 8px; }
+.agents__whatsapp .wa-wait .dots { display: inline-flex; gap: 3px; }
+.agents__whatsapp .wa-wait .dots i { width: 5px; height: 5px; border-radius: 50%; background: currentColor; opacity: .4; animation: wa-dot 1.2s infinite; }
+.agents__whatsapp .wa-wait .dots i:nth-child(2) { animation-delay: .2s; }
+.agents__whatsapp .wa-wait .dots i:nth-child(3) { animation-delay: .4s; }
+@keyframes wa-dot { 50% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .agents__whatsapp .wa-wait .dots i { animation: none; } }
+.agents__wa-profile select { font: inherit; padding: 4px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel, transparent); color: inherit; }
+/* How to connect each agent (src/components/AgentDirectory.tsx). */
+.agentdir { border-top: 1px solid var(--line); padding-top: 12px; margin: 4px 0 14px; display: grid; gap: 10px; }
+.agentdir h3 { font-size: 15px; margin: 0; }
+.agentdir__group { display: grid; gap: 6px; }
+.agentdir__label { color: var(--ink-2); font-weight: 600; font-size: 12.5px; text-transform: uppercase; letter-spacing: .04em; }
+.agentdir__chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.agentdir__chip { display: grid; text-align: left; gap: 1px; border: 1px solid var(--line); background: var(--paper); border-radius: 10px; padding: 6px 10px; font: inherit; color: var(--ink); cursor: pointer; }
+.agentdir__chip b { font-size: 13.5px; }
+.agentdir__chip small { color: var(--ink-2); font-size: 11.5px; }
+.agentdir__chip[aria-pressed='true'] { border-color: var(--pond); box-shadow: inset 0 0 0 1px var(--pond); }
+.agentdir__steps { border: 1px solid var(--line); background: var(--mist); border-radius: 12px; padding: 12px 14px; display: grid; gap: 8px; justify-items: start; min-width: 0; }
+.agentdir__steps ol { margin: 0; padding-left: 20px; display: grid; gap: 4px; font-size: 14px; overflow-wrap: anywhere; }
+.agentdir__steps .agents__pre { width: 100%; margin: 0; }
+.agentdir__paste { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; display: grid; gap: 6px; }
+.agentdir__paste small { color: var(--ink-2); }
+.agentdir__paste-row { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; font-size: 14px; }
+.agentdir__paste-row select { border: 1px solid var(--line); background: var(--paper); border-radius: var(--r-ctl); padding: 5px 8px; font-size: 13px; }
+.agentdir__kind { display: flex; gap: 6px; align-items: center; }

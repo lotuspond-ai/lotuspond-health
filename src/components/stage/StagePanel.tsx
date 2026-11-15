@@ -12,7 +12,9 @@ import { Icon } from '../ui';
 import { BodyMap2D } from '../bodymap2d/BodyMap2D';
 import { Glyph, type GlyphName } from './Glyph';
 import { STATUS_COLOR } from './status';
+import { ISSUE_COLOR, useIssues } from './issues';
 import { useStage, type StageMode } from './stageSettings';
+import { GRADE_COLOR, gradeText, useSystemGrades } from './grades';
 import '../../styles/stage.css';
 
 // Loaded only when the 3D view is first chosen (it also starts the model download).
@@ -116,6 +118,7 @@ function ModeSwitch({ mode }: { mode: StageMode }) {
 function StageOverlay({ mode }: { mode: StageMode }) {
   const selected = useHealth(s => s.selectedOrgan), selectOrgan = useHealth(s => s.selectOrgan);
   const { layers, toggleLayer } = useUI();
+  const glow = useStage(s => s.glow), setGlow = useStage(s => s.setGlow);
   const studio = useStage(s => s.studio), tier = useStage(s => s.tier), setStudio = useStage(s => s.setStudio);
   const organ = selected && selected !== 'skin' ? organOrNull(selected) : null;
   const profile = useActiveProfile();
@@ -131,19 +134,18 @@ function StageOverlay({ mode }: { mode: StageMode }) {
         <div className="stage__chips" role="group" aria-label="Show on the model">
           {in3d && !organ && <Chip on={layers.skin} onClick={() => toggleLayer('skin')} icon="skin" label="Skin" />}
           {in3d && (!organ || organ.id === 'marrow') && <Chip on={layers.skeleton} onClick={() => toggleLayer('skeleton')} icon="bone" label="Skeleton" />}
-          <Chip on={layers.labels} onClick={() => toggleLayer('labels')} icon="tag" label="Labels" title="Result dots and labels" />
+          {!in3d && !organ && <Chip on={glow} onClick={() => setGlow(!glow)} icon="glow" label="Glow view" title="Glow view: soft halos and a grade per body system" />}
+          {!(glow && !in3d && !organ) && <Chip on={layers.labels} onClick={() => toggleLayer('labels')} icon="tag" label="Labels" title="Result dots and labels" />}
           {in3d && <Chip on={studio} onClick={() => setStudio(!studio)} icon="sun" label="Studio light"
             title={held ? 'Studio light: paused to keep this device smooth' : 'Studio light: water reflections and glow'} extra={held ? <i className="chip__held" /> : null} />}
         </div>
       </div>
       {organ ? (
         <button className="btn stage__back" onClick={() => selectOrgan(null)}>{Icon.back} Whole body</button>
+      ) : glow && !in3d ? (
+        <SystemGrades />
       ) : (
-        <div className="stage__legend" aria-hidden>
-          <span><i style={{ background: STATUS_COLOR.ok }} />In range</span>
-          <span><i style={{ background: STATUS_COLOR.out }} />Outside</span>
-          <span><i style={{ background: STATUS_COLOR.none }} />No results</span>
-        </div>
+        <IssueLegend />
       )}
       <p className="stage__credit">
         <a href={siteHref('/credits/')} {...siteLinkProps}><span className="stage__credit-long">Anatomy: HuBMAP Human Reference Atlas and Z-Anatomy, CC BY-SA 4.0</span><span className="stage__credit-short">Anatomy credits</span></a>
@@ -154,6 +156,66 @@ function StageOverlay({ mode }: { mode: StageMode }) {
           : organ ? <><Glyph name="tap" /><span>details</span></> : <><Glyph name="drag" /><span>turn</span><Glyph name="tap" /><span>open</span></>}
       </div>
     </>
+  );
+}
+
+/** A ring and a letter per body system, beside the body in the glow view. Choosing one shows only its organs. */
+function SystemGrades() {
+  const grades = useSystemGrades();
+  // Before any results, the rings all read "–" and nothing glows, so the keys are left out.
+  const any = grades.some(g => g.total > 0);
+  const active = useHealth(s => s.activeSystem), setActive = useHealth(s => s.setActiveSystem);
+  return (
+    <>
+    <nav className="grades" aria-label="Body systems">
+      <ul>
+        {grades.map(g => {
+          const c = GRADE_COLOR[g.grade];
+          // The ring fills with the share of results in range.
+          const share = g.total ? (g.total - g.out) / g.total : 0;
+          return (
+            <li key={g.system}>
+              <button className={`grade${g.total ? '' : ' is-empty'}`} aria-pressed={active === g.system} title={gradeText(g)} aria-label={gradeText(g)}
+                onClick={() => setActive(active === g.system ? null : g.system)} style={{ ['--grade' as string]: c }}>
+                <span className="grade__ring" aria-hidden>
+                  <svg viewBox="0 0 36 36"><circle cx="18" cy="18" r="15.5" className="grade__track" />
+                    {g.total > 0 && <circle cx="18" cy="18" r="15.5" className="grade__fill" pathLength={100} strokeDasharray={`${Math.max(share * 100, 6)} 100`} />}</svg>
+                  <b>{g.grade}</b>
+                </span>
+                <span className="grade__name">{g.label}</span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+      {any && <p className="grades__key">A all in range · B some outside<br />C some far outside</p>}
+    </nav>
+    {any && <GlowLegend />}
+    </>
+  );
+}
+
+/** Key for the glow view: halo colours and what the letters mean. */
+function GlowLegend() {
+  return (
+    <div className="stage__legend stage__legend--glow" aria-hidden>
+      <span><i className="halo" style={{ ['--c' as string]: GRADE_COLOR.A }} />In range</span>
+      <span><i className="halo" style={{ ['--c' as string]: GRADE_COLOR.B }} />Outside range</span>
+      <span><i className="halo" style={{ ['--c' as string]: GRADE_COLOR.C }} />Far outside</span>
+    </div>
+  );
+}
+
+/** What the glow on the body means; only shown when something glows. */
+function IssueLegend() {
+  const { organs } = useIssues();
+  const levels = new Set(Object.values(organs));
+  if (!levels.size) return <div className="stage__legend" aria-hidden><span><i style={{ background: STATUS_COLOR.ok }} />Nothing outside range</span></div>;
+  return (
+    <div className="stage__legend" aria-hidden>
+      <span><i className="glow" style={{ background: ISSUE_COLOR.out }} />Outside range</span>
+      {levels.has('far') && <span><i className="glow" style={{ background: ISSUE_COLOR.far }} />Far outside</span>}
+    </div>
   );
 }
 

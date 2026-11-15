@@ -13,7 +13,7 @@ import {
   clearSessionCookie, createSession, deleteSession, deleteUserSessions, findSession, readSessionToken, wantsTokenSession, writeSessionCookie,
 } from '../auth/sessions.ts';
 import { eventContext, eraseHistory, recentActivity, recordEvent } from '../compliance/audit.ts';
-import { currentConsents, listConsents, recordConsents, REQUIRED_CONSENTS } from '../compliance/consents.ts';
+import { currentConsents, listConsents, outdatedConsents, recordConsents, REQUIRED_CONSENTS } from '../compliance/consents.ts';
 import { claim, locate, release } from '../compliance/directory.ts';
 import { badRequest, conflict, HttpError, tooMany } from '../lib/errors.ts';
 import { RateLimiter } from '../lib/rate-limit.ts';
@@ -26,8 +26,11 @@ const MINUTE = 60_000;
 const EMAIL_TAKEN = 'An account with this email already exists. Sign in instead.';
 
 export async function sessionInfo(db: Db, user: UserRow): Promise<SessionInfo> {
-  const rows = await db.select().from(profiles).where(eq(profiles.userId, user.id)).orderBy(asc(profiles.createdAt));
-  return { account: toAccount(user), profiles: rows.sort(relationshipOrder).map(toProfile) };
+  const [rows, consents] = await Promise.all([
+    db.select().from(profiles).where(eq(profiles.userId, user.id)).orderBy(asc(profiles.createdAt)),
+    listConsents(db, user.id),
+  ]);
+  return { account: toAccount(user), profiles: rows.sort(relationshipOrder).map(toProfile), consentsOutdated: outdatedConsents(consents) };
 }
 
 const isUniqueViolation = (e: unknown) => !!e && typeof e === 'object' && 'code' in e && (e as { code: string }).code === '23505';

@@ -4,4 +4,6 @@
     <string name="title_activity_main">LotusPond Health</string>
     <string name="package_name">ai.lotuspond.health</string>
     <string name="custom_url_scheme">ai.lotuspond.health</string>
+    <!-- Shown by Health Connect when the person taps "Privacy policy" in its permission screen. -->
+    <string name="health_connect_privacy_policy_url">https://health.lotuspond.ai/privacy/</string>
 </resources>

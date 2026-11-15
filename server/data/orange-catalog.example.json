@@ -1,0 +1,23 @@
+[
+  {
+    "code": "OH-P-3",
+    "kind": "package",
+    "id": "3",
+    "name": "Full Body Checkup - Smart",
+    "tests": ["Complete blood count", "Lipid profile", "HbA1c", "Liver function", "Kidney function", "Thyroid profile"],
+    "pricePaise": 129900,
+    "mrpPaise": 249900,
+    "fasting": true,
+    "reportHours": 12
+  },
+  {
+    "code": "OH-T-154",
+    "kind": "test",
+    "id": "154",
+    "name": "Vitamin D (25-OH)",
+    "tests": ["Vitamin D"],
+    "pricePaise": 89900,
+    "fasting": false,
+    "reportHours": 24
+  }
+]

@@ -20,7 +20,7 @@
           <p class="eyebrow">Legal</p>
           <h1>Privacy Policy</h1>
           <p class="doc-hero__lede">How we handle your personal and health data, what we never do with it, and how to use your rights. This page includes our Consumer Health Data Privacy Policy for Washington, Nevada and other US states.</p>
-          <p class="doc-meta"><span><b>Last updated</b> <time datetime="2026-11-03">3 November 2026</time></span><span><b>Applies to</b> LotusPond Health on health.lotuspond.ai</span></p>
+          <p class="doc-meta"><span><b>Last updated</b> <time datetime="2026-11-11">11 November 2026</time></span><span><b>Applies to</b> LotusPond Health on health.lotuspond.ai</span></p>
         </div>
       </header>
 
@@ -52,7 +52,7 @@
             <h2 id="summary-title">The short version</h2>
             <ul>
               <li>We collect what you give us: your account details, the profiles you keep for yourself and your family, and the reports and scans you upload.</li>
-              <li>We use it to run LotusPond Health for you. We never sell it, and we do not share it for advertising.</li>
+              <li>We use it to run LotusPond Health for you. We never sell it, and we do not share it for advertising. AI agents see it only if you connect them, and only what you choose.</li>
               <li>We process health data only with your explicit consent, which you give at sign-up.</li>
               <li>Your records are stored in the region that serves your country: India, Europe, the United States or our international region.</li>
               <li>You can export, correct or delete your data in the app at any time.</li>
@@ -79,7 +79,12 @@
             <p>For each person you keep records for: name, relationship to you, date of birth, sex, height, weight, blood type, conditions, medications, allergies and notes. You choose what to fill in.</p>
             <p>The sex in a profile also chooses which body the map shows, female or male (the female body when it is Intersex or not set), unless you pick the other body for that profile on your device. On the website, your browser then downloads that body’s pictures from our servers, and its 3D model when you open the 3D view. Like any request, these downloads can appear in the technical logs described below. The iOS and Android apps include both bodies and download neither.</p>
             <h3>Health records</h3>
-            <p>Lab results (marker, value, unit, reference range, date and source file), scans with their thumbnails, and the original files you upload, such as PDFs, CSV and JSON exports, DICOM files and images. Files are read in your browser. The values you confirm and the original file are then stored in your account.</p>
+            <p>Lab results (marker, value, unit, reference range, date and source file), scans with their thumbnails, and the original files you upload, such as PDFs, CSV and JSON exports, DICOM files and images. Files are read in your browser or app, including photos and scanned pages, which are read with text recognition on your device. The values you confirm and the original file are then stored in your account.</p>
+            <h3>Readings from Apple Health or Health Connect</h3>
+            <p>In the iOS and Android apps you can choose to import measurements from Apple Health or Health Connect: blood pressure, blood glucose, resting heart rate, oxygen saturation, respiratory rate, body temperature, weight and body fat. Your phone asks your permission for each type, and you choose the types and the period each time. The app turns the readings into one average per day on your phone, and only the daily values you confirm in the review are stored in your account, marked with where they came from. Individual readings and every other kind of health data stay on your phone. LotusPond never writes to Apple Health or Health Connect. You can delete imported values like any other result, and turning off access in your phone’s settings stops new imports.</p>
+            <p>Data from Apple Health and Health Connect is used only to show and explain your records, never for advertising, marketing or to build profiles about you, and it is never sold. It is shared only with AI agents you connect and choose to share that profile with (section 5). Our use of information received from Health Connect follows <a href="https://support.google.com/googleplay/android-developer/answer/12991134">Google Play’s Health Connect policy</a>, including its Limited Use requirements.</p>
+            <h3>Your WhatsApp number, if you link it</h3>
+            <p>The number, the messages you send to LotusPond on WhatsApp and the answers (kept as conversations in your account until you delete them), and photos or PDFs you send, saved to your files. See section 5 for what WhatsApp handles.</p>
             <h3>Lab finder searches</h3>
             <p>The area, postcode or location you search with. Our server rounds a location to about 1 km before it looks up public listings, so your exact position is not sent to anyone else. Results for an area may be cached for up to 7 days, with no link to your account.</p>
             <h3>Security and technical data</h3>
@@ -117,7 +122,7 @@
             <h3>Withdrawing consent</h3>
             <p>You can withdraw consent at any time by deleting your account in Account and sign-in, or by contacting us. LotusPond cannot work without processing health data, so withdrawing consent closes the account. Withdrawal does not affect processing that happened before it.</p>
             <h3>United States</h3>
-            <p>We collect consumer health data only with your opt-in consent, and we do not share or sell it. Section 9 has the details.</p>
+            <p>We collect consumer health data only with your opt-in consent. We do not sell it, and we share it only with AI agents you connect yourself, and with Anthropic for a report you choose to read with Claude; each is a separate consent you give at that moment. Section 9 has the details.</p>
             <h3>Elsewhere</h3>
             <p>In other countries we rely on your consent and on the bases your local law provides for running a service you asked for.</p>
           </section>
@@ -127,6 +132,10 @@
             <p>We do not sell personal data, including health data, and we do not share it with advertisers or data brokers. We disclose data only in these cases:</p>
             <ul>
               <li><b>Service providers</b> that host our servers and storage in each region. They process data only on our instructions, under written contracts with confidentiality and security duties: <span class="ph">[List of service providers and their locations — to be completed by LotusPond]</span>.</li>
+              <li><b>AI agents you connect.</b> When you connect an agent such as Claude or ChatGPT (Account, Connected agents), it can read the profiles you chose for it: their basic details (name, age, sex, height, weight and blood type) and the kinds of data you tick, which can be results and their ranges and trends, conditions, medications and allergies, the names and dates of scans and files (never the files themselves), and home lab tests. You choose how long the connection lasts, and you can change all of this at any time. With your permission it can also add readings and profile entries. We send it data only when it asks, at your direction. The agent’s provider receives that data under its own privacy policy. You can disconnect an agent at any time, and every connection appears in Recent activity.</li>
+              <li><b>Reading a report with Claude, when you choose it.</b> If a photo or scanned report is hard to read on your device, the app offers to read it with Claude. Only if you agree for that file do we send it to Anthropic, the company that makes Claude, to read the results; it may be processed outside your country under Anthropic’s terms. We record your agreement and keep nothing from the read unless you add the results. Each use appears in Recent activity.</li>
+              <li><b>The LotusPond assistant, when you turn it on.</b> The assistant (Ask, in the app) answers with Claude, an AI made by Anthropic. The first time you open it, you choose which kinds of data it may read and agree to this. When you send a message, the assistant reads the parts of your records it needs, within what you chose, and sends them to Anthropic with your message to write the answer; they may be processed outside your country under Anthropic’s terms. It can add a reading or a condition, medication or allergy when you ask it to, and each addition appears under the bell with an Undo. Conversations are kept in your account until you delete them. You can change what it reads or turn it off on Account, Connected agents and assistant. If you speak instead of typing, your browser turns the speech into text; some browsers, Chrome among them, send the audio to their maker for this.</li>
+              <li><b>WhatsApp, when you link a number.</b> If you link your WhatsApp number on Account, Connected agents and assistant, you can talk to the assistant and send reports from WhatsApp. Messages between you and LotusPond pass through WhatsApp, which Meta runs, under WhatsApp’s terms; Meta delivers them and does not get access to your records beyond what is in those messages. You link a number by sending a code from it, which shows it is yours. We keep your number in your account’s data region, and a keyed hash of it so incoming messages reach your account. Answers on WhatsApp include health information, so anyone who can open WhatsApp on that phone can read them. Photos and PDFs you send are saved to your files, with the same Undo as other additions. Send STOP, or unlink in the app, to end it; unlinking or deleting your account removes the number.</li>
               <li><b>Lab finder look-ups.</b> Our server sends OpenStreetMap services a rounded location or the area name you typed. Nothing that identifies you is sent.</li>
               <li><b>Legal requirements,</b> such as a valid court order. We will tell you unless the law prevents us.</li>
               <li><b>A change of ownership.</b> If LotusPond Health is merged or sold, your data stays protected by this policy, and we will tell you before any other policy applies to it.</li>
@@ -177,19 +186,19 @@
             <h2 id="chd-title"><span class="num">9</span>Consumer Health Data Privacy Policy</h2>
             <p>This section is our Consumer Health Data Privacy Policy under the Washington My Health My Data Act (RCW 19.373), Nevada Senate Bill 370 (2023) and similar state laws. It applies to consumer health data about people in those states.</p>
             <h3>Consumer health data we collect</h3>
-            <p>Health conditions, medications, allergies and notes you add to a profile; body measurements such as height, weight and blood type; lab results and reference ranges; scans, images and the original medical files you upload; and lab finder searches, which could show that you are looking for health services.</p>
+            <p>Health conditions, medications, allergies and notes you add to a profile; body measurements such as height, weight and blood type; vital signs such as blood pressure, heart rate, oxygen saturation and glucose readings, typed in or imported from your phone; lab results and reference ranges; scans, images and the original medical files you upload; and lab finder searches, which could show that you are looking for health services.</p>
             <h3>Why we collect it</h3>
             <p>Only to provide the features you ask for: storing, showing and explaining your records, and finding labs near you.</p>
             <h3>Where it comes from</h3>
-            <p>From you. Data about a family member comes from you as the person who keeps their profile.</p>
+            <p>From you, including measurements you choose to import from Apple Health or Health Connect on your phone. Data about a family member comes from you as the person who keeps their profile.</p>
             <h3>Consumer health data we share, and with whom</h3>
-            <p>We do not share consumer health data with third parties or affiliates, including LotusPond’s other products. The service providers that host our storage process it for us under contract and may not use it for anything else. We do not sell consumer health data; selling it would need your signed authorisation, and we do not ask for one.</p>
+            <p>We share consumer health data only with the AI agents you connect (section 5), and only the profiles and permissions you choose for each one; the agent’s provider is the third party. When you choose to read a report with Claude, that file goes to Anthropic, and when you use the LotusPond assistant, the parts of your records it needs for each answer go to Anthropic. If you link WhatsApp, your messages and the answers pass through WhatsApp (Meta). We do not share it with affiliates, including LotusPond’s other products. The service providers that host our storage process it for us under contract and may not use it for anything else. We do not sell consumer health data; selling it would need your signed authorisation, and we do not ask for one.</p>
             <h3>Consent</h3>
             <p>We collect consumer health data only after your opt-in consent at sign-up. We would ask for separate consent before sharing it for any purpose other than providing the service. We do not set up geofences around health facilities.</p>
             <h3>Your rights</h3>
             <ul>
               <li>Confirm whether we collect or share your consumer health data, and see it.</li>
-              <li>Get a list of every third party and affiliate we have shared it with, with their contact details. Today that list is empty.</li>
+              <li>Get a list of every third party and affiliate we have shared it with, with their contact details. That list is the agents shown in Account, Connected agents, and in Recent activity.</li>
               <li>Withdraw consent, and have your data deleted, including from our service providers’ systems.</li>
               <li>Appeal if we decline a request.</li>
             </ul>

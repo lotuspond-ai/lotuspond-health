@@ -1,11 +1,15 @@
-// Find a lab: partner labs and public labs, imaging centres, hospitals and clinics near a chosen area,
-// on a map and as cards with one-tap directions, calls and booking.
+// Find a lab. Two halves where a partner lab serves the account's region: Home collection (book a visit, follow it,
+// check the results) and Near you: partner labs and public labs, imaging centres, hospitals and clinics near a
+// chosen area, on a map and as cards with one-tap directions, calls and booking.
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import type { Facility, FacilityKind, FacilitySearchResult } from '../types';
 import { ApiError, errorMessage, isPreview } from '../api';
 import { FACILITY_KINDS, RADIUS_OPTIONS_KM } from '../../shared/facilities';
 import { firstName, useActiveProfile, useSession } from '../state/session';
+import { labBookingAvailable, useLab } from '../state/lab';
+import '../styles/agents.css';
 import { FacilityCard } from '../components/labs/FacilityCard';
+import { HomeTests } from '../components/labs/HomeTests';
 import { EmptyState } from '../components/labs/Illustration';
 import { LabIcon } from '../components/labs/LabIcon';
 import { LocationPicker, RememberArea } from '../components/labs/LocationPicker';
@@ -19,6 +23,53 @@ const FacilityMap = import.meta.env.VITE_BACKEND === 'browser' ? null : lazy(() 
 const SOURCE_LABEL: Record<SearchPoint['source'], string> = { device: 'Your location', search: 'Searched area', saved: 'Home area' };
 
 export default function Labs() {
+  useSession(s => s.account?.region); // re-render when the account (and so its region) changes
+  const available = labBookingAvailable();
+  const tab = useLab(s => s.tab), setTab = useLab(s => s.setTab);
+  const ready = useLab(s => s.results.filter(r => r.status === 'pending').length);
+  const mode = available ? tab : 'near';
+  return (
+    <main className="page labs">
+      {available && (
+        <div className="seg labs__mode" role="group" aria-label="Find a lab">
+          <button type="button" aria-pressed={mode === 'home'} onClick={() => setTab('home')}>
+            <LabIcon name="home" />Home collection{ready > 0 && <span className="labs__count" aria-label={`${ready} to check`}>{ready}</span>}
+          </button>
+          <button type="button" aria-pressed={mode === 'near'} onClick={() => setTab('near')}><LabIcon name="pin" />Near you</button>
+        </div>
+      )}
+      {available && <AgentProposalBanner />}
+      {mode === 'home' ? <HomeTests /> : <NearbyLabs />}
+    </main>
+  );
+}
+
+/** A booking an agent prepared: the person reviews it in the booking dialog, where they pick a visit and confirm. */
+function AgentProposalBanner() {
+  const proposal = useLab(s => s.proposal), setProposal = useLab(s => s.setProposal), setOpen = useLab(s => s.setBookingOpen);
+  const profiles = useSession(s => s.profiles);
+  const activeId = useSession(s => s.activeId), switchProfile = useSession(s => s.switchProfile);
+  const who = profiles.find(p => p.id === proposal?.profileId);
+  if (!proposal || !who) return null;
+  const review = () => {
+    if (activeId !== who.id) switchProfile(who.id);
+    useLab.getState().setTab('home');
+    // After the profile switch has loaded its bookings.
+    setTimeout(() => setOpen(true), 0);
+  };
+  return (
+    <div className="agent-proposal" role="status">
+      <p><b>An AI agent suggested a home test{who.relationship === 'self' ? '' : ` for ${who.displayName}`}.</b><br />
+        <small>{proposal.reason ? `“${proposal.reason}” · ` : ''}Pincode {proposal.pincode}. Nothing is booked until you choose a visit and confirm.</small></p>
+      <span style={{ display: 'flex', gap: 8 }}>
+        <button type="button" className="btn" onClick={() => setProposal(null)}>Dismiss</button>
+        <button type="button" className="btn btn--primary" onClick={review}>Review booking</button>
+      </span>
+    </div>
+  );
+}
+
+function NearbyLabs() {
   const profile = useActiveProfile();
   const account = useSession(s => s.account);
   const { picked, radiusKm, filter, selectedId, pick, setRadius, setFilter, select } = useLabs();
@@ -53,7 +104,7 @@ export default function Labs() {
   const who = profile ? (profile.relationship === 'self' ? 'you' : firstName(profile)) : 'you';
 
   return (
-    <main className="page labs">
+    <>
       <header className="labs__head">
         <div>
           <h1>Find a lab</h1>
@@ -124,7 +175,7 @@ export default function Labs() {
           </div>
         </>
       )}
-    </main>
+    </>
   );
 }
 

@@ -139,6 +139,14 @@ export function buildMeasurement(row: RawRow, opts: BuildOptions): Measurement |
     }
   }
 
+  // A converted value is shown and edited as converted: the review's value box next to "10^3/µL" must read 7.8,
+  // not the printed 7800 (editing that would store 7800 thousand). A "<" or ">" qualifier is kept.
+  let valueText = pv.text;
+  if (value != null && pv.value != null && value !== pv.value) {
+    const qualifier = /^\s*([<>]=?|≤|≥)/.exec(pv.text)?.[1] ?? '';
+    valueText = `${qualifier}${Number(value.toPrecision(6))}`;
+  }
+
   let status = computeStatus(value, range, pv.text);
   if (status === 'unknown' && flag) status = flag;
   if (value == null && def && confidence === 'high' && qualitativeValue(pv.text) === 'positive' && def.lowerIsBetter) status = 'high';
@@ -148,7 +156,7 @@ export function buildMeasurement(row: RawRow, opts: BuildOptions): Measurement |
     markerId: def?.id ?? null,
     rawName,
     value,
-    valueText: pv.text,
+    valueText,
     unit,
     range,
     status,

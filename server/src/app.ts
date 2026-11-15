@@ -16,6 +16,19 @@ import { facilityRoutes } from './routes/facilities.ts';
 import { geoRoutes } from './routes/geo.ts';
 import { configRoutes, mapFileRoutes } from './routes/config.ts';
 import { addCspSources, mapCspSources } from './facilities/index.ts';
+import { hookRoutes, labOrderRoutes, labResultRoutes, labRoutes } from './lab/routes.ts';
+import { agentRoutes } from './agents/routes.ts';
+import { notificationRoutes } from './routes/notifications.ts';
+import { assistantRoutes } from './assistant/routes.ts';
+import { whatsappHookRoutes, whatsappRoutes } from './whatsapp/routes.ts';
+import { whatsappService, type WhatsAppService } from './whatsapp/service.ts';
+import { cloudApiClient, type WhatsAppClient } from './whatsapp/client.ts';
+import { extractionRoutes } from './extraction/routes.ts';
+import { mcpRoutes } from './agents/mcp.ts';
+import { oauthRoutes, type OAuthOptions } from './agents/oauth.ts';
+import { recordOAuthRoutes, recordRoutes } from './records/routes.ts';
+import { ekaWebhookRoutes } from './records/abdm/webhook.ts';
+import { DEMO_PORTAL_PATH, type DemoPortal } from './records/demo-portal.ts';
 
 const UNSAFE = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
@@ -50,11 +63,25 @@ const SITE_CSP = [
 
 const IMMUTABLE = 'public, max-age=31536000, immutable';
 /** Files whose names change with their content: built assets, and the pre-rendered body-map images (name.<hash>.webp/png). */
-const HASHED = /[\\/]assets[\\/]|[\\/]bodymap[\\/][^\\/]+\.[0-9a-f]{10}\.(webp|png)$/;
+// …and the OCR files, in a folder named by the tesseract.js version (tools/ocr-assets.ts).
+const HASHED = /[\\/]assets[\\/]|[\\/]bodymap[\\/][^\\/]+\.[0-9a-f]{10}\.(webp|png)$|[\\/]ocr[\\/]\d+\.\d+\.\d+[\\/]/;
 
-export function createApp(input: DepsInput): Hono<AppEnv> {
+export interface AppOptions {
+  oauth?: OAuthOptions;
+  /** WhatsApp: a client other than the Cloud API (tests), and a way to reach the service once it exists. */
+  whatsapp?: { client?: WhatsAppClient; onService?: (s: WhatsAppService) => void };
+  /** The pretend lab portal for the record agent (development and tests), served at /demo-portal. */
+  demoPortal?: DemoPortal;
+}
+
+export function createApp(input: DepsInput, opts: AppOptions = {}): Hono<AppEnv> {
   const deps = completeDeps(input); // one default cell unless index.ts opened several
   const { config } = deps;
+  // The assistant on WhatsApp needs both the Cloud API settings and the assistant itself.
+  const wa = config.whatsapp && deps.assistant
+    ? whatsappService(deps, deps.assistant, opts.whatsapp?.client ?? cloudApiClient(config.whatsapp), config.whatsapp, `${config.publicUrl ?? `http://localhost:${config.port}`}/app`)
+    : undefined;
+  if (wa) opts.whatsapp?.onService?.(wa);
   const app = new Hono<AppEnv>();
   // Map tiles on the Labs page may come from another host (see facilities/map.ts).
   const appCsp = addCspSources(APP_CSP, mapCspSources(config));
@@ -76,14 +103,15 @@ export function createApp(input: DepsInput): Hono<AppEnv> {
         'Access-Control-Allow-Origin': origin,
         'Access-Control-Allow-Methods': 'GET, POST, PATCH, PUT, DELETE',
         // Range: map tiles (.pmtiles) are read in byte ranges; some web views preflight it.
-        'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-LotusPond-Client, Range',
+        // Idempotency-Key: lab bookings (lab/routes.ts) need one, so a retried booking can't book twice.
+        'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-LotusPond-Client, Range, Idempotency-Key',
         'Access-Control-Max-Age': '600',
         Vary: 'Origin',
       });
     }
     await next();
     c.res.headers.set('Access-Control-Allow-Origin', origin);
-    c.res.headers.set('Access-Control-Expose-Headers', 'Content-Disposition, Content-Range, ETag');
+    c.res.headers.set('Access-Control-Expose-Headers', 'Content-Disposition, Content-Range, ETag, Idempotent-Replayed');
     c.res.headers.append('Vary', 'Origin');
   });
 
@@ -109,12 +137,24 @@ export function createApp(input: DepsInput): Hono<AppEnv> {
 
   // JSON bodies (results, scan thumbnails) stay small; file uploads have their own limit.
   app.use('/api/*', async (c, next) => {
-    if (c.req.path.endsWith('/documents') && c.req.method === 'POST') return next();
+    if ((c.req.path.endsWith('/documents') || c.req.path.endsWith('/extract')) && c.req.method === 'POST') return next();
     return bodyLimit({ maxSize: 20 * 1024 * 1024, onError: () => { throw new HttpError(413, 'too_large', 'This request is too large.'); } })(c, next);
   });
 
   app.get('/api/health', c => c.json({ ok: true }));
   app.route('/api/auth', authRoutes(deps));
+  if (deps.labs) {
+    // Before /api/profiles, so lab-order requests are answered here (with the same session and profile checks).
+    app.route('/api/lab', labRoutes(deps, deps.labs));
+    app.route('/api/profiles/:pid/lab-orders', labOrderRoutes(deps, deps.labs));
+    app.route('/api/profiles/:pid/lab-results', labResultRoutes(deps, deps.labs));
+  }
+  app.route('/api/agents', agentRoutes(deps));
+  app.route('/api/notifications', notificationRoutes(deps));
+  app.route('/api/assistant', assistantRoutes(deps, deps.assistant));
+  app.route('/api/whatsapp', whatsappRoutes(deps, wa));
+  app.route('/api/records', recordRoutes(deps, deps.records));
+  if (deps.extractor) app.route('/api/profiles/:pid/extract', extractionRoutes(deps, deps.extractor));
   app.route('/api/profiles', profileRoutes(deps));
   app.route('/api/facilities', facilityRoutes(deps));
   app.route('/api/geo', geoRoutes(deps));
@@ -127,6 +167,36 @@ export function createApp(input: DepsInput): Hono<AppEnv> {
     console.error('[api] unhandled error', err);
     return c.json({ error: { code: 'server_error', message: 'Something went wrong on the server. Try again.' } }, 500);
   });
+
+  // Agents (Claude, ChatGPT, …): the MCP endpoint and the OAuth sign-in it points to. Bearer tokens only, never
+  // cookies (except the consent page), so these sit outside /api and its browser checks. CORS is open, without credentials.
+  app.use('/mcp', async (c, next) => {
+    if (c.req.method === 'OPTIONS') {
+      return c.body(null, 204, {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'POST, GET, DELETE',
+        'Access-Control-Allow-Headers': 'Authorization, Content-Type, Accept, MCP-Protocol-Version, Mcp-Session-Id, Last-Event-ID',
+        'Access-Control-Max-Age': '600',
+      });
+    }
+    await next();
+    c.res.headers.set('Access-Control-Allow-Origin', '*');
+    c.res.headers.set('Access-Control-Expose-Headers', 'WWW-Authenticate, Mcp-Session-Id');
+    c.res.headers.set('Cache-Control', 'no-store');
+  });
+  app.use('/mcp', bodyLimit({ maxSize: 1024 * 1024, onError: c => c.json({ jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Request too large.' } }, 413) }));
+  app.route('/mcp', mcpRoutes(deps));
+  app.use('/oauth/*', bodyLimit({ maxSize: 64 * 1024, onError: c => c.json({ error: 'invalid_request', error_description: 'Request too large.' }, 413) }));
+  app.route('/', oauthRoutes(deps, opts.oauth));
+
+  // Lab partner webhooks: server to server, so outside /api (no browser checks, no CORS).
+  if (deps.labs) app.route('/hooks', hookRoutes(deps, deps.labs));
+  if (wa) app.route('/hooks/whatsapp', whatsappHookRoutes(wa));
+  if (deps.records) app.route('/records/oauth', recordOAuthRoutes(deps.records, config.allowedOrigins[0] ?? config.publicUrl ?? ''));
+  const ekaKey = config.records?.eka?.webhookSigningKey;
+  if (deps.records && ekaKey) { const records = deps.records; app.route('/hooks/eka', ekaWebhookRoutes({ signingKey: ekaKey, wake: ref => records.wake(ref) })); }
+  // A pretend portal for the record agent's browsers; its own pages, so outside /api and the app's policy.
+  if (opts.demoPortal && config.env !== 'production') app.route(DEMO_PORTAL_PATH, opts.demoPortal.app);
 
   if (config.staticDir && fs.existsSync(path.join(config.staticDir, 'index.html'))) serveSite(app, config.staticDir, appCsp);
 

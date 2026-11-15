@@ -32,6 +32,8 @@ const SYSTEM_PATHS: Record<SystemId | 'other', ReactNode> = {
   hormones: <><path d="M12 4.2l6.5 3.7v7.4L12 19l-6.5-3.7V7.9z" /><circle cx="12" cy="11.6" r="2.3" /><path d="M12 4.2v5.1M18.5 15.3l-4.5-2.6M5.5 15.3l4.5-2.6" /></>,
   // specimen cup
   urine: <><path d="M6.5 8.5h11l-1.2 10.2a1.6 1.6 0 0 1-1.6 1.4H9.3a1.6 1.6 0 0 1-1.6-1.4z" /><path d="M5.5 5.2h13v3.3h-13z" /><path d="M8.2 13.2c1.2-.7 2.4-.7 3.8 0s2.6.7 3.8 0" /></>,
+  // gauge with a needle (blood pressure cuff dial)
+  vitals: <><circle cx="12" cy="13" r="7.5" /><path d="M12 13l3.6-3.4M7.6 13h1.2M15.2 13h1.2M12 8.6v1.2" /><path d="M10 3.8h4" /></>,
   // flask for anything unmatched
   other: <><path d="M9.5 3.8h5M10.3 3.8v5.4L5.4 17.8a1.6 1.6 0 0 0 1.4 2.4h10.4a1.6 1.6 0 0 0 1.4-2.4l-4.9-8.6V3.8" /><path d="M7.8 14.2h8.4" /></>,
 };

@@ -40,7 +40,8 @@ section('catalog');
 const ids = new Set();
 for (const b of BIOMARKERS) {
   check(`unique id ${b.id}`, !ids.has(b.id)); ids.add(b.id);
-  check(`${b.id} has organs`, b.organs.length > 0);
+  // Whole-body vitals (temperature, weight, body fat) belong to no single organ; everything else shows on the body map.
+  check(`${b.id} has organs`, b.organs.length > 0 || b.system === 'vitals');
   check(`${b.id} has about`, b.about.length > 10);
   check(`${b.id} system label`, !!SYSTEM_LABELS[b.system]);
   check(`${b.id} aliases lower-case`, b.aliases.every(a => a === a.toLowerCase()));
@@ -90,6 +91,20 @@ check('urine context: RBC → urine_rbc', matchMarkerName('RBC', { section: 'uri
 console.log(`  names: ${nameOk}/${NAME_CASES.length} positive cases`);
 
 /* ---------------- ranges ---------------- */
+section('LOINC');
+{
+  const { LOINC, isLoincCode } = await import(new URL('../shared/loinc.ts', import.meta.url).href);
+  const codes = Object.entries(LOINC);
+  check('LOINC: every code passes the mod-10 check digit', codes.every(([, c]) => isLoincCode(c)), codes.filter(([, c]) => !isLoincCode(c)).map(([k]) => k).join(', '));
+  check('LOINC: codes are unique', new Set(codes.map(([, c]) => c)).size === codes.length);
+  check('LOINC: every code names a catalogue marker', codes.every(([id]) => findMarker(id)?.loinc === LOINC[id]));
+  check('LOINC: most markers are coded', codes.length >= BIOMARKERS.length - 5, `${codes.length} of ${BIOMARKERS.length}`);
+  check('LOINC: a code finds its marker', findMarker('2093-3')?.id === 'total_cholesterol' && findMarker('4548-4')?.id === 'hba1c');
+  check('LOINC: a wrong check digit is not a code', !isLoincCode('2093-4') && isLoincCode('718-7'));
+  const csv = parseCsvText('LOINC,Test,Result,Unit\n4548-4,Glycated Hb,6.4,%\n', 'loinc.csv');
+  check('LOINC: a CSV LOINC column matches the marker', csv.measurements[0]?.markerId === 'hba1c', JSON.stringify(csv.measurements[0]));
+}
+
 section('ranges');
 const RANGE_CASES = [
   ['13.0 - 17.0', { low: 13, high: 17 }], ['13-17', { low: 13, high: 17 }], ['< 200', { high: 200 }], ['<=5.7', { high: 5.7 }],
@@ -373,6 +388,14 @@ check('PDF units never contain digits-only tokens', pdf.measurements.every(m => 
   check('method after value', m2('iron')?.valueText === '62' && m2('iron')?.unit === 'µg/dL' && m2('iron')?.rangeText === '65 - 175', `${m2('iron')?.unit} | ${m2('iron')?.rangeText}`);
   check('plasma suffix', m2('glucose_fasting')?.valueText === '98');
   check('note lines skipped', more.length === 4, more.map(r => r.match.def.id).join(','));
+  // A method column after the range (Apollo's Lp(a) and thyroid rows): not part of the range.
+  const tail = findRows([
+    mk(540, [['LIPOPROTEIN a (Lp-a) , SERUM', 40], ['5.29', 150], ['mg/dL', 190], ['<75', 230], ['Immunoturbidimetric', 280]]),
+    mk(526, [['TSH', 40], ['3.413', 150], ['µIU/mL', 190], ['0.35-4.75', 230], ['CLIA', 280]]),
+  ]);
+  const t2 = id => tail.find(x => x.match.def.id === id);
+  check('method after range: Lp(a)', t2('lpa')?.rangeText === '<75', t2('lpa')?.rangeText);
+  check('method after range: TSH', t2('tsh')?.rangeText === '0.35-4.75', t2('tsh')?.rangeText);
 }
 
 // Second layout: method column, per-word text items, separate flag column, multi-line ranges, urine section.
@@ -573,6 +596,120 @@ const ON = { enabled: true, delayMs: 60_000 };
   const lock2 = createAppLock(d2);
   await lock2.start();
   check('lock: cannot turn on without Face ID or a passcode', (await lock2.setEnabled(true)) === false && d2.prompts === 0 && !!lock2.store.getState().message);
+}
+
+/* ---------------- phone health import (Apple Health, Health Connect) ---------------- */
+section('health import');
+{
+  process.env.TZ = process.env.TZ || 'UTC';
+  const h = await import(lib('health-import.ts'));
+  const k = t => h.KIND_BY_TYPE.get(t);
+  const today = '2026-11-11';
+  // Blood pressure: two readings on one day are averaged, each half becomes its own marker; today is left out.
+  const bp = h.dailyValues(k('bloodPressure'), [
+    { value: 0, unit: 'mmHg', startDate: '2026-11-09T07:00:00Z', systolic: 128, diastolic: 84 },
+    { value: 0, unit: 'mmHg', startDate: '2026-11-09T20:00:00Z', systolic: 121, diastolic: 79 },
+    { value: 0, unit: 'mmHg', startDate: '2026-11-10T07:00:00Z', systolic: 118, diastolic: 76 },
+    { value: 0, unit: 'mmHg', startDate: '2026-11-11T07:00:00Z', systolic: 140, diastolic: 90 },
+  ], today);
+  check('health: BP daily mean, split into systolic and diastolic', eq(bp.map(d => [d.markerId, d.date, d.value, d.readings]), [
+    ['bp_systolic', '2026-11-09', 125, 2], ['bp_diastolic', '2026-11-09', 82, 2],
+    ['bp_systolic', '2026-11-10', 118, 1], ['bp_diastolic', '2026-11-10', 76, 1],
+  ]), JSON.stringify(bp));
+  // SpO2: HealthKit fractions and Health Connect percentages both become %; an implausible reading is dropped.
+  const sp = h.dailyValues(k('oxygenSaturation'), [
+    { value: 0.97, unit: 'percent', startDate: '2026-11-08T01:00:00Z' },
+    { value: 95, unit: 'percent', startDate: '2026-11-08T03:00:00Z' },
+    { value: 12, unit: 'percent', startDate: '2026-11-08T04:00:00Z' },
+  ], today);
+  check('health: SpO2 fraction and percent, implausible dropped', eq(sp.map(d => [d.value, d.readings]), [[96, 2]]), JSON.stringify(sp));
+  const t = h.dailyValues(k('bodyTemperature'), [{ value: 98.6, unit: 'fahrenheit', startDate: '2026-11-01T08:00:00Z' }], today);
+  check('health: temperature in °F converted to °C', t[0]?.value === 37, JSON.stringify(t));
+  const g = h.dailyValues(k('bloodGlucose'), [{ value: 5.5, unit: 'mmol/L', startDate: '2026-11-01T08:00:00Z' }], today);
+  check('health: glucose in mmol/L converted to mg/dL', g[0]?.value === 99, JSON.stringify(g));
+  const w = h.dailyValues(k('weight'), [{ value: 72.46, unit: 'kilogram', startDate: '2026-11-01T08:00:00Z' }, { value: NaN, unit: 'kilogram', startDate: '2026-11-01T09:00:00Z' }], today);
+  check('health: weight to one decimal, NaN ignored', w.length === 1 && w[0].value === 72.5, JSON.stringify(w));
+
+  const ms = h.toMeasurements(bp, 'apple_health');
+  const sys = ms.find(m => m.markerId === 'bp_systolic' && m.date === '2026-11-09');
+  check('health: results carry the source, unit, typical range and status', !!sys && sys.sourceFile === 'Apple Health' && sys.unit === 'mmHg' && sys.range?.source === 'typical' && sys.status === 'high' && sys.confidence === 'high', JSON.stringify(sys));
+  const fresh = h.onlyNewDays(ms, [{ markerId: 'bp_systolic', date: '2026-11-09', sourceFile: 'Apple Health' }, { markerId: 'bp_diastolic', date: '2026-11-10', sourceFile: 'Sample report' }]);
+  check('health: a day already imported from the same source is skipped', fresh.length === 3 && !fresh.some(m => m.markerId === 'bp_systolic' && m.date === '2026-11-09'));
+  check('health: next import starts the day after the last one', h.importStart([{ date: '2026-10-30', sourceFile: 'Apple Health' }, { date: '2026-11-05', sourceFile: 'Health Connect' }], 'apple_health', today, 90) === '2026-10-31');
+  check('health: first import goes back the chosen number of days', h.importStart([], 'health_connect', today, 30) === '2026-10-12');
+  const win = h.monthWindows('2026-09-15', '2026-11-11');
+  check('health: reads are split by calendar month', win.length === 3 && win[0].startDate.startsWith('2026-09-15') && win[2].endDate.startsWith('2026-11-11'), JSON.stringify(win));
+  check('health: summary line', h.importSummary(ms) === 'Blood pressure: 2 days', h.importSummary(ms));
+  check('health: every kind maps to catalogue markers with LOINC codes', h.IMPORT_KINDS.every(x => x.markers.every(id => findMarker(id)?.loinc)));
+}
+
+/* ---------------- FHIR R4 (ABDM / ABHA apps) ---------------- */
+section('fhir');
+{
+  const f = await import(lib('parse/fhir.ts'));
+  const text = readFileSync(join(fixtures, 'fhir/lab-record-bundle.json'), 'utf8');
+  const r = parseJsonText(text, 'lab-record-bundle.json');
+  const by = id => r.measurements.find(m => m.markerId === id);
+  check('fhir: bundle detected', f.isFhir(JSON.parse(text)));
+  check('fhir: LOINC picks the marker (HbA1c by code, name "HbA1c")', by('hba1c')?.value === 6.1 && by('hba1c')?.status === 'high', JSON.stringify(by('hba1c')));
+  check('fhir: date from effectiveDateTime', by('hba1c')?.date === '2026-10-20');
+  check('fhir: report range kept', by('glucose_fasting')?.range?.low === 70 && by('glucose_fasting')?.range?.high === 100 && by('glucose_fasting')?.range?.source === 'report', JSON.stringify(by('glucose_fasting')?.range));
+  check('fhir: unit from the UCUM code when unit is missing', by('hemoglobin')?.unit === 'g/dL' && by('wbc')?.value === 7.8, `${by('hemoglobin')?.unit} ${by('wbc')?.unit} ${by('wbc')?.value}`);
+  check('fhir: UCUM u[IU]/mL read as µIU/mL', by('tsh')?.value === 2.4 && by('tsh')?.confidence !== 'low', JSON.stringify(by('tsh')));
+  check('fhir: comparator kept (<8)', by('vitamin_d')?.valueText.startsWith('<') && by('vitamin_d')?.status === 'low', JSON.stringify(by('vitamin_d')));
+  check('fhir: coded qualitative value', by('urine_protein')?.valueText === 'Negative');
+  check('fhir: entered-in-error left out', !r.measurements.some(m => m.value === 999) && r.warnings.some(w => /entered in error/.test(w)));
+  check('fhir: preliminary marked for checking', by('ldl')?.confidence === 'low' && r.warnings.some(w => /preliminary/.test(w)));
+  check('fhir: BP panel components become systolic and diastolic', by('bp_systolic')?.value === 132 && by('bp_diastolic')?.value === 86 && by('bp_diastolic')?.unit === 'mmHg', `${JSON.stringify(by('bp_systolic'))} ${JSON.stringify(by('bp_diastolic'))}`);
+  check('fhir: unknown code kept unmatched for review', r.measurements.some(m => !m.markerId && m.rawName === 'Lipoprotein X index'));
+  check('fhir: the panel itself (no value) is not a row', !r.measurements.some(m => /panel/i.test(m.rawName)));
+  check('fhir: whose results these are', r.warnings.some(w => w.includes('Asha Rao')));
+  check('fhir: 11 rows', r.measurements.length === 11, String(r.measurements.length));
+  const single = parseJsonText(JSON.stringify({ resourceType: 'Observation', status: 'final', code: { coding: [{ system: 'http://loinc.org', code: '2093-3' }] }, valueQuantity: { value: 5.2, unit: 'mmol/L' }, effectiveDateTime: '2026-01-05' }), 'obs.json');
+  check('fhir: single Observation, name from LOINC, mmol/L converted', single.measurements[0]?.markerId === 'total_cholesterol' && Math.round(single.measurements[0].value) === 201, JSON.stringify(single.measurements[0]));
+  // Withings daily values as the record agent saves them (server/src/records/api/withings.ts readingsBundle).
+  const wd = f.parseFhir(JSON.parse(readFileSync(join(fixtures, 'fhir/withings-daily.json'), 'utf8')), 'withings.json');
+  const wdRows = wd.measurements.map(m => `${m.date} ${m.markerId} ${m.value} ${m.unit}`).sort();
+  check('fhir: Withings daily vitals become the vitals markers', eq(wdRows, [
+    '2026-11-01 body_fat 18.2 %', '2026-11-01 body_weight 72.5 kg', '2026-11-01 bp_diastolic 84 mmHg', '2026-11-01 bp_systolic 128 mmHg',
+    '2026-11-01 resting_heart_rate 71 bpm', '2026-11-02 body_temperature 36.8 °C', '2026-11-02 spo2 97 %',
+  ]), JSON.stringify(wdRows));
+  // Ultrahuman / Oura daily values (server/src/records/api/vitals.ts): breathing rate and sensor glucose too.
+  const ud = f.parseFhir(JSON.parse(readFileSync(join(fixtures, 'fhir/ultrahuman-daily.json'), 'utf8')), 'ultrahuman.json');
+  const udRows = ud.measurements.map(m => `${m.markerId} ${m.value} ${m.unit}`).sort();
+  check('fhir: ring and CGM daily values become the vitals markers', eq(udRows, [
+    'glucose_meter 104 mg/dL', 'respiratory_rate 14 breaths/min', 'resting_heart_rate 56 bpm', 'spo2 97 %',
+  ]), JSON.stringify(udRows));
+  const pdfOnly = JSON.parse(readFileSync(join(fixtures, 'fhir/pdf-only-report.json'), 'utf8'));
+  const att = f.fhirAttachments(pdfOnly);
+  check('fhir: PDF in presentedForm found', att.length === 1 && att[0].contentType === 'application/pdf' && att[0].title === 'Lipid profile.pdf' && att[0].data.length > 1000);
+  check('fhir: UCUM display', f.ucumDisplay('10*3/uL') === '10^3/µL' && f.ucumDisplay('mm[Hg]') === 'mmHg' && f.ucumDisplay('[IU]/L') === 'IU/L' && f.ucumDisplay('Cel') === '°C' && f.ucumDisplay('ug/dL') === 'µg/dL' && f.ucumDisplay('mg/dL') === 'mg/dL');
+  check('fhir: not FHIR stays with the generic reader', !f.isFhir({ results: [] }));
+}
+
+/* ---------------- home: what needs attention, and where on the body ---------------- */
+section('attention');
+{
+  const a = await import(lib('attention.ts'));
+  const { buildSeries } = await import(lib('derive.ts'));
+  const m = (markerId, value, date, range, status, valueText = String(value), unit = 'mg/dL') => ({ id: `${markerId}-${date}`, markerId, rawName: markerId, value, valueText, unit, range: { ...range, source: 'report' }, status, date, sourceFile: 'r.pdf', confidence: 'high' });
+  const ms = [
+    m('ldl', 121, '2026-07-02', { high: 100 }, 'high'), m('ldl', 131, '2026-10-20', { high: 100 }, 'high'),
+    m('glucose_fasting', 104, '2026-10-20', { low: 70, high: 100 }, 'high'),
+    m('tsh', 2.1, '2026-10-20', { low: 0.4, high: 4.5 }, 'normal'),
+    m('vitamin_d', 8, '2026-01-10', { low: 30, high: 100 }, 'low', '8', 'ng/mL'),
+  ];
+  const now = Date.parse('2026-11-11T00:00:00Z');
+  const items = a.attentionItems(buildSeries(ms), now);
+  check('attention: only out-of-range results, furthest first', items.map(i => i.name).join(',') === 'Vitamin D (25-OH),LDL cholesterol,Fasting glucose', items.map(i => i.name).join(','));
+  const ldl = items.find(i => i.seriesKey === 'ldl');
+  check('attention: plain detail with the change', /^131 mg\/dL on .+, up from 121 on .+\.$/.test(ldl.detail), ldl.detail);
+  check('attention: far outside (LDL 31% over) vs just outside (glucose 13%)', ldl.level === 'far' && items.find(i => i.seriesKey === 'glucose_fasting').level === 'out');
+  check('attention: an old result suggests asking about a repeat', /Last checked 10 months ago/.test(items[0].next), items[0].next);
+  const organs = a.organIssues(items);
+  check('attention: organs light up by their primary marker', organs.heart === 'far' && organs.pancreas === 'out' && !organs.thyroid, JSON.stringify(organs));
+  const due = a.testsDue({ conditions: ['Type 2 diabetes'] }, ms, items, now);
+  check('attention: tests due from conditions, not repeating listed items', due.some(f => f.marker === 'HbA1c') && !due.some(f => f.marker === 'LDL cholesterol'), JSON.stringify(due.map(f => f.marker)));
 }
 
 /* ---------------- summary ---------------- */
