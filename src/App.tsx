@@ -48,9 +48,7 @@ export default function App() {
   const onboarding = useSession(s => s.onboarding);
   const locked = useLock(s => s.status !== 'open');
   const ready = status === 'signed-in' && !onboarding;
-  // Once shown, the app (and its WebGL stage) stays mounted and is only hidden while signed out. Tearing the
-  // stage down and rebuilding it on every sign-in re-parses the model and recompiles every shader, and the
-  // R3F/drei teardown path has proved fragile.
+  // Once shown, the app stays mounted and is only hidden while signed out, so signing in again is instant.
   const [shellMounted, setShellMounted] = useState(false);
   if (ready && !shellMounted) setShellMounted(true);
   // In the apps the session (and the records with it) loads only once the app lock allows it.

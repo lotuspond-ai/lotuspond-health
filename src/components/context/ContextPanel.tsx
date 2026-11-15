@@ -11,7 +11,6 @@ import { errorMessage, isPreview } from '../../api';
 import { firstName, useActiveProfile } from '../../state/session';
 import { toast } from '../../state/toast';
 import { findLegacyData, legacyAsResult, markLegacyHandled } from '../../lib/legacy';
-import { SectionControls } from '../stage/StagePanel';
 import { MarkerCard } from './MarkerCard';
 import { openLabs, sampleDates, showMarkers, statusCounts } from './summary';
 import { useIssues } from '../stage/issues';
@@ -249,7 +248,6 @@ function OrganPanel({ organ, series }: { organ: OrganId; series: Series[] }) {
           <dl className="org-facts">{o.facts.map(f => <div key={f.label}><dt>{f.label}</dt><dd>{f.value}</dd></div>)}</dl>
         </div>
       )}
-      <SectionControls />
       <div className="section">
         <h3>Related results <small>{list.length ? `${list.length} marker${list.length > 1 ? 's' : ''}` : ''}</small></h3>
         {list.length
