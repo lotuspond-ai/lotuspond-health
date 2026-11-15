@@ -64,7 +64,19 @@ const SI_DEFAULT = new Set('GB IE NL SE NO DK FI IS CH CA AU NZ ZA SG MY HK CN'.
 /** Imperial height and weight. */
 const US_MEASURES = new Set('US LR MM PR GU VI AS MP UM'.split(' '));
 
-const UNAVAILABLE: Record<string, string> = {
+/**
+ * Countries where sign-up is open. LotusPond Health opens in India first (the owner's decision of 2026-11-16,
+ * recorded in lotuspond-ai/lotuspond ADR-0018). Opening a country means adding it here: the sign-up form, the
+ * server's default and the public pages all follow. The other regions' rules below stay, so they apply as soon
+ * as a country opens. The server's OPEN_COUNTRIES setting can override this list (tests, staged rollouts).
+ */
+export const OPEN_COUNTRIES: readonly string[] = ['IN'];
+
+/** Shown to someone whose country is not open yet and has no legal restriction of its own. */
+export const NOT_OPEN_YET = 'LotusPond Health is open to people living in India first. It will open in more countries later.';
+
+/** Countries where local law or other restrictions keep sign-up closed, with the reason shown at sign-up. */
+export const LEGAL_RESTRICTIONS: Readonly<Record<string, string>> = {
   AE: 'Health data of people in the UAE must be stored inside the UAE (Federal Law No. 2 of 2019). LotusPond Health will open here once hosting in the UAE is in place.',
   SA: 'Saudi rules on health data generally require hosting inside the Kingdom. LotusPond Health will open here once hosting in Saudi Arabia is in place.',
   CN: 'China requires security assessments before health data leaves the country (PIPL). LotusPond Health is not available here yet.',
@@ -74,6 +86,7 @@ const UNAVAILABLE: Record<string, string> = {
   SY: 'LotusPond Health is not available in this country.',
   CU: 'LotusPond Health is not available in this country.',
 };
+const UNAVAILABLE = LEGAL_RESTRICTIONS;
 
 /** Main data-protection law by country, for countries outside the India, Europe and US cells. */
 const LOCAL_LAWS: Record<string, string[]> = {
@@ -113,13 +126,17 @@ const LOCAL_LAWS: Record<string, string[]> = {
 
 const GLOBAL_DEFAULT_LAW = 'Local data-protection law';
 
-/** The policy for a country code (case-insensitive). Unknown codes get the international defaults. */
-export function countryPolicy(code: string): CountryPolicy {
+/**
+ * The policy for a country code (case-insensitive). Unknown codes get the international defaults. `open` is the
+ * list of countries where sign-up is open; a country outside it keeps its region and laws but is not available.
+ */
+export function countryPolicy(code: string, open: readonly string[] = OPEN_COUNTRIES): CountryPolicy {
   const c = code.trim().toUpperCase();
+  const isOpen = !UNAVAILABLE[c] && open.includes(c);
   const base = {
     code: c,
-    available: !UNAVAILABLE[c],
-    unavailableReason: UNAVAILABLE[c],
+    available: isOpen,
+    unavailableReason: UNAVAILABLE[c] ?? (isOpen ? undefined : NOT_OPEN_YET),
     minAge: 18,
     units: (SI_DEFAULT.has(c) ? 'si' : 'conventional') as UnitSystem,
     measurement: (US_MEASURES.has(c) ? 'us' : 'metric') as 'metric' | 'us',
@@ -199,11 +216,11 @@ export interface SignUpProblem {
  * The first reason this person cannot sign up yet, or null. The sign-up form, the API server and the browser
  * preview all apply these same rules, in this order.
  */
-export function signUpProblem(input: SignUpChoices, servedRegions: readonly DataRegion[]): SignUpProblem | null {
+export function signUpProblem(input: SignUpChoices, servedRegions: readonly DataRegion[], open: readonly string[] = OPEN_COUNTRIES): SignUpProblem | null {
   if (!input.country || !isCountryCode(input.country)) {
     return { code: 'country_required', field: 'country', message: 'Choose the country you live in.' };
   }
-  const policy = countryPolicy(input.country);
+  const policy = countryPolicy(input.country, open);
   const name = countryInSentence(policy.code);
   if (!policy.available) {
     return { code: 'country_unavailable', field: 'country', message: policy.unavailableReason ?? 'LotusPond Health is not available in this country yet.' };

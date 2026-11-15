@@ -67,7 +67,7 @@ export function authRoutes(deps: Deps) {
     const wait = registerByIp.hit(clientIp(c, config.trustProxy));
     if (wait) throw tooMany(`Too many new accounts from this network. Try again in ${Math.ceil(wait / 60)} minutes.`);
     const body = await readJson(c, RegisterBody);
-    const problem = signUpProblem(body, cells.servedRegions);
+    const problem = signUpProblem(body, cells.servedRegions, config.openCountries);
     if (problem) {
       const refused = problem.code === 'country_unavailable' || problem.code === 'region_not_served';
       throw new HttpError(refused ? 403 : 400, problem.code, problem.message);

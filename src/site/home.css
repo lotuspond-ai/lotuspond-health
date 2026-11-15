@@ -349,6 +349,9 @@ html { scroll-padding-top: calc(var(--header, 72px) + 16px); }
 .home-regions h3 { margin-top: 22px; font: 600 clamp(22px, 2vw, 27px)/1.15 var(--font-display); letter-spacing: -0.01em; }
 .home-regions .region__where { margin-top: 8px; color: var(--on-deep); font-size: 15px; font-weight: 700; }
 .home-regions .region__who { margin-top: 10px; color: var(--on-deep-muted); font-size: 14.5px; line-height: 1.55; }
+.home-regions .region__status { margin-top: 14px; color: var(--on-deep); font: 700 13px/1.2 var(--font-sans); letter-spacing: 0.04em; text-transform: uppercase; }
+.home-regions .region--later { background: transparent; }
+.home-regions .region--later .region__status { color: var(--on-deep-muted); }
 .home-availability {
   display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px 32px;
   margin-top: clamp(32px, 4vw, 48px); padding-top: 24px; border-top: 1px solid var(--deep-line); color: var(--on-deep-muted);

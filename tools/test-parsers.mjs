@@ -302,6 +302,16 @@ section('country policy');
   check('Australia: international cell, own law', regions.countryPolicy('AU').region === 'global' && regions.countryPolicy('AU').laws[0].includes('Privacy Act 1988'));
   check('every country has a region and a law', regions.COUNTRY_CODES.every(c => { const p = regions.countryPolicy(c); return p.region && p.laws.length > 0; }));
   check('isCountryCode', regions.isCountryCode('in') && !regions.isCountryCode('ZZ'));
+  check('India first: only India is open', regions.OPEN_COUNTRIES.length === 1 && regions.OPEN_COUNTRIES[0] === 'IN' && regions.countryPolicy('IN').available);
+  const de = regions.countryPolicy('DE');
+  check('not open yet: keeps its region and laws, says India first', !de.available && de.region === 'eu' && de.unavailableReason === regions.NOT_OPEN_YET);
+  check('opening a country makes it available', regions.countryPolicy('DE', ['IN', 'DE']).available);
+  check('a legal restriction outranks opening', !regions.countryPolicy('AE', ['AE']).available && /UAE/.test(regions.countryPolicy('AE', ['AE']).unavailableReason));
+  const choices = country => ({ country, ageConfirmed: true, consents: { termsAndPrivacy: true, healthData: true, crossBorder: true, marketing: false } });
+  const all = ['in', 'eu', 'us', 'global'];
+  check('sign-up outside India is refused as not open yet', regions.signUpProblem(choices('FR'), all)?.code === 'country_unavailable' && regions.signUpProblem(choices('FR'), all)?.message === regions.NOT_OPEN_YET);
+  check('sign-up in India passes', regions.signUpProblem(choices('IN'), all) === null);
+  check('a server that opens France accepts it', regions.signUpProblem(choices('FR'), all, ['IN', 'FR']) === null);
 }
 
 /* ---------------- PDF ---------------- */

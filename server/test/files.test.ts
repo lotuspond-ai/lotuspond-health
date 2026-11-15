@@ -147,6 +147,12 @@ describe('configuration and secrets', () => {
     assert.deepEqual(loadConfig({}).servedRegions, ['in', 'eu', 'us', 'global']);
     assert.deepEqual(loadConfig({ SERVED_REGIONS: 'in, eu' }).servedRegions, ['in', 'eu']);
     assert.throws(() => loadConfig({ SERVED_REGIONS: 'in,mars' }), /unknown region mars/);
+    assert.deepEqual(loadConfig({}).openCountries, ['IN'], 'Health opens in India first');
+    assert.deepEqual(loadConfig({ OPEN_COUNTRIES: 'in, de' }).openCountries, ['IN', 'DE']);
+    const all = loadConfig({ OPEN_COUNTRIES: 'all' }).openCountries;
+    assert.ok(all.includes('FR') && !all.includes('AE'), 'all leaves out legally restricted countries');
+    assert.throws(() => loadConfig({ OPEN_COUNTRIES: 'IN,ZZ' }), /unknown country ZZ/);
+    assert.throws(() => loadConfig({ OPEN_COUNTRIES: 'AE' }), /AE cannot open/);
     const url = 'postgres://u:p@db:5432/lp';
     assert.throws(() => loadConfig({ DATABASE_URL: url, CELL_IN_DATABASE_URL: url }), /same database as DATABASE_URL/);
     assert.throws(() => loadConfig({ CELL_IN_DATABASE_URL: url, CELL_EU_DATABASE_URL: url }), /same database/);
