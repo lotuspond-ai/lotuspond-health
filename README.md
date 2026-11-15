@@ -4,7 +4,7 @@
 
 It works with any agent that speaks the [Model Context Protocol](https://modelcontextprotocol.io): the server is a remote MCP server at `/mcp`, with OAuth 2.1 sign-in so agents connect like any other connector. The app around it is a full personal health record: upload reports, see results on a body map, book a home sample collection.
 
-See [docs/agents.md](docs/agents.md) for how agents connect, the tools they get, and the safety model.
+See [docs/agents.md](docs/agents.md) for how agents connect, the tools they get, and the safety model. Every outside system it reaches is a connector of the connector core ([docs/connectors.md](docs/connectors.md)), listed publicly at `GET /v1/connectors`.
 
 ## What it does
 

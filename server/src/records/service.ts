@@ -38,6 +38,7 @@ import { metropolisRecipe } from './recipes/metropolis.ts';
 import { apollo247Recipe } from './recipes/apollo247.ts';
 import { RecipeDriftError } from './recipes/kit.ts';
 import { isOAuth, type ApiContext, type ApiFetcher } from './api/types.ts';
+import { connectorRegistry, type ConnectorRegistry } from '../connectors/registry.ts';
 import { NeedsPersonError, PortalError, REPORT_TYPES, RunStoppedError, sniffType, type Ask, type PortalReport, type Recipe, type RecipeContext } from './recipes/types.ts';
 
 const MIN = 60_000, DAY = 24 * 60 * MIN;
@@ -87,6 +88,8 @@ export interface ConnectInput {
 export interface RecordAgent {
   /** Where the browsers run, for the person. */
   browserLabel: string;
+  /** Every source as a connector of the connector core, with what this server can run. */
+  connectors: ConnectorRegistry;
   sources(region: DataRegion | null): SourceView[];
   connections(cell: Cell, userId: string): Promise<RecordConnectionView[]>;
   /** Connect and start the first run; for a source with its own sign-in page (OAuth) no run yet, but that page. */
@@ -143,8 +146,17 @@ export function createRecordAgent(opts: RecordAgentOptions): RecordAgent {
   const now = opts.now ?? Date.now;
   const questionMs = opts.questionMs ?? QUESTION_MS;
   const resolve = opts.resolve ?? (async (h: string) => (await lookup(h, { all: true })).map(a => a.address));
-  const recipes = new Map<string, Recipe>([demoRecipe, drlalRecipe(), thyrocareRecipe(), metropolisRecipe(), apollo247Recipe(), ...(opts.recipes ?? [])].map(r => [r.sourceId, r] as const));
-  const apis = new Map<string, ApiFetcher>([...(opts.abdm ? [opts.abdm] : []), ...(opts.apis ?? [])].map(f => [f.sourceId, f] as const));
+  const catalogue = (): SourceInfo[] => (opts.config.demoPortal ? [DEMO_SOURCE, ...SOURCES] : SOURCES);
+  // Every source as a connector of the connector core (server/src/connectors), with how it runs here.
+  const connectors = connectorRegistry({
+    sources: catalogue(),
+    // Later recipes win (tests replace the demo recipe).
+    recipes: [demoRecipe, drlalRecipe(), thyrocareRecipe(), metropolisRecipe(), apollo247Recipe(), ...(opts.recipes ?? [])],
+    apis: [...(opts.abdm ? [opts.abdm] : []), ...(opts.apis ?? [])],
+    navigator: !!opts.navigator, typedPortals: opts.config.typedPortals,
+  });
+  /** The source's own API fetcher, when it is reached through one on this server. */
+  const fetcherOf = (id: string): ApiFetcher | undefined => { const r = connectors.get(id)?.records; return r?.via === 'api' ? r.fetcher : undefined; };
   const live = new Map<string, Live>();
   const queue: Job[] = [];
   let running = 0;
@@ -170,15 +182,11 @@ export function createRecordAgent(opts: RecordAgentOptions): RecordAgent {
   };
 
   function availability(s: SourceInfo): SourceAvailability {
-    // A source's own API, when it is set up, takes over from the browser (DigiLocker).
-    if (apis.has(s.id)) return s.access === 'abdm' ? 'abdm' : 'api';
-    if (s.access === 'abdm' || s.access === 'api') return 'unavailable';
-    if (s.access !== 'browser') return 'unavailable';
-    if (!s.startUrl && s.id !== DEMO_SOURCE_ID && !opts.config.typedPortals) return 'unavailable';
-    if (recipes.has(s.id)) return 'recipe';
-    return opts.navigator ? 'navigator' : 'unavailable';
+    const c = connectors.get(s.id);
+    if (!c?.available || !c.records) return 'unavailable';
+    if (c.records.via === 'api') return s.access === 'abdm' ? 'abdm' : 'api';
+    return c.records.via;
   }
-  const catalogue = (): SourceInfo[] => (opts.config.demoPortal ? [DEMO_SOURCE, ...SOURCES] : SOURCES);
   const findSource = (id: string) => (id === DEMO_SOURCE_ID ? (opts.config.demoPortal ? DEMO_SOURCE : undefined) : sourceById(id));
 
   /** Where the agent starts and which hosts it may reach. */
@@ -264,8 +272,9 @@ export function createRecordAgent(opts: RecordAgentOptions): RecordAgent {
       return;
     }
     // ABHA goes through an API (no browser); portals through a recipe, or the navigator when there is none.
-    const api = apis.get(source.id) ?? null;
-    const recipe = api ? null : recipes.get(source.id) ?? (opts.navigator && source.access === 'browser' ? navigatorRecipe(source.id, opts.navigator) : null);
+    const impl = connectors.get(source.id)?.records ?? null;
+    const api = impl?.via === 'api' ? impl.fetcher : null;
+    const recipe = impl?.via === 'recipe' ? impl.recipe : impl?.via === 'navigator' && opts.navigator ? navigatorRecipe(source.id, opts.navigator) : null;
     if (!api && !recipe) {
       await setRun(cell, job.runId, { status: 'failed', error: 'The record agent cannot fetch from this source yet.', finishedAt: new Date(now()) });
       return;
@@ -482,12 +491,13 @@ export function createRecordAgent(opts: RecordAgentOptions): RecordAgent {
 
   return {
     browserLabel: opts.browsers.label,
+    connectors,
 
     sources(region) {
       return catalogue()
         .filter(s => !region || s.regions.includes(region))
         .map(s => {
-          const f = apis.get(s.id);
+          const f = fetcherOf(s.id);
           const viaApi = !!f;
           return { ...s, availability: availability(s), needsUrl: !viaApi && s.access === 'browser' && !s.startUrl && s.id !== DEMO_SOURCE_ID, ...(f && isOAuth(f) && f.oneTime ? { oneTime: true } : {}) };
         });
@@ -526,7 +536,7 @@ export function createRecordAgent(opts: RecordAgentOptions): RecordAgent {
         await recordEvent(cell.db, null, user.id, 'records_source_connected', { profileId: input.profileId, connectionId: conn.id });
       }
       // A source with its own sign-in page, not signed in yet (or no longer): send the person there first.
-      const fetcher = apis.get(source.id);
+      const fetcher = fetcherOf(source.id);
       if (fetcher && isOAuth(fetcher) && (fetcher.oneTime || !conn.sessionCt || conn.status !== 'active')) {
         const state = randomBytes(32).toString('base64url');
         const [row] = await cell.db.update(recordConnections).set({
@@ -544,7 +554,7 @@ export function createRecordAgent(opts: RecordAgentOptions): RecordAgent {
     },
 
     async oauthCallback(sourceId, q) {
-      const fetcher = apis.get(sourceId);
+      const fetcher = fetcherOf(sourceId);
       const source = findSource(sourceId);
       if (!fetcher || !isOAuth(fetcher) || !source) return { ok: false, message: 'That source cannot be connected here.' };
       if (!q.state || !/^[A-Za-z0-9_-]{20,100}$/.test(q.state)) return { ok: false, message: 'That sign-in link is not valid. Start again from Sources.' };
@@ -570,7 +580,7 @@ export function createRecordAgent(opts: RecordAgentOptions): RecordAgent {
 
     async update(cell, userId, id, patch) {
       const conn = await connectionRow(cell, userId, id);
-      const fetcher = apis.get(conn.sourceId);
+      const fetcher = fetcherOf(conn.sourceId);
       if (fetcher && isOAuth(fetcher) && fetcher.oneTime && patch.refreshDays) throw badRequest(`${findSource(conn.sourceId)?.name ?? 'This source'} cannot be checked on a schedule: it asks you to approve each check.`, 'no_schedule');
       const base = conn.lastSuccessAt?.getTime() ?? now();
       const [row] = await cell.db.update(recordConnections).set({
@@ -582,7 +592,7 @@ export function createRecordAgent(opts: RecordAgentOptions): RecordAgent {
 
     async startRun(cell, user, connectionId) {
       const conn = await connectionRow(cell, user.id, connectionId);
-      const fetcher = apis.get(conn.sourceId);
+      const fetcher = fetcherOf(conn.sourceId);
       if (fetcher && isOAuth(fetcher) && (fetcher.oneTime || !conn.sessionCt || conn.status !== 'active')) {
         const name = findSource(conn.sourceId)?.name ?? 'this source';
         throw conflict(fetcher.oneTime ? `${name} asks you to approve each check on its own page.` : `Connect ${name} again: its sign-in has ended.`, 'oauth_needed');
