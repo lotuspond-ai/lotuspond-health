@@ -299,4 +299,26 @@ describe('email sources', { timeout: 60_000 }, () => {
     assert.ok(!/more emails/.test(r3.note ?? ''));
     await small.agent.idle();
   });
+
+  test('a busy day of attachment emails does not stall the backlog', async () => {
+    // Outlook lists every email with attachments. More than one check's worth (200) within one day: the next check
+    // must carry on from where the last stopped, not re-read the same day and stop at the same email again.
+    const junk = Array.from({ length: 210 }, (_, i) => ({ id: `j${i}`, from: 'Team <team@work.example>', subject: `Slides ${i}`, at: clock - 3 * 3600_000 + i * 1000, files: [{ name: `deck-${i}.pptx`, type: 'application/vnd.ms-powerpoint', bytes: Buffer.from('x') }] }));
+    const late = { id: 'late', from: 'Dr Lal PathLabs <noreply@lalpathlabs.com>', subject: 'Report ready', at: clock - 3600_000, files: [{ name: 'Late.pdf', type: 'application/pdf', bytes: pdf('late') }] };
+    MAILS.push(...junk, late);
+    try {
+      graph.tokens.codes.add('good-code');
+      const c = makeClient(app);
+      const info = await c.json<SessionInfo>('POST', '/api/auth/register', registration(`busy-${Date.now()}@example.com`), 201);
+      const { conn } = await connect(app, agent, c, info.profiles[0].id, 'outlook');
+      assert.match(conn.lastRun!.note ?? '', /more emails to look at/);
+      assert.ok(!conn.lastRun!.documents.some(d => d.fileName === 'Late.pdf'));
+      const r2 = await checkNow(c, agent, conn.id);
+      assert.equal(r2.status, 'succeeded', r2.error ?? '');
+      assert.deepEqual(r2.documents.map(d => d.fileName), ['Late.pdf'], 'the second check reaches past the busy day');
+      assert.ok(!/more emails/.test(r2.note ?? ''));
+    } finally {
+      MAILS.splice(MAILS.length - junk.length - 1);
+    }
+  });
 });

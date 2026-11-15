@@ -87,7 +87,7 @@ function toReport(f: Found): PortalReport {
   };
 }
 
-type MailTokens = Tokens & { since?: number };
+type MailTokens = Tokens & { since?: number; caughtUp?: boolean };
 
 /** An email to look at: when it arrived, and how to read its health PDFs (none when it is not a health email). */
 interface Candidate { received: number; reports(): Promise<Found[]> }
@@ -100,8 +100,11 @@ interface Candidate { received: number; reports(): Promise<Found[]> }
 async function check(ctx: ApiContext, device: string, s: { tokens: MailTokens; progress(extra: Partial<MailTokens>): void }, now: number,
   list: (since: number) => Promise<{ candidates: Candidate[]; complete: boolean }>): Promise<PortalReport[]> {
   await ctx.step(`Looking for reports in your ${device} email`);
-  // A day of overlap with the last check: an email that arrived while it ran is not missed (each is saved once).
-  const since = s.tokens.since ? s.tokens.since - DAY_MS : now - FIRST_DAYS * DAY_MS;
+  // After a check that caught up, a day of overlap: an email that arrived while it ran is not missed (each is saved
+  // once). While a backlog is being worked through, no overlap: re-reading a busy day would take the whole check and
+  // the cursor would never move on.
+  const backlog = s.tokens.caughtUp === false;
+  const since = s.tokens.since ? s.tokens.since - (backlog ? 0 : DAY_MS) : now - FIRST_DAYS * DAY_MS;
   const { candidates, complete } = await list(since);
   const ordered = [...candidates].sort((a, b) => a.received - b.received);
   const found: Found[] = [];
@@ -115,12 +118,14 @@ async function check(ctx: ApiContext, device: string, s: { tokens: MailTokens; p
     done++;
   }
   const finishedAll = complete && done === ordered.length;
-  const cursor = finishedAll ? now : done ? ordered[done - 1].received + 1 : s.tokens.since ?? since + DAY_MS;
+  // Nothing finished (stopped at once): keep the same window start, so nothing is skipped.
+  const cursor = finishedAll ? now : done ? ordered[done - 1].received + 1 : since;
   const locked = found.filter(f => isEncryptedPdf(f.bytes)).length;
   const more = finishedAll ? '' : ' There are more emails to look at: the next check carries on from here.';
-  if (locked) ctx.note(`${locked} of the reports are password-protected PDFs. Labs often use your name and date of birth as the password; open them in Files to read them.${more}`);
+  // Notes are kept to 200 characters, so the backlog sentence goes first and the password hint is short.
+  if (locked) ctx.note(`${more.trim()} ${locked} of the reports are password-protected PDFs; labs often use your name and date of birth as the password.`.trim());
   else if (more) ctx.note(more.trim());
-  s.progress({ since: cursor });
+  s.progress({ since: cursor, caughtUp: finishedAll });
   return found.map(toReport);
 }
 
