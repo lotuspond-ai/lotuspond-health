@@ -72,8 +72,8 @@
             </div>
             <p class="hero__note"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></svg>Stored in your region and never sold. LotusPond explains results; it does not diagnose.</p>
             <a class="hero__agents" href="#agents">
-              <span class="hero__agents-logos" aria-hidden="true"><svg><use href="#ag-claude" /></svg><svg><use href="#ag-openai" /></svg><svg><use href="#ag-gemini" /></svg><svg><use href="#ag-mistral" /></svg><svg><use href="#ag-copilot" /></svg></span>
-              <span><b>Connect your AI.</b> Claude, ChatGPT and other agents can read the records you choose.</span>
+              <span class="hero__agents-logos" aria-hidden="true"><svg><use href="#ag-claude" /></svg><svg><use href="#ag-openai" /></svg><svg><use href="#ag-gemini" /></svg><svg class="mark-exact"><use href="#ag-grok" /></svg><svg><use href="#ag-muse" /></svg></span>
+              <span><b>Connect your AI.</b> Claude, ChatGPT, Gemini, Grok, Muse and other agents can read the records you choose.</span>
             </a>
           </div>
         </div>
@@ -114,12 +114,15 @@
           <ul class="agent-grid" aria-label="AI agents you can connect">
             <li><svg aria-hidden="true"><use href="#ag-claude" /></svg><b>Claude</b><span>Settings, Connectors, Add custom connector</span></li>
             <li><svg aria-hidden="true"><use href="#ag-openai" /></svg><b>ChatGPT</b><span>A developer mode connector, on plans that offer one</span></li>
-            <li><svg aria-hidden="true"><use href="#ag-gemini" /></svg><b>Gemini CLI</b><span>Add the address to its settings, then sign in</span></li>
+            <li><svg aria-hidden="true"><use href="#ag-gemini" /></svg><b>Gemini</b><span>Gemini CLI connects directly; in the Gemini app, paste a summary</span></li>
+            <li><svg class="mark-exact" aria-hidden="true"><use href="#ag-grok" /></svg><b>Grok</b><span>grok.com, Connectors, New connector, Custom</span></li>
+            <li><svg class="mark-exact" aria-hidden="true"><use href="#ag-grokbot" /></svg><b>Grok Bot</b><span>Ask a Bot to add a remote MCP server, with an access token</span></li>
+            <li><svg aria-hidden="true"><use href="#ag-muse" /></svg><b>Muse</b><span>Ask Muse to create a custom connector, with an access token</span></li>
             <li><svg aria-hidden="true"><use href="#ag-mistral" /></svg><b>Le Chat</b><span>A custom MCP connector, on plans that offer one</span></li>
             <li><svg aria-hidden="true"><use href="#ag-copilot" /></svg><b>GitHub Copilot in VS Code</b><span>MCP: Add Server, then HTTP</span></li>
             <li><svg aria-hidden="true"><use href="#ag-cursor" /></svg><b>Cursor</b><span>Settings, MCP, Add new MCP server</span></li>
             <li><svg aria-hidden="true"><use href="#ag-windsurf" /></svg><b>Windsurf</b><span>Add the address to its MCP settings</span></li>
-            <li><svg aria-hidden="true"><use href="#ag-mcp" /></svg><b>Any MCP client</b><span>Claude Code, Codex CLI, Goose, Zed and your own agents</span></li>
+            <li class="agent-grid__wide"><svg aria-hidden="true"><use href="#ag-mcp" /></svg><b>Any MCP client</b><span>Claude Code, Codex CLI, Grok Build, Muse Code, Goose, Zed and your own agents</span></li>
           </ul>
           <div class="connect">
             <ol class="connect__steps">
@@ -132,7 +135,7 @@
               <p>Account, Connected agents has the steps for each agent, and access tokens for agents that cannot sign in.</p>
             </div>
           </div>
-          <p class="agents__fine">Agents see summaries only, never your files or scan images, and they cannot book or pay for anything. The Gemini, Grok and Meta AI apps do not take connectors yet: copy a summary of your records from Account and paste it in. LotusPond is not affiliated with or endorsed by these companies; their names and logos are trademarks of their owners.</p>
+          <p class="agents__fine">Agents see summaries only, never your files or scan images, and they cannot book or pay for anything. Grok Bot, Muse and agents that cannot sign in use an access token made on Account. The Gemini app and Meta AI do not take connectors yet: copy a summary of your records from Account and paste it in. LotusPond is not affiliated with or endorsed by these companies; their names and logos are trademarks of their owners.</p>
         </div>
       </section>
 
