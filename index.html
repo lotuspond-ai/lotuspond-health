@@ -3,7 +3,7 @@
   <head>
     <!-- @include head -->
     <title>LotusPond Health: your health records, mapped to your body</title>
-    <meta name="description" content="Keep lab reports and scans for you and your family in one place, and see every result on a 3D map of the body. Records are stored in your region and never sold." />
+    <meta name="description" content="Keep lab reports and scans for you and your family in one place, see every result on a 3D map of the body, and connect Claude, ChatGPT or another AI to the records you choose. Stored in your region and never sold." />
     <link rel="canonical" href="%SITE_URL%/" />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="%SITE_URL%/" />
@@ -56,6 +56,7 @@
   </head>
   <body>
     <!-- @include header -->
+    <!-- @include agent-logos -->
     <main id="main">
       <section class="hero" aria-labelledby="hero-title">
         <div class="wrap hero__copy">
@@ -70,6 +71,10 @@
               <a class="button button--ghost" href="/login">Sign in</a>
             </div>
             <p class="hero__note"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></svg>Stored in your region and never sold. LotusPond explains results; it does not diagnose.</p>
+            <a class="hero__agents" href="#agents">
+              <span class="hero__agents-logos" aria-hidden="true"><svg><use href="#ag-claude" /></svg><svg><use href="#ag-openai" /></svg><svg><use href="#ag-gemini" /></svg><svg><use href="#ag-mistral" /></svg><svg><use href="#ag-copilot" /></svg></span>
+              <span><b>Connect your AI.</b> Claude, ChatGPT and other agents can read the records you choose.</span>
+            </a>
           </div>
         </div>
         <div class="hero__visual">
@@ -93,6 +98,41 @@
               <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2" /><circle cx="9" cy="9.5" r="1.6" /><path d="M20 15l-4.5-4.5L6 20" /></svg>Photos of scans</li>
             </ul>
           </div>
+        </div>
+      </section>
+
+      <section class="section agents" id="agents" aria-labelledby="agents-title">
+        <div class="wrap">
+          <div class="section__head">
+            <div>
+              <p class="eyebrow">Works with your AI</p>
+              <h2 class="title" id="agents-title">Ask your own AI <em>about your health.</em></h2>
+            </div>
+            <p>Connect the assistant you already use. It reads the records you choose (results, trends, conditions and medications) and explains them in your words. You can disconnect it at any time.</p>
+          </div>
+          <!-- Each entry and its steps follow shared/agent-directory.ts; keep the two in step. -->
+          <ul class="agent-grid" aria-label="AI agents you can connect">
+            <li><svg aria-hidden="true"><use href="#ag-claude" /></svg><b>Claude</b><span>Settings, Connectors, Add custom connector</span></li>
+            <li><svg aria-hidden="true"><use href="#ag-openai" /></svg><b>ChatGPT</b><span>A developer mode connector, on plans that offer one</span></li>
+            <li><svg aria-hidden="true"><use href="#ag-gemini" /></svg><b>Gemini CLI</b><span>Add the address to its settings, then sign in</span></li>
+            <li><svg aria-hidden="true"><use href="#ag-mistral" /></svg><b>Le Chat</b><span>A custom MCP connector, on plans that offer one</span></li>
+            <li><svg aria-hidden="true"><use href="#ag-copilot" /></svg><b>GitHub Copilot in VS Code</b><span>MCP: Add Server, then HTTP</span></li>
+            <li><svg aria-hidden="true"><use href="#ag-cursor" /></svg><b>Cursor</b><span>Settings, MCP, Add new MCP server</span></li>
+            <li><svg aria-hidden="true"><use href="#ag-windsurf" /></svg><b>Windsurf</b><span>Add the address to its MCP settings</span></li>
+            <li><svg aria-hidden="true"><use href="#ag-mcp" /></svg><b>Any MCP client</b><span>Claude Code, Codex CLI, Goose, Zed and your own agents</span></li>
+          </ul>
+          <div class="connect">
+            <ol class="connect__steps">
+              <li><b>Create your account</b><span>Add your reports, or start with sample data.</span></li>
+              <li><b>Paste one address into your agent</b><code>%SITE_URL%/mcp</code></li>
+              <li><b>Choose what it may see</b><span>Whose records, which kinds of data, and whether it may add readings. Change or remove it on Account.</span></li>
+            </ol>
+            <div class="connect__cta">
+              <a class="button button--primary" href="/signup">Create free account <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" /></svg></a>
+              <p>Account, Connected agents has the steps for each agent, and access tokens for agents that cannot sign in.</p>
+            </div>
+          </div>
+          <p class="agents__fine">Agents see summaries only, never your files or scan images, and they cannot book or pay for anything. The Gemini, Grok and Meta AI apps do not take connectors yet: copy a summary of your records from Account and paste it in. LotusPond is not affiliated with or endorsed by these companies; their names and logos are trademarks of their owners.</p>
         </div>
       </section>
 
@@ -283,6 +323,10 @@
             <details>
               <summary>Who can see my records?</summary>
               <div><p>Your records belong to your account, and every request for a profile’s data is checked against the account that is signed in. We do not sell health data, and we do not share it for advertising.</p></div>
+            </details>
+            <details>
+              <summary>Can I use LotusPond with ChatGPT, Claude or another AI?</summary>
+              <div><p>Yes. Add <code>%SITE_URL%/mcp</code> as a connector in Claude, ChatGPT (developer mode, where your plan offers it), Le Chat, Gemini CLI, Cursor, VS Code or any agent that speaks the Model Context Protocol. The agent opens a LotusPond sign-in, where you choose whose records it may see, which kinds of data, whether it may add readings, and for how long.</p><p>Every connection is listed on Account, with what it can see and when it was last used, and you can disconnect it at once. Anything an agent adds is marked with its name, and you can undo it.</p></div>
             </details>
             <details>
               <summary>Can I keep records for my children or parents?</summary>
