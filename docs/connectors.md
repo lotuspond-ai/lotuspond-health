@@ -45,9 +45,31 @@ A portal the person names by address is offered only where `typedPortals` allows
 
 `GET /v1/connectors` lists the operations and every connector, with whether this server runs it now. `?region=in` narrows the list to one data region. No sign-in is needed: it describes connectors, never connections, people or credentials. It answers with `Access-Control-Allow-Origin: *`, so documentation sites can read it. It is served even when the record agent is off, with every connector unavailable.
 
+## The organisation API
+
+The organisation side of LotusPond Health is in place, with no organisation operation live yet:
+
+- **Organisations and keys** live in the default database (`organisations`, `organisation_keys`, migration `0014`), never in a person's cell. A key looks like `lpk_…`. Only its SHA-256 is stored, and the key itself is shown once. Each key lists the operations it may call, and only organisation operations can be given.
+- **Making them**, on the server (the production image has the same commands, `node dist/index.js …`):
+
+  ```bash
+  npx tsx src/index.ts org:create "City Hospital" in
+  npx tsx src/index.ts org:key <organisation id> "Pilot" claims.status,preauth.submit   # or: all
+  npx tsx src/index.ts org:revoke <key id>
+  ```
+
+- **Calls.** Every call sends `Authorization: Bearer lpk_…`, with no cookies or browsers involved.
+  - `GET /v1/organisation`: who the key belongs to, and which operations it may call.
+  - `POST /v1/operations/{id}`: run an operation.
+- **Refusals.**
+  - An operation that runs only on a person's authority answers `403 wrong_authority`; `records.fetch` belongs to LotusPond Health.
+  - One outside the key's list answers `403 not_in_key`.
+  - A planned operation answers `501 operation_not_offered` until its first adapter is live.
+- **Audit.** Every call, allowed or refused, is recorded in `organisation_calls` with the organisation, the key, the operation and the outcome.
+
 ## Next
 
-1. **Organisations and API keys.** An `organisations` table in its own cell or tenant (never in a person's records), hashed API keys with scopes per operation, and an audit of every call.
-2. **The organisation API.** `/v1/connections` (an organisation's links to its systems, with sealed credentials and health status), and `/v1/operations/{id}` for running an operation. Calls are idempotent and asynchronous with webhooks, and writes go through an approvals queue. The same operations are served as MCP tools for organisations' agents.
+1. ~~Organisations and API keys~~: done (above).
+2. **Connections and running operations.** `/v1/connections` holds an organisation's links to its systems, with sealed credentials and health status. Operations become idempotent and asynchronous, with webhooks, and writes go through an approvals queue. The same operations are served as MCP tools for organisations' agents.
 3. **First adapters, with a pilot.** Either EHR write-back for one AI-scribe customer across two authorised HIS vendors, or claims status and pre-authorisation for one hospital, preferring NHCX where the payer is on it (`docs/abdm.md`; the plan in Notion).
 4. **LotusPond Link.** An organisation using the organisation API can ask a person to share records from their LotusPond Health account. The person approves in their consent centre and can revoke it there.

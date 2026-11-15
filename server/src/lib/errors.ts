@@ -1,6 +1,6 @@
 // Errors that map to an HTTP status and a message safe to show to the person using the app.
 export class HttpError extends Error {
-  readonly status: 400 | 401 | 403 | 404 | 409 | 413 | 415 | 422 | 429 | 500 | 503;
+  readonly status: 400 | 401 | 403 | 404 | 409 | 413 | 415 | 422 | 429 | 500 | 501 | 503;
   readonly code: string;
   /** Extra fields for the client, sent next to code and message (for example where to sign in instead). */
   readonly details?: Record<string, unknown>;

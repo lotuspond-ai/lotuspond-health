@@ -28,6 +28,7 @@ import { mcpRoutes } from './agents/mcp.ts';
 import { oauthRoutes, type OAuthOptions } from './agents/oauth.ts';
 import { recordOAuthRoutes, recordRoutes } from './records/routes.ts';
 import { connectorRoutes } from './connectors/routes.ts';
+import { organisationRoutes } from './connectors/organisation-routes.ts';
 import { ekaWebhookRoutes } from './records/abdm/webhook.ts';
 import { DEMO_PORTAL_PATH, type DemoPortal } from './records/demo-portal.ts';
 
@@ -189,6 +190,9 @@ export function createApp(input: DepsInput, opts: AppOptions = {}): Hono<AppEnv>
   app.route('/mcp', mcpRoutes(deps));
   // The connector core's public catalogue (docs/connectors.md); versioned, outside /api like /mcp.
   app.route('/v1/connectors', connectorRoutes(deps.records?.connectors ?? null));
+  // Health's organisation API: API keys, operations on an organisation's authority. Bodies are small.
+  app.use('/v1/operations/*', bodyLimit({ maxSize: 256 * 1024, onError: () => { throw new HttpError(413, 'too_large', 'This request is too large.'); } }));
+  app.route('/v1', organisationRoutes(deps.db));
   app.use('/oauth/*', bodyLimit({ maxSize: 64 * 1024, onError: c => c.json({ error: 'invalid_request', error_description: 'Request too large.' }, 413) }));
   app.route('/', oauthRoutes(deps, opts.oauth));
 

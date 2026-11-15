@@ -525,3 +525,42 @@ export type AssistantMessageRow = typeof assistantMessages.$inferSelect;
 export type WhatsAppLinkRow = typeof whatsappLinks.$inferSelect;
 export type RecordConnectionRow = typeof recordConnections.$inferSelect;
 export type RecordRunRow = typeof recordRuns.$inferSelect;
+
+/**
+ * Organisations that use the connector core on their own authority (Health's organisation API: healthcare startups, hospitals,
+ * clinics, insurers). Kept in the default database, never in a person's cell: an organisation's data and a
+ * person's records do not share tables (docs/connectors.md).
+ */
+export const organisations = pgTable('organisations', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  name: text('name').notNull(),
+  /** Where its data is held and its systems are reached from. */
+  region: text('region').$type<DataRegion>().notNull(),
+  createdAt: createdAt(),
+});
+
+/** An organisation's API key: only its SHA-256 is kept; the key is shown once when made. */
+export const organisationKeys = pgTable('organisation_keys', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  organisationId: uuid('organisation_id').notNull().references(() => organisations.id, { onDelete: 'cascade' }),
+  name: text('name').notNull(),
+  /** The key's first characters, to tell keys apart in lists and logs. */
+  prefix: text('prefix').notNull(),
+  keyHash: text('key_hash').notNull(),
+  /** Operations this key may call (connector core operation ids). */
+  operations: jsonb('operations').$type<string[]>().notNull(),
+  createdAt: createdAt(),
+  lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
+  revokedAt: timestamp('revoked_at', { withTimezone: true }),
+}, t => [uniqueIndex('organisation_keys_hash_key').on(t.keyHash), index('organisation_keys_org_idx').on(t.organisationId)]);
+
+/** Every call an organisation's key makes to an operation, allowed or refused. */
+export const organisationCalls = pgTable('organisation_calls', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  organisationId: uuid('organisation_id').notNull().references(() => organisations.id, { onDelete: 'cascade' }),
+  keyId: uuid('key_id').references(() => organisationKeys.id, { onDelete: 'set null' }),
+  operation: text('operation').notNull(),
+  /** done, refused (scope or authority), not_offered (planned operation), failed. */
+  outcome: text('outcome').$type<'done' | 'refused' | 'not_offered' | 'failed'>().notNull(),
+  at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
+}, t => [index('organisation_calls_org_idx').on(t.organisationId, t.at)]);
