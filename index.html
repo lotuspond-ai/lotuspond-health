@@ -1,7 +1,9 @@
 <!doctype html>
 <html lang="en">
   <head>
-    <!-- @include head -->
+    <!-- @include meta -->
+    <meta name="theme-color" content="#9caf88" />
+    <link rel="stylesheet" href="/src/site/home.css" />
     <title>LotusPond Health: your family’s health records, ready for any AI agent</title>
     <meta name="description" content="Your family’s health records from labs, hospitals, ABHA and your devices, in one place and ready for any AI agent you choose. Records are stored in your region and never sold." />
     <link rel="canonical" href="%SITE_URL%/" />
@@ -10,7 +12,7 @@
     <meta property="og:title" content="LotusPond Health: your family’s health records, ready for any AI agent" />
     <meta property="og:description" content="Bring your family’s reports in from labs, hospitals, ABHA and your devices, and use them with Claude, ChatGPT or any AI agent you choose. You decide who sees what." />
     <meta name="twitter:title" content="LotusPond Health: your family’s health records, ready for any AI agent" />
-    <meta name="twitter:description" content="Keep lab reports and scans for you and your family in one place, and see every result on the organ it relates to." />
+    <meta name="twitter:description" content="Bring your family’s reports in from labs, hospitals, ABHA and your devices, and use them with Claude, ChatGPT or any AI agent you choose. You decide who sees what." />
     <script type="application/ld+json">
       {
         "@context": "https://schema.org",
@@ -54,64 +56,74 @@
       }
     </script>
   </head>
-  <body>
-    <!-- @include header -->
+  <body class="home">
+    <!-- Drawn in the LotusPond design system (design-system/project; values in src/site/home.css): a sage field,
+         off-white sheets, one pine chapter, pine as the ink, and tomato spent once per view and never on sage.
+         On the field the main action is the ink button and the underline is off-white. The page runs no JavaScript. -->
+    <a class="home-skip" href="#main">Skip to content</a>
     <!-- @include agent-logos -->
-    <main id="main">
-      <section class="hero" aria-labelledby="hero-title">
-        <div class="wrap hero__copy">
-          <div>
-            <p class="eyebrow">Health records for families</p>
-            <h1 class="display" id="hero-title">Your family’s health records, <em>ready for any AI agent.</em></h1>
-          </div>
-          <div class="hero__side">
-            <p class="hero__lede">LotusPond brings your reports in from labs, hospitals, ABHA and your devices, keeps them for each person in your family, and lets Claude, ChatGPT or any agent you choose use them. You decide whose records each agent sees.</p>
-            <div class="hero__actions">
-              <a class="button button--primary" href="/signup">Create free account <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" /></svg></a>
-              <a class="button button--ghost" href="/login">Sign in</a>
-            </div>
-            <p class="hero__note"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></svg>Stored in your region and never sold. LotusPond explains results; it does not diagnose.</p>
-            <a class="hero__agents" href="#agents">
-              <span class="hero__agents-logos" aria-hidden="true"><svg><use href="#ag-claude" /></svg><svg><use href="#ag-openai" /></svg><svg><use href="#ag-gemini" /></svg><svg class="mark-exact"><use href="#ag-grok" /></svg><svg><use href="#ag-muse" /></svg></span>
-              <span><b>Connect your AI.</b> Claude, ChatGPT, Gemini, Grok, Muse and other agents can read the records you choose.</span>
-            </a>
-          </div>
+    <header class="home-nav">
+      <div class="home-wrap home-nav-in">
+        <a class="home-wordmark" href="/" aria-label="LotusPond Health home">LotusPond <b>Health</b><i aria-hidden="true"></i></a>
+        <nav class="home-nav-links" aria-label="Main">
+          <a href="#agents">Your AI</a>
+          <a href="#features">What it does</a>
+          <a href="#how">How it works</a>
+          <a href="#labs">Find a lab</a>
+          <a href="#privacy">Privacy</a>
+          <a href="#faq">FAQ</a>
+        </nav>
+        <div class="home-nav-actions">
+          <a class="home-btn home-btn-quiet home-btn-sm" href="/login">Sign in</a>
+          <a class="home-btn home-btn-ink home-btn-sm" href="/signup">Create free account</a>
         </div>
-        <div class="hero__visual">
-          <div class="wrap">
-            <div class="hero__stage">
-              <figure class="frame">
-                <div class="frame__bar" aria-hidden="true"><i></i><i></i><i></i><span>health.lotuspond.ai/app</span></div>
-                <img src="/site/body-map-1600.webp" srcset="/site/body-map-960.webp 960w, /site/body-map-1600.webp 1600w, /site/body-map-2160.webp 2160w" sizes="(min-width: 1280px) 1180px, 92vw" width="1600" height="1000" fetchpriority="high"
-                  alt="The LotusPond body map: a figure of the body with dots on the brain, thyroid, heart, liver, spleen and bone marrow where results relate, beside a list of results worth a closer look." />
-              </figure>
-              <figure class="phone">
-                <img src="/site/phone-body-390.webp" srcset="/site/phone-body-390.webp 390w, /site/phone-body-585.webp 585w" sizes="(min-width: 1300px) 248px, (min-width: 640px) 19vw, 112px" width="390" height="844" loading="lazy" decoding="async"
-                  alt="LotusPond on a phone: the body map with dots on the organs where results relate." />
-              </figure>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="hero home-hero" aria-labelledby="hero-title">
+        <div class="home-wrap">
+          <div class="home-hero-grid">
+            <div>
+              <p class="home-kicker"><b>LotusPond Health</b> <span>Health records for families</span></p>
+              <h1 class="home-d-xl" id="hero-title">Your family’s health records, ready for any AI <span class="home-u home-u-draw">agent.<svg viewBox="0 0 200 20" preserveAspectRatio="none" aria-hidden="true" focusable="false"><path pathLength="1" d="M3 12C38 4 86 17 128 9s52-3 69 2" /></svg></span></h1>
             </div>
-            <ul class="formats" aria-label="Where LotusPond brings records in from">
-              <li>Brings records in from</li>
-              <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V7z" /><path d="M14 3v4h4M9 13h6M9 17h4" /></svg>Labs and hospitals</li>
-              <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2" /><path d="M4 10h16M10 4v16" /></svg>ABHA and DigiLocker</li>
-              <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8" /><path d="M12 4v16M4 12h16" opacity=".5" /><circle cx="12" cy="12" r="3" /></svg>Devices and wearables</li>
-              <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2" /><circle cx="9" cy="9.5" r="1.6" /><path d="M20 15l-4.5-4.5L6 20" /></svg>Reports you upload</li>
-            </ul>
+            <div class="home-hero-side">
+              <p class="home-lede">LotusPond brings your reports in from labs, hospitals, ABHA and your devices, keeps them for each person in your family, and lets Claude, ChatGPT or any agent you choose use them. You decide whose records each agent sees.</p>
+              <div class="home-cta">
+                <a class="home-btn home-btn-ink" href="/signup">Create free account <span aria-hidden="true">→</span></a>
+                <a class="home-btn home-btn-light" href="/login">Sign in</a>
+              </div>
+              <p class="home-note">Stored in your region and never sold. LotusPond explains results; it does not diagnose.</p>
+              <a class="home-agents-link" href="#agents">
+                <span class="home-agents-logos" aria-hidden="true"><svg><use href="#ag-claude" /></svg><svg><use href="#ag-openai" /></svg><svg><use href="#ag-gemini" /></svg><svg class="mark-exact"><use href="#ag-grok" /></svg><svg><use href="#ag-muse" /></svg></span>
+                <span><b>Connect your AI.</b> Claude, ChatGPT, Gemini, Grok, Muse and other agents can read the records you choose.</span>
+              </a>
+            </div>
           </div>
+          <figure class="home-product">
+            <div class="home-window">
+              <div class="home-window-bar" aria-hidden="true"><i></i><i></i><i></i><span>health.lotuspond.ai/app</span></div>
+              <img src="/site/body-map-1600.webp" srcset="/site/body-map-960.webp 960w, /site/body-map-1600.webp 1600w, /site/body-map-2160.webp 2160w" sizes="(min-width: 1280px) 1200px, 92vw" width="1600" height="1000" fetchpriority="high"
+                alt="The LotusPond body map: a figure of the body with dots on the brain, thyroid, heart, liver, spleen and bone marrow where results relate, beside a list of results worth a closer look." />
+            </div>
+            <div class="home-phone">
+              <img src="/site/phone-body-390.webp" srcset="/site/phone-body-390.webp 390w, /site/phone-body-585.webp 585w" sizes="(min-width: 1300px) 232px, (min-width: 640px) 18vw, 104px" width="390" height="844" loading="lazy" decoding="async"
+                alt="LotusPond on a phone: the body map with dots on the organs where results relate." />
+            </div>
+            <figcaption>The body map in a browser and on a phone, showing sample data.</figcaption>
+          </figure>
         </div>
       </section>
 
-      <section class="section agents" id="agents" aria-labelledby="agents-title">
-        <div class="wrap">
-          <div class="section__head">
-            <div>
-              <p class="eyebrow">Works with your AI</p>
-              <h2 class="title" id="agents-title">Ask your own AI <em>about your health.</em></h2>
-            </div>
-            <p>Connect the assistant you already use. It reads the records you choose (results, trends, conditions and medications) and explains them in your words. You can disconnect it at any time.</p>
+      <section class="home-sheet" id="agents" aria-labelledby="agents-title">
+        <div class="home-wrap">
+          <div class="home-head">
+            <h2 class="home-d-lg" id="agents-title">Ask your own AI about your <span class="home-u">health.<svg viewBox="0 0 200 20" preserveAspectRatio="none" aria-hidden="true" focusable="false"><path pathLength="1" d="M3 12C38 4 86 17 128 9s52-3 69 2" /></svg></span></h2>
+            <p class="home-lede">Connect the assistant you already use. It reads the records you choose (results, trends, conditions and medications) and explains them in your words. You can disconnect it at any time.</p>
           </div>
           <!-- Each entry and its steps follow shared/agent-directory.ts; keep the two in step. -->
-          <ul class="agent-grid" aria-label="AI agents you can connect">
+          <ul class="home-agents" aria-label="AI agents you can connect">
             <li><svg aria-hidden="true"><use href="#ag-claude" /></svg><b>Claude</b><span>Settings, Connectors, Add custom connector</span></li>
             <li><svg aria-hidden="true"><use href="#ag-openai" /></svg><b>ChatGPT</b><span>A developer mode connector, on plans that offer one</span></li>
             <li><svg aria-hidden="true"><use href="#ag-gemini" /></svg><b>Gemini</b><span>Gemini CLI connects directly; in the Gemini app, paste a summary</span></li>
@@ -122,154 +134,153 @@
             <li><svg aria-hidden="true"><use href="#ag-copilot" /></svg><b>GitHub Copilot in VS Code</b><span>MCP: Add Server, then HTTP</span></li>
             <li><svg aria-hidden="true"><use href="#ag-cursor" /></svg><b>Cursor</b><span>Settings, MCP, Add new MCP server</span></li>
             <li><svg aria-hidden="true"><use href="#ag-windsurf" /></svg><b>Windsurf</b><span>Add the address to its MCP settings</span></li>
-            <li class="agent-grid__wide"><svg aria-hidden="true"><use href="#ag-mcp" /></svg><b>Any MCP client</b><span>Claude Code, Codex CLI, Grok Build, Muse Code, Goose, Zed and your own agents</span></li>
+            <li class="home-agents-wide"><svg aria-hidden="true"><use href="#ag-mcp" /></svg><b>Any MCP client</b><span>Claude Code, Codex CLI, Grok Build, Muse Code, Goose, Zed and your own agents</span></li>
           </ul>
-          <div class="connect">
-            <ol class="connect__steps">
-              <li><b>Create your account</b><span>Add your reports, or start with sample data.</span></li>
-              <li><b>Paste one address into your agent</b><code>%SITE_URL%/mcp</code></li>
-              <li><b>Choose what it may see</b><span>Whose records, which kinds of data, and whether it may add readings. Change or remove it on Account.</span></li>
+          <div class="home-connect">
+            <ol class="home-steps home-connect-steps">
+              <li><h3 class="home-d-sm">Create your account</h3><p>Add your reports, or start with sample data.</p></li>
+              <li><h3 class="home-d-sm">Paste one address into your agent</h3><code>%SITE_URL%/mcp</code></li>
+              <li><h3 class="home-d-sm">Choose what it may see</h3><p>Whose records, which kinds of data, and whether it may add readings. Change or remove it on Account.</p></li>
             </ol>
-            <div class="connect__cta">
-              <a class="button button--primary" href="/signup">Create free account <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" /></svg></a>
+            <div class="home-connect-cta">
+              <a class="home-btn home-btn-ink" href="/signup">Create free account <span aria-hidden="true">→</span></a>
               <p>Account, Connected agents has the steps for each agent, and access tokens for agents that cannot sign in.</p>
             </div>
           </div>
-          <p class="agents__fine">Agents see summaries only, never your files or scan images, and they cannot book or pay for anything. Grok Bot, Muse and agents that cannot sign in use an access token made on Account. The Gemini app and Meta AI do not take connectors yet: copy a summary of your records from Account and paste it in. LotusPond is not affiliated with or endorsed by these companies; their names and logos are trademarks of their owners.</p>
+          <p class="home-fine home-agents-fine">Agents see summaries only, never your files or scan images, and they cannot book or pay for anything. Grok Bot, Muse and agents that cannot sign in use an access token made on Account. The Gemini app and Meta AI do not take connectors yet: copy a summary of your records from Account and paste it in. LotusPond is not affiliated with or endorsed by these companies; their names and logos are trademarks of their owners.</p>
         </div>
       </section>
 
-      <section class="section" id="features" aria-labelledby="features-title">
-        <div class="wrap">
-          <div class="section__head">
-            <div>
-              <p class="eyebrow">What it does</p>
-              <h2 class="title" id="features-title">Your records, <em>clear and complete.</em></h2>
-            </div>
-            <p>Every report becomes results you can follow over time, for each person in your family, with the original kept. A simple map of the body shows where each result belongs.</p>
+      <section class="home-sheet" id="features" aria-labelledby="features-title">
+        <div class="home-wrap">
+          <div class="home-head">
+            <h2 class="home-d-lg" id="features-title">Your records, clear and complete.</h2>
+            <p class="home-lede">Every report becomes results you can follow over time, for each person in your family, with the original kept. A simple map of the body shows where each result belongs.</p>
           </div>
-          <div class="tiles">
-            <article class="tile tile--organ">
-              <div class="tile__media">
+          <div class="home-tiles">
+            <article class="home-tile home-tile-organ">
+              <div class="home-tile-media">
                 <img src="/site/organ-heart-1026.webp" srcset="/site/organ-heart-640.webp 640w, /site/organ-heart-1026.webp 1026w" sizes="(min-width: 900px) 640px, 92vw" width="1026" height="1175" loading="lazy" decoding="async"
                   alt="The heart opened on the body map, with labels for the aortic arch, pulmonary trunk, atria, ventricles and coronary arteries." />
               </div>
-              <div class="tile__text">
-                <h3>Open any organ</h3>
+              <div class="home-tile-text">
+                <h3 class="home-d-sm">Open any organ</h3>
                 <p>Open the heart, lungs, kidneys or brain for a close-up with labelled landmarks. Results that relate to the organ sit beside it.</p>
               </div>
             </article>
-            <article class="tile tile--history">
-              <div class="tile__media">
+            <article class="home-tile home-tile-history">
+              <div class="home-tile-media">
                 <img src="/site/marker-history-780.webp" srcset="/site/marker-history-520.webp 520w, /site/marker-history-780.webp 780w" sizes="(min-width: 900px) 460px, 92vw" width="780" height="776" loading="lazy" decoding="async"
                   alt="The history of LDL cholesterol: the latest value, its place in the reference range, and a chart of values over time." />
               </div>
-              <div class="tile__text">
-                <h3>Each marker over time</h3>
+              <div class="home-tile-text">
+                <h3 class="home-d-sm">Each marker over time</h3>
                 <p>See where a value sits in its reference range and how it has moved across reports, with a short note on what it measures.</p>
               </div>
             </article>
-            <article class="tile tile--files">
-              <div class="tile__media">
+            <article class="home-tile home-tile-files">
+              <div class="home-tile-media">
                 <img src="/site/files-1240.webp" srcset="/site/files-720.webp 720w, /site/files-1240.webp 1240w" sizes="(min-width: 900px) 460px, 92vw" width="1240" height="420" loading="lazy" decoding="async"
                   alt="The Files page listing an uploaded lab report, a results export and a chest x-ray, each with options to open, download or delete." />
               </div>
-              <div class="tile__text">
-                <h3>Your originals, kept</h3>
+              <div class="home-tile-text">
+                <h3 class="home-d-sm">Your originals, kept</h3>
                 <p>Every report and scan is stored with the values read from it, ready to open, download or delete.</p>
               </div>
             </article>
-            <article class="tile tile--family">
-              <div class="tile__text">
-                <h3>One account for the whole family</h3>
+            <article class="home-tile home-tile-family">
+              <div class="home-tile-text">
+                <h3 class="home-d-md">One account for the whole family</h3>
                 <p>Add a profile for each person you care for, from children to parents. Each person’s records stay separate, and you switch between them from the menu.</p>
               </div>
-              <div class="tile__media">
+              <div class="home-tile-media">
                 <img src="/site/family-513.webp" srcset="/site/family-400.webp 400w, /site/family-513.webp 513w" sizes="342px" width="513" height="669" loading="lazy" decoding="async"
                   alt="The profile menu with two people, Asha Rao and her daughter Mira, and an option to add a family member." />
               </div>
             </article>
           </div>
+          <p class="home-caption">Screens from the app, showing sample data.</p>
         </div>
       </section>
 
-      <section class="section how" id="how" aria-labelledby="how-title">
-        <div class="wrap">
-          <div class="section__head">
-            <div>
-              <p class="eyebrow">How it works</p>
-              <h2 class="title" id="how-title">Your records, <em>with any agent.</em></h2>
-            </div>
-            <p>Nothing to install. LotusPond runs in your browser and in the iPhone and Android apps.</p>
+      <section class="home-band" aria-labelledby="formats-title">
+        <div class="home-wrap home-band-grid">
+          <div>
+            <h2 class="home-d-lg" id="formats-title">It brings in the records you already have.</h2>
+            <p class="home-lede">Connect a lab, hospital, ABHA, DigiLocker or a device, and LotusPond fetches your reports. Or upload a PDF or photo: every value is shown for you to check before it is saved, and the original is kept with your records.</p>
+            <ul class="home-chips" aria-label="Where LotusPond brings records in from">
+              <li>Labs and hospitals</li>
+              <li>ABHA and DigiLocker</li>
+              <li>Devices and wearables</li>
+              <li>Reports you upload</li>
+            </ul>
           </div>
-          <ol class="steps">
-            <li class="step">
-              <span class="step__num" aria-hidden="true">1</span>
-              <span class="step__icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="8" r="3.6" /><path d="M3.5 20c1.1-3.6 3.6-5.4 6.5-5.4 1.4 0 2.7.4 3.8 1.2M18 14v6M15 17h6" /></svg></span>
-              <h3>Bring in your records</h3>
+          <img class="home-illo" src="/src/site/illustrations/records-into-one.svg" alt="" width="480" height="360" loading="lazy" decoding="async" />
+        </div>
+      </section>
+
+      <section class="home-sheet" id="how" aria-labelledby="how-title">
+        <div class="home-wrap">
+          <div class="home-head">
+            <h2 class="home-d-lg" id="how-title">Your records, with any agent.</h2>
+            <p class="home-lede">Nothing to install. LotusPond runs in your browser and in the iPhone and Android apps.</p>
+          </div>
+          <ol class="home-steps">
+            <li>
+              <h3 class="home-d-sm">Bring in your records</h3>
               <p>Connect a lab, hospital, ABHA, DigiLocker or a device, and LotusPond fetches your reports. Or upload a PDF or photo; you check every value before it is saved.</p>
             </li>
-            <li class="step">
-              <span class="step__num" aria-hidden="true">2</span>
-              <span class="step__icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V4M7.5 8.5 12 4l4.5 4.5M4 15v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4" /></svg></span>
-              <h3>Use them with your AI</h3>
+            <li>
+              <h3 class="home-d-sm">Use them with your AI</h3>
               <p>Add LotusPond to Claude, ChatGPT or any agent that speaks MCP, with one address. Ask about your results, add readings, or plan a test.</p>
             </li>
-            <li class="step">
-              <span class="step__num" aria-hidden="true">3</span>
-              <span class="step__icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="6" r="3" /><path d="M5.5 21v-4.5a6.5 6.5 0 0 1 13 0V21" /><circle cx="14" cy="16" r="1.8" fill="currentColor" stroke="none" /></svg></span>
-              <h3>Stay in control</h3>
+            <li>
+              <h3 class="home-d-sm">Stay in control</h3>
               <p>Choose whose records each agent sees, which kinds, and for how long. Every agent read and write shows in your activity, and you can disconnect at once.</p>
             </li>
           </ol>
         </div>
       </section>
 
-      <section class="section" id="labs" aria-labelledby="labs-title">
-        <div class="wrap labs">
-          <div class="labs__copy">
-            <p class="eyebrow">Labs near you</p>
-            <h2 class="title" id="labs-title">Find a lab <em>near you.</em></h2>
-            <p class="labs__lede">Enter an area or postcode to see where you can get tested. Partner labs are listed first, starting in India, followed by diagnostic labs, imaging centres and hospitals nearby.</p>
-            <ul class="ticks">
-              <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7" /></svg><span><b>Partner labs first.</b> Starting in India, with the tests they offer, home collection and booking.</span></li>
-              <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7" /></svg><span><b>Public listings nearby.</b> Diagnostic labs, imaging centres and hospitals, from OpenStreetMap.</span></li>
-              <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7" /></svg><span><b>Directions in one tap.</b> Distance, phone and opening hours, with a route in your maps app.</span></li>
+      <section class="home-sheet" id="labs" aria-labelledby="labs-title">
+        <div class="home-wrap home-labs">
+          <div>
+            <h2 class="home-d-lg" id="labs-title">Find a lab near you.</h2>
+            <p class="home-lede">Enter an area or postcode to see where you can get tested. Partner labs are listed first, starting in India, followed by diagnostic labs, imaging centres and hospitals nearby.</p>
+            <ul class="home-points">
+              <li><b>Partner labs first.</b> Starting in India, with the tests they offer, home collection and booking.</li>
+              <li><b>Public listings nearby.</b> Diagnostic labs, imaging centres and hospitals, from OpenStreetMap.</li>
+              <li><b>Directions in one tap.</b> Distance, phone and opening hours, with a route in your maps app.</li>
             </ul>
-            <div class="hero__actions">
-              <a class="button button--primary" href="/app#labs">Find a lab near you</a>
+            <div class="home-cta">
+              <a class="home-btn home-btn-accent" href="/app#labs">Find a lab near you <span aria-hidden="true">→</span></a>
             </div>
-            <p class="labs__fine">Searches go through our server, which rounds your location to about 1 km before it looks up public listings.</p>
+            <p class="home-fine">Searches go through our server, which rounds your location to about 1 km before it looks up public listings.</p>
           </div>
-          <figure class="finder" role="img" aria-label="Illustration of the lab finder: a map with pins around your location, and a list that starts with a partner lab, followed by a diagnostic lab, an imaging centre and a hospital.">
-            <svg class="finder__map" viewBox="0 0 640 560" aria-hidden="true" focusable="false">
-              <rect width="640" height="560" fill="#dfe9e5" />
-              <path d="M-20 420c90-30 150-10 230-50s120-120 220-130 160 30 230 10v330H-20z" fill="#cfe0da" />
-              <path d="M470 -10c-20 70 10 120-30 180s-120 70-130 150 60 120 40 250" fill="none" stroke="#b9d3dc" stroke-width="30" stroke-linecap="round" />
-              <ellipse cx="150" cy="190" rx="90" ry="60" fill="#cde3d3" />
-              <ellipse cx="540" cy="430" rx="80" ry="54" fill="#cde3d3" />
-              <g fill="none" stroke="#f8fbfa" stroke-linecap="round">
+          <figure class="home-finder" role="img" aria-label="Illustration of the lab finder: a map with pins around your location, and a list that starts with a partner lab, followed by a diagnostic lab, an imaging centre and a hospital.">
+            <svg class="home-finder-map" viewBox="0 0 640 560" aria-hidden="true" focusable="false">
+              <rect width="640" height="560" fill="#eaf0e3" />
+              <path d="M-20 420c90-30 150-10 230-50s120-120 220-130 160 30 230 10v330H-20z" fill="#d5dfca" />
+              <path d="M470 -10c-20 70 10 120-30 180s-120 70-130 150 60 120 40 250" fill="none" stroke="#b9c7a9" stroke-width="30" stroke-linecap="round" />
+              <ellipse cx="150" cy="190" rx="90" ry="60" fill="#d5dfca" />
+              <ellipse cx="540" cy="430" rx="80" ry="54" fill="#b9c7a9" />
+              <g fill="none" stroke="#ffffff" stroke-linecap="round">
                 <path d="M-10 300h660M-10 150h660M210 -10v580M400 -10v580" stroke-width="16" />
                 <path d="M-10 80l300 120 360 60M90 -10l60 580M520 -10l-40 580M-10 470h660M300 -10l-20 580" stroke-width="7" />
               </g>
-              <g>
-                <circle class="you-ring" cx="300" cy="300" r="46" fill="#5b70c9" opacity=".25" />
-                <circle cx="300" cy="300" r="10" fill="#5b70c9" stroke="#fff" stroke-width="4" />
+              <circle cx="300" cy="300" r="40" fill="#18211b" opacity=".12" />
+              <circle cx="300" cy="300" r="10" fill="#18211b" stroke="#f7f5ef" stroke-width="4" />
+              <g stroke="#f7f5ef" stroke-width="3">
+                <path d="M372 238c0-11 9-20 20-20s20 9 20 20c0 15-20 32-20 32s-20-17-20-32z" fill="#55694a" />
+                <path d="M196 352c0-9 7-16 16-16s16 7 16 16c0 12-16 26-16 26s-16-14-16-26z" fill="#18211b" />
+                <path d="M436 372c0-9 7-16 16-16s16 7 16 16c0 12-16 26-16 26s-16-14-16-26z" fill="#18211b" />
+                <path d="M120 236c0-9 7-16 16-16s16 7 16 16c0 12-16 26-16 26s-16-14-16-26z" fill="#18211b" />
+                <path d="M510 174c0-9 7-16 16-16s16 7 16 16c0 12-16 26-16 26s-16-14-16-26z" fill="#18211b" />
               </g>
-              <g stroke="#fff" stroke-width="3">
-                <path d="M372 238c0-11 9-20 20-20s20 9 20 20c0 15-20 32-20 32s-20-17-20-32z" fill="#b9506d" />
-                <path d="M196 352c0-9 7-16 16-16s16 7 16 16c0 12-16 26-16 26s-16-14-16-26z" fill="#12353a" />
-                <path d="M436 372c0-9 7-16 16-16s16 7 16 16c0 12-16 26-16 26s-16-14-16-26z" fill="#12353a" />
-                <path d="M120 236c0-9 7-16 16-16s16 7 16 16c0 12-16 26-16 26s-16-14-16-26z" fill="#12353a" />
-                <path d="M510 174c0-9 7-16 16-16s16 7 16 16c0 12-16 26-16 26s-16-14-16-26z" fill="#12353a" />
-              </g>
-              <circle cx="392" cy="238" r="6" fill="#fff" />
+              <circle cx="392" cy="238" r="6" fill="#f7f5ef" />
             </svg>
-            <div class="finder__search" aria-hidden="true">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7-6.2-7-12a7 7 0 0 1 14 0c0 5.8-7 12-7 12z" /><circle cx="12" cy="9" r="2.5" /></svg>
-              <span><b>Near you</b> · within 5 km</span>
-            </div>
-            <ul class="finder__list" aria-hidden="true">
+            <div class="home-finder-search" aria-hidden="true"><b>Near you</b> · within 5 km</div>
+            <ul class="home-finder-list" aria-hidden="true">
               <li class="is-partner"><i></i><b>Partner lab</b><em>0.6 km</em><small>Home collection · Book a test</small></li>
               <li><i></i><b>Diagnostic lab</b><em>1.2 km</em><small>Blood tests · Directions</small></li>
               <li><i></i><b>Imaging centre</b><em>1.9 km</em><small>X-ray and ultrasound · Directions</small></li>
@@ -279,38 +290,37 @@
         </div>
       </section>
 
-      <section class="section dark" id="privacy" aria-labelledby="privacy-title">
-        <div class="wrap">
-          <div class="section__head">
-            <div>
-              <p class="eyebrow">Privacy and availability</p>
-              <h2 class="title" id="privacy-title">Your records stay <em>in your region.</em></h2>
-            </div>
-            <p>Your country of residence decides where your records are kept. Each region has its own database and file storage, and sign-up tells you which one holds yours.</p>
+      <section class="home-sheet home-deep" id="privacy" aria-labelledby="privacy-title">
+        <div class="home-wrap">
+          <div class="home-head">
+            <h2 class="home-d-lg" id="privacy-title">Your records stay in your <span class="home-u">region.<svg viewBox="0 0 200 20" preserveAspectRatio="none" aria-hidden="true" focusable="false"><path pathLength="1" d="M3 12C38 4 86 17 128 9s52-3 69 2" /></svg></span></h2>
+            <p class="home-lede">Your country of residence decides where your records are kept. Each region has its own database and file storage, and sign-up tells you which one holds yours.</p>
           </div>
-          <ul class="regions"><!-- @regions region-cards -->
+          <div class="home-trust">
+            <img class="home-illo" src="/src/site/illustrations/records-in-hand.svg" alt="" width="480" height="360" loading="lazy" decoding="async" />
+            <ul class="home-four">
+              <li><h3 class="home-d-sm">Nothing shared or sold</h3><p>We do not sell health data or share it for advertising.</p></li>
+              <li><h3 class="home-d-sm">No ads or trackers</h3><p>No advertising, and no third-party trackers on our pages or in the app.</p></li>
+              <li><h3 class="home-d-sm">One cookie</h3><p>A single cookie keeps you signed in. There are no tracking cookies.</p></li>
+              <li><h3 class="home-d-sm">Export or delete</h3><p>Download a profile as JSON, or delete a profile or your whole account, at any time.</p></li>
+            </ul>
+          </div>
+          <ul class="home-regions"><!-- @regions region-cards -->
           </ul>
-          <ul class="promises">
-            <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7 3v5c0 4.6-3 8.4-7 10-4-1.6-7-5.4-7-10V6z" /><path d="M9 12l2 2 4-4" /></svg><b>Nothing shared or sold</b><span>We do not sell health data or share it for advertising.</span></li>
-            <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3l18 18M10.6 5.6A9.8 9.8 0 0 1 12 5.5c6 0 9.5 6.5 9.5 6.5a17 17 0 0 1-3 3.8M6.2 6.9C3.9 8.6 2.5 12 2.5 12S6 18.5 12 18.5c1.6 0 3-.4 4.2-1" /><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2" /></svg><b>No ads or trackers</b><span>No advertising, and no third-party trackers on our pages or in the app.</span></li>
-            <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><circle cx="9" cy="9.5" r="1" fill="currentColor" /><circle cx="14.5" cy="14" r="1.2" fill="currentColor" /><circle cx="9.5" cy="15" r=".8" fill="currentColor" /></svg><b>One cookie</b><span>A single cookie keeps you signed in. There are no tracking cookies.</span></li>
-            <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M4 20h16" /></svg><b>Export or delete</b><span>Download a profile as JSON, or delete a profile or your whole account, at any time.</span></li>
-          </ul>
-          <div class="availability">
+          <div class="home-availability">
             <p><b>Open in <!-- @regions available-count --> countries and territories.</b> Sign-up is not offered yet in <!-- @regions unavailable-names -->, because of local data rules or restrictions.</p>
-            <a class="arrow-link" href="/trust/#availability"><span>Where and why</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" /></svg></a>
+            <a class="home-btn home-btn-light" href="/trust/#availability">Where and why <span aria-hidden="true">→</span></a>
           </div>
         </div>
       </section>
 
-      <section class="section" id="faq" aria-labelledby="faq-title">
-        <div class="wrap faq">
-          <div class="faq__head">
-            <p class="eyebrow">FAQ</p>
-            <h2 class="title" id="faq-title">Questions, <em>answered.</em></h2>
-            <p>More detail is in the <a class="link" href="/privacy/">Privacy Policy</a> and on the <a class="link" href="/trust/">Trust and compliance</a> page.</p>
+      <section class="home-sheet" id="faq" aria-labelledby="faq-title">
+        <div class="home-wrap">
+          <div class="home-head">
+            <h2 class="home-d-lg" id="faq-title">Questions, answered.</h2>
+            <p class="home-lede">More detail is in the <a class="home-link" href="/privacy/">Privacy Policy</a> and on the <a class="home-link" href="/trust/">Trust and compliance</a> page.</p>
           </div>
-          <div class="faq__list">
+          <div class="home-faq">
             <details>
               <summary>Does LotusPond diagnose conditions?</summary>
               <div><p>No. LotusPond explains results; it does not diagnose. It shows each value next to its reference range with a short note in plain language.</p><p>A single result outside its range is common and is not a diagnosis. Talk to a doctor about what your results mean for you.</p></div>
@@ -325,7 +335,7 @@
             </details>
             <details>
               <summary>Where are my records stored?</summary>
-              <div><p>In the region that serves your country: India, Europe, the United States, or our international region. Sign-up shows the region before you agree, and the <a class="link" href="/trust/#storage">Trust page</a> lists which countries go where.</p></div>
+              <div><p>In the region that serves your country: India, Europe, the United States, or our international region. Sign-up shows the region before you agree, and the <a class="home-link" href="/trust/#storage">Trust page</a> lists which countries go where.</p></div>
             </details>
             <details>
               <summary>Who can see my records?</summary>
@@ -341,24 +351,62 @@
             </details>
             <details>
               <summary>How do I delete my data?</summary>
-              <div><p>In Profile details you can export a profile as JSON, delete its records or remove the profile. In Account and sign-in you can delete your whole account with everything in it. The <a class="link" href="/privacy/#retention">Privacy Policy</a> explains how deletion works.</p></div>
+              <div><p>In Profile details you can export a profile as JSON, delete its records or remove the profile. In Account and sign-in you can delete your whole account with everything in it. The <a class="home-link" href="/privacy/#retention">Privacy Policy</a> explains how deletion works.</p></div>
             </details>
           </div>
         </div>
       </section>
 
-      <section class="closing" aria-labelledby="closing-title">
-        <div class="wrap">
-          <h2 class="title" id="closing-title">Start your record. <em>Use it anywhere.</em></h2>
-          <p>Create a free account, bring in your first report, and connect the agent you already use.</p>
-          <div class="hero__actions">
-            <a class="button button--primary" href="/signup">Create free account <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" /></svg></a>
-            <a class="button button--ghost" href="/login">Sign in</a>
+      <section class="home-close" aria-labelledby="closing-title">
+        <div class="home-wrap">
+          <h2 class="home-d-xl" id="closing-title">Start your record. Use it <span class="home-u">anywhere.<svg viewBox="0 0 200 20" preserveAspectRatio="none" aria-hidden="true" focusable="false"><path pathLength="1" d="M3 12C38 4 86 17 128 9s52-3 69 2" /></svg></span></h2>
+          <p class="home-lede">Create a free account, bring in your first report, and connect the agent you already use.</p>
+          <div class="home-cta">
+            <a class="home-btn home-btn-ink" href="/signup">Create free account <span aria-hidden="true">→</span></a>
+            <a class="home-btn home-btn-light" href="/login">Sign in</a>
           </div>
+          <img class="home-illo home-pano" src="/src/site/illustrations/health-journey.svg" alt="" width="1200" height="300" loading="lazy" decoding="async" />
         </div>
-        <!-- @include pads -->
       </section>
     </main>
-    <!-- @include footer -->
+
+    <footer class="home-footer">
+      <div class="home-wrap home-foot">
+        <div class="home-foot-about">
+          <a class="home-wordmark" href="/" aria-label="LotusPond Health home">LotusPond <b>Health</b><i aria-hidden="true"></i></a>
+          <p>Your family’s health records, from labs, hospitals, ABHA and your devices, ready for any AI agent you choose. LotusPond explains results; it does not diagnose.</p>
+          <p>A product of <a href="https://lotuspond.ai" rel="noopener">LotusPond</a></p>
+        </div>
+        <nav aria-label="Product">
+          <h2 class="home-label">Product</h2>
+          <ul>
+            <li><a href="/signup">Create free account</a></li>
+            <li><a href="/login">Sign in</a></li>
+            <li><a href="#agents">Connect your AI</a></li>
+            <li><a href="#how">How it works</a></li>
+            <li><a href="#labs">Find a lab</a></li>
+            <li><a href="#faq">FAQ</a></li>
+          </ul>
+        </nav>
+        <nav aria-label="Legal">
+          <h2 class="home-label">Legal</h2>
+          <ul>
+            <li><a href="/privacy/">Privacy Policy</a></li>
+            <li><a href="/privacy/#consumer-health-data">Consumer Health Data Privacy Policy</a></li>
+            <li><a href="/terms/">Terms of Use</a></li>
+            <li><a href="/trust/">Trust and compliance</a></li>
+          </ul>
+        </nav>
+        <div>
+          <h2 class="home-label">Contact</h2>
+          <p><a href="/privacy/#contact">Privacy, support and grievance contacts</a></p>
+          <p>Not for emergencies. If you feel unwell, contact a doctor or your local emergency number.</p>
+        </div>
+      </div>
+      <div class="home-wrap home-foot-base">
+        <p>© 2026 LotusPond. LotusPond Health is a LotusPond product.</p>
+        <p><a href="https://lotuspond.ai" rel="noopener">lotuspond.ai</a></p>
+      </div>
+    </footer>
   </body>
 </html>
