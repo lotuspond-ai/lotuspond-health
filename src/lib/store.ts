@@ -30,7 +30,8 @@ export interface HealthState {
   /** Load a profile's records (null clears everything). */
   openProfile: (profileId: string | null) => Promise<void>;
   /** Save reviewed results and scans. `files` are the originals the person chose; report files are kept too. */
-  addResult: (r: ParseResult, files?: File[]) => Promise<AddSummary>;
+  /** `stored`: files already saved (file name → document id), whose results are linked to them instead of uploading again. */
+  addResult: (r: ParseResult, files?: File[], stored?: Record<string, string>) => Promise<AddSummary>;
   updateMeasurement: (id: string, patch: Partial<Measurement>) => void;
   removeMeasurement: (id: string) => void;
   updateScan: (id: string, patch: ScanPatch) => void;
@@ -153,7 +154,7 @@ export const useHealth = create<HealthState>()((set, get) => {
       }
     },
 
-    addResult: async (r, files = []) => {
+    addResult: async (r, files = [], stored = {}) => {
       const { measurements, scans, profileId } = get();
       const newMs = onlyNew(measurements, r.measurements.map(refreshMeasurement), measurementKey);
       const newScans = onlyNew(scans, r.scans, scanKey);
@@ -179,7 +180,7 @@ export const useHealth = create<HealthState>()((set, get) => {
           scanInputs.push({ ...withoutId(s), blobKey: doc.id });
         }
         // Keep each report file that new results were read from.
-        const docBySource = new Map<string, string>();
+        const docBySource = new Map<string, string>(Object.entries(stored));
         const sources = new Set(newMs.map(m => m.sourceFile));
         const scanFiles = new Set(newScans.map(s => s.fileName));
         for (const f of files) {

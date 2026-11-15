@@ -4,7 +4,7 @@
 // browsers. Data-residency cells do not apply: everything stays in this browser.
 import { createStore, del, delMany, get, keys, set, type UseStore } from 'idb-keyval';
 import type {
-  Account, ActivityEvent, AuditDetail, AuditKind, ConsentKind, ConsentRecord, DocumentKind, Measurement, MeasurementInput, Profile, ProfileInput,
+  Account, ActivityEvent, FamilyConfirmation, AuditDetail, AuditKind, ConsentKind, ConsentRecord, DocumentKind, Measurement, MeasurementInput, Profile, ProfileInput,
   ProfileRecords, RegisterInput, ScanInput, ScanItem, ServiceInfo, SessionInfo, StoredDocument,
   FacilitySearchResult, GeoCandidate, GeoReverse, PublicConfig,
 } from '../types';
@@ -14,6 +14,14 @@ import { CONSENT_VERSION, countryPolicy, isCountryCode, signUpProblem, type Data
 import { searchOffline } from './gazetteer';
 import { uid } from '../lib/id';
 import { ApiError, type Backend, type ScanPatch } from './backend';
+import { needsGuardian } from '../../shared/family';
+import type { AgentConnection, AgentConnectionsInfo, CreatedAgentToken } from '../../shared/agents';
+import type { NotificationList, UndoResult } from '../../shared/notifications';
+import { ASSISTANT_NOTICE_VERSION, type AssistantConsent, type AssistantInfo, type AssistantMessage } from '../../shared/assistant';
+import { WHATSAPP_NOTICE_VERSION, type WhatsAppInfo, type WhatsAppLink, type WhatsAppLinkStart } from '../../shared/whatsapp';
+import { RECORD_AGENT_NOTICE_VERSION, type RecordConnectionView, type RecordRunView, type SourcesInfo } from '../../shared/sources';
+import type { AiExtraction } from '../../shared/types';
+import type { LabCatalog, LabOrderView, LabResultSaved, LabResultView, LabSlot } from '../../shared/lab-bundle';
 
 interface StoredAccount extends Account { salt: string; hash: string }
 
@@ -104,6 +112,9 @@ function checkLocation(patch: Partial<ProfileInput>, out: Partial<ProfileInput>)
   return out;
 }
 
+const noAgents = () => new ApiError(503, 'preview', 'Connecting AI agents needs the LotusPond server, and this preview runs without one.');
+const noLabs = () => new ApiError(503, 'preview', 'Booking a home test needs the LotusPond server, and this preview runs without one.');
+
 export class BrowserBackend implements Backend {
   readonly kind = 'browser' as const;
   private readonly dbName: string;
@@ -163,7 +174,10 @@ export class BrowserBackend implements Backend {
   }
 
   private async session(account: StoredAccount): Promise<SessionInfo> {
-    return { account: this.publicAccount(account), profiles: await this.profiles(account.id) };
+    const consents = await this.readConsents(account.id);
+    const latest = (k: ConsentKind) => consents.find(r => r.kind === k);
+    const consentsOutdated = (['terms', 'privacy'] as const).filter(k => latest(k)?.granted && latest(k)!.version !== CONSENT_VERSION);
+    return { account: this.publicAccount(account), profiles: await this.profiles(account.id), consentsOutdated };
   }
 
   private publicAccount(a: StoredAccount): Account {
@@ -323,19 +337,27 @@ export class BrowserBackend implements Backend {
 
   /* ---------------- profiles ---------------- */
 
-  createProfile(input: ProfileInput): Promise<Profile> {
+  createProfile(input: ProfileInput, confirmation: FamilyConfirmation): Promise<Profile> {
     return this.locked(async () => {
       const account = await this.current();
       const list = await this.profiles(account.id);
       if (list.length >= LIMITS.profilesPerAccount) throw new ApiError(409, 'conflict', `An account can hold up to ${LIMITS.profilesPerAccount} profiles.`);
       if (input.relationship === 'self') throw bad('Your account already has your own profile. Choose who this person is to you.');
       const fields = checkProfile(input);
+      if (confirmation !== 'guardian' && needsGuardian(input.relationship ?? 'other', fields.dateOfBirth)) {
+        throw new ApiError(400, 'guardian_required', 'For a child, confirm that you are their parent or legal guardian.');
+      }
       const profile: Profile = {
         id: uid(), relationship: 'other', dateOfBirth: null, sex: null, heightCm: null, weightKg: null, bloodType: null,
         conditions: [], medications: [], allergies: [], notes: '', ...fields, displayName: fields.displayName ?? input.displayName,
         createdAt: now(), updatedAt: now(),
       };
       await set(profilesKey(account.id), [...list, profile], this.store);
+      const record: ConsentRecord = {
+        kind: 'family_profile', granted: true, version: CONSENT_VERSION, createdAt: now(), country: account.country ?? null,
+        detail: { profileId: profile.id, relationship: profile.relationship, confirmation },
+      };
+      await set(consentsKey(account.id), [record, ...await this.readConsents(account.id)], this.store);
       return profile;
     });
   }
@@ -484,6 +506,21 @@ export class BrowserBackend implements Backend {
     return { map: null, nearbySearch: false };
   }
 
+  /* Lab booking needs the LotusPond server: a preview shows no bookings and explains why it can't book. */
+  async labCatalog(): Promise<LabCatalog> { throw noLabs(); }
+  async labSlots(): Promise<LabSlot[]> { throw noLabs(); }
+  async labOrders(): Promise<LabOrderView[]> { return []; }
+  async labOrder(): Promise<LabOrderView> { throw noLabs(); }
+  async bookLab(): Promise<LabOrderView> { throw noLabs(); }
+  async cancelLabOrder(): Promise<LabOrderView> { throw noLabs(); }
+  async labOrderSlots(): Promise<LabSlot[]> { throw noLabs(); }
+  async rescheduleLabOrder(): Promise<LabOrderView> { throw noLabs(); }
+  async labResults(): Promise<LabResultView[]> { return []; }
+  async labReport(): Promise<Blob> { throw noLabs(); }
+  labReportUrl(): string | null { return null; }
+  async saveLabResult(): Promise<LabResultSaved> { throw noLabs(); }
+  async dismissLabResult(): Promise<LabResultView> { throw noLabs(); }
+
   async nearbyFacilities(): Promise<FacilitySearchResult> {
     throw new ApiError(503, 'preview', 'Finding labs needs the LotusPond server, and this preview runs without one.');
   }
@@ -502,4 +539,35 @@ export class BrowserBackend implements Backend {
   async allKeys(): Promise<IDBValidKey[]> {
     return keys(this.store);
   }
+
+  async agentConnections(): Promise<AgentConnectionsInfo> { throw noAgents(); }
+  // No agents can connect to the preview, so nothing is ever added by one.
+  async notifications(): Promise<NotificationList> { return { unread: 0, items: [] }; }
+  async markNotificationsRead(): Promise<NotificationList> { return { unread: 0, items: [] }; }
+  async undoNotification(): Promise<UndoResult> { throw noAgents(); }
+  // The assistant runs on the LotusPond server; the preview has none.
+  async assistantInfo(): Promise<AssistantInfo> { return { enabled: false, noticeVersion: ASSISTANT_NOTICE_VERSION, consent: null, conversations: [] }; }
+  async agreeToAssistant(): Promise<AssistantConsent> { throw noAgents(); }
+  async withdrawAssistant(): Promise<void> { throw noAgents(); }
+  async assistantConversation(): Promise<{ id: string; profileId: string; title: string; channel?: 'whatsapp'; messages: AssistantMessage[] }> { throw noAgents(); }
+  async deleteAssistantConversation(): Promise<void> { throw noAgents(); }
+  async sendToAssistant(): Promise<void> { throw noAgents(); }
+  async whatsappInfo(): Promise<WhatsAppInfo> { return { enabled: false, noticeVersion: WHATSAPP_NOTICE_VERSION, link: null, pending: null }; }
+  async startWhatsAppLink(): Promise<WhatsAppLinkStart> { throw noAgents(); }
+  async setWhatsAppProfile(): Promise<WhatsAppLink> { throw noAgents(); }
+  async unlinkWhatsApp(): Promise<void> { throw noAgents(); }
+  async createAgentToken(): Promise<CreatedAgentToken> { throw noAgents(); }
+  async updateAgentConnection(): Promise<AgentConnection> { throw noAgents(); }
+  async disconnectAgent(): Promise<void> { throw noAgents(); }
+  // The record agent runs browsers on the LotusPond server; the preview has none.
+  async recordSources(): Promise<SourcesInfo> { return { enabled: false, browser: null, noticeVersion: RECORD_AGENT_NOTICE_VERSION, sources: [] }; }
+  async recordConnections(): Promise<RecordConnectionView[]> { return []; }
+  async connectRecordSource(): Promise<{ connection: RecordConnectionView; run: RecordRunView | null; authorizeUrl?: string }> { throw noAgents(); }
+  async updateRecordConnection(): Promise<RecordConnectionView> { throw noAgents(); }
+  async runRecordConnection(): Promise<RecordRunView> { throw noAgents(); }
+  async disconnectRecordSource(): Promise<void> { throw noAgents(); }
+  async recordRun(): Promise<RecordRunView> { throw noAgents(); }
+  async answerRecordRun(): Promise<RecordRunView> { throw noAgents(); }
+  async cancelRecordRun(): Promise<RecordRunView> { throw noAgents(); }
+  async extractReport(): Promise<AiExtraction> { throw new ApiError(503, 'preview', 'Reading with Claude needs the LotusPond server, and this preview runs without one.'); }
 }

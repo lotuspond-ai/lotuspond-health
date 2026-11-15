@@ -1,17 +1,23 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useHealth, getScanBlob } from '../lib/store';
 import { parseFile } from '../lib/parse';
+import { releaseOcr } from '../lib/parse/ocr-engine';
+import { AiReadOffers } from './AiRead';
+import { HealthImportPanel } from './HealthImport';
+import { healthStore as phoneHealthStore } from '../native/health';
+import { SOURCE_NAME } from '../lib/health-import';
 import { renderDicom } from '../lib/parse/dicom';
 import { BIOMARKERS, SYSTEM_LABELS } from '../lib/catalog';
 import { ORGAN_BY_ID } from '../anatomy/organs';
 import { buildSeries, formatDate } from '../lib/derive';
 import { useUI } from '../state/ui';
+import { useEscape } from './useEscape';
 import { Icon, RangeBar, StatusChip, TrendChart } from './ui';
 import { ArrowIcon, ModalityBadge, SystemIcon, UiIcon } from './icons';
 import { rangeText } from './context/summary';
 import { displayMeasurement, roundForDisplay } from '../lib/units';
 import { OrganSelect } from '../pages/Scans';
-import { errorMessage, isPreview } from '../api';
+import { backend, errorMessage, isPreview } from '../api';
 import { firstName, useActiveProfile, useUnitSystem } from '../state/session';
 import { toast } from '../state/toast';
 import { isNative } from '../native/platform';
@@ -41,16 +47,6 @@ const takeFiles = (input: HTMLInputElement): File[] => {
   return files;
 };
 
-/** Close on Escape. Subscribes once and always calls the latest `close`, so there is no gap while effects re-run. */
-function useEscape(close: () => void) {
-  const latest = useRef(close);
-  useLayoutEffect(() => { latest.current = close; });
-  useLayoutEffect(() => {
-    const k = (e: KeyboardEvent) => { if (e.key === 'Escape') latest.current(); };
-    window.addEventListener('keydown', k);
-    return () => window.removeEventListener('keydown', k);
-  }, []);
-}
 
 /* ---------- marker detail ---------- */
 function Delta({ points }: { points: Measurement[] }) {
@@ -141,6 +137,38 @@ export function MarkerDrawer() {
 }
 
 /* ---------- upload + review ---------- */
+/** The review table: every value read from a file (or from a lab's report), editable before it is saved. */
+export function ReviewTable({ measurements, onPatch, onDrop }: {
+  measurements: Measurement[];
+  onPatch: (id: string, p: Partial<Measurement>) => void;
+  onDrop: (id: string) => void;
+}) {
+  const unitSystem = useUnitSystem();
+  return (
+    <div className="table-wrap review-wrap"><table className="table review">
+      <thead><tr><th>Marker</th><th>Value</th><th>Unit</th><th>Range</th><th>Date</th><th>Read as</th><th /></tr></thead>
+      <tbody>
+        {measurements.map(m => (
+          <tr key={m.id}>
+            <td><select value={m.markerId ?? ''} onChange={e => onPatch(m.id, { markerId: e.target.value || null })} aria-label="Marker">
+              <option value="">{m.rawName} (unmatched)</option>
+              {BIOMARKERS.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+            </select></td>
+            <td><input value={m.valueText} aria-label="Value" onChange={e => { const v = parseFloat(e.target.value.replace(/,/g, '')); onPatch(m.id, { valueText: e.target.value, value: Number.isFinite(v) ? v : null }); }} />
+              {(() => { const d = displayMeasurement(m, unitSystem); return d.converted && <small className="review__alt" title="How this value is shown in your unit setting">Shown as {d.text} {d.unit}</small>; })()}</td>
+            <td><input value={m.unit} aria-label="Unit" onChange={e => onPatch(m.id, { unit: e.target.value })} /></td>
+            <td className="muted">{m.range?.text ?? 'None'}
+              {(() => { const d = displayMeasurement(m, unitSystem); return d.converted && d.range && <small className="review__alt">Shown as {rangeText(d.range)} {d.unit}</small>; })()}</td>
+            <td><input type="date" value={m.date ?? ''} aria-label="Date" onChange={e => onPatch(m.id, { date: e.target.value || null })} /></td>
+            <td><span className={`conf${m.confidence === 'low' ? ' conf--low' : ''}`}>{m.confidence === 'high' ? 'Clear' : m.confidence === 'medium' ? 'Check unit' : 'Check'}</span></td>
+            <td><button className="btn btn--quiet" onClick={() => onDrop(m.id)} aria-label={`Remove ${m.rawName}`}>{Icon.close}</button></td>
+          </tr>
+        ))}
+      </tbody>
+    </table></div>
+  );
+}
+
 export function UploadDialog() {
   const open = useUI(s => s.uploadOpen);
   // Mounted only while open, so closing from anywhere (Escape, Android back) starts the next upload fresh.
@@ -151,16 +179,24 @@ function UploadPanel() {
   const setOpen = useUI(s => s.setUploadOpen);
   const addResult = useHealth(s => s.addResult);
   const profile = useActiveProfile();
-  const unitSystem = useUnitSystem();
   const [over, setOver] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [draft, setDraft] = useState<ParseResult | null>(null);
   const [files, setFiles] = useState<File[]>([]);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  // A file already in the records (sent on WhatsApp, or Read results in Files): read it, and link the results to it.
+  const review = useUI(s => s.review);
+  const reviewDoc = useHealth(s => (review ? s.documents.find(d => d.id === review.documentId) : undefined));
+  const healthReady = useHealth(s => !s.loading && s.profileId === review?.profileId);
+  const [stored, setStored] = useState<Record<string, string>>({});
+  const started = useRef(false);
+  // Apple Health or Health Connect, in the apps only.
+  const healthStore = useMemo(() => phoneHealthStore(), []);
+  const [healthOpen, setHealthOpen] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const camera = useRef<HTMLInputElement>(null);
-  const close = () => { if (saving) return; setOpen(false); setDraft(null); setBusy(null); setFiles([]); setSaveError(null); };
+  const close = () => { if (saving) return; setOpen(false); setDraft(null); setBusy(null); setFiles([]); setSaveError(null); setHealthOpen(false); void releaseOcr(); };
   useEscape(close);
   const who = profile?.relationship === 'self' ? 'your' : `${firstName(profile)}’s`;
 
@@ -168,7 +204,7 @@ function UploadPanel() {
     setSaving(true);
     setSaveError(null);
     try {
-      const done = await addResult(d, files);
+      const done = await addResult(d, files, stored);
       setSaving(false);
       close();
       const parts = [done.measurements && `${done.measurements} result${done.measurements > 1 ? 's' : ''}`, done.scans && `${done.scans} scan${done.scans > 1 ? 's' : ''}`].filter(Boolean);
@@ -186,25 +222,51 @@ function UploadPanel() {
     for (const f of chosen) {
       setBusy(`Reading ${f.name}…`);
       try {
-        const r = await parseFile(f);
+        const r = await parseFile(f, setBusy);
         merged.measurements.push(...r.measurements); merged.scans.push(...r.scans); Object.assign(merged.blobs, r.blobs);
+        if (r.reads?.length) (merged.reads ??= []).push(...r.reads);
         merged.warnings.push(...r.warnings.map(w => `${f.name}: ${w}`)); merged.detectedDate ??= r.detectedDate;
       } catch (e) { merged.warnings.push(`${f.name}: could not be read (${e instanceof Error ? e.message : String(e)}).`); }
     }
     setBusy(null); setDraft(merged);
   }
+  useEffect(() => {
+    if (!review || started.current || !healthReady) return;
+    started.current = true;
+    if (!reviewDoc) { setSaveError('That file is no longer in these records.'); return; }
+    void (async () => {
+      setBusy(`Opening ${reviewDoc.fileName}…`);
+      try {
+        const blob = await backend.documentFile(review.profileId, reviewDoc.id);
+        setStored({ [reviewDoc.fileName]: reviewDoc.id });
+        await handle([new File([blob], reviewDoc.fileName, { type: reviewDoc.contentType })]);
+      } catch (e) { setBusy(null); setSaveError(`Could not open ${reviewDoc.fileName}. ${errorMessage(e)}`); }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- read the file once, when the records are loaded
+  }, [review, healthReady, reviewDoc]);
   const patch = (id: string, p: Partial<Measurement>) => setDraft(d => d && { ...d, measurements: d.measurements.map(m => m.id === id ? { ...m, ...p } : m) });
   const drop = (id: string) => setDraft(d => d && { ...d, measurements: d.measurements.filter(m => m.id !== id) });
+  // Claude's read of one file replaces what the device read from it.
+  const replaceRead = (fileName: string, r: ParseResult) => setDraft(d => d && {
+    ...d,
+    measurements: [...d.measurements.filter(m => m.sourceFile !== fileName), ...r.measurements],
+    warnings: d.warnings.filter(w => !w.startsWith(`${fileName}: `)),
+    detectedDate: d.detectedDate ?? r.detectedDate,
+    reads: [...(d.reads ?? []).filter(x => x.fileName !== fileName), ...(r.reads ?? [])],
+  });
 
   return (
     <div className="scrim" onClick={close}>
       <div className="dialog dialog--upload" role="dialog" aria-modal="true" aria-labelledby="up-title" onClick={e => e.stopPropagation()}>
-        <div className="dialog__head"><div><h2 id="up-title">{draft ? 'Check what was read' : 'Add results and scans'}</h2>
+        <div className="dialog__head"><div><h2 id="up-title">{draft ? 'Check what was read' : healthOpen && healthStore ? `Import from ${SOURCE_NAME[healthStore.source]}` : 'Add results and scans'}</h2>
           <p className="muted">{draft
             ? `Edit anything that looks wrong, then add it to ${who} records.`
+            : healthOpen && healthStore ? `Readings are added to ${who} records only after you check them.`
             : isPreview ? `Files are read on this device and saved to ${who} records in this browser.` : `Files are read on this device, then saved with the originals to ${who} records.`}</p></div>
           <button className="btn btn--quiet x" onClick={close} aria-label="Close">{Icon.close}</button></div>
-        {!draft ? (
+        {!draft && healthOpen && healthStore ? (
+          <HealthImportPanel store={healthStore} onDraft={d => { setFiles([]); setDraft(d); }} onCancel={() => setHealthOpen(false)} />
+        ) : !draft ? (
           <div className={`drop${over ? ' is-over' : ''}`} onDragOver={e => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)}
             onDrop={e => { e.preventDefault(); setOver(false); void handle(e.dataTransfer.files); }}>
             <h3>{busy ?? <><span className="only-fine">Drop files here</span><span className="only-touch">Add a report or scan</span></>}</h3>
@@ -212,37 +274,19 @@ function UploadPanel() {
             <div className="drop__actions">
               <button className="btn btn--primary" onClick={() => input.current?.click()} disabled={!!busy}>{Icon.upload} Choose files</button>
               <button className="btn only-touch" onClick={() => camera.current?.click()} disabled={!!busy}>{Icon.camera} Take a photo</button>
+              {healthStore && <button className="btn" onClick={() => setHealthOpen(true)} disabled={!!busy}>{Icon.heart} Import from {SOURCE_NAME[healthStore.source]}</button>}
             </div>
             <input ref={input} type="file" multiple hidden accept={ACCEPT} onChange={e => { const f = takeFiles(e.target); if (f.length) void handle(f); }} />
             <input ref={camera} type="file" hidden accept="image/*" capture="environment" onChange={e => { const f = takeFiles(e.target); if (f.length) void handle(f); }} />
-            <div className="formats"><span>Lab report PDF</span><span>CSV or JSON export</span><span>DICOM (.dcm)</span><span>X-ray or scan photos</span></div>
+            <div className="formats"><span>Lab report PDF</span><span>Photo of a report</span><span>CSV or JSON export</span><span>FHIR / ABHA record</span><span>DICOM (.dcm)</span><span>X-ray or scan photos</span></div>
+            {saveError && <p className="form-error" role="alert" style={{ marginTop: 14 }}>{saveError}</p>}
           </div>
         ) : (
           <>
+            {draft.notes?.map(n => <p key={n} className="muted review__note">{n}</p>)}
             {draft.warnings.map(w => <p key={w} className="warn">{w}</p>)}
-            {draft.measurements.length > 0 && (
-              <div className="table-wrap review-wrap"><table className="table review">
-                <thead><tr><th>Marker</th><th>Value</th><th>Unit</th><th>Range</th><th>Date</th><th>Read as</th><th /></tr></thead>
-                <tbody>
-                  {draft.measurements.map(m => (
-                    <tr key={m.id}>
-                      <td><select value={m.markerId ?? ''} onChange={e => patch(m.id, { markerId: e.target.value || null })} aria-label="Marker">
-                        <option value="">{m.rawName} (unmatched)</option>
-                        {BIOMARKERS.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-                      </select></td>
-                      <td><input value={m.valueText} aria-label="Value" onChange={e => { const v = parseFloat(e.target.value.replace(/,/g, '')); patch(m.id, { valueText: e.target.value, value: Number.isFinite(v) ? v : null }); }} />
-                        {(() => { const d = displayMeasurement(m, unitSystem); return d.converted && <small className="review__alt" title="How this value is shown in your unit setting">Shown as {d.text} {d.unit}</small>; })()}</td>
-                      <td><input value={m.unit} aria-label="Unit" onChange={e => patch(m.id, { unit: e.target.value })} /></td>
-                      <td className="muted">{m.range?.text ?? 'None'}
-                        {(() => { const d = displayMeasurement(m, unitSystem); return d.converted && d.range && <small className="review__alt">Shown as {rangeText(d.range)} {d.unit}</small>; })()}</td>
-                      <td><input type="date" value={m.date ?? ''} aria-label="Date" onChange={e => patch(m.id, { date: e.target.value || null })} /></td>
-                      <td><span className={`conf${m.confidence === 'low' ? ' conf--low' : ''}`}>{m.confidence === 'high' ? 'Clear' : m.confidence === 'medium' ? 'Check unit' : 'Check'}</span></td>
-                      <td><button className="btn btn--quiet" onClick={() => drop(m.id)} aria-label={`Remove ${m.rawName}`}>{Icon.close}</button></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table></div>
-            )}
+            <AiReadOffers draft={draft} files={files} onRead={replaceRead} />
+            {draft.measurements.length > 0 && <ReviewTable measurements={draft.measurements} onPatch={patch} onDrop={drop} />}
             {draft.scans.length > 0 && (
               <div className="section" style={{ marginTop: 12 }}><h3>Scans</h3>
                 <div className="gallery">{draft.scans.map(s => (
@@ -255,7 +299,7 @@ function UploadPanel() {
             {draft.measurements.length === 0 && draft.scans.length === 0 && <p className="lede" style={{ marginTop: 12 }}>Nothing could be read from these files. Try a text-based PDF, a CSV export, or image files.</p>}
             {saveError && <p className="form-error" role="alert" style={{ marginTop: 14 }}>{saveError}</p>}
             <div className="tools dialog__actions">
-              <button className="btn" disabled={saving} onClick={() => { setDraft(null); setFiles([]); setSaveError(null); }}>Choose other files</button>
+              <button className="btn" disabled={saving} onClick={() => { setDraft(null); setFiles([]); setSaveError(null); }}>{healthOpen ? 'Back' : 'Choose other files'}</button>
               <button className="btn btn--primary" disabled={saving || (!draft.measurements.length && !draft.scans.length)}
                 onClick={() => void save(draft)}>{saving ? 'Saving…' : <>Add {[draft.measurements.length && `${draft.measurements.length} result${draft.measurements.length === 1 ? '' : 's'}`, draft.scans.length && `${draft.scans.length} scan${draft.scans.length === 1 ? '' : 's'}`].filter(Boolean).join(' and ')}</>}</button>
             </div>

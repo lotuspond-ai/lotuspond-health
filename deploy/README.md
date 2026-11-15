@@ -15,7 +15,7 @@ Sign-up tells every person where their records are stored. That promise is only 
 
 Anyone from a region this server does not hold sees why they cannot sign up yet; nothing is stored for them.
 
-**Starting point:** one server in India with `SERVED_REGIONS=in`, since the partner labs start in India. Add a server per region later, each with this same folder and its own `SERVED_REGIONS` and secrets. Then set `REGION_API_ORIGINS` so the mobile apps and sign-in know which host holds which region (see the main README, "Data residency" and "Mobile apps").
+**Starting point:** one server in India with `SERVED_REGIONS=in`, since the partner labs start in India. On AWS, follow [`aws-lightsail.md`](aws-lightsail.md): an Amazon Lightsail instance in Mumbai, with backups to S3 in the same region. Add a server per region later, each with this same folder and its own `SERVED_REGIONS` and secrets. Then set `REGION_API_ORIGINS` so the mobile apps and sign-in know which host holds which region (see the main README, "Data residency" and "Mobile apps").
 
 ## 2. Prepare the server
 
@@ -79,6 +79,8 @@ Importing again with the same file updates the existing entries; it does not cre
 
 ## 6. Updates
 
+To deploy automatically on every push to `main` (and `development` to a staging server), set up [`ci-cd.md`](ci-cd.md). By hand:
+
 ```bash
 git pull
 ```
@@ -89,11 +91,7 @@ docker compose up -d --build
 
 ## 7. Backups
 
-`./backup.sh` writes a database dump and an archive of the uploaded files (still encrypted) to `deploy/backups/`, and keeps 14 days. Run it nightly and copy the folder off the server. For example, in `crontab -e`:
-
-```
-30 2 * * * /path/to/lotuspond-health/deploy/backup.sh >> /var/log/lotuspond-backup.log 2>&1
-```
+`./backup.sh` writes a database dump and an archive of the uploaded files (still encrypted) to `deploy/backups/`, and keeps 14 days. `sudo ./install-backup.sh` runs it every night from a systemd timer (log: `journalctl -u lotuspond-backup`). With `BACKUP_S3_URI` and `BACKUP_AGE_RECIPIENT` in `.env`, each night's dump, files and `.env` are also encrypted with age and uploaded to S3; on AWS, see [`aws-lightsail.md`](aws-lightsail.md), section 5. Without them, copy `deploy/backups/` off the server yourself.
 
 To restore a database dump into a fresh stack:
 

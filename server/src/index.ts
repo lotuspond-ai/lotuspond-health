@@ -11,7 +11,23 @@ import { resolveSecrets } from './compliance/secrets.ts';
 import { purgeOldEvents } from './compliance/audit.ts';
 import { EncryptedFileStore } from './lib/files-encrypted.ts';
 import { purgeExpiredSessions } from './auth/sessions.ts';
+import { purgeExpiredAgentSecrets } from './agents/grants.ts';
+import { purgeOldNotifications } from './notifications.ts';
+import { claudeAssistant } from './assistant/agent.ts';
 import { createApp } from './app.ts';
+import { claudeExtractor } from './extraction/claude.ts';
+import { createLabs, fakePartner, orangePartner, type Labs } from './lab/runtime.ts';
+import type { PartnerConfig } from './lab/partners/types.ts';
+import { createRecordAgent } from './records/service.ts';
+import { browserProvider } from './records/browsers.ts';
+import { demoPortal } from './records/demo-portal.ts';
+import { createEka } from './records/abdm/eka.ts';
+import { abhaFetcher } from './records/abdm/abha.ts';
+import { withingsFetcher } from './records/api/withings.ts';
+import { ouraFetcher } from './records/api/oura.ts';
+import { ultrahumanFetcher } from './records/api/ultrahuman.ts';
+import { gmailFetcher, outlookFetcher } from './records/api/mail.ts';
+import { digilockerFetcher } from './records/api/digilocker.ts';
 
 // This file runs from server/src (tsx) or server/dist (bundle); both are one level below server/.
 const serverRoot = fileURLToPath(new URL('..', import.meta.url));
@@ -55,6 +71,8 @@ async function sweep() {
   for (const cell of allCells) {
     await purgeExpiredSessions(cell.db);
     await purgeOldEvents(cell.db, config.auditRetentionMs);
+    await purgeExpiredAgentSecrets(cell.db);
+    await purgeOldNotifications(cell.db);
   }
 }
 await sweep();
@@ -63,7 +81,61 @@ if (config.env === 'production' && registry.serves('in') && !config.grievanceCon
   console.warn('[api] GRIEVANCE_CONTACT is not set. India\'s DPDP Act requires a published grievance contact for accounts in India.');
 }
 
-const app = createApp({ db: opened.defaultDatabase.db, files: registry.defaultCell.files, config, cells: registry, secrets });
+// Lab booking (docs/lab-booking-backend.md). The simulated lab runs in this process and posts its webhooks here over HTTP.
+let labs: Labs | undefined;
+let stopFakeLab: (() => void) | undefined;
+if (config.labs.partners.length) {
+  const partners: PartnerConfig[] = [];
+  if (config.labs.partners.includes('fake')) {
+    const fake = fakePartner({
+      stepMs: config.labs.fakeStepMs,
+      deliver: async (hookPath, req) => {
+        const res = await fetch(`http://127.0.0.1:${config.port}${hookPath}`, { method: 'POST', headers: req.headers, body: req.rawBody });
+        if (!res.ok) throw new Error(`webhook receiver replied ${res.status}`);
+      },
+    });
+    stopFakeLab = fake.lab.start(1000);
+    partners.push(fake.config);
+  }
+  if (config.labs.orange) {
+    try {
+      partners.push(orangePartner(config.labs.orange));
+    } catch (e) {
+      fail(e);
+    }
+  }
+  try {
+    labs = createLabs({ cells: registry, secrets, partners });
+  } catch (e) {
+    fail(e);
+  }
+}
+
+const extractor = config.aiExtraction.enabled ? claudeExtractor({ model: config.aiExtraction.model }) : undefined;
+const assistant = config.assistant.enabled ? claudeAssistant({ model: config.assistant.model }) : undefined;
+// The record agent (docs/record-agent.md): its browsers reach this server's demo portal at its local address.
+const records = config.records
+  ? createRecordAgent({
+    cells: registry, secrets, config: config.records, browsers: browserProvider(config.records.browser), selfUrl: `http://127.0.0.1:${config.port}`,
+    maxBytes: config.maxUploadBytes, ...(config.records.navigator ? { navigator: { model: config.records.navigator.model } } : {}),
+    apis: [
+      ...(config.records.withings ? [withingsFetcher(config.records.withings)] : []),
+      ...(config.records.oura ? [ouraFetcher(config.records.oura)] : []),
+      ...(config.records.ultrahuman ? [ultrahumanFetcher(config.records.ultrahuman, { cgm: config.records.ultrahuman.cgm })] : []),
+      ...(config.records.gmail ? [gmailFetcher(config.records.gmail)] : []),
+      ...(config.records.outlook ? [outlookFetcher(config.records.outlook)] : []),
+      ...(config.records.digilocker ? [digilockerFetcher(config.records.digilocker, { apiUrl: config.records.digilocker.apiUrl })] : []),
+    ],
+    ...(config.records.eka ? { abdm: abhaFetcher({ eka: createEka(config.records.eka), ...(config.records.eka.hiu ? { hiu: config.records.eka.hiu } : {}) }) } : {}),
+  })
+  : undefined;
+const portal = config.records?.demoPortal ? demoPortal() : undefined;
+let whatsapp: import('./whatsapp/service.ts').WhatsAppService | undefined;
+const app = createApp({ db: opened.defaultDatabase.db, files: registry.defaultCell.files, config, cells: registry, secrets, labs, extractor, assistant, records }, { whatsapp: { onService: s => { whatsapp = s; } }, demoPortal: portal });
+const sweepWhatsApp = setInterval(() => void whatsapp?.purge().catch(() => {}), 60 * 60 * 1000);
+sweepWhatsApp.unref();
+const stopLabs = labs?.start();
+const stopRecords = records?.start();
 const server = serve({ fetch: app.fetch, port: config.port, hostname: config.host }, info => {
   const where = (d: (typeof opened.databases)[number]) => (d.database.kind === 'pglite' ? `PGlite in ${path.dirname(d.filesRoot)}` : 'PostgreSQL');
   console.log(`[api] LotusPond Health API on http://localhost:${info.port} (${where(opened.databases[0])})`);
@@ -73,6 +145,12 @@ const server = serve({ fetch: app.fetch, port: config.port, hostname: config.hos
     console.log(`[api]   ${cell.id} cell: ${regions.length ? regions.join(', ') : 'no regions (directory and shared data)'}; ${where(db)}; files in ${db.filesRoot}${config.fileEncryption ? ', encrypted' : ', NOT encrypted'}`);
   }
   if (config.staticDir) console.log(`[api] serving the app from ${config.staticDir}`);
+  if (assistant) console.log(`[api] assistant: on (${config.assistant.model})`);
+  if (whatsapp) console.log(`[api] WhatsApp: on (+${config.whatsapp!.number}); Meta posts to ${config.publicUrl ?? '<PUBLIC_URL>'}/hooks/whatsapp`);
+  else if (config.whatsapp) console.warn('[api] WhatsApp is set up but the assistant is off, so WhatsApp is off too.');
+  if (extractor) console.log(`[api] reading reports with Claude: on (${config.aiExtraction.model}), only for uploads the person sends`);
+  if (records) console.log(`[api] record agent: on, browsers on ${records.browserLabel}${config.records!.navigator ? `, navigator ${config.records!.navigator.model}` : ', recipes only'}${portal ? '; demo portal at /demo-portal' : ''}`);
+  if (labs) console.log(`[api] lab booking: ${[...labs.partners.keys()].join(', ')}${labs.partners.has('fake') ? ` (the simulated lab; orders move a step every ${config.labs.fakeStepMs / 1000} s)` : ''}`);
 });
 
 const timer = setInterval(() => void sweep().catch(() => {}), 6 * 60 * 60 * 1000);
@@ -83,6 +161,9 @@ async function stop(signal: string) {
   if (stopping) return;
   stopping = true;
   console.log(`[api] ${signal}: shutting down`);
+  stopLabs?.();
+  stopRecords?.();
+  stopFakeLab?.();
   server.close();
   await opened.close();
   process.exit(0);

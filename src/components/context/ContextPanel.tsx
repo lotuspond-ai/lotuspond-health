@@ -1,23 +1,24 @@
 // Side panel of the body map: welcome, overview and organ details.
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useHealth } from '../../lib/store';
 import { useUI } from '../../state/ui';
 import { ORGAN_BY_ID, organOrNull } from '../../anatomy/organs';
 import { landmarksOf } from '../../anatomy/bodies';
 import { useBody } from '../../state/body';
 import { formatDate, seriesForOrgan, type Series } from '../../lib/derive';
-import { Icon, SegBar, StatusChip, StatusRing } from '../ui';
-import { ArrowIcon, ModalityBadge, SystemIcon, UiIcon } from '../icons';
-import type { OrganId, ScanItem, Status } from '../../types';
+import { Icon, StatusChip } from '../ui';
+import { ModalityBadge, UiIcon } from '../icons';
+import type { OrganId, ScanItem } from '../../types';
 import { errorMessage, isPreview } from '../../api';
 import { firstName, useActiveProfile } from '../../state/session';
 import { toast } from '../../state/toast';
 import { findLegacyData, legacyAsResult, markLegacyHandled } from '../../lib/legacy';
 import { SectionControls } from '../stage/StagePanel';
 import { MarkerCard } from './MarkerCard';
-import {
-  groupBySystem, groupStatus, needsAttention, openLabs, sampleDates, showMarkers, statusCounts, systemLabel, type StatusCounts,
-} from './summary';
+import { openLabs, sampleDates, showMarkers, statusCounts } from './summary';
+import { useIssues } from '../stage/issues';
+import { testsDue } from '../../lib/attention';
+import { AskBox } from '../chat/AssistantPanel';
 
 type Legacy = Awaited<ReturnType<typeof findLegacyData>>;
 
@@ -121,23 +122,6 @@ function Welcome() {
   );
 }
 
-/* ---------------- overview ---------------- */
-
-const LEGEND: Status[] = ['normal', 'high', 'low', 'unknown'];
-const LEGEND_WORD: Record<Status, string> = { normal: 'In range', high: 'Above range', low: 'Below range', unknown: 'No range' };
-
-function CountFlags({ c }: { c: StatusCounts }) {
-  if (!c.high && !c.low) {
-    return c.normal ? <span className="flags"><span className="flags__ok">{Icon.check} All in range</span></span> : <span className="flags">No ranges</span>;
-  }
-  return (
-    <span className="flags">
-      {c.high > 0 && <span className="flag flag--high" title={`${c.high} above range`}><ArrowIcon dir="up" />{c.high}<span className="sr-only"> above range</span></span>}
-      {c.low > 0 && <span className="flag flag--low" title={`${c.low} below range`}><ArrowIcon dir="down" />{c.low}<span className="sr-only"> below range</span></span>}
-    </span>
-  );
-}
-
 function ScanStrip({ scans, limit }: { scans: ScanItem[]; limit?: number }) {
   const setScanOpen = useUI(s => s.setScanOpen);
   const list = [...scans].sort((a, b) => (b.date ?? '').localeCompare(a.date ?? '')).slice(0, limit);
@@ -155,89 +139,89 @@ function ScanStrip({ scans, limit }: { scans: ScanItem[]; limit?: number }) {
   );
 }
 
-const ATTENTION_FIRST = 4;
+/* ---------------- home brief ---------------- */
 
-function Overview({ series }: { series: Series[] }) {
+const BRIEF_FIRST = 4;
+
+function greeting(now = new Date()) {
+  const h = now.getHours();
+  return h < 5 ? 'Good evening' : h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
+}
+
+/**
+ * The whole-body view: what needs attention, in a few sentences, with the organs lighting up on the body. Everything
+ * else (every marker, every system) is one tap away on Biomarkers.
+ */
+function HomeBrief({ series }: { series: Series[] }) {
+  const measurements = useHealth(s => s.measurements);
   const scans = useHealth(s => s.scans);
+  const selectOrgan = useHealth(s => s.selectOrgan), selectMarker = useHealth(s => s.selectMarker);
+  const setHovered = useUI(s => s.setHovered);
   const setUploadOpen = useUI(s => s.setUploadOpen);
-  const setView = useUI(s => s.setView);
+  const profile = useActiveProfile();
+  const { items } = useIssues();
+  const due = useMemo(() => testsDue(profile, measurements, items), [profile, measurements, items]);
   const [showAll, setShowAll] = useState(false);
-  const counts = statusCounts(series);
-  const attention = needsAttention(series);
-  const groups = groupBySystem(series);
   const dates = sampleDates(series);
   const latest = dates[dates.length - 1];
-  const shown = showAll ? attention : attention.slice(0, ATTENTION_FIRST);
-  const ringLabel = `${counts.total} markers tracked: ${LEGEND.filter(s => counts[s]).map(s => `${counts[s]} ${LEGEND_WORD[s].toLowerCase()}`).join(', ')}.`;
+  const inRange = series.filter(s => s.latest.status === 'normal').length;
+  const isSelf = profile?.relationship === 'self';
+  const shown = showAll ? items : items.slice(0, BRIEF_FIRST);
   return (
-    <>
-      <div className="section ov-head">
-        <h2>Overview</h2>
-        <div className="ichips">
-          <span className="ichip ichip--strong"><UiIcon name="calendar" size={15} />{latest ? `Latest report ${formatDate(latest)}` : 'Results without dates'}</span>
-          {dates.length > 1 && <span className="ichip"><UiIcon name="layers" size={15} />{dates.length} report dates</span>}
-          {scans.length > 0 && <span className="ichip"><UiIcon name="scan" size={15} />{scans.length} scan{scans.length > 1 ? 's' : ''}</span>}
-        </div>
-      </div>
+    <div className="brief">
+      <p className="brief__hello">{isSelf ? `${greeting()}, ${firstName(profile)}` : `${firstName(profile)}’s records`}</p>
+      <h2 className="brief__head">{items.length ? `${items.length} result${items.length === 1 ? '' : 's'} to look at` : 'Everything is within range'}</h2>
+      <p className="brief__sub">
+        {latest ? `Latest report ${formatDate(latest)}` : 'Results without dates'} · {series.length} marker{series.length === 1 ? '' : 's'}
+        {inRange ? `, ${inRange} in range` : ''}{scans.length ? ` · ${scans.length} scan${scans.length === 1 ? '' : 's'}` : ''}
+      </p>
 
-      <div className="section tally ov-ring">
-        <StatusRing counts={counts} label={ringLabel}>
-          <b>{counts.total}</b><span>markers tracked</span>
-        </StatusRing>
-        <ul className="ov-legend" aria-label="Latest results by status">
-          {LEGEND.filter(s => s !== 'unknown' || counts.unknown).map(s => (
-            <li key={s}><i className={`swatch dot--${s}`} aria-hidden /><span>{LEGEND_WORD[s]}</span><b>{counts[s]}</b></li>
-          ))}
-        </ul>
-      </div>
+      <AskBox />
 
-      <div className="section ov-actions">
-        <button className="btn btn--primary" onClick={() => setUploadOpen(true)}>{Icon.upload} Upload results</button>
-        <button className="btn" onClick={() => { if (!openLabs()) toast.info('Finding a nearby lab is not available yet.'); }}><UiIcon name="pin" size={16} /> Find a lab</button>
-        <button className="btn btn--quiet" onClick={() => showMarkers('all')}><UiIcon name="grid" size={16} /> All results</button>
-      </div>
-
-      <div className="section">
-        <h3>Needs attention <small>{attention.length ? `${attention.length} outside range` : ''}</small></h3>
-        {attention.length ? (
-          <>
-            <div className="mlist">{shown.map(s => <MarkerCard key={s.key} s={s} />)}</div>
-            {attention.length > ATTENTION_FIRST && (
-              <button className="btn btn--quiet ov-more" aria-expanded={showAll} onClick={() => setShowAll(v => !v)}>
-                {showAll ? 'Show fewer' : `Show ${attention.length - ATTENTION_FIRST} more`}<span className={`chev${showAll ? ' chev--up' : ''}`}>{Icon.chevron}</span>
-              </button>
-            )}
-          </>
-        ) : <p className="ov-allgood">{Icon.check}<span>Every latest result is within its range.</span></p>}
-      </div>
-
-      <div className="section">
-        <h3>Body systems <small>{groups.filter(g => g.system !== 'other').length} with results</small></h3>
-        <div className="systiles">
-          {groups.map(g => {
-            const st = groupStatus(g.counts);
+      {items.length > 0 && (
+        <ol className="brief__items">
+          {shown.map(i => {
+            const organ = i.organ ? ORGAN_BY_ID[i.organ] : null;
             return (
-              <button key={g.system} className={`systile systile--${st}`} onClick={() => showMarkers(g.system)}
-                aria-label={`${systemLabel(g.system)}: ${g.counts.total} markers${g.counts.high ? `, ${g.counts.high} above range` : ''}${g.counts.low ? `, ${g.counts.low} below range` : ''}${!g.counts.high && !g.counts.low && g.counts.normal ? ', all in range' : ''}`}>
-                <span className="systile__icon"><SystemIcon system={g.system} size={20} /></span>
-                <span className="systile__name">{systemLabel(g.system)}</span>
-                <span className="systile__meta"><span>{g.counts.total} marker{g.counts.total > 1 ? 's' : ''}</span><CountFlags c={g.counts} /></span>
-                <SegBar counts={g.counts} />
-              </button>
+              <li key={i.key} className={`brief__item brief__item--${i.level}`}
+                onMouseEnter={() => i.organ && setHovered(i.organ)} onMouseLeave={() => setHovered(null)}>
+                <button type="button" className="brief__main" onClick={() => (i.organ ? selectOrgan(i.organ) : selectMarker(i.seriesKey))}
+                  aria-label={`${i.name}: ${i.headline.toLowerCase()}. ${i.detail} ${organ ? `Show the ${organ.name.toLowerCase()} on the body.` : ''}`}>
+                  <span className="brief__dot" aria-hidden />
+                  <span className="brief__text">
+                    <b>{i.name}</b> <span className="brief__status">{i.headline.toLowerCase()}</span>
+                    <span className="brief__detail">{i.detail}</span>
+                    <span className="brief__next">{i.next}</span>
+                  </span>
+                  {organ && <span className="brief__organ">{organ.short}</span>}
+                </button>
+                <button type="button" className="linkish brief__history" onClick={() => selectMarker(i.seriesKey)}>History</button>
+              </li>
             );
           })}
-        </div>
-      </div>
+        </ol>
+      )}
+      {items.length > BRIEF_FIRST && (
+        <button className="btn btn--quiet ov-more" aria-expanded={showAll} onClick={() => setShowAll(v => !v)}>
+          {showAll ? 'Show fewer' : `Show ${items.length - BRIEF_FIRST} more`}<span className={`chev${showAll ? ' chev--up' : ''}`}>{Icon.chevron}</span>
+        </button>
+      )}
+      {!items.length && <p className="ov-allgood">{Icon.check}<span>Every latest result is within its range. Nothing on the body needs attention.</span></p>}
 
-      {scans.length > 0 && (
-        <div className="section">
-          <h3>Recent scans <button className="linkish" onClick={() => setView('scans')}>See all</button></h3>
-          <ScanStrip scans={scans} limit={4} />
+      {due.length > 0 && (
+        <div className="brief__due">
+          <h3>May be due</h3>
+          <ul>{due.slice(0, 3).map(f => <li key={f.marker}><b>{f.marker}</b><span>{f.reason}</span></li>)}</ul>
         </div>
       )}
 
-      <div className="section"><p className="note">Ranges come from your report when it lists one; otherwise a typical adult range is used and marked as such. LotusPond explains results; it does not diagnose. Discuss results with a clinician before acting on them.</p></div>
-    </>
+      <div className="brief__links">
+        <button className="btn btn--quiet" onClick={() => showMarkers('all')}><UiIcon name="grid" size={16} /> All results</button>
+        <button className="btn btn--quiet" onClick={() => setUploadOpen(true)}>{Icon.upload} Add a report</button>
+        <button className="btn btn--quiet" onClick={() => { if (!openLabs()) toast.info('Finding a nearby lab is not available yet.'); }}><UiIcon name="pin" size={16} /> Book a test</button>
+      </div>
+      <p className="note brief__note">Ranges come from your report, or a typical adult range when it lists none. LotusPond explains results; it does not diagnose.</p>
+    </div>
   );
 }
 
@@ -295,7 +279,7 @@ export function ContextPanel({ series }: { series: Series[] }) {
   const selected = useHealth(s => s.selectedOrgan);
   const loading = useHealth(s => s.loading);
   if (loading) return <p className="note loading-note" role="status">Loading records…</p>;
-  // an organ id this version does not know (sent by a newer app) falls back to the overview
+  // an organ id this version does not know (sent by a newer app) falls back to the brief
   if (selected && organOrNull(selected)) return <OrganPanel organ={selected} series={series} />;
-  return series.length ? <Overview series={series} /> : <Welcome />;
+  return series.length ? <HomeBrief series={series} /> : <Welcome />;
 }

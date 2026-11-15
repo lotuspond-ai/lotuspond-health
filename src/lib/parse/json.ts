@@ -5,6 +5,7 @@ import { parseDate } from './dates.ts';
 import { refreshMeasurement } from '../status.ts';
 import { findMarker } from '../catalog.ts';
 import { uid } from '../id.ts';
+import { isFhir, parseFhir } from './fhir.ts';
 
 type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => !!v && typeof v === 'object' && !Array.isArray(v);
@@ -98,6 +99,12 @@ export function parseJsonText(text: string, sourceFile: string): ParseResult {
   try { data = JSON.parse(text.replace(/^﻿/, '')); } catch {
     result.warnings.push('This JSON file could not be read (invalid JSON).');
     return result;
+  }
+
+  // FHIR R4 (ABDM / ABHA apps, hospital portals). PDFs inside it are read by parseFile (index.ts).
+  if (isFhir(data)) {
+    const { attachments: _attachments, ...fhir } = parseFhir(data, sourceFile);
+    return fhir;
   }
 
   // Our own export.

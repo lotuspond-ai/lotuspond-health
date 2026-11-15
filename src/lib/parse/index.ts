@@ -4,6 +4,7 @@ import { parseCsvText } from './csv.ts';
 import { parseJsonText } from './json.ts';
 import { looksLikeDicom, parseDicomFile } from './dicom.ts';
 import { parseImage } from './image.ts';
+import { OCR_BASE } from './ocr-engine.ts';
 
 export { parseCsvText } from './csv.ts';
 export { parseJsonText } from './json.ts';
@@ -32,7 +33,10 @@ async function sniff(file: File): Promise<'pdf' | 'json' | 'text' | 'dicom' | 'i
 }
 
 /** Parse a user file (PDF, CSV/TSV/TXT, JSON, image, DICOM), dispatching by extension, MIME type, then content. */
-export async function parseFile(file: File): Promise<ParseResult> {
+/** Progress while reading: "Reading the photo…", "Reading page 2 of 3…". */
+export type ParseProgress = (message: string) => void;
+
+export async function parseFile(file: File, onProgress?: ParseProgress): Promise<ParseResult> {
   const name = file.name.toLowerCase();
   const type = (file.type || '').toLowerCase();
   let kind: Awaited<ReturnType<typeof sniff>> = null;
@@ -48,24 +52,69 @@ export async function parseFile(file: File): Promise<ParseResult> {
   switch (kind) {
     case 'pdf': {
       const { parsePdf } = await import('./pdf.ts');
-      return parsePdf(file);
+      const r = await parsePdf(file);
+      // A scanned PDF has no text layer: read its pages as images on the device.
+      if (OCR_BASE && !r.measurements.length && r.warnings.some(w => /no readable text/.test(w))) {
+        const { readScannedPdf } = await import('./ocr-read.ts');
+        return readScannedPdf(file, onProgress);
+      }
+      return r;
     }
     case 'text': {
       if (file.size > MAX_TEXT) return empty('This file is too large to read as a table.');
       const text = await file.text();
       const trimmed = text.replace(/^﻿/, '').trimStart();
-      if (trimmed.startsWith('{') || trimmed.startsWith('[')) return parseJsonText(text, file.name);
+      if (trimmed.startsWith('{') || trimmed.startsWith('[')) return parseJsonFile(text, file.name);
       return parseCsvText(text, file.name);
     }
     case 'json': {
       if (file.size > MAX_TEXT) return empty('This file is too large to read.');
-      return parseJsonText(await file.text(), file.name);
+      return parseJsonFile(await file.text(), file.name);
     }
     case 'dicom':
       return parseDicomFile(file);
-    case 'image':
+    case 'image': {
+      // A photo may be a lab report (read it) or a scan, an X-ray or a skin photo (keep it as a scan).
+      if (OCR_BASE) {
+        const { readReportPhoto } = await import('./ocr-read.ts');
+        const read = await readReportPhoto(file, onProgress).catch(() => null);
+        if (read) return read;
+      }
       return parseImage(file);
+    }
     default:
       return empty('This file type is not supported. Use a PDF lab report, CSV or JSON export, DICOM (.dcm) or an image.');
   }
+}
+
+/**
+ * JSON, with FHIR's embedded reports: a DiagnosticReport that carries only a PDF (common in ABDM records) is read
+ * like an uploaded PDF, and its results are added to the review with the bundle as their source.
+ */
+async function parseJsonFile(text: string, fileName: string): Promise<ParseResult> {
+  const r = parseJsonText(text, fileName);
+  if (r.measurements.length) return r;
+  let data: unknown;
+  try { data = JSON.parse(text.replace(/^\uFEFF/, '')); } catch { return r; }
+  const { isFhir, fhirAttachments, fhirPatientName } = await import('./fhir.ts');
+  if (!isFhir(data)) return r;
+  const pdfs = fhirAttachments(data).filter(a => /pdf/i.test(a.contentType)).slice(0, 10);
+  if (!pdfs.length) return r;
+  const { parsePdf } = await import('./pdf.ts');
+  const out: ParseResult = { ...r, warnings: r.warnings.filter(w => !/No lab results were found/.test(w)) };
+  for (const a of pdfs) {
+    try {
+      const bytes = Uint8Array.from(atob(a.data.replace(/\s+/g, '')), c => c.charCodeAt(0));
+      const read = await parsePdf(new File([bytes], fileName, { type: 'application/pdf' }));
+      out.measurements.push(...read.measurements);
+      out.warnings.push(...read.warnings.map(w => `${a.title}: ${w}`));
+      out.detectedDate ??= read.detectedDate;
+    } catch {
+      out.warnings.push(`${a.title}: the report attached to this record could not be read.`);
+    }
+  }
+  const who = fhirPatientName(data);
+  if (who && out.measurements.length) out.warnings.unshift(`These results are for ${who}. Add them only to that person’s profile.`);
+  if (!out.measurements.length && !out.warnings.length) out.warnings.push('No lab results were found in this FHIR file or the report attached to it.');
+  return out;
 }

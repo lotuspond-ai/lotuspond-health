@@ -46,6 +46,17 @@ function ShareFile({ d }: { d: StoredDocument }) {
   return <button className="btn btn--quiet" disabled={busy} onClick={() => void share()} aria-label={`Open or save ${d.fileName}`}>{Icon.share} {busy ? 'Opening…' : 'Open or save'}</button>;
 }
 
+/** Kinds of saved file the upload review can read again. */
+const READABLE = /^(application\/pdf|image\/(jpeg|png|webp))$/;
+
+/** Read a saved report into the upload review (for example one sent on WhatsApp), linking the results to it. */
+function ReadResults({ d }: { d: StoredDocument }) {
+  const openReview = useUI(s => s.openReview);
+  const profileId = useHealth(s => s.profileId);
+  if (!profileId || isPreview) return null;
+  return <button className="btn btn--quiet" onClick={() => openReview({ profileId, documentId: d.id })} aria-label={`Read results from ${d.fileName}`}>{Icon.upload} Read results</button>;
+}
+
 function Actions({ f, compact }: { f: FileInfo; compact?: boolean }) {
   const setScanOpen = useUI(s => s.setScanOpen);
   const removeDocument = useHealth(s => s.removeDocument);
@@ -56,6 +67,7 @@ function Actions({ f, compact }: { f: FileInfo; compact?: boolean }) {
       {!scan && open && INLINE.test(d.contentType) && <a className="btn btn--quiet" href={open} target="_blank" rel="noopener" aria-label={`Open ${d.fileName}`}>{Icon.eye} Open</a>}
       {download && <a className="btn btn--quiet" href={download} download={d.fileName} aria-label={`Download ${d.fileName}`}>{Icon.download} Download</a>}
       {!download && <ShareFile d={d} />}
+      {!scan && d.kind === 'report' && f.results === 0 && READABLE.test(d.contentType) && <ReadResults d={d} />}
       <ConfirmButton className="btn btn--quiet btn--danger-text" confirmText={scan ? 'Delete the file and its scan?' : 'Delete this file?'}
         onConfirm={() => removeDocument(d.id)}>Delete</ConfirmButton>
     </div>

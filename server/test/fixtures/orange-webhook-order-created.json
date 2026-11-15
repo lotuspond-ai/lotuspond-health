@@ -1,0 +1,140 @@
+{
+ "source": "Orange Health Partner API docs (orangehealth.docs.apiary.io), example \"order.created event (Jane Doe)\", read 2026-11-10. Signed by Orange Health with the documented example secret \"abcd\".",
+ "secret": "abcd",
+ "headers": {
+  "x-oh-signature": "039fe01711848fc82839895bfc2535cfe659d9a159134f893222c76f8df8e090",
+  "x-oh-event-id": "c3f87585-ff85-4352-bb64-e0d7deb207eb"
+ },
+ "body": {
+  "event": "order.created",
+  "contains": [
+   "order",
+   "request",
+   "tests",
+   "customer_details",
+   "payment_details",
+   "tasks",
+   "city_code"
+  ],
+  "payload": {
+   "customer_details": {
+    "created_on": "2022-02-16 06:52:52",
+    "id": 60936,
+    "name": "John Doe",
+    "number": "9999999999",
+    "system_customer_id": 3517,
+    "system_customer_user_id": 5897
+   },
+   "order": {
+    "city_name": "Bengaluru",
+    "city_request_id": "BLR520289",
+    "collected_on": "",
+    "completed_on": null,
+    "customer_id": 60936,
+    "direct_charges": null,
+    "discount": 0,
+    "discount_amount": 0,
+    "discount_type": "",
+    "id": 692963,
+    "organization": "",
+    "partner_discount": 0,
+    "partner_discount_amount": 0,
+    "partner_discount_type": "",
+    "partner_id": 3536,
+    "partner_reference_id": "P_1",
+    "partner_user_id": 0,
+    "partnership_nature": "paid_by_group",
+    "patient_details": {
+     "age_months": 0,
+     "age_years": 21,
+     "gender": "female",
+     "id": "",
+     "name": "Jane Doe",
+     "number": "9999999999"
+    },
+    "request_id": 520289,
+    "sample_received_on": "",
+    "scheduled_on": "",
+    "status": 1,
+    "status_string": "requested",
+    "textual_prescription": "",
+    "total_price": 1100,
+    "voucher_code": "",
+    "voucher_discount_amount": 0,
+    "voucher_id": 0,
+    "voucher_info": "",
+    "voucher_name": ""
+   },
+   "payment_details": {
+    "amount": 0,
+    "external_id": 0,
+    "link": "",
+    "status": "payment_not_issued"
+   },
+   "request": {
+    "additional_charges": 0,
+    "additional_charges_reason": "",
+    "cancellation_explanation": "",
+    "cancellation_reason": "",
+    "cancelled_on": null,
+    "city_name": "Bengaluru",
+    "city_request_id": "BLR520289",
+    "collection_type": 0,
+    "completed_on": null,
+    "created_on": "2024-01-03 09:40:52",
+    "emedic_slot_data": {
+     "emedic_filled_slot_id": 1418141,
+     "emedic_id": 1077,
+     "emedic_name": "Mohammed Iqball H",
+     "slot_date": "2024-01-04",
+     "slot_datetime": "2024-01-04T00:30:00Z",
+     "token": "f1d65ec6-f063-4eed-9bac-4ed0d6b5aa6f"
+    },
+    "id": 520289,
+    "paid_on": null,
+    "payment_description": "",
+    "payment_status": 0,
+    "refund_amount": 0,
+    "refund_id": "",
+    "refund_on": null,
+    "scheduled_on": "",
+    "source": "partner_api",
+    "status": 1,
+    "status_string": "requested",
+    "system_payment_id": 0,
+    "system_payment_link": "",
+    "time_slot": "2024-01-04T00:30:00Z",
+    "total_price": 0,
+    "uuid": "61a4c54b-b907-41bf-bce9-b3102e0285ab"
+   },
+   "tasks": null,
+   "tests": [
+    {
+     "cancellation_reason": "",
+     "category": "A",
+     "city_name": "Bengaluru",
+     "city_request_id": "BLR520289",
+     "completed_at": null,
+     "id": 2466550,
+     "is_fasting_required": 0,
+     "lab_eta": "",
+     "labtat": 4,
+     "master_package_id": 0,
+     "master_test_id": 154,
+     "orange_package_id": "",
+     "orange_test_id": 0,
+     "order_id": 692963,
+     "package_id": 0,
+     "package_name": "",
+     "package_type": "",
+     "report_tat": "",
+     "request_id": 520289,
+     "status": 1,
+     "status_string": "requested",
+     "test_name": "Vitamin B12",
+     "testing_frequency": "1111111"
+    }
+   ]
+  }
+ }
+}

@@ -18,6 +18,14 @@ import { registration } from '../server/test/helpers.ts';
 import { HttpBackend } from '../src/api/http.ts';
 import { ApiError } from '../src/api/backend.ts';
 import { AppSession, serverOrigin, type StoredSession, type TokenStore } from '../src/api/appSession.ts';
+import { singleCell } from '../server/src/cells.ts';
+import { ephemeralSecrets } from '../server/src/compliance/secrets.ts';
+import { memoryLogger } from '../server/src/lab/log.ts';
+import { createLabs, fakePartner } from '../server/src/lab/runtime.ts';
+import { istDate } from '../server/src/lab/time.ts';
+import { LAB_BOOKING_NOTICE_VERSION } from '../shared/lab-bundle.ts';
+import { nextDays, rupees, slotLabel, stepOf, timeRange } from '../src/components/labs/labFormat.ts';
+import { parseJsonText } from '../src/lib/parse/json.ts';
 
 const ORIGIN = 'capacitor://localhost';
 const API = 'https://health.lotuspond.test';
@@ -227,5 +235,82 @@ describe('server picker addresses (test builds)', () => {
     for (const bad of ['', '   ', 'ftp://example.org', 'javascript:alert(1)', 'http://', 'http:// spaces .org']) {
       assert.equal(serverOrigin(bad), null, bad);
     }
+  });
+});
+
+describe('app client: lab booking', () => {
+  let plain: Hono<AppEnv>;
+  let fake: ReturnType<typeof fakePartner>;
+  let labs: ReturnType<typeof createLabs>;
+  before(() => {
+    plain = app;
+    const config = loadConfig({ NODE_ENV: 'test', TRUST_PROXY: 'true' });
+    const files = new DiskFileStore(filesDir);
+    const cells = singleCell(database.db, files, config.servedRegions);
+    const secrets = ephemeralSecrets();
+    // A fast simulated lab: one step per millisecond, so a tick plays the whole order out. Its webhooks are server to server.
+    fake = fakePartner({ stepMs: 1, deliver: async (hookPath, req) => { await app.request(hookPath, { method: 'POST', headers: req.headers, body: req.rawBody }); } });
+    labs = createLabs({ cells, secrets, partners: [fake.config], log: memoryLogger() });
+    app = createApp({ db: database.db, files, config, cells, secrets, labs });
+  });
+  after(() => { app = plain; });
+
+  it('books across sites with an idempotency key, follows the order and saves the results into the profile', async () => {
+    const { backend } = client();
+    const info = await backend.register(registration(email()));
+    const pid = info.profiles[0].id;
+    const catalog = await backend.labCatalog('560034');
+    assert.ok(catalog.items.some(i => i.code === 'FL_ESSENTIAL'));
+    const [slot] = await backend.labSlots({ partner: 'fake', pincode: '560034', date: istDate(Date.now() + 86_400_000), items: ['FL_ESSENTIAL'] });
+    const input = {
+      partner: 'fake' as const, items: ['FL_ESSENTIAL'], slot, patient: { name: 'Asha Rao', age: 34, sex: 'female' as const }, phone: '+919812345678',
+      address: { line1: '12 Lake Road', city: 'Bengaluru', pincode: '560034' }, consent: { noticeVersion: LAB_BOOKING_NOTICE_VERSION, accepted: true },
+    };
+    // The preflight must allow Idempotency-Key, or the web view refuses the booking outright.
+    const order = await backend.bookLab(pid, input, `app-booking-${run}`);
+    assert.equal(order.status, 'booked');
+    assert.equal((await backend.bookLab(pid, input, `app-booking-${run}`)).id, order.id, 'a retry with the same key is the same booking');
+    assert.deepEqual((await backend.labOrders(pid)).map(o => o.id), [order.id]);
+
+    await new Promise(r => setTimeout(r, 20));
+    await fake.lab.tick();
+    await labs.tick();
+    assert.equal((await backend.labOrder(pid, order.id)).status, 'report_ready');
+    const [result] = await backend.labResults(pid);
+    const pdf = new Uint8Array(await (await backend.labReport(pid, result.id)).arrayBuffer());
+    assert.equal(new TextDecoder().decode(pdf.subarray(0, 5)), '%PDF-');
+    const reviewed = parseJsonText(JSON.stringify(result.bundle), result.source).measurements;
+    const saved = await backend.saveLabResult(pid, result.id, reviewed);
+    assert.equal(saved.saved, reviewed.length);
+    assert.equal((await backend.records(pid)).measurements.length, reviewed.length);
+    assert.equal((await backend.labOrder(pid, order.id)).status, 'delivered');
+    assert.deepEqual(await backend.labResults(pid), []);
+  });
+});
+
+describe('app: lab booking display', () => {
+  const slot = (a: string, b: string) => ({ start: `2026-11-08T${a}:00+05:30`, end: `2026-11-08T${b}:00+05:30` });
+
+  it('shows prices in rupees with Indian grouping', () => {
+    assert.equal(rupees(99900), '₹999');
+    assert.equal(rupees(18990000), '₹1,89,900');
+    assert.equal(rupees(34950), '₹349.50');
+  });
+
+  it('shows visits in India time, whatever the device clock says', () => {
+    assert.equal(timeRange(slot('07:00', '08:00')), '7:00 – 8:00 am');
+    assert.equal(timeRange(slot('11:00', '12:00')), '11:00 am – 12:00 pm');
+    assert.equal(slotLabel(slot('16:00', '17:00')), 'Sun, 8 Nov, 4:00 – 5:00 pm');
+    // 01:30 on 4 November in India is still 3 November in UTC: the days start from India's today.
+    assert.deepEqual(nextDays(3, Date.parse('2026-11-03T20:00:00Z')), [
+      { date: '2026-11-04', label: 'Today' }, { date: '2026-11-05', label: 'Tomorrow' }, { date: '2026-11-06', label: 'Fri, 6 Nov' },
+    ]);
+  });
+
+  it('places each order status on the tracker', () => {
+    const at = (status: string) => stepOf({ status } as Parameters<typeof stepOf>[0]);
+    assert.deepEqual(['booked', 'collector_assigned', 'sample_collected', 'processing', 'report_ready', 'delivered'].map(at), [0, 1, 2, 3, 4, 4]);
+    assert.equal(at('recollection_needed'), 0, 'a new sample starts the visit again');
+    assert.deepEqual(['placing', 'failed', 'cancelled', 'expired'].map(at), [-1, -1, -1, -1]);
   });
 });

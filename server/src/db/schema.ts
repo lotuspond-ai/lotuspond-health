@@ -1,7 +1,10 @@
 // Database schema (PostgreSQL). Generate migrations with `npm run db:generate -w server`.
 import { boolean, date, doublePrecision, index, integer, jsonb, pgTable, real, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
-import type { AuditDetail, AuditKind, ConsentKind, RefRange } from '../../../shared/types.ts';
+import type { AuditDetail, AuditKind, ConsentDetail, ConsentKind, RefRange } from '../../../shared/types.ts';
 import type { DataRegion, UnitSystem } from '../../../shared/regions.ts';
+import type { LabResultBundle, OrderStatus } from '../../../shared/lab-bundle.ts';
+import type { NotificationDetail } from '../../../shared/notifications.ts';
+import type { RecordQuestion } from '../../../shared/sources.ts';
 
 const createdAt = () => timestamp('created_at', { withTimezone: true }).notNull().defaultNow();
 const updatedAt = () => timestamp('updated_at', { withTimezone: true }).notNull().defaultNow();
@@ -141,7 +144,7 @@ export const facilityCache = pgTable('facility_cache', {
 });
 /**
  * Consent decisions, append-only: each grant or withdrawal is a new row with the text version it refers to.
- * The latest row per kind is the current state.
+ * The latest row per kind is the current state; for family_profile and agent_sharing, per profile or connection.
  */
 export const consents = pgTable('consents', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -151,6 +154,8 @@ export const consents = pgTable('consents', {
   granted: boolean('granted').notNull(),
   /** Country of residence when the decision was made. */
   country: text('country'),
+  /** For per-item consents (family_profile, agent_sharing): the profile or connection, as ids and permissions only. */
+  detail: jsonb('detail').$type<ConsentDetail>(),
   createdAt: createdAt(),
 }, t => [index('consents_user_idx').on(t.userId, t.createdAt)]);
 
@@ -180,6 +185,325 @@ export const directory = pgTable('directory', {
   createdAt: createdAt(),
 }, t => [index('directory_user_idx').on(t.userId)]);
 
+/* ---------- lab bookings (personal data: kept in the account's cell) ---------- */
+
+/**
+ * Home sample collections booked with a lab partner (docs/lab-booking-backend.md). The lab code reads and writes
+ * these through lab/store/drizzle.ts, which maps them to the booking service's records.
+ */
+export const labOrders = pgTable('lab_orders', {
+  id: uuid('id').primaryKey(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  profileId: uuid('profile_id').notNull().references(() => profiles.id, { onDelete: 'cascade' }),
+  partner: text('partner').notNull(),
+  /** The partner's order number, once it has accepted the booking. */
+  partnerRef: text('partner_ref'),
+  /** The partner's per-order token, when its API needs one on later calls (Orange Health). Useless without our API key. */
+  partnerToken: text('partner_token'),
+  status: text('status').$type<OrderStatus>().notNull(),
+  /** The partner's own last status and when it says it began: guards against out-of-date reads. */
+  partnerStatus: text('partner_status'),
+  partnerStatusAt: timestamp('partner_status_at', { withTimezone: true }),
+  lastSyncedAt: timestamp('last_synced_at', { withTimezone: true }),
+  items: jsonb('items').$type<{ code: string; name: string; pricePaise: number }[]>().notNull().default([]),
+  slotStart: timestamp('slot_start', { withTimezone: true }),
+  slotEnd: timestamp('slot_end', { withTimezone: true }),
+  pricePaise: integer('price_paise').notNull().default(0),
+  payer: text('payer').$type<'partner' | 'lotuspond'>().notNull().default('partner'),
+  /** Patient name, age, sex, mobile number and address, sealed with the cell's file key (lab/sealer.ts), base64. */
+  contactCt: text('contact_ct'),
+  piiPurgedAt: timestamp('pii_purged_at', { withTimezone: true }),
+  /** The booking notice version accepted, and when. */
+  consentVersion: text('consent_version'),
+  consentedAt: timestamp('consented_at', { withTimezone: true }),
+  idempotencyKey: text('idempotency_key'),
+  requestHash: text('request_hash'),
+  placementAttempts: integer('placement_attempts').notNull().default(0),
+  nextPlacementAt: timestamp('next_placement_at', { withTimezone: true }),
+  failureReason: text('failure_reason'),
+  /** The partner's identifier for the last report stored (lab_results), to tell a new or amended report from a repeat. */
+  reportVersion: text('report_version'),
+  /** The partner status time the last report check covered; a later partner status means check again. */
+  reportCheckedStatusAt: timestamp('report_checked_status_at', { withTimezone: true }),
+  reportAttempts: integer('report_attempts').notNull().default(0),
+  nextReportAt: timestamp('next_report_at', { withTimezone: true }),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, t => [
+  uniqueIndex('lab_orders_partner_ref_key').on(t.partner, t.partnerRef),
+  uniqueIndex('lab_orders_idempotency_key').on(t.userId, t.idempotencyKey),
+  index('lab_orders_profile_idx').on(t.profileId, t.createdAt),
+  index('lab_orders_status_idx').on(t.status, t.lastSyncedAt),
+  index('lab_orders_placement_idx').on(t.nextPlacementAt),
+]);
+
+/** Every status change and partner update on an order: its timeline, and the audit trail for support. */
+export const labOrderEvents = pgTable('lab_order_events', {
+  id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
+  orderId: uuid('order_id').notNull().references(() => labOrders.id, { onDelete: 'cascade' }),
+  status: text('status').$type<OrderStatus>().notNull(),
+  partnerStatus: text('partner_status'),
+  source: text('source').$type<'webhook' | 'poll' | 'api' | 'user' | 'system'>().notNull(),
+  occurredAt: timestamp('occurred_at', { withTimezone: true }),
+  receivedAt: timestamp('received_at', { withTimezone: true }).notNull(),
+  note: text('note'),
+}, t => [index('lab_order_events_order_idx').on(t.orderId, t.id)]);
+
+/**
+ * Reports fetched from the partner, waiting for the person to review them (docs/lab-booking-backend.md §5.3).
+ * Saving one turns it into ordinary records: a document (the PDF) and measurements. Each delivery for an order has
+ * the next sequence number; a newer one replaces what an earlier one saved.
+ */
+export const labResults = pgTable('lab_results', {
+  id: uuid('id').primaryKey(),
+  orderId: uuid('order_id').notNull().references(() => labOrders.id, { onDelete: 'cascade' }),
+  profileId: uuid('profile_id').notNull().references(() => profiles.id, { onDelete: 'cascade' }),
+  sequence: integer('sequence').notNull(),
+  partial: boolean('partial').notNull(),
+  /** The partner's report version, or a hash of the report when it gives none. */
+  partnerVersion: text('partner_version').notNull(),
+  /** The rows as the lab printed them, for the app to match to the catalogue (shared/lab-bundle.ts). */
+  bundle: jsonb('bundle').$type<LabResultBundle>().notNull(),
+  /** The report PDF in the cell's file store, keyed <profile>/<result id> like documents (deleted with the profile). */
+  pdfKey: text('pdf_key'),
+  pdfBytes: integer('pdf_bytes'),
+  pdfSha256: text('pdf_sha256'),
+  status: text('status').$type<'pending' | 'saved' | 'dismissed' | 'superseded'>().notNull().default('pending'),
+  /** The document the PDF became when saved. */
+  documentId: uuid('document_id').references(() => documents.id, { onDelete: 'set null' }),
+  createdAt: createdAt(),
+  decidedAt: timestamp('decided_at', { withTimezone: true }),
+}, t => [
+  uniqueIndex('lab_results_order_sequence_key').on(t.orderId, t.sequence),
+  index('lab_results_profile_idx').on(t.profileId, t.status),
+]);
+
+/**
+ * Partner webhooks as received, before processing (lab/webhooks/). Kept in the partner's region cell, sealed,
+ * because a body may carry results. Purged 7 days after processing.
+ */
+export const labWebhookInbox = pgTable('lab_webhook_inbox', {
+  id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
+  partner: text('partner').notNull(),
+  /** The partner's event id, or a hash of the body. */
+  dedupeKey: text('dedupe_key').notNull(),
+  headers: jsonb('headers').$type<Record<string, string>>().notNull(),
+  /** Sealed raw body, base64. */
+  body: text('body').notNull(),
+  receivedAt: timestamp('received_at', { withTimezone: true }).notNull(),
+  attempts: integer('attempts').notNull().default(0),
+  nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }).notNull(),
+  processedAt: timestamp('processed_at', { withTimezone: true }),
+  error: text('error'),
+  deadAt: timestamp('dead_at', { withTimezone: true }),
+}, t => [
+  uniqueIndex('lab_webhook_inbox_dedupe_key').on(t.partner, t.dedupeKey),
+  index('lab_webhook_inbox_due_idx').on(t.processedAt, t.nextAttemptAt),
+]);
+
+/* ---------- agent connections (shared/agents.ts, server/src/agents/) ---------- */
+
+/**
+ * OAuth clients that registered themselves (RFC 7591 dynamic client registration): Claude, ChatGPT and other agent
+ * platforms. Not personal data, so kept in the default database. Public clients only: they prove themselves with PKCE.
+ */
+export const oauthClients = pgTable('oauth_clients', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  redirectUris: jsonb('redirect_uris').$type<string[]>().notNull(),
+  createdAt: createdAt(),
+});
+
+/**
+ * One connected agent: what it may do and which profiles it may see. Kept in the account's cell. Revoking deletes
+ * the row, and its tokens with it.
+ */
+export const agentGrants = pgTable('agent_grants', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  kind: text('kind').$type<'oauth' | 'token'>().notNull(),
+  /** The OAuth client (oauth_clients.id in the default database); null for tokens made on Account. */
+  clientId: text('client_id'),
+  name: text('name').notNull(),
+  redirectHost: text('redirect_host'),
+  scopes: jsonb('scopes').$type<string[]>().notNull(),
+  /** Kinds of data shared (shared/agents.ts AgentCategory); null for every kind (connections made before categories). */
+  categories: jsonb('categories').$type<string[]>(),
+  profileIds: jsonb('profile_ids').$type<string[]>().notNull(),
+  createdAt: createdAt(),
+  lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
+  /** When the last agent_access audit event was written, so reads are logged at most once an hour. */
+  lastLoggedAt: timestamp('last_logged_at', { withTimezone: true }),
+  expiresAt: timestamp('expires_at', { withTimezone: true }),
+}, t => [index('agent_grants_user_idx').on(t.userId), uniqueIndex('agent_grants_user_client_key').on(t.userId, t.clientId)]);
+
+/**
+ * Secrets issued for a grant, stored as SHA-256: authorization codes (single use, minutes), access tokens (an hour,
+ * or as long as the grant for tokens made on Account) and refresh tokens (rotated on every use).
+ */
+export const agentTokens = pgTable('agent_tokens', {
+  id: text('id').primaryKey(),
+  grantId: uuid('grant_id').notNull().references(() => agentGrants.id, { onDelete: 'cascade' }),
+  type: text('type').$type<'code' | 'access' | 'refresh'>().notNull(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }),
+  /** Authorization codes: the PKCE challenge (S256) and the redirect URI they were issued for. */
+  codeChallenge: text('code_challenge'),
+  redirectUri: text('redirect_uri'),
+  /** The resource (RFC 8707) the token is for. */
+  resource: text('resource'),
+  createdAt: createdAt(),
+}, t => [index('agent_tokens_grant_idx').on(t.grantId)]);
+
+/**
+ * What the person is told in the app (shared/notifications.ts): today, each addition a connected agent made. In the
+ * account's cell. connection_id has no foreign key, so a notification outlives a disconnected agent.
+ */
+export const notifications = pgTable('notifications', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  profileId: uuid('profile_id').notNull().references(() => profiles.id, { onDelete: 'cascade' }),
+  kind: text('kind').$type<'agent_write'>().notNull(),
+  connectionId: uuid('connection_id'),
+  agentName: text('agent_name').notNull(),
+  detail: jsonb('detail').$type<NotificationDetail>().notNull(),
+  createdAt: createdAt(),
+  readAt: timestamp('read_at', { withTimezone: true }),
+  undoneAt: timestamp('undone_at', { withTimezone: true }),
+}, t => [index('notifications_user_idx').on(t.userId, t.createdAt)]);
+
+/**
+ * Conversations with LotusPond's own assistant (server/src/assistant/), in the account's cell. One conversation is
+ * about one profile; the person can ask about others in it.
+ */
+export const assistantConversations = pgTable('assistant_conversations', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  profileId: uuid('profile_id').notNull().references(() => profiles.id, { onDelete: 'cascade' }),
+  title: text('title').notNull(),
+  /** Where it happens: the app, or WhatsApp from the linked number. */
+  channel: text('channel').$type<'app' | 'whatsapp'>().notNull().default('app'),
+  createdAt: createdAt(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, t => [index('assistant_conversations_user_idx').on(t.userId, t.updatedAt)]);
+
+/**
+ * Every message of a conversation as sent to and returned by the model, in order and never edited (the model's
+ * thinking blocks are valid only in an unchanged history). `text` and `meta` are what the app shows.
+ */
+export const assistantMessages = pgTable('assistant_messages', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  conversationId: uuid('conversation_id').notNull().references(() => assistantConversations.id, { onDelete: 'cascade' }),
+  seq: integer('seq').notNull(),
+  role: text('role').$type<'user' | 'assistant'>().notNull(),
+  /** The message as the API takes it (content blocks, tool uses and results included). */
+  content: jsonb('content').$type<unknown>().notNull(),
+  /** Shown in the app: the person's words, or the assistant's reply; empty for tool-result turns. */
+  text: text('text').notNull().default(''),
+  meta: jsonb('meta').$type<{ tools?: string[]; organs?: string[]; links?: { label: string; url: string }[]; wrote?: boolean; refused?: boolean }>(),
+  createdAt: createdAt(),
+}, t => [uniqueIndex('assistant_messages_seq_key').on(t.conversationId, t.seq)]);
+
+/* ---------- WhatsApp (shared/whatsapp.ts, server/src/whatsapp/) ---------- */
+
+/** The WhatsApp number linked to an account, in the account's cell. One number per account, one account per number. */
+export const whatsappLinks = pgTable('whatsapp_links', {
+  userId: uuid('user_id').primaryKey().references(() => users.id, { onDelete: 'cascade' }),
+  /** The WhatsApp id: the number with its country code, digits only. */
+  phone: text('phone').notNull(),
+  /** The profile WhatsApp works on and saves reports to. */
+  profileId: uuid('profile_id').notNull().references(() => profiles.id, { onDelete: 'cascade' }),
+  createdAt: createdAt(),
+  lastMessageAt: timestamp('last_message_at', { withTimezone: true }),
+}, t => [uniqueIndex('whatsapp_links_phone_key').on(t.phone)]);
+
+/**
+ * Which cell holds the account a WhatsApp number is linked to, keyed by an HMAC of the number (like `directory`).
+ * Default database only.
+ */
+export const whatsappDirectory = pgTable('whatsapp_directory', {
+  phoneHash: text('phone_hash').primaryKey(),
+  region: text('region').$type<DataRegion>().notNull(),
+  userId: uuid('user_id').notNull(),
+  createdAt: createdAt(),
+}, t => [index('whatsapp_directory_user_idx').on(t.userId)]);
+
+/** Link codes waiting to be sent from WhatsApp, keyed by an HMAC of the code. Default database only. */
+export const whatsappLinkCodes = pgTable('whatsapp_link_codes', {
+  codeHash: text('code_hash').primaryKey(),
+  region: text('region').$type<DataRegion>().notNull(),
+  userId: uuid('user_id').notNull(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  createdAt: createdAt(),
+}, t => [index('whatsapp_link_codes_user_idx').on(t.userId)]);
+
+/** Ids of incoming WhatsApp messages already handled (Meta can deliver one more than once). Default database only. */
+export const whatsappInbound = pgTable('whatsapp_inbound', {
+  messageId: text('message_id').primaryKey(),
+  receivedAt: timestamp('received_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/* ---------- the record agent (shared/sources.ts, server/src/records/) ---------- */
+
+/**
+ * A source (portal) the person asked the record agent to fetch from, for one profile. Kept in the account's cell.
+ * The portal's sign-in (cookies and local storage, Playwright's storage state) is sealed with the cell's file key, so
+ * the agent can check again later without asking; passwords and OTPs are never stored.
+ */
+export const recordConnections = pgTable('record_connections', {
+  id: uuid('id').primaryKey(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  profileId: uuid('profile_id').notNull().references(() => profiles.id, { onDelete: 'cascade' }),
+  sourceId: text('source_id').notNull(),
+  status: text('status').$type<'active' | 'needs_sign_in' | 'paused'>().notNull().default('active'),
+  /** The portal address, for sources without a fixed one ("another lab"); empty for the others. */
+  portalUrl: text('portal_url').notNull().default(''),
+  /** The phone number or user name the portal knows the person by, sealed (records/sealed.ts), base64. */
+  identifierCt: text('identifier_ct'),
+  /** The portal's sign-in as Playwright storage state, sealed, base64. */
+  sessionCt: text('session_ct'),
+  /** For sources reached through an API: a hash of the person's id there (ABHA: their Eka id), so webhooks find it. */
+  externalRef: text('external_ref'),
+  refreshDays: integer('refresh_days'),
+  nextRunAt: timestamp('next_run_at', { withTimezone: true }),
+  lastSuccessAt: timestamp('last_success_at', { withTimezone: true }),
+  consentVersion: text('consent_version').notNull(),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, t => [
+  uniqueIndex('record_connections_key').on(t.userId, t.profileId, t.sourceId, t.portalUrl),
+  index('record_connections_due_idx').on(t.status, t.nextRunAt),
+  index('record_connections_external_idx').on(t.externalRef),
+]);
+
+/** One visit of the agent to a portal: started by the person or by the schedule. */
+export const recordRuns = pgTable('record_runs', {
+  id: uuid('id').primaryKey(),
+  connectionId: uuid('connection_id').notNull().references(() => recordConnections.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  status: text('status').$type<'queued' | 'running' | 'waiting' | 'succeeded' | 'failed' | 'cancelled'>().notNull(),
+  trigger: text('trigger').$type<'person' | 'schedule'>().notNull(),
+  step: text('step'),
+  /** What the agent is waiting for (never the answer). */
+  question: jsonb('question').$type<RecordQuestion>(),
+  found: integer('found').notNull().default(0),
+  saved: integer('saved').notNull().default(0),
+  documentIds: jsonb('document_ids').$type<string[]>().notNull().default([]),
+  error: text('error'),
+  /** How a run ended, for the person, when it is not an error ("Approve the request in your ABHA app"). */
+  note: text('note'),
+  startedAt: timestamp('started_at', { withTimezone: true }).notNull(),
+  finishedAt: timestamp('finished_at', { withTimezone: true }),
+}, t => [index('record_runs_connection_idx').on(t.connectionId, t.startedAt), index('record_runs_status_idx').on(t.status)]);
+
+/** Reports already brought in from a connection, so checking again saves only new ones. */
+export const recordItems = pgTable('record_items', {
+  connectionId: uuid('connection_id').notNull().references(() => recordConnections.id, { onDelete: 'cascade' }),
+  /** A hash of the portal's own id for the report (or of its contents). */
+  itemKey: text('item_key').notNull(),
+  documentId: uuid('document_id').references(() => documents.id, { onDelete: 'set null' }),
+  createdAt: createdAt(),
+}, t => [uniqueIndex('record_items_key').on(t.connectionId, t.itemKey)]);
+
 export type UserRow = typeof users.$inferSelect;
 export type ConsentRow = typeof consents.$inferSelect;
 export type AuditEventRow = typeof auditEvents.$inferSelect;
@@ -188,3 +512,16 @@ export type DocumentRow = typeof documents.$inferSelect;
 export type MeasurementRow = typeof measurements.$inferSelect;
 export type ScanRow = typeof scans.$inferSelect;
 export type PartnerLabRow = typeof partnerLabs.$inferSelect;
+export type LabOrderRow = typeof labOrders.$inferSelect;
+export type LabOrderEventRow = typeof labOrderEvents.$inferSelect;
+export type LabWebhookInboxRow = typeof labWebhookInbox.$inferSelect;
+export type LabResultRow = typeof labResults.$inferSelect;
+export type OAuthClientRow = typeof oauthClients.$inferSelect;
+export type AgentGrantRow = typeof agentGrants.$inferSelect;
+export type AgentTokenRow = typeof agentTokens.$inferSelect;
+export type NotificationRow = typeof notifications.$inferSelect;
+export type AssistantConversationRow = typeof assistantConversations.$inferSelect;
+export type AssistantMessageRow = typeof assistantMessages.$inferSelect;
+export type WhatsAppLinkRow = typeof whatsappLinks.$inferSelect;
+export type RecordConnectionRow = typeof recordConnections.$inferSelect;
+export type RecordRunRow = typeof recordRuns.$inferSelect;

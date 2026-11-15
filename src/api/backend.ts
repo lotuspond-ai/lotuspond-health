@@ -2,9 +2,16 @@
 // HttpBackend talks to the LotusPond API; BrowserBackend keeps everything in this browser (preview builds).
 import type {
   Account, ActivityEvent, ConsentKind, ConsentRecord, DocumentKind, Measurement, MeasurementInput, Profile, ProfileInput, ProfileRecords,
-  RegisterInput, ScanInput, ScanItem, ServiceInfo, SessionInfo, StoredDocument,
+  RegisterInput, ScanInput, FamilyConfirmation, AiExtraction, ScanItem, ServiceInfo, SessionInfo, StoredDocument,
   FacilityQuery, FacilitySearchResult, GeoCandidate, GeoReverse, PublicConfig,
 } from '../types';
+import type { NotificationList, UndoResult } from '../../shared/notifications';
+import type { AssistantConsent, AssistantEvent, AssistantInfo, AssistantMessage } from '../../shared/assistant';
+import type { WhatsAppInfo, WhatsAppLink, WhatsAppLinkStart } from '../../shared/whatsapp';
+import type { RecordConnectionView, RecordRunView, SourcesInfo } from '../../shared/sources';
+import type { AgentCategory } from '../../shared/agents';
+import type { AgentConnection, AgentConnectionsInfo, CreateAgentTokenInput, CreatedAgentToken, UpdateAgentConnectionInput } from '../../shared/agents';
+import type { LabBookingInput, LabCatalog, LabOrderView, LabResultSaved, LabResultView, LabSlot } from '../../shared/lab-bundle';
 
 export class ApiError extends Error {
   readonly status: number;
@@ -43,7 +50,8 @@ export interface Backend {
   /** Recent account events, newest first. */
   activity(): Promise<ActivityEvent[]>;
 
-  createProfile(input: ProfileInput): Promise<Profile>;
+  /** Add a family member, with what the account holder confirmed (shared/family.ts); recorded as a consent. */
+  createProfile(input: ProfileInput, confirmation: FamilyConfirmation): Promise<Profile>;
   updateProfile(id: string, patch: Partial<ProfileInput>): Promise<Profile>;
   deleteProfile(id: string): Promise<void>;
 
@@ -76,6 +84,78 @@ export interface Backend {
   searchPlaces(q: string): Promise<GeoCandidate[]>;
   /** The area around a point (sent rounded to about 1 km). */
   reversePlace(lat: number, lon: number): Promise<GeoReverse>;
+
+  /* Lab booking: home sample collection and its results (docs/lab-booking-backend.md). Needs the LotusPond server. */
+  /** Packages from the partners serving the account's region at this pincode. */
+  labCatalog(pincode: string): Promise<LabCatalog>;
+  labSlots(q: { partner: string; pincode: string; date: string; items: string[] }): Promise<LabSlot[]>;
+  /** A profile's bookings, newest first. */
+  labOrders(profileId: string): Promise<LabOrderView[]>;
+  /** One booking with its status timeline. */
+  labOrder(profileId: string, id: string): Promise<LabOrderView>;
+  /**
+   * Book. Retrying the same booking (after a network error) must reuse the same idempotency key, so the lab is never
+   * asked twice. An order still `placing` is being confirmed with the lab. A refused booking throws an ApiError whose
+   * detail carries the failed `order`.
+   */
+  bookLab(profileId: string, input: LabBookingInput, idempotencyKey: string): Promise<LabOrderView>;
+  cancelLabOrder(profileId: string, id: string, reason?: string): Promise<LabOrderView>;
+  /** Slots for moving a booking's visit (the server knows its address). */
+  labOrderSlots(profileId: string, id: string, date: string): Promise<LabSlot[]>;
+  rescheduleLabOrder(profileId: string, id: string, slot: LabSlot): Promise<LabOrderView>;
+  /** Results waiting for review. */
+  labResults(profileId: string): Promise<LabResultView[]>;
+  /** The report PDF of a result. */
+  labReport(profileId: string, resultId: string): Promise<Blob>;
+  /** A link that opens the report PDF in the browser, or null in the apps (which fetch it with labReport). */
+  labReportUrl(profileId: string, resultId: string): string | null;
+  /** Save reviewed values (and the report PDF) as the profile's records. */
+  saveLabResult(profileId: string, resultId: string, measurements: MeasurementInput[]): Promise<LabResultSaved>;
+  /** Drop a result without saving anything. */
+  dismissLabResult(profileId: string, resultId: string): Promise<LabResultView>;
+
+  /**
+   * Send one photographed or scanned report to Claude to read it (docs/report-reading.md). Only after the person
+   * agreed to the notice for this file; the server records that consent. Needs the LotusPond server.
+   */
+  extractReport(profileId: string, file: Blob, fileName: string): Promise<AiExtraction>;
+
+  /* Connected agents (shared/agents.ts): AI agents reading the records over MCP. Needs the LotusPond server. */
+  agentConnections(): Promise<AgentConnectionsInfo>;
+  createAgentToken(input: CreateAgentTokenInput): Promise<CreatedAgentToken>;
+  updateAgentConnection(id: string, patch: UpdateAgentConnectionInput): Promise<AgentConnection>;
+  disconnectAgent(id: string): Promise<void>;
+
+  /* Notifications (shared/notifications.ts): what connected agents added, with an undo. Needs the LotusPond server. */
+  notifications(): Promise<NotificationList>;
+  markNotificationsRead(ids?: string[]): Promise<NotificationList>;
+  undoNotification(id: string): Promise<UndoResult>;
+
+  /* LotusPond's assistant (shared/assistant.ts). Needs the LotusPond server and Anthropic credentials on it. */
+  assistantInfo(): Promise<AssistantInfo>;
+  agreeToAssistant(categories: AgentCategory[]): Promise<AssistantConsent>;
+  withdrawAssistant(): Promise<void>;
+  assistantConversation(id: string): Promise<{ id: string; profileId: string; title: string; channel?: 'whatsapp'; messages: AssistantMessage[] }>;
+  deleteAssistantConversation(id: string): Promise<void>;
+  /** Sends a message; the answer arrives as events until `done` or `error`. */
+  /* The assistant on WhatsApp (shared/whatsapp.ts). Needs WhatsApp set up on the server. */
+  whatsappInfo(): Promise<WhatsAppInfo>;
+  /** Agree to the WhatsApp notice and get a code to send from WhatsApp. */
+  startWhatsAppLink(): Promise<WhatsAppLinkStart>;
+  setWhatsAppProfile(profileId: string): Promise<WhatsAppLink>;
+  unlinkWhatsApp(): Promise<void>;
+  sendToAssistant(input: { profileId: string; conversationId?: string; text: string }, onEvent: (e: AssistantEvent) => void, signal?: AbortSignal): Promise<void>;
+
+  /* The record agent (shared/sources.ts): fetching reports from portals. Needs the LotusPond server. */
+  recordSources(): Promise<SourcesInfo>;
+  recordConnections(): Promise<RecordConnectionView[]>;
+  connectRecordSource(input: { sourceId: string; profileId: string; portalUrl?: string; refreshDays: number | null }): Promise<{ connection: RecordConnectionView; run: RecordRunView | null; authorizeUrl?: string }>;
+  updateRecordConnection(id: string, patch: { refreshDays: number | null }): Promise<RecordConnectionView>;
+  runRecordConnection(id: string): Promise<RecordRunView>;
+  disconnectRecordSource(id: string): Promise<void>;
+  recordRun(id: string): Promise<RecordRunView>;
+  answerRecordRun(id: string, answer: string): Promise<RecordRunView>;
+  cancelRecordRun(id: string): Promise<RecordRunView>;
 }
 
 /** A message suitable for showing to the person. */
