@@ -232,6 +232,13 @@ html { scroll-padding-top: calc(var(--header, 72px) + 16px); }
 
 /* The band on the field: one headline, one lede, a row of chips */
 .home-band { padding: clamp(64px, 8vw, 112px) 0; }
+.home-band-grid { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 48px; align-items: center; }
+.home-band .home-lede { margin-top: 22px; }
+.home-band .home-illo { justify-self: end; }
+@media (max-width: 900px) {
+  .home-band-grid { grid-template-columns: minmax(0, 1fr); }
+  .home-band .home-illo { justify-self: center; max-width: 360px; }
+}
 .home-chips { display: flex; flex-wrap: wrap; gap: 10px; margin-top: clamp(32px, 4vw, 48px); padding: 0; list-style: none; }
 .home-chips li {
   display: inline-flex; align-items: center; height: 40px; padding: 0 18px; border-radius: 999px;
