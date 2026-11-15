@@ -11,7 +11,6 @@ import { countryInSentence, countryName, countryPolicy, storageSentence, type Un
 import type { ActivityEvent, AuditKind, ConsentKind, ConsentRecord, Profile } from '../types';
 import { ConfirmButton, Field } from '../components/forms';
 import { AppLockSettings } from '../components/AppLock';
-import { AgentConnectionsPanel } from '../components/AgentConnections';
 import '../styles/compliance.css';
 
 const focusDeletePassword = () => document.querySelector<HTMLInputElement>('#delete-account input[type=password]')?.focus();
@@ -36,7 +35,6 @@ export default function AccountPage() {
         </section>
         <AppLockSettings />
         <ResidencyPanel />
-        {!isPreview && <AgentConnectionsPanel />}
         <UnitsPanel onChange={reload} />
         <ConsentsPanel consents={consents} failed={failed} onChange={reload} profiles={profiles} />
         <ActivityPanel activity={activity} failed={failed} profiles={profiles} />

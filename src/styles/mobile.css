@@ -13,10 +13,10 @@ html, body { overscroll-behavior: none; }
 body { -webkit-tap-highlight-color: transparent; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 
 /* ---------- shell ---------- */
-.app { grid-template-rows: auto minmax(0, 1fr); height: 100dvh; padding: 0 var(--sar) 0 var(--sal); }
+.app { height: 100dvh; padding: 0 var(--sar) 0 var(--sal); }
 .topbar { padding-top: calc(14px + var(--sat)); }
 .brand b, .nav button { white-space: nowrap; }
-.tabbar, .files-switch { display: none; }
+.tabbar { display: none; }
 .bodymap { padding-bottom: calc(20px + var(--sab)); }
 .page { padding-bottom: calc(40px + var(--sab)); }
 .scrim { padding: var(--sat) var(--sar) var(--sab) var(--sal); }
@@ -64,15 +64,10 @@ body { -webkit-tap-highlight-color: transparent; -webkit-text-size-adjust: 100%;
 
 /* ---------- phone layout (keep the width in step with COMPACT in src/lib/useMedia.ts) ---------- */
 @media (max-width: 760px) {
-  /* Rows: top bar, the Files / Scans switch (when shown), the page, the tab bar. Placed explicitly so the page
-     keeps the stretching row whether or not the switch is there. */
-  .app { grid-template-rows: auto auto minmax(0, 1fr) auto; }
-  .app > * { grid-row: 3; }
-  .app > .topbar { grid-row: 1; }
-  .app > .files-switch { grid-row: 2; }
-  .app > .tabbar { grid-row: 4; }
-  .files-switch { display: flex; margin: 10px 16px 0; }
-  .files-switch button { flex: 1; }
+  .records-switch { display: flex; justify-self: stretch; margin: 10px 16px 0; }
+  .records-switch button { flex: 1; padding-left: 4px; padding-right: 4px; white-space: nowrap; }
+  .home-grid { grid-template-columns: 1fr; }
+  .home-steps { grid-template-columns: 1fr; }
   /* Toasts sit above the tab bar and its raised Add button. */
   .app:not([hidden]) ~ .toasts { bottom: calc(84px + var(--sab)); }
   /* The sheet header already names the open organ or the overview. */
@@ -102,7 +97,7 @@ body { -webkit-tap-highlight-color: transparent; -webkit-text-size-adjust: 100%;
   .stage__title { display: none; }
   .stage__back { top: 12px; left: 12px; bottom: auto; }
   /* --cover is the height of the stage under the settled sheet (BodyMap): the 2D map and the controls at the
-     bottom fit in what is left, as the 3D camera does (ViewInset in src/three/Stage.tsx). */
+     bottom fit in what is left. */
   .bm2d { bottom: var(--cover, 0px); container-type: size; transition: bottom 0.3s ease-out; }
   .stage__legend { bottom: calc(var(--cover, 0px) + 12px); transition: bottom 0.3s ease-out; }
 
