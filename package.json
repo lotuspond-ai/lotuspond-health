@@ -12,7 +12,7 @@
     "local": "node tools/local.mjs",
     "lint": "oxlint",
     "typecheck": "tsc -b && npm run typecheck -w server",
-    "test": "node tools/test-parsers.mjs && npm run test:app && npm run test:ocr && npm test -w server",
+    "test": "node tools/test-parsers.mjs && npm run test:app && npm run test:ocr && npm run test:site && npm test -w server",
     "test:parsers": "node tools/test-parsers.mjs",
     "preview": "vite preview",
     "build:artifact": "node tools/build-artifact.mjs",
@@ -23,7 +23,8 @@
     "ios": "npm run build:mobile && cap open ios",
     "mobile:assets": "node tools/mobile-assets.mjs",
     "test:ocr": "node --import tsx --test --test-reporter=spec tools/test-ocr.ts",
-    "test:app": "node --import tsx --test --test-reporter=spec tools/test-app-client.ts"
+    "test:app": "node --import tsx --test --test-reporter=spec tools/test-app-client.ts",
+    "test:site": "node --import tsx --test --test-reporter=spec tools/test-site-design.ts"
   },
   "dependencies": {
     "@aparajita/capacitor-biometric-auth": "^10.0.0",
@@ -39,6 +40,8 @@
     "@capacitor/share": "^8.0.3",
     "@capacitor/splash-screen": "^8.0.2",
     "@capgo/capacitor-health": "8.11.13",
+    "@fontsource-variable/atkinson-hyperlegible-next": "^5.3.0",
+    "@fontsource-variable/platypi": "^5.3.0",
     "@protomaps/basemaps": "^5.7.2",
     "@react-three/drei": "^10.7.9",
     "@react-three/fiber": "^9.8.2",
