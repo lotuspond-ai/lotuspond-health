@@ -271,7 +271,11 @@ def fit_diaphragm(sex, W, extra=(), outer=10):
     vi, vd, vw = vessel_targets(sex, W, v0, f, thor, rep)
     guide = v0.copy(); guide[vi] = v0[vi] + vd
     gw = np.full(n, 0.02); gw[vi] = np.maximum(gw[vi], vw)
-    lungs, heart = field(sex, 'lungs'), HeartBed(heart_union(sex))
+    # the lungs as closed, parity-filled lobes (organs_lungs: the old field leaked and read 'outside' over most of the
+    # lung bases); a vertex inside a lung leaves it under the base (LungBed), not through its posterior or lateral wall
+    from fit.organs_lungs import LungBed
+    lungs, heart = LungBed(field(sex, 'lungs')), HeartBed(heart_union(sex))
+    rep['lung_field'] = getattr(lungs.fl, 'volume_check', None)
     # the liver as assembled (heart + HEART_CARVE carved out of its dome)
     pushers = [(k, liver_carved(sex) if k == 'liver' else field(sex, k)) for k in ABD + VESSELS + BONES] + list(extra) + [('lungs', lungs), ('heart', heart)]
     T = np.flatnonzero(thor)

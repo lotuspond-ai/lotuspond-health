@@ -102,35 +102,7 @@ def level_crit(sex, y, lo, hi):
     return crit(level_name(x), f'{lo}-{hi}', a <= x <= b, level_index=round(x, 2), y=round(float(y), 4))
 
 
-def lung_base(sex):
-    """Samples of the lungs' diaphragmatic surfaces: downward-facing lung surface (normal y < -0.5), not on a fissure
-    (>= 4 mm from another lobe), the lowest lung surface in its 4 mm column, below the heart's top."""
-    path = os.path.join(cache_dir(sex), 'lung-base.npz')
-    if os.path.exists(path): return np.load(path)['p']
-    P = []
-    lobes = {k: hra(sex, k) for k in LOBES}
-    for k, (v, f) in lobes.items():
-        fl = Field.build(v, f, 0.001)
-        p = sample_surface(v, f[fl.fsel], 30000, seed=1)
-        q, d, t = fl.closest(p); nrm = fl.fn[t]
-        others = np.concatenate([lobes[o][0] for o in LOBES if o != k])
-        dz, _ = cKDTree(others).query(p)
-        P.append(p[(nrm[:, 1] < -0.5) & (dz > 0.004)])
-    P = np.concatenate(P)
-    allv = np.concatenate([lobes[k][0] for k in LOBES])
-    key = np.floor(allv[:, [0, 2]] / 0.004).astype(np.int64)
-    low = {}
-    for kk, y in zip(map(tuple, key), allv[:, 1]):
-        if y < low.get(kk, 9): low[kk] = y
-    kp = np.floor(P[:, [0, 2]] / 0.004).astype(np.int64)
-    lowest = np.array([low.get(tuple(k), 9) for k in kp])
-    P = P[P[:, 1] < lowest + 0.012]
-    # not the parts lying on the heart (cardiac impression) or on the mediastinum above it, nor downward-facing lung
-    # above the level of the domes (below the hilum): the domes rise at most ~3 cm above the heart's lowest point
-    hd = field(sex, 'heart')(P)
-    P = P[(hd > 0.015) & (P[:, 1] < hra(sex, 'heart')[0][:, 1].min() + 0.03)]
-    np.savez(path, p=P)
-    return P
+from fit.organs_lungs import lung_base  # noqa: E402  (closed lobes; was defined here on the leaking HRA segment field)
 
 
 def arcuate(sex, dv):
@@ -194,7 +166,12 @@ def measure(sex, out, aux):
     pairs['esophagus']['stomach (beyond the junction)'] = pair(es, own['stomach'], exclude=near_junction, listed=False)
     # diaphragm
     from fit.organs_final import liver_carved, HEART_CARVE
-    pairs['diaphragm'] = {k: pair(di, F(k), n=40000) for k in ('lungs', 'heart', 'spleen', 'ivc', 'aorta')}
+    pairs['diaphragm'] = {k: pair(di, F(k), n=40000) for k in ('heart', 'spleen', 'ivc', 'aorta')}
+    # the lungs exactly: samples inside or within 1.5 mm of the closed lobes' field tested by ray parity on the lobes,
+    # depth by the exact closest point (organs_lungs.lungs_exact_pair)
+    from fit.organs_lungs import lungs_exact_pair
+    lx = lungs_exact_pair(sex, di)
+    pairs['diaphragm']['lungs'] = dict(lx, ok=bool(lx['inside_pct'] <= FRAC_MAX and lx['deepest_mm'] <= DEPTH_MAX), listed=True)
     # the liver as assembled (assemble.py carves the heart plus 4 mm out of the HRA liver dome the heart sinks into);
     # the uncarved HRA liver is reported alongside
     pairs['diaphragm']['liver'] = pair(di, liver_carved(sex), n=40000)
@@ -219,6 +196,14 @@ def measure(sex, out, aux):
     R['contact_pairs_summary'] = crit(sum(v['ok'] for _, _, v in listed), len(listed), all(v['ok'] for _, _, v in listed),
                                       unit='listed pairs passing (<= 1 mm deep and <= 0.5 % of surface)',
                                       failing=[f'{o} x {k}: {v["inside_pct"]}% / {v["deepest_mm"]} mm' for o, k, v in listed if not v['ok']])
+    # the diaphragm's mesh after the final settle (organs_final.settle_diaphragm re-splits stretched edges between its
+    # rounds): its longest edge, and its triangles' interiors (7 barycentric points per triangle) against the aorta
+    # (capped; the inflated one where lib.inflate has inflated it) and the IVC (lumen filled)
+    from fit.organs_final import max_edge, EDGE_CAP
+    el = max_edge(*di)
+    R['diaphragm_longest_edge_mm'] = crit(round(el * 1000, 2), EDGE_CAP * 1000, el <= EDGE_CAP + 1e-9, unit='mm',
+                                          aorta_source='inflated (lib.inflate)' if 'aorta' in _inflated_keys(sex) else 'HRA')
+    R['diaphragm_triangles_in_vessels'] = triangles_in(di, [(k, F(k)) for k in ('aorta', 'ivc')])
     # joins
     from lib.mesh import closest_on_mesh
     _, d = closest_on_mesh(*es, st[0][car])
@@ -323,6 +308,15 @@ def measure(sex, out, aux):
         R[f'{k}_to_thyroid'] = crit(round(float(d.min() * 1000), 2), '0-1 mm, none inside', (d.min() <= 0.001) and (d >= 0).all(),
                                     inside_pct=round(float((d < 0).mean() * 100), 2), centre=np.round(out[k][0].mean(0), 4).tolist(),
                                     method='exact distance to the thyroid mesh, inside by its winding number')
+    # parathyroids clear of the carotid sheath (exact signed distance to the carotid arteries and internal jugular veins)
+    from fit.organs_pth import sheath_vessels, _clearance, SHEATH_CLEAR
+    sv_ = sheath_vessels(sex); sc = {}
+    for k in PTH:
+        P_ = np.vstack([out[k][0], sample_surface(*out[k], 400, seed=2)]); c_, who_ = _clearance(P_, sv_); sc[k] = (round(c_ * 1000, 2), who_)
+    R['parathyroid_sheath_clearance_mm'] = crit({k: x[0] for k, x in sc.items()}, f'>= 0 mm (outside every carotid artery and jugular vein; target {SHEATH_CLEAR * 1000:.1f})',
+                                                all(x[0] >= 0 for x in sc.values()), nearest={k: x[1] for k, x in sc.items()},
+                                                method='exact signed distance (closest point, inside by winding number) to the vessels group\'s carotid arteries and '
+                                                       'internal jugular veins and the HRA carotid stumps, capped')
     # the gland does not pass through itself (exact test: lib.mesh ray-parity votes on every face, confirmed by the
     # winding number; the facing assemble.py measures)
     from fit.organs_thyroid import fold_faces
@@ -370,6 +364,40 @@ def measure(sex, out, aux):
                                        pylorus_right_of_cardia_mm=round(float((cc[0] - pc[0]) * 1000), 1),
                                        lowest_point_below_cardia_mm=round(float((cc[1] - sv[:, 1].min()) * 1000), 1))
     return R
+
+
+TRI_BARY = np.array([[1 / 3, 1 / 3, 1 / 3], [0.5, 0.5, 0.0], [0.0, 0.5, 0.5], [0.5, 0.0, 0.5], [2 / 3, 1 / 6, 1 / 6], [1 / 6, 2 / 3, 1 / 6],
+                     [1 / 6, 1 / 6, 2 / 3]])
+
+
+def _inflated_keys(sex):
+    from fit.organs_data import _INFLATED_KEYS
+    return _INFLATED_KEYS.get(sex, set())
+
+
+def triangles_in(mesh, fields, band=0.004):
+    """Triangle interiors of a sheet inside neighbours: 7 points per triangle (centroid, edge midpoints and three inner
+    points) of every triangle with a vertex within `band` of the neighbour; a triangle counts when any of its points is
+    inside. ok: no point deeper than DEPTH_MAX and at most FRAC_MAX % of the sheet's area."""
+    v, f = mesh
+    ar = 0.5 * np.linalg.norm(np.cross(v[f[:, 1]] - v[f[:, 0]], v[f[:, 2]] - v[f[:, 0]]), axis=1)
+    out, ok = {}, True
+    for name, fl in fields:
+        near = fl.coarse(v) < band
+        fi = np.flatnonzero(near[f].any(1))
+        deep = np.zeros(len(fi))
+        for b in TRI_BARY:
+            P = np.einsum('k,ikj->ij', b, v[f[fi]])
+            deep = np.maximum(deep, -fl(P))
+        hit = fi[deep > 0]
+        pct = float(ar[hit].sum() / ar.sum() * 100)
+        dmm = float(max(0.0, deep.max()) * 1000) if len(fi) else 0.0
+        out[name] = dict(triangles=int(len(hit)), area_cm2=round(float(ar[hit].sum() * 1e4), 2), area_pct=round(pct, 3), deepest_mm=round(dmm, 2),
+                         ok=bool(dmm <= DEPTH_MAX and pct <= FRAC_MAX))
+        ok &= out[name]['ok']
+    return crit({k: d['deepest_mm'] for k, d in out.items()}, f'<= {DEPTH_MAX} mm deep and <= {FRAC_MAX} % of the sheet', ok,
+                unit='mm (deepest triangle-interior point inside the vessel)', per_vessel=out,
+                method='7 barycentric points per triangle near the vessel; aorta field capped, IVC field with its lumen filled')
 
 
 STAGES = ('neck', 'adrenals', 'diaphragm', 'stomach', 'esophagus', 'final', 'measure')   # --from=measure: re-measure only
@@ -447,6 +475,12 @@ def fit(sex, render=True, frm=None):
         v_, f_ = out[k]; v2 = seat_pth(v_, f_, thy, GAP_PTH)
         rep['thyroid'].setdefault('parathyroids', {}).setdefault(k, {})['final_seat_shift_mm'] = round(float(np.linalg.norm(v2 - v_, axis=1).max() * 1000), 2)
         out[k] = (v2, f_)
+    # each gland clear of the carotid sheath by the exact distance (organs_pth.clear_sheath: re-seated on its lobe's
+    # posterior surface at its level, shape kept, 0-1 mm off the lobe)
+    from fit.organs_pth import clear_sheath
+    pg, prep = clear_sheath(sex, {k: out[k] for k in PTH}, thy, *ax)
+    for k in PTH:
+        out[k] = pg[k]; rep['thyroid'].setdefault('parathyroids', {}).setdefault(k, {})['sheath'] = prep[k]
 
     def adrenals():
         log(sex, 'adrenals')

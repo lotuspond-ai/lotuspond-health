@@ -201,12 +201,19 @@ const meanEdge = (P, I) => {
   return n ? s / n : 0;
 };
 
-/** Error tolerance of a structure: 4 % of its size, between 0.25 and 1 mm. */
-function tolerance(P, I) {
+/** Error tolerance of a structure: 4 % of its size, between 0.25 mm and `cap` (1 mm; SHEET_TOL for translucent sheets). */
+function tolerance(P, I, cap = 0.001) {
   const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
   for (let i = 0; i < I.length; i++) for (let a = 0; a < 3; a++) { const x = P[I[i] * 3 + a]; if (x < lo[a]) lo[a] = x; if (x > hi[a]) hi[a] = x; }
-  return Math.min(0.001, Math.max(0.00025, 0.04 * Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2])));
+  return Math.min(cap, Math.max(0.00025, 0.04 * Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2])));
 }
+// translucent sheets (parts flagged 'noinner': the diaphragm, drawn at 22 % opacity over the lungs and liver) take a
+// looser tolerance and are capped at their budget: at 1 mm the diaphragm needed 4x its budget (40,000 triangles) and the
+// female's still 40,000 at 2.5 mm (her diaphragm's long bridging faces fold when collapsed), 20,000 at 4 mm; a sheet is
+// simplified to its budget at SHEET_TOL (folds mended by locking the vertices under them when that is cheap) and its
+// remaining errors are reported (simplify.json sheets_capped), never raised by doubling
+const SHEET_TOL = 0.0025;
+const tolCap = part => ((part.flags || []).includes('noinner') ? SHEET_TOL : 0.001);
 
 /** Fractions of the probes of surface A farther than tol and farther than 2 tol from surface B (sampled one-sided
  * Hausdorff test). */
@@ -228,8 +235,8 @@ const within = e => Math.max(e[0], e[2]) <= FAR && e[1] === 0 && e[3] === 0 && (
  * over: folds are mended by locking the source vertices under them (up to 3 rounds, when the ~2 triangles per locked
  * vertex cost less than doubling the target), else by one doubling of the target; distance errors by doubling it. err = [orig->new beyond tol, beyond 2 tol, new->orig beyond tol, beyond 2 tol] (fractions of probes), folded
  * area beyond the source's own (fraction), area (mm2) of the result. */
-function simplifyBounded(P, I, target, N, lock) {
-  const n = I.length / 3, tol = tolerance(P, I);
+function simplifyBounded(P, I, target, N, lock, cap = 0.001, hard = false) {
+  const n = I.length / 3, tol = tolerance(P, I, cap);
   const [f0, a0] = folds(P, N, I), own = f0 / Math.max(a0, 1e-30);
   let lk = lock, mended = 0, foldDoubled = 0;
   for (let t = target, tries = 0; ;) {
@@ -243,6 +250,7 @@ function simplifyBounded(P, I, target, N, lock) {
       for (let v = 0; v < lk2.length; v++) if (lk2[v] && !(lk && lk[v])) added++;
       if (2 * added < t) { lk = lk2; mended++; continue; }
     }
+    if (hard) return { out, tol, raised: tries, mended, target, err, own, capped: true };  // a sheet: folds mended, never doubled
     if (within(err.slice(0, 4))) {  // folds left: at most one doubling for them (the budget), then the result stands
       if (foldDoubled) return { out, tol, raised: tries, mended, target, err, own };
       foldDoubled++;
@@ -293,7 +301,7 @@ async function build(sex) {
   if (rig.inward_failing && Object.keys(rig.inward_failing).length)
     throw new Error(`${sex}: parts with more than ${rig.inward_max * 100} % of their area facing inward: ${JSON.stringify(rig.inward_failing)} (assemble.py)`);
   const names = JSON.parse(fs.readFileSync(path.join(dir, 'structures.json'), 'utf8'));
-  const raised = [], errors = [], failing = [], foldLimited = [], lockedVerts = {};
+  const raised = [], errors = [], failing = [], foldLimited = [], lockedVerts = {}, sheetsCapped = [];
   let foldedMm2 = 0;
   const doc = new Document();
   const buffer = doc.createBuffer();
@@ -312,12 +320,14 @@ async function build(sex) {
     sizes.forEach((n, s) => {
       if (!n) return;
       const target = Math.min(n, Math.max(Math.min(n, 60), Math.round((part.budget * w[s]) / W)));
-      const r = simplifyBounded(P, I.subarray(seg[s] * 3, seg[s + 1] * 3), target, N, lock);
+      const sheet = (part.flags || []).includes('noinner');
+      const r = simplifyBounded(P, I.subarray(seg[s] * 3, seg[s + 1] * 3), target, N, lock, tolCap(part), sheet);
       const name = `${pid}/${names[pid]?.[s]?.name ?? s}`;
       if (r.raised || r.mended) raised.push(`${name} ${n}->${target}->${r.out.length / 3} (tol ${(r.tol * 1000).toFixed(2)} mm${r.mended ? `, ${r.mended} fold mends` : ''})`);
       errors.push({ name, tris: n, target, out: r.out.length / 3, tol_mm: +(r.tol * 1000).toFixed(2), err: r.err.map(x => +x.toFixed(5)), src_folded: +r.own.toFixed(5) });
       foldedMm2 += r.err[4] * r.err[5];
-      if (!within(r.err.slice(0, 4))) failing.push(name); else if (!within(r.err)) foldLimited.push(name);
+      if (sheet) sheetsCapped.push({ name, tris: r.out.length / 3, budget_target: target, tol_mm: +(r.tol * 1000).toFixed(2), within: within(r.err), err: r.err.map(x => +x.toFixed(5)) });
+      else if (!within(r.err.slice(0, 4))) failing.push(name); else if (!within(r.err)) foldLimited.push(name);
       chunks.push(r.out);
     });
     const all = concat(chunks);
@@ -349,8 +359,8 @@ async function build(sex) {
   fs.mkdirSync(bodies, { recursive: true });
   fs.writeFileSync(path.join(bodies, `${sex}.json`), JSON.stringify({ ...out, triangles: total, license: sources.outputLicense.spdx }, null, 1) + '\n');
   // every structure's sampled error both ways: [orig->GLB beyond tol, beyond 2 tol, GLB->orig beyond tol, beyond 2 tol]
-  fs.writeFileSync(path.join(dir, 'simplify.json'), JSON.stringify({ rule: `at most ${FAR * 100} % of probes beyond tol, none beyond 2 tol, both ways; folded area beyond the source's own at most ${FOLD * 100} % (or ${FOLD_MM2} mm2)`,
-    raised, failing, fold_limited: foldLimited, folded_mm2: +foldedMm2.toFixed(2), locked_shared_vertices: lockedVerts, structures: errors }, null, 0));
+  fs.writeFileSync(path.join(dir, "simplify.json"), JSON.stringify({ rule: `at most ${FAR * 100} % of probes beyond tol, none beyond 2 tol, both ways (tol 4 % of size, 0.25-1 mm; translucent sheets up to ${SHEET_TOL * 1000} mm); folded area beyond the source's own at most ${FOLD * 100} % (or ${FOLD_MM2} mm2)`,
+    raised, failing, fold_limited: foldLimited, sheets_capped: sheetsCapped, folded_mm2: +foldedMm2.toFixed(2), locked_shared_vertices: lockedVerts, structures: errors }, null, 0));
   const worst = errors.filter(e => e.out < e.tris).sort((a, b) => Math.max(b.err[0], b.err[2]) - Math.max(a.err[0], a.err[2]))[0];
   console.log(`${sex}: ${Object.keys(out.parts).length} parts, ${total} triangles, ${(fs.statSync(glb).size / 1e6).toFixed(2)} MB, ${raised.length} structures given more triangles to stay within tolerance, `
     + `${failing.length} outside it${failing.length ? ' ' + JSON.stringify(failing) : ''}; worst ${worst?.name} ${JSON.stringify(worst?.err)} at ${worst?.tol_mm} mm; `

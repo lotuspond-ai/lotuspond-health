@@ -91,11 +91,18 @@ class TubeObstacle:
         return sd, dirn, np.zeros(len(p), int)
 
 
-def hra_aorta_tube(sex):
+def hra_aorta_tube(sex, inflated=True):
     """The HRA thoracic aorta (ascending aorta, arch, descending aorta a and b) as one capped TubeObstacle: each piece's
     centreline marched by plane sections (vessels_geom.march: the largest polygon near the running axis, i.e. the outer
-    wall of the double-walled HRA vessel) from its open ring that continues the previous piece, radius sqrt(area / pi)."""
-    S = source(f'hra-{sex}'); X = 'VH_M_' if sex == 'male' else 'VH_F_'
+    wall of the double-walled HRA vessel) from its open ring that continues the previous piece, radius sqrt(area / pi).
+    inflated: the pieces lib/inflate.py inflates for the assembly (male descending aorta) at that calibre
+    (fit/vessels_tubes.hra_source)."""
+    if inflated:
+        from fit.vessels_tubes import hra_source
+        S = hra_source(sex)
+    else:
+        S = source(f'hra-{sex}')
+    X = 'VH_M_' if sex == 'male' else 'VH_F_'
     pts, rad, prev, desc = [], [], None, []
     for n in ('ascending_aorta', 'aortic_arch', 'descending_aorta_a', 'descending_aorta_b'):
         if X + n not in S.by_name: continue
@@ -643,14 +650,30 @@ def superficial_layer(sex, VES, skin, log=print):
 
 
 RADIAL_D = (0.002, 0.004)     # radial artery wall depth at the pulse
-RADIAL_ZONE = 0.050           # over the distal 5 cm proximal to the radial styloid
+RADIAL_ZONE = 0.050           # the pulse zone: the distal 5 cm proximal to the radial styloid's level (measured)
+RADIAL_FULL, RADIAL_FADE = 0.060, 0.020   # superficial over the distal 6 cm above the styloid level, faded in over 2 cm more
+
+
+def styloid_level(cl, rv, sty):
+    """Arc length along the artery's centreline (from its proximal end) where it reaches the radial styloid tip's level
+    on the forearm axis (the radius's principal axis, pointing distally)."""
+    c = rv.mean(0); ev, V = np.linalg.eigh(np.cov((rv - c).T)); a = V[:, -1]
+    if (sty - c) @ a < 0: a = -a
+    Q, sq = polyline_resample(cl['p'], 0.0005)
+    h = (Q - sty) @ a
+    k = np.flatnonzero((h[:-1] < 0) & (h[1:] >= 0))
+    if not len(k): return float(sq[int(np.argmin(np.abs(h)))])
+    k = int(k[0]); t = -h[k] / max(h[k + 1] - h[k], 1e-9)
+    return float(sq[k] + t * (sq[k + 1] - sq[k]))
 
 
 def radial_pulse(sex, VES, skin, log=print):
-    """Radial artery at the wrist: over the RADIAL_ZONE proximal to the tip of the radial styloid (the placed radius
-    keeps Z-Anatomy's vertex order: the styloid tip is the Z-Anatomy radius's lowest vertex) the wall depth is brought to
-    clip(Z-Anatomy depth, 2, 4) mm, faded in over 2 cm proximally and out over 1.5 cm past the styloid (the artery then
-    turns dorsally into the anatomical snuffbox)."""
+    """Radial artery at the wrist: the styloid level is the tip of the radial styloid (the placed radius keeps Z-Anatomy's
+    vertex order: the styloid tip is the Z-Anatomy radius's lowest vertex) projected on the forearm axis (the placed
+    radius's long axis), and the point of the artery's centreline at that level anchors the pulse zone (the RADIAL_ZONE
+    above it, where the report measures the depth). Over the distal RADIAL_FULL above that level the wall depth is
+    brought to clip(Z-Anatomy depth, 2, 4) mm (in front of the distal radius), faded in over RADIAL_FADE more
+    proximally and out over 1.5 cm past the styloid (the artery then turns dorsally into the anatomical snuffbox)."""
     ztree = za_skin_tree(); out = {}
     for side in 'lr':
         n = f'Radial_artery{side}'; x = VES.get(n)
@@ -662,8 +685,8 @@ def radial_pulse(sex, VES, skin, log=print):
         cl = trunk(x['v'], x['f'])
         s, b, D, ZD, N = depth_field(x, cl, skin, ztree)
         sk = (np.arange(len(D)) + 0.5) * SUP_STEP
-        s_sty = float(project(cl, sty[None])[0][0])
-        w = G.smoothstep((sk - (s_sty - RADIAL_ZONE)) / 0.02) * (1 - G.smoothstep((sk - s_sty) / 0.015))
+        s_sty = styloid_level(cl, rv, sty)
+        w = G.smoothstep((sk - (s_sty - RADIAL_FULL - RADIAL_FADE)) / RADIAL_FADE) * (1 - G.smoothstep((sk - s_sty) / 0.015))
         w = np.where(np.isfinite(D), w, 0.0)
         tgt = np.clip(np.nan_to_num(ZD, nan=RADIAL_D[1]), *RADIAL_D)
         vec = gauss_along(np.nan_to_num(D - tgt)[:, None] * N, np.ones(len(D)), SUP_STEP, 0.006) * w[:, None]

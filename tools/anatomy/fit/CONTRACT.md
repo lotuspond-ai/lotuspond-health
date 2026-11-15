@@ -32,6 +32,22 @@ group of structures and writes them where `assemble.py` picks them up.
 - The machine has 4 cores shared with other jobs: keep runs lean (subsample, cache intermediate results under
   `.cache/fit/<sex>/<group>/`), and avoid running more than one heavy job at a time.
 
+## Shared data
+
+- Adult-calibre HRA vessels (`lib/inflate.py`): `from lib.inflate import inflated_hra; m = inflated_hra(sex)` returns
+  `{HRA structure name: (v, f)}` in the HRA body's coordinates for every HRA structure the assembly changes: the
+  inflated vessels (male descending aorta a/b at x1.5, about 21/19 mm across, its centreline moved off the vertebral
+  bodies and discs by up to 3 mm with 0.5 mm clearance; male renal arteries 2.5 mm radius; female common bile and
+  hepatic ducts 2.5 mm; female superior mesenteric artery 3.5 mm at its origin), the branches moved with them (the
+  aortic arch, superior and inferior mesenteric arteries, coeliac trunk...; the female hepatic, cystic and pancreatic
+  ducts) and the HRA veins pushed out of them (male renal veins and inferior vena cava, female left renal vein). Any
+  structure not in it is unchanged (`lib.mesh.source(f'hra-{sex}').get(name)`). Fits whose structures must clear these
+  vessels (the vessels fit's azygos system, the organs fit's oesophagus and diaphragm crura) should use these meshes as
+  their obstacles instead of the raw HRA ones: `assemble.py` draws them. Cached in `.cache/fit/<sex>/inflated/`
+  (`<name>.npz`, `manifest.json` with each structure's role, `report.json` with radii, shifts and every overlap before
+  and after); rebuilt when its inputs change (it reads the rib cage fit's discs), or with `python3 lib/inflate.py
+  [male|female|all]`. This folder is not a fit group: never write into it from a fit.
+
 ## Outputs
 
 `python3 fit/<group>.py [male|female|all]` (default all) must write, per sex,

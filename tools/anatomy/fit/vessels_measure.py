@@ -31,6 +31,7 @@ from fit.common import FIT  # noqa: E402
 from fit import vessels_geom as G  # noqa: E402
 
 GAP_MAX, ANGLE_MAX, BONE_MAX = 0.0015, 20.0, 0.0005
+FORK_RING_MAX = 0.0005   # a fork child's start ring: every vertex at most this far outside the stub's capped lumen (fit/vessels_tubes.fork_rings)
 
 
 def r3(x, k=2):
@@ -109,6 +110,19 @@ def junctions(J, VES):
             c, r, t = start_frame(x['v'], x['f'], e['c'])
             gap = float(np.linalg.norm(c - e['c'])); ang = G.angle_deg(t, e['n'])
             row.update(gap_mm=r3(gap * 1000), angle_deg=r3(ang, 1), za_r_mm=r3(r * 1000), hra_r_mm=r3(e['r'] * 1000),
+                       pass_gap=bool(gap <= GAP_MAX), pass_angle=bool(ang <= ANGLE_MAX))
+        elif j.get('seat'):
+            # a child rebuilt into its own opening of the stub (fit/vessels_tubes.iliac_tubes: the common iliacs in the HRA
+            # aorta's two openings): measured as a chain onto that opening, gap = how far its start ring's centre lies
+            # outside the stub's capped lumen, angle = its leaving axis against the opening's axis
+            x = VES[j['vessels'][0]]; st = j['seat']
+            c, r, t = start_frame(x['v'], x['f'], st['c'])
+            from lib.mesh import cap_holes
+            hv, hf = j['hra_mesh']; cv, cf = cap_holes(hv, hf)
+            sd, _ = G.TriSet(cv, cf).signed(c[None], band=0.05)
+            gap = max(0.0, float(sd[0])); ang = G.angle_deg(t, st['n'])
+            row.update(gap_mm=r3(gap * 1000), angle_deg=r3(ang, 1), angle_note="child seated in the stub's opening: its axis vs the opening's",
+                       za_r_mm=r3(r * 1000), hra_r_mm=r3(st['r'] * 1000), seat_centre_offset_mm=r3(np.linalg.norm(c - st['c']) * 1000),
                        pass_gap=bool(gap <= GAP_MAX), pass_angle=bool(ang <= ANGLE_MAX))
         else:
             gaps, A, B, kids = [], [], [], {}

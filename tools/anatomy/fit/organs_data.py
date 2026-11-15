@@ -16,6 +16,7 @@ HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, HERE)
 from lib.mesh import source, save, load, orient_outward, merge, components  # noqa: E402
 from fit.common import get_warp, hra_mesh, hra_select, za_whole, FIT  # noqa: E402
+from catalog import HRA_EXCLUDE  # noqa: E402
 from catalog import LOBE_PATH  # noqa: E402
 
 GROUP = 'organs'
@@ -190,11 +191,62 @@ def hra(sex, key):
         m = merge(list(ribs(sex)[0].values()))
     else:
         sel = HRA[key]
-        v, f = hra_mesh(sex, sel)
+        inf, _ = inflated(sex)
+        es = [o for o in hra_select(sex, sel) if not re.search(HRA_EXCLUDE, o['path'])]
+        if inf and any(o['name'] in inf for o in es):
+            # the shared inflation step's meshes (lib/inflate.py) replace the HRA ones they inflate (the male
+            # descending aorta at adult calibre), so the oesophagus, the diaphragm and its hiatus clear the vessel the
+            # assembled body shows
+            src = source(f'hra-{sex}')
+            ms = [inf[o['name']] if o['name'] in inf else src.load([o]) for o in es]
+            v, f = merge(ms)
+            _INFLATED_KEYS.setdefault(sex, set()).add(key)
+        else:
+            v, f = hra_mesh(sex, sel)
         if not len(f): raise MissingHRA(f'{sex}: no HRA mesh for {key}')
         m = (v, orient_outward(v, f))
     _HRA_CACHE[ck] = m
     return m
+
+
+# ------------------------------------------------------------------------------------------------ inflated vessels
+USE_INFLATED = True          # switch: False keeps the HRA vessels as they are even when the inflation step has run
+_INFLATED, _INFLATED_KEYS = {}, {}
+
+
+def inflated(sex):
+    """({HRA structure name: (v, f)}, stamp) from the shared inflation step (lib/inflate.py writes
+    .cache/fit/<sex>/inflated/ with a manifest), in the HRA body's frame; ({}, None) when it has not run (or
+    USE_INFLATED is off). The manifest may be a list of {name, file} entries or a {name: file} map."""
+    if sex in _INFLATED: return _INFLATED[sex]
+    d = os.path.join(FIT, sex, 'inflated'); man = os.path.join(d, 'manifest.json')
+    out = ({}, None)
+    try:
+        from lib.inflate import inflated_hra           # the shared step (rebuilds its cache when its inputs changed)
+    except ImportError:
+        inflated_hra = None
+    if USE_INFLATED and inflated_hra is not None:
+        meshes = inflated_hra(sex)
+        if meshes:
+            out = (dict(meshes), f'inflated{int(os.stat(man).st_mtime)}' if os.path.exists(man) else 'inflated')
+            log(sex, f'inflated vessels (lib.inflate.inflated_hra): {sorted(meshes)}')
+    elif USE_INFLATED and os.path.exists(man):
+        m = json.load(open(man))
+        if isinstance(m, dict):
+            items = m.get('structures') or m.get('items') or m.get('meshes') or [dict(name=k, file=x) for k, x in m.items() if isinstance(x, str)]
+        else:
+            items = m
+        meshes = {}
+        for o in items:
+            if not isinstance(o, dict): continue
+            name = o.get('name') or o.get('structure'); fn = o.get('file') or o.get('path')
+            if name and fn and str(fn).endswith('.npz') and os.path.exists(os.path.join(d, fn)):
+                meshes[name] = load(os.path.join(d, fn))
+        if meshes:
+            out = (meshes, f'inflated{int(os.stat(man).st_mtime)}')
+            log(sex, f'inflated vessels from {d}: {sorted(meshes)}')
+    _INFLATED[sex] = out
+    return out
 
 
 # ------------------------------------------------------------------------------------------------ fields
@@ -214,6 +266,10 @@ SLICE_FILL = {'ivc', 'trachea', 'bronchi'}
 def field(sex, key, h=None):
     ck = (sex, key)
     if ck in _FIELDS: return _FIELDS[ck]
+    if key == 'lungs':                       # closed lobes, parity-filled, volume-checked (organs_lungs)
+        from fit.organs_lungs import lung_field
+        _FIELDS[ck] = lung_field(sex)
+        return _FIELDS[ck]
     h = h or FIELD_H.get(key, 0.0008)
     tag = key
     if key == 'ribs':                        # the ribcage group may rewrite its meshes: key the cache on its manifest
@@ -222,8 +278,10 @@ def field(sex, key, h=None):
         for old in os.listdir(cache_dir(sex)):
             if old.startswith('field-ribs-') and old != f'field-{tag}.npz': os.remove(os.path.join(cache_dir(sex), old))
     if key in SLICE_FILL: tag = key + '-filled'
-    path = os.path.join(cache_dir(sex), f'field-{tag}.npz')
     v, f = hra(sex, key)
+    if key in _INFLATED_KEYS.get(sex, ()):  # inflated meshes keep the HRA topology: key the cache on the inflation run
+        tag = f'{tag}-{inflated(sex)[1]}'
+    path = os.path.join(cache_dir(sex), f'field-{tag}.npz')
     crop = None
     if key == 'lungs':                       # only the bases matter here
         crop = (v.min(0) - 0.02, np.array([9, v[:, 1].min() + 0.17, 9]))

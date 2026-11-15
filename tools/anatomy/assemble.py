@@ -12,8 +12,9 @@ import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 from lib.mesh import (source, merge, remesh_solid, remesh_solids, orient_exact, facing, RayParity, closest_on_mesh, dense_points,  # noqa: E402
-                      laplacian_smooth_field, face_normals, signed_volume, save, load, components, CACHE, compact)
+                      laplacian_smooth_field, face_normals, signed_volume, save, load, components, CACHE, compact, cap_holes)
 from catalog import PARTS, HRA_EXCLUDE, LOBE_PATH  # noqa: E402
+from lib.inflate import inflated_hra, inflation_report  # noqa: E402
 
 OUT = os.path.join(CACHE, 'parts')
 FIT = os.path.join(CACHE, 'fit')
@@ -54,7 +55,8 @@ HRA_PARTS = {
     # (the posterior interventricular vessels and the middle and small cardiac veins stand proud of the chambers) plus
     # 4 mm, the diaphragm's room
     'liver': dict(sel=[r'_liver/'], exclude=r'(ligament|artery|vein|duct|_portal|blood_vasculature)', mode='solid', opening=1,
-                  carve=[(r'cardiac_chamber/', 0.004), (r'blood_vasculature_of_heart/.*' + CORONARY, 0.004), (r'blood_vasculature_of_heart/.*' + CARDIAC_VEINS, 0.004)]),
+                  carve=[(r'cardiac_chamber/', 0.004), (r'blood_vasculature_of_heart/.*' + CORONARY, 0.004), (r'blood_vasculature_of_heart/.*' + CARDIAC_VEINS, 0.004),
+                         ('fit:costal_cartilage', 0.001)]),  # the rib cage fit's costal cartilages (8r reached 1.7 mm into the liver)
     'liver_ligaments': dict(sel=[r'_liver/.*ligament'], double=True),
     'gallbladder': dict(sel=[r'_gallbladder_/']),
     'bile_ducts': dict(sel=[r'_biliary_tree/']),
@@ -94,18 +96,11 @@ LOBE_CARVE = [(r'cardiac_chamber/', 0.001), (r'blood_vasculature/.*/VH_[MF]_[^/]
 INWARD_MAX = 0.01  # a part fails the build when more of its area than this is inside-out (lib.mesh.facing: exact parity test per patch)
 THIN_SOLID = 0.002  # a rebuilt solid whose mean thickness (2 V / A) is below this is a shell, not an organ: reported in rig.json
 
-# Thread-thin HRA vessels and ducts inflated radially about their centrelines (inflate_tube) when they are loaded, so the
-# lung lobes are carved round the inflated aorta too. name: (('r', median radius) | ('k', scale factor), fade, fade length).
-# fade: 'keep_top' / 'keep_bottom' leave the upper / lower end as it is (a junction with a vessel that keeps its size),
-# 'only_top' inflates the upper end (an artery's origin) and fades out along the vessel. The male descending aorta is
-# 12.5-13.9 mm across (adult 20-25 mm in the thorax, 18-20 mm in the abdomen): both its pieces are scaled by the same factor
-# so their junction stays closed, the arch junction and the iliac bifurcation are kept as they are.
-INFLATE = {
-    'male': {'VH_M_descending_aorta_a': (('k', 1.5), 'keep_top', 0.025), 'VH_M_descending_aorta_b': (('k', 1.5), 'keep_bottom', 0.03),
-             'VH_M_left_renal_artery': (('r', 0.0025), None, 0), 'VH_M_right_renal_artery': (('r', 0.0025), None, 0)},
-    'female': {'VH_F_common_bile_duct': (('r', 0.0025), None, 0), 'VH_F_common_hepatic_duct': (('r', 0.0025), None, 0),
-               'VH_F_superior_mesenteric_artery': (('r', 0.0035), 'only_top', 0.045)},
-}
+# Thread-thin HRA vessels and ducts are loaded at adult calibre from lib/inflate.py (inflated_hra: a cached shared step,
+# also read by the vessels and organs fits): the male descending aorta x1.5 (its centreline moved off the vertebral
+# bodies and discs), the renal arteries 2.5 mm; the female common bile and hepatic ducts 2.5 mm, the superior mesenteric
+# artery 3.5 mm at its origin. Their junction neighbours move with them and the renal veins and vena cava are pushed
+# out of the inflated arteries there, so the lung lobes and the liver are carved round the inflated vessels too.
 # Faces of a structure that coincide with a neighbour's surface (the HRA colon flexures repeat 85-89 % of the adjoining
 # segments' walls, the female interventricular septum repeats the ventricles' walls): (part, structure, neighbours,
 # distance) - faces whose vertices and centroid all lie within the distance of a neighbour are dropped.
@@ -155,9 +150,14 @@ def hra_entries(sex, spec):
 
 
 def carve_meshes(sex, carve):
+    """[(meshes, margin)] of a carve list: HRA node-path regexes, or 'fit:<part>' for every fitted structure of a part."""
     s = source(f'hra-{sex}')
     out = []
     for rx, margin in carve or ():
+        if rx.startswith('fit:'):
+            ms = [m for _, m, _ in fitted(sex).get(rx[4:], [])]
+            if ms: out.append((ms, margin))
+            continue
         es = [o for o in s.index if re.search(rx, o['path']) and not re.search(HRA_EXCLUDE, o['path']) and o['name'] not in fit_excludes(sex)]
         if es: out.append(([load_hra(sex, s, o) for o in es], margin))
     return out
@@ -167,104 +167,11 @@ def _smooth01(x):
     x = np.clip(x, 0.0, 1.0); return x * x * (3 - 2 * x)
 
 
-def inflate_tube(v, f, size, fade=None, length=0.0, step=0.002):
-    """Inflate a vessel radially about its centreline: the centreline is the smoothed centroid of 2 mm slices across the
-    vessel's principal axis, each vertex moves along its radial direction (perpendicular to the local tangent) by the
-    factor (('k', k)) or to the median radius (('r', r)), never shrinking; `fade` keeps one end as it is or inflates one
-    end only (see INFLATE), with a smoothstep over `length`. Returns (v, median radius before, after)."""
-    c0 = v.mean(0); _, V = np.linalg.eigh(np.cov((v - c0).T)); ax = V[:, -1]
-    if ax[1] < 0: ax = -ax  # t grows upwards
-    t = (v - c0) @ ax
-    nb = max(int(np.ceil((t.max() - t.min()) / step)), 1)
-    b = np.minimum(((t - t.min()) / step).astype(int), nb - 1)
-    cnt = np.bincount(b, minlength=nb); ok = np.flatnonzero(cnt >= 6)
-    if len(ok) < 3: return v, None, None
-    C = np.stack([np.bincount(b, weights=v[:, k], minlength=nb) for k in range(3)], 1)[ok] / cnt[ok, None]
-    tb = np.bincount(b, weights=t, minlength=nb)[ok] / cnt[ok]
-    C = np.stack([np.convolve(np.pad(C[:, k], 2, mode='edge'), np.ones(5) / 5, 'valid') for k in range(3)], 1)
-    T = np.gradient(C, tb, axis=0); T /= np.maximum(np.linalg.norm(T, axis=1, keepdims=True), 1e-12)
-    cv = np.stack([np.interp(t, tb, C[:, k]) for k in range(3)], 1)
-    tv = np.stack([np.interp(t, tb, T[:, k]) for k in range(3)], 1); tv /= np.maximum(np.linalg.norm(tv, axis=1, keepdims=True), 1e-12)
-    d = v - cv; d -= np.einsum('ij,ij->i', d, tv)[:, None] * tv
-    rad = np.linalg.norm(d, axis=1)
-    r0 = float(np.median([np.median(rad[b == i]) for i in ok]))
-    k = size[1] if size[0] == 'k' else size[1] / max(r0, 1e-6)
-    k = max(k, 1.0)
-    w = np.ones(len(v))
-    if fade == 'keep_top': w = _smooth01((t.max() - t) / length)
-    elif fade == 'keep_bottom': w = _smooth01((t - t.min()) / length)
-    elif fade == 'only_top': w = 1 - _smooth01((t.max() - t) / length)
-    v2 = v + ((k - 1) * w)[:, None] * d
-    return v2, r0, r0 * k
-
-
-JOIN_FALLOFF = 0.012  # m: length over which a junction's snap fades into each vessel
-
-
-def inflation(sex, s):
-    """The INFLATE vessels inflated, with their junctions kept closed: the HRA vessels and ducts share rings of vertices
-    where they join (the aorta's pieces, a branch's origin on its trunk's wall), and every vertex of a shared ring takes
-    one displacement, the mean of the inflated structures' displacements there weighted by their cross-sections (the two
-    pieces of the aorta meet half-way, an inflated trunk carries the root of a branch, inflated or not, outwards with its
-    wall), blended into each structure that shares the ring with a smoothstep over
-    JOIN_FALLOFF of its distance to the ring. Returns {name: ((v, f), r0, r1)} for the inflated vessels and the neighbours
-    moved, and {name: max junction mismatch (mm) before the snap}."""
-    from scipy.spatial import cKDTree
-    key = ('_all', sex)
-    if key in _INFL: return _INFL[key]
-    spec = INFLATE.get(sex, {})
-    idx = {o['name']: o for o in s.index}
-    raw = {n: s.load_entry(idx[n]) for n in spec if n in idx}
-    new = {}
-    for n, m in raw.items():
-        v2, r0, r1 = inflate_tube(m[0], m[1], *spec[n]); new[n] = (v2, r0, r1)
-    # neighbours sharing raw vertices with an inflated vessel (vessels and ducts only)
-    cand = [o for o in s.index if o['name'] not in raw and re.search(r'(blood_vasculature|duct|biliary|bile|ampulla)', o['path'])]
-    trees = {n: cKDTree(m[0]) for n, m in raw.items()}
-    base = list(raw)
-    for o in cand:
-        v = None
-        for n in base:
-            m = raw[n]; lo, hi = m[0].min(0) - 0.002, m[0].max(0) + 0.002
-            if v is None: v = s.load_entry(o)[0]
-            if not np.any(np.all((v > lo) & (v < hi), axis=1)): continue
-            if np.any(trees[n].query(v, distance_upper_bound=1e-6)[0] < 1e-6):
-                raw[o['name']] = s.load_entry(o); new[o['name']] = (raw[o['name']][0].copy(), None, None); break
-    # consensus displacement of every shared position
-    names = list(raw); disp = {n: new[n][0] - raw[n][0] for n in names}
-    allv = np.concatenate([raw[n][0] for n in names]); own = np.concatenate([np.full(len(raw[n][0]), i) for i, n in enumerate(names)])
-    D = np.concatenate([disp[n] for n in names]); infl = np.array([(new[n][2] or 0.0) ** 2 if n in spec else 0.0 for n in names])[own]
-    from scipy import sparse
-    from scipy.sparse.csgraph import connected_components
-    pr = cKDTree(allv).query_pairs(1e-6, output_type='ndarray')  # positions within 1 um are one vertex of a shared ring
-    _, grp = connected_components(sparse.coo_matrix((np.ones(len(pr)), (pr[:, 0], pr[:, 1])), shape=(len(allv), len(allv))), directed=False)
-    nstr = np.zeros(grp.max() + 1, int); np.add.at(nstr, grp, 1)
-    shared = nstr[grp] > 1
-    wsum = np.zeros(grp.max() + 1); np.add.at(wsum, grp, infl)
-    dsum = np.zeros((grp.max() + 1, 3)); np.add.at(dsum, grp, D * infl[:, None])
-    cons = dsum / np.maximum(wsum, 1e-30)[:, None]
-    mism = {}
-    o0 = 0
-    for i, n in enumerate(names):
-        k = len(raw[n][0]); sl = slice(o0, o0 + k); o0 += k
-        sh = np.flatnonzero(shared[sl])
-        if not len(sh): continue
-        corr = cons[grp[sl][sh]] - disp[n][sh]
-        mism[n] = round(float(np.linalg.norm(corr, axis=1).max()) * 1000, 2)
-        d, j = cKDTree(raw[n][0][sh]).query(raw[n][0])
-        w = 1 - _smooth01(d / JOIN_FALLOFF)
-        new[n] = (new[n][0] + w[:, None] * corr[j], new[n][1], new[n][2])
-    out = {n: ((new[n][0], raw[n][1]), new[n][1], new[n][2]) for n in names}
-    _INFL[key] = (out, mism)
-    return _INFL[key]
-
-
-_INFL = {}
 def load_hra(sex, s, o):
-    """An HRA mesh as stored, or inflated (INFLATE) or moved with an inflated vessel's junction (inflation)."""
-    if not INFLATE.get(sex): return s.load_entry(o)
-    out, _ = inflation(sex, s)
-    if o['name'] in out: return out[o['name']][0]
+    """An HRA mesh as stored, or as lib/inflate.py leaves it (inflated, moved with an inflated vessel's junction, or a
+    vein pushed out of an inflated artery)."""
+    m = inflated_hra(sex).get(o['name'])
+    if m is not None and len(s.by_name.get(o['name'], ())) == 1: return m
     return s.load_entry(o)
 
 
@@ -325,12 +232,16 @@ def keep_or_orient(v, f):
     return fo if facing(v, fo)[1] < inward else f
 
 
+_FITTED = {}
 def fitted(sex):
-    """Fitted Z-Anatomy structures by part: {part: [(name, (v, f), sources)]}."""
-    out = {}
+    """Fitted Z-Anatomy structures by part: {part: [(name, (v, f), sources)]} (the 'inflated' folder is lib/inflate.py's
+    cache of HRA vessels, not a fit group)."""
+    if sex in _FITTED: return _FITTED[sex]
+    out = _FITTED[sex] = {}
     d = os.path.join(FIT, sex)
     if not os.path.isdir(d): return out
     for group in sorted(os.listdir(d)):
+        if group == 'inflated': continue
         man = os.path.join(d, group, 'manifest.json')
         if not os.path.exists(man): continue
         for e in json.load(open(man)):
@@ -458,6 +369,33 @@ def inset(mesh, skin_v, skin_f, rays, depth=0.0012, iters=4):
     return v, (float(sd0.max()), float(exact_sdf(rays, skin_v, skin_f, v).max()))
 
 
+def inset_union(mesh, containers, mask, depth=0.0003, iters=8):
+    """Pull the masked vertices of a structure inside the union of closed containers (each vertex towards the container
+    nearest to it) to `depth` inside, with the smooth falloff of `inset`. Returns (v, (before, after) deepest outside
+    reach of the masked vertices, (before, after) share of them outside)."""
+    v, f = mesh; v = v.copy()
+    cs = [(cv, cf, RayParity(cv, cf)) for cv, cf in containers]
+    def sdq(p):
+        best = np.full(len(p), np.inf); q = p.copy()
+        for cv, cf, rp in cs:
+            qq, d = closest_on_mesh(cv, cf, p, k=16); sd = np.where(rp.inside(p), -d, d)
+            m = sd < best; best[m] = sd[m]; q[m] = qq[m]
+        return best, q
+    sd0, _ = sdq(v)
+    for _ in range(iters):
+        sd, q = sdq(v)
+        bad = (sd > -depth) & mask
+        if not bad.any(): break
+        n = q[bad] - v[bad]; n /= np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-12)
+        n = np.where((sd[bad] < 0)[:, None], -n, n)
+        D = np.zeros_like(v); D[bad] = n * (sd[bad] + depth + 1e-5)[:, None]
+        S = laplacian_smooth_field(f, D, iters=12, lam=0.6)
+        keep = np.linalg.norm(D, axis=1) >= np.linalg.norm(S, axis=1)
+        v += np.where(keep[:, None], D, S)
+    sd1, _ = sdq(v)
+    return v, (float(sd0[mask].max()), float(sd1[mask].max())), (round(float((sd0[mask] > 0).mean()), 4), round(float((sd1[mask] > 0).mean()), 4))
+
+
 def tube_radius(v, f):
     """Mean radius of a closed tube: 2 V / A."""
     A = 0.5 * np.linalg.norm(np.cross(v[f[:, 1]] - v[f[:, 0]], v[f[:, 2]] - v[f[:, 0]]), axis=1).sum()
@@ -485,67 +423,114 @@ def border_loops(f):
     return out
 
 
-def sweep_tube(c0, a0, r0, c1, a1, r1, K=32, J=16):
-    """A closed tube along the cubic Hermite curve from c0 (tangent a0) to c1 (tangent a1), its radius blending from r0 to
-    r1 by a smoothstep, both ends capped. Returns (v, f) wound outwards."""
-    L = np.linalg.norm(c1 - c0)
-    ref = np.eye(3)[np.argmin(np.abs(a0))]
-    th = np.linspace(0, 2 * np.pi, K, endpoint=False)
-    V = []
-    e1p = None
-    for j in range(J + 1):
-        t = j / J; h00, h10, h01, h11 = 2 * t**3 - 3 * t**2 + 1, t**3 - 2 * t**2 + t, -2 * t**3 + 3 * t**2, t**3 - t**2
-        c = h00 * c0 + h10 * L * a0 + h01 * c1 + h11 * L * a1
-        tan = (6 * t**2 - 6 * t) * c0 + (3 * t**2 - 4 * t + 1) * L * a0 + (-6 * t**2 + 6 * t) * c1 + (3 * t**2 - 2 * t) * L * a1
-        tan /= np.linalg.norm(tan)
-        e1 = (ref if e1p is None else e1p) - tan * ((ref if e1p is None else e1p) @ tan); e1 /= np.linalg.norm(e1); e1p = e1  # parallel transport
-        e2 = np.cross(tan, e1)
-        r = r0 + (r1 - r0) * (3 * t**2 - 2 * t**3)
-        V += [c + r * (np.cos(a) * e1 + np.sin(a) * e2) for a in th]
-    V = np.array(V + [c0, c1]); F = []
-    for j in range(J):
-        for k in range(K):
-            p, q = j * K + k, j * K + (k + 1) % K
-            F += [[p, q, p + K], [q, q + K, p + K]]
-    nb, nt = len(V) - 2, len(V) - 1
-    F += [[nb, (k + 1) % K, k] for k in range(K)] + [[nt, J * K + k, J * K + (k + 1) % K] for k in range(K)]
-    F = np.array(F)
-    return V, orient_exact(V, F)
-
-
-def renal_vein_extension(vein, kidney, end_r=0.00475, lo=0.0015, hi=0.04):
-    """Swept tubes continuing a renal vessel's open lateral stumps into the kidney's hilum. A stump is a border loop (or
-    the inner and outer wall loops of a double-walled one) whose centre lies lo-hi from the kidney and within 15 mm of
-    the vessel's nearest approach to it (its lateral end, not a tributary's opening), outside the kidney; each tube starts 3 mm back inside
-    the vessel along its axis, just inside the stump's outer wall, follows the vessel's axis and turns into the kidney at
-    the nearest point of the hilum's surface, tapering to end_r (None: the stump's own radius), and ends 4 mm inside the
-    kidney. Returns [(v, f)] and per stump the gap closed (mm)."""
-    v, f = vein; kv, kf = kidney
+def renal_stumps(vessel, kidney, lo=0.0015, hi=0.04):
+    """Open lateral stumps of a renal vessel that stops short of the hilum: border loops whose centre lies lo-hi outside
+    the kidney and within 15 mm of the vessel's nearest approach to it (its lateral end, not a tributary's opening); of
+    a double-walled stump (loops within 3 mm) the outer loop. Returns [(loop, centre, radius, distance to the kidney)]."""
+    v, f = vessel; kv, kf = kidney
     loops = [(v[L].mean(0), float(np.linalg.norm(v[L] - v[L].mean(0), axis=1).mean()), L) for L in border_loops(f)]
-    _, dk = closest_on_mesh(kv, kf, np.array([c for c, _, _ in loops]), k=16) if loops else (None, [])
+    if not loops: return []
+    _, dk = closest_on_mesh(kv, kf, np.array([c for c, _, _ in loops]), k=16)
     _, dv = closest_on_mesh(kv, kf, v[::max(1, len(v) // 4000)], k=16)
-    inside = RayParity(kv, kf).inside(np.array([c for c, _, _ in loops])) if loops else []
-    stumps = []
+    inside = RayParity(kv, kf).inside(np.array([c for c, _, _ in loops]))
+    out = []
     for (c, r, L), d, ins in zip(loops, dk, inside):
         if ins or not (lo < d < hi) or r < 0.0008 or d > dv.min() + 0.015: continue
-        for st in stumps:
-            if np.linalg.norm(st['c'] - c) < 0.003:
-                if r > st['r']: st.update(c=c, r=r)
+        for st in out:
+            if np.linalg.norm(st[1] - c) < 0.003:
+                if r > st[2]: st[:] = [L, c, r, float(d)]
                 break
-        else: stumps.append(dict(c=c, r=r))
-    out, gaps = [], []
-    for st in stumps:
-        c, r = st['c'], st['r']
-        dv = np.linalg.norm(v - c, axis=1); back = v[(dv > 0.004) & (dv < 0.012)]
-        if len(back) < 6: continue
-        a0 = c - back.mean(0); a0 /= np.linalg.norm(a0)
-        q, dq = closest_on_mesh(kv, kf, c[None], k=16); q = q[0]
-        a1 = (q - c) / np.linalg.norm(q - c)
-        a1 = a1 + 0.5 * a0; a1 /= np.linalg.norm(a1)
-        c0 = c - 0.003 * a0; c1 = q + 0.004 * a1
-        out.append(sweep_tube(c0, a0, r - 0.00025, c1, a1, end_r if end_r else r - 0.00025))
-        gaps.append(round(float(dq[0]) * 1000, 1))
-    return out, gaps
+        else: out.append([L, c, r, float(d)])
+    return out
+
+
+def _hermite(c0, m0, c1, m1, t):
+    t = np.asarray(t, float)[:, None]
+    h00, h10, h01, h11 = 2 * t**3 - 3 * t**2 + 1, t**3 - 2 * t**2 + t, -2 * t**3 + 3 * t**2, t**3 - t**2
+    p = h00 * c0 + h10 * m0 + h01 * c1 + h11 * m1
+    d = (6 * t**2 - 6 * t) * c0 + (3 * t**2 - 4 * t + 1) * m0 + (-6 * t**2 + 6 * t) * c1 + (3 * t**2 - 2 * t) * m1
+    return p, d / np.maximum(np.linalg.norm(d, axis=1, keepdims=True), 1e-12)
+
+
+def stump_axis(v, L):
+    """Centre and outward axis of an open border loop: the normal of the loop's plane, pointing away from the vessel."""
+    P = v[L]; c = P.mean(0)
+    _, V = np.linalg.eigh(np.cov((P - c).T)); a = V[:, 0]
+    dv = np.linalg.norm(v - c, axis=1); back = v[(dv > 0.003) & (dv < 0.012)]
+    if len(back) and a @ (c - back.mean(0)) < 0: a = -a
+    return c, a
+
+
+def bridge_path(c0, a0, q, depth=0.004):
+    """Hermite path from a stump (centre c0, axis a0) into the kidney at surface point q, ending `depth` inside."""
+    a1 = (q - c0) / max(np.linalg.norm(q - c0), 1e-9); a1 = a1 + 0.5 * a0; a1 /= np.linalg.norm(a1)
+    c1 = q + depth * a1; L = np.linalg.norm(c1 - c0)
+    return c1, a1, 0.7 * L * a0, 0.7 * L * a1
+
+
+def stump_bridge(v, L, c1, m0, m1, r1, J=20, blend=0.005):
+    """A tube swept from the open border loop L of the vessel (v): its first ring is the loop's own vertices, its section
+    blends from the loop's shape and radius to a circle over `blend` of arc length while the radius eases to r1, along
+    the Hermite curve to c1 (end tangents m0, m1), the far end capped. Returns (v, f) wound outwards; the first ring
+    coincides with the stump, so the vessel and its bridge share that ring (no stand-off, no seam)."""
+    P = v[L]; c0, a0 = stump_axis(v, L)
+    rel = P - c0; h = rel @ a0
+    e1 = rel[0] - h[0] * a0; e1 /= np.linalg.norm(e1); e2 = np.cross(a0, e1)
+    th = np.arctan2(rel @ e2, rel @ e1); rho = np.hypot(rel @ e1, rel @ e2); r0 = float(rho.mean())
+    ts = np.linspace(0, 1, 401); pc, _ = _hermite(c0, m0, c1, m1, ts)
+    arc = np.r_[0, np.cumsum(np.linalg.norm(np.diff(pc, axis=0), axis=1))]
+    tj = np.linspace(0, 1, J + 1); C, T = _hermite(c0, m0, c1, m1, tj); T[0] = a0
+    sj = np.interp(tj, ts, arc)
+    K = len(L); V = [P.copy()]; ep = e1
+    for j in range(1, J + 1):
+        e = ep - T[j] * (ep @ T[j]); e /= np.linalg.norm(e); ep = e; f2 = np.cross(T[j], e)  # parallel transport
+        b = _smooth01(sj[j] / blend); r = r0 + (r1 - r0) * _smooth01(tj[j])
+        rad = (1 - b) * rho + b * r
+        V.append(C[j] + rad[:, None] * (np.cos(th)[:, None] * e + np.sin(th)[:, None] * f2) + ((1 - b) * h)[:, None] * T[j])
+    V = np.concatenate(V + [C[-1][None]])
+    F = []
+    for j in range(J):
+        for k in range(K):
+            p0, p1, q0, q1 = j * K + k, j * K + (k + 1) % K, (j + 1) * K + k, (j + 1) * K + (k + 1) % K
+            F += [[p0, p1, q0], [p1, q1, q0]]
+    tip = len(V) - 1
+    F += [[J * K + k, J * K + (k + 1) % K, tip] for k in range(K)]
+    F = np.array(F)
+    # outward: closed by a temporary cap over the stump ring, the tube must enclose a positive volume
+    Fc = np.vstack([F, [[(k + 1) % K, k, len(V)] for k in range(K)]])
+    if signed_volume(np.vstack([V, c0]), Fc) < 0: F = F[:, ::-1]
+    return V, F
+
+
+def aim_bridge(c0, a0, r, kidney, avoid, side, reach=0.025):
+    """The hilum point a renal vessel's bridge aims at: on the kidney's surface within `reach` of the stump's nearest
+    kidney point, on the given side of the vessels to avoid ('behind' for an artery: the vein lies in front of the
+    artery at the hilum; 'front' for a vein), at least r + 1 mm from their surfaces (r_other + r + 1 mm from their
+    axes), the swept path keeping r + 0.5 mm off them and never running inside one; the shortest such path, else the one
+    with the most clearance. Returns (q, clearance of the path from the avoided vessels, m)."""
+    from scipy.spatial import cKDTree
+    kv, kf = kidney
+    q0 = closest_on_mesh(kv, kf, c0[None], k=16)[0][0]
+    if not avoid: return q0, None
+    cand = dense_points(kv, kf, 0.0008); cand = cand[np.linalg.norm(cand - q0, axis=1) < reach]
+    vp = np.concatenate([dense_points(v, f, 0.0005) for v, f in avoid]); tv = cKDTree(vp)
+    vin = [RayParity(*cap_holes(v, f)) for v, f in avoid]
+    nearv = np.linalg.norm(vp - q0, axis=1) < 0.02
+    zref = np.median(vp[nearv][:, 2]) if nearv.any() else None
+    fall, fclear = q0, -np.inf
+    for q in cand[np.argsort(np.linalg.norm(cand - c0, axis=1))][:2500]:
+        c1, a1, m0, m1 = bridge_path(c0, a0, q)
+        pts, _ = _hermite(c0, m0, c1, m1, np.linspace(0, 1, 40))
+        far = np.linalg.norm(pts - c0, axis=1) > 0.002
+        if not far.any(): continue
+        dd = tv.query(pts[far])[0]
+        clear = float(dd.min()) - r
+        if any(rp.inside(pts[far]).any() for rp in vin): clear = -float(dd.max()) - r  # runs inside an avoided vessel
+        if clear > fclear: fall, fclear = q, clear
+        ok_side = zref is None or (q[2] <= zref if side == 'behind' else q[2] >= zref)
+        if float(tv.query(q)[0]) >= r + 0.001 and clear >= 0.0005 and ok_side:
+            return q, clear
+    return fall, fclear
 
 
 def trim_coincident(m, others, dist):
@@ -565,12 +550,13 @@ LANDMARK_V = {}  # (sex, structure) -> vertices of a trimmed structure before tr
 
 def repairs(sex, acc, off, log):
     """Fixes between structures of different parts, in the HRA frame (before the floor shift)."""
-    # vessels and ducts inflated when loaded (load_hra)
-    if ('_all', sex) in _INFL:
-        out, mism = _INFL[('_all', sex)]
-        for n, (_, r0, r1) in out.items():
-            if r0 is not None: log.setdefault('inflated_radius_mm', {})[n] = dict(before=round(r0 * 1000, 2), after=round(r1 * 1000, 2))
-        log['inflation_junctions_snapped_mm'] = mism  # largest mismatch an independent inflation left at each shared ring
+    # vessels and ducts loaded at adult calibre (lib/inflate.py, load_hra)
+    ir = inflation_report(sex)
+    if ir:
+        log['inflated_radius_mm'] = ir.get('radius_mm', {})
+        log['inflation_junctions_snapped_mm'] = ir.get('junctions_snapped_mm', {})  # largest mismatch an independent inflation left at each shared ring
+        for k in ('rigid', 'near_loops', 'capped_stubs_r_mm', 'pushed', 'stopped', 'kept_ends'):
+            if ir.get(k): log[f'inflation_{k}'] = ir[k]
     # faces that repeat a neighbour's wall
     for part, rx, nrx, dist in TRIM:
         items = acc.get(part, [])
@@ -583,17 +569,45 @@ def repairs(sex, acc, off, log):
             items[i] = (src, n, m2, dbl, paths)  # a structure trimmed away entirely is dropped below (its landmark stays)
             log.setdefault('trimmed_coincident', {})[n] = dict(area_dropped=round(frac, 3), within_mm=dist * 1000, faces_left=int(len(m2[1])), faces_before=int(len(m[1])))
         acc[part] = [it for it in items if len(it[2][1]) >= 10] if part in acc else items
-    # renal vessels that stop short of the hilum
+    # renal vessels that stop short of the hilum: each open stump is swept on from its own boundary ring into the kidney,
+    # the veins first; each artery then aims at a hilum point behind the veins and clear of them, at its own radius
     kid = {n: m for _, n, m, _, _ in acc.get('kidneys', [])}
     for part, vname, end_r in RENAL_EXTEND.get(sex, []):
         vi = [m for _, n, m, _, _ in acc.get(part, []) if n == vname]
         if not vi or not kid: continue
         kname = min(kid, key=lambda k: float(closest_on_mesh(*kid[k], vi[0][0][::max(1, len(vi[0][0]) // 2000)], k=16)[1].min()))
-        tubes, gaps = renal_vein_extension(vi[0], kid[kname], end_r=end_r)
         base = vname if part == 'veins' else f'VH_{sex[0].upper()}_renal_artery_{kname[-1]}'  # the artery's L/R name is swapped later
-        for j, t in enumerate(tubes):
+        # veins keep off the renal arteries and pass in front of them; arteries keep off every renal vein (bridges included)
+        # and pass behind them
+        other = [m for _, n, m, _, _ in acc.get('arteries' if part == 'veins' else 'veins', []) if re.search(r'renal_(artery|vein)', n)]
+        other = [m for m in other if float(closest_on_mesh(*kid[kname], m[0][::max(1, len(m[0]) // 500)], k=8)[1].min()) < 0.03]
+        info = []
+        for j, (L, c, r, d) in enumerate(renal_stumps(vi[0], kid[kname])):
+            c0, a0 = stump_axis(vi[0][0], L)
+            q, clear = aim_bridge(c0, a0, r if part == 'arteries' else (end_r or r), kid[kname], other, 'front' if part == 'veins' else 'behind')
+            c1, a1, m0, m1 = bridge_path(c0, a0, q)
+            t = stump_bridge(vi[0][0], L, c1, m0, m1, end_r if end_r else r)
             acc[part].append(('HRA', f'{base}_hilar_{"abcd"[j] if j < 4 else j}', t, False, [f'derived:{vname} stump {j} swept to the hilum of {kname}']))
-        log.setdefault('renal_vessel_extended', {})[vname] = dict(kidney=kname, stumps=len(tubes), gap_closed_mm=gaps)
+            info.append(dict(gap_mm=round(d * 1000, 1), stump_r_mm=round(r * 1000, 2), end_r_mm=round((end_r or r) * 1000, 2),
+                             **({} if clear is None else dict(clearance_mm=round(clear * 1000, 2)))))
+        # an artery's other open ends on the hilum (a branch stopping at the kidney's surface, not bridged) are capped:
+        # an open rim shows in the kidney close-up
+        capped = []
+        if part == 'arteries':
+            v0, f0 = vi[0]; done_ = {frozenset(L) for L, *_ in renal_stumps(vi[0], kid[kname])}
+            rest = [L for L in border_loops(f0) if frozenset(L) not in done_]
+            if rest:
+                _, dk = closest_on_mesh(*kid[kname], np.array([v0[L].mean(0) for L in rest]), k=16)
+                caps = [L for L, d_ in zip(rest, dk) if d_ < 0.006]
+                if caps:
+                    nv = [v0[L].mean(0) for L in caps]; nf = []
+                    for i_, L in enumerate(caps): nf += [(L[(k + 1) % len(L)], L[k], len(v0) + i_) for k in range(len(L))]
+                    m2 = (np.vstack([v0, np.array(nv)]), np.vstack([f0, np.array(nf, np.int64)]))
+                    for i_, it in enumerate(acc[part]):
+                        if it[1] == vname: acc[part][i_] = (it[0], it[1], m2, it[3], it[4])
+                    capped = [round(float(np.linalg.norm(v0[L] - v0[L].mean(0), axis=1).mean()) * 1000, 2) for L in caps]
+        log.setdefault('renal_vessel_extended', {})[vname] = dict(kidney=kname, stumps=len(info), bridges=info, gap_closed_mm=[x['gap_mm'] for x in info],
+                                                                  **(dict(capped_ends_r_mm=capped) if capped else {}))
     # spinal cord to medulla
     cord = {n: m for _, n, m, _, _ in acc.get('spinal_cord', [])}
     med = [m for _, n, m, _, _ in acc.get('brain', []) if re.search(r'^Allen_(tegmentum|pyramidal_part)_of_medulla_oblongata_[LR]$', n)]
@@ -629,6 +643,16 @@ def repairs(sex, acc, off, log):
             if b > -0.0005:
                 acc['bladder'][i] = (src, n, (v2, m[1]), dbl, paths)
                 log.setdefault('urethra_skin_reach_mm', {})[n] = dict(before=round(b * 1000, 2), after=round(a * 1000, 2))
+    # the penile urethra lies in the corpus spongiosum and the glans (fitted): the part below the spongiosum's top is
+    # pulled 0.3 mm inside their union, with a smooth falloff (the skin inset above may have pulled it out)
+    if sex == 'male':
+        cont = [m for _, n, m, _, _ in acc.get('reproductive', []) if re.search(r'(corpus_spongiosum|glans_penis)$', n)]
+        for i, (src, n, m, dbl, paths) in enumerate(acc.get('bladder', [])):
+            if not cont or not re.search(r'other_urethra', n): continue
+            ytop = max(c[0][:, 1].max() for c in cont)
+            v2, (b, a), share = inset_union(m, cont, m[0][:, 1] < ytop, depth=0.0005)
+            acc['bladder'][i] = (src, n, (v2, m[1]), dbl, paths)
+            log.setdefault('urethra_spongiosum_reach_mm', {})[n] = dict(before=round(b * 1000, 2), after=round(a * 1000, 2), outside_share_before=share[0], outside_share_after=share[1])
     # thread-thin HRA ureters (female): offset outward to a 1.6 mm radius (adult ureter 3-4 mm across), at most 1.2 mm
     for i, (src, n, m, dbl, paths) in enumerate(acc.get('ureters', [])):
         r = tube_radius(*m)

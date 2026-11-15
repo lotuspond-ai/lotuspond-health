@@ -872,6 +872,8 @@ def qa(sex, VES, J, out_dir, log=log):
     groin = ring_c('Femoral_arteryl', 'top')
     cams['groin'] = (groin + [-0.01, -0.02, 0], 0.08, (0.15, 0.05, 1))
     cams['elbow'] = (ring_c('Brachial_arteryl', 'bottom'), 0.07, (0.1, 0.05, 1))
+    jb = [j for j in J if j['key'].startswith('aortic_bifurcation')]
+    if jb: cams['pelvis'] = (jb[0]['end']['c'] + [0, -0.05, 0], 0.085, (0, 0.15, 1))
     knee = VES['Popliteal_arteryl']['v'].mean(0)
     cams['knee'] = (knee, 0.09, (0.1, 0.05, -1))
     for k, (c, r, d) in cams.items():
@@ -909,7 +911,10 @@ def run(sex, stage='all', render=True):
     # ---- review fixes: calibres, crushed veins, superficial layer (fit/vessels_review.py)
     from fit import vessels_review as RV
     from fit.common import skin as _skin, skin_solid
+    # the HRA aorta as an obstacle at the calibre the assembly gives it (lib/inflate.py: the male descending aorta x1.5);
+    # the iliac calibres follow the HRA aorta's own end (the inflation keeps the bifurcation)
     aorta, aorta_info = RV.hra_aorta_tube(sex)
+    aorta_end, _ = RV.hra_aorta_tube(sex, inflated=False)
     sv_, sf_ = _skin(sex); SK = G.SkinField(sv_, sf_, skin_solid(sex))
     review = dict(aorta_tube=aorta_info)
 
@@ -920,7 +925,7 @@ def run(sex, stage='all', render=True):
             import traceback; log('  review stage', key, 'FAILED:', repr(ex)); traceback.print_exc(); review[key] = dict(error=repr(ex))
     step('neck_calibres', RV.neck_calibres, sex, VES, log=log)
     step('radius_blend', RV.junction_radius_blend, VES, J, log=log)
-    step('pelvic_calibres', RV.pelvic_calibres, sex, VES, J, aorta, log=log)
+    step('pelvic_calibres', RV.pelvic_calibres, sex, VES, J, aorta_end, log=log)
     from fit import vessels_sep as SP
     SWEPT = SP.SWEEP.get(sex, ())   # short veins swept again from ring to ring (vessels_sep.sweep_veins) instead
     RR = tuple(n for n in REROUND.get(sex, ()) if n not in SWEPT)
@@ -994,10 +999,17 @@ def run(sex, stage='all', render=True):
     _dump(sex, 'pre_neck', VES=VES, J=J, review=review)
     from fit import vessels_neck as NK
     step('neck_tubes', NK.neck_tubes, sex, VES, J, F, aorta, HV, log=log)
+    # the iliac arteries rebuilt through the aortic openings and one crotch ring, the axillary veins re-joined to the
+    # subclavian veins, the crushed limb vessels swept round (fit/vessels_tubes.py)
+    from fit import vessels_tubes as TB
+    _dump(sex, 'pre_tubes', VES=VES, J=J, review=review)
+    step('limb_pelvic_tubes', TB.tubes, sex, VES, J, F, aorta, HV, review, log=log)
     _dump(sex, 'post_push', VES=VES, J=J, trees=trees, contacts=contacts, review=review, pel=pel, realigned=realigned, sheath=sheath, hist=hist)
     # ---- measurements
     names = [n for n, x in VES.items() if x['placed'] and not x.get('dropped')]
     jr = VM.junctions(J, VES)
+    from fit import vessels_tubes as TB
+    jr += TB.vein_chain_rows(VES)    # subclavian -> axillary veins (Z-Anatomy to Z-Anatomy, measured as chains)
     bone = VM.bones(VES, names, F.bones)
     limb = [n for n in names if VES[n]['region'] in LIMB]
     skin_rows = VM.skin_check(VES, names, F.skin)
@@ -1057,6 +1069,21 @@ def run(sex, stage='all', render=True):
         if 'pulse_zone_median_mm' in r:
             crit.append(dict(criterion=f'{n} wall depth at the pulse (median over 5 cm)', value_mm=r['pulse_zone_median_mm'], threshold_mm=REVIEW_PULSE_MM,
                              pass_=r['pulse_zone_median_mm'] <= REVIEW_PULSE_MM))
+    # pelvic arteries (round, not inside out), limb vessels round, fork children's start rings inside the stub's lumen
+    step('tubes_measured', TB.measure, sex, VES, names, J)
+    step('fork_rings', TB.fork_rings, J, VES)
+    tm = review['tubes_measured'] if 'error' not in review['tubes_measured'] else dict(pelvic={}, limb={})
+    for n, m in sorted(tm['pelvic'].items()):
+        crit.append(dict(criterion=f'{n} round (p90 section aspect, 8 mm in from the rings)', value=m['p90'], threshold=TB.PELVIC_ASPECT, pass_=m['p90'] <= TB.PELVIC_ASPECT))
+        crit.append(dict(criterion=f'{n} not inside out (share of the surface, %)', value=m['inverted_pct'], threshold=TB.PELVIC_INVERTED * 100,
+                         pass_=m['inverted_pct'] <= TB.PELVIC_INVERTED * 100))
+    for n, m in sorted(tm['limb'].items()):
+        crit.append(dict(criterion=f'limb vessel {n} round (p90 section aspect, 8 mm in from the rings)', value=m['p90'], threshold=m['threshold'],
+                         pass_=m['p90'] <= m['threshold']))
+    if 'error' not in review['fork_rings']:
+        for k, r in sorted(review['fork_rings'].items()):
+            crit.append(dict(criterion=f"junction {r['key']} {r['vessel']} start ring inside the stub's capped lumen (max outside)", value_mm=r['ring_outside_max_mm'],
+                             threshold_mm=VM.FORK_RING_MAX * 1000, pass_=r['ring_outside_max_mm'] <= VM.FORK_RING_MAX * 1000))
     rep['criteria'] = crit
     rep['all_pass'] = all(c['pass_'] for c in crit)
     # ---- outputs

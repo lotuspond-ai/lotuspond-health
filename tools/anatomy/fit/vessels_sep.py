@@ -78,8 +78,10 @@ def marched_tube(v, f, start, direction, length=0.30, r0=0.008):
 
 def hra_ivc_tube(sex):
     """The HRA inferior vena cava (_b infrahepatic from the iliac confluence, _a hepatic up to its end) as one capped
-    TubeObstacle, push biased toward the vertebral bodies at the same level. Returns (obstacle, info)."""
-    S = source(f'hra-{sex}'); X = 'VH_M_' if sex == 'male' else 'VH_F_'
+    TubeObstacle, push biased toward the vertebral bodies at the same level (where lib/inflate.py pushed the vena cava out
+    of the inflated aorta, the pushed mesh: fit/vessels_tubes.hra_source). Returns (obstacle, info)."""
+    from fit.vessels_tubes import hra_source
+    S = hra_source(sex); X = 'VH_M_' if sex == 'male' else 'VH_F_'
     parts = [n for n in ('inferior_vena_cava_b', 'inferior_vena_cava_a') if X + n in S.by_name]
     if not parts: return None, dict(error='no HRA inferior vena cava')
     pieces = {n: S.get(X + n) for n in parts}
@@ -162,8 +164,10 @@ def vessel_tube(x, step=0.004):
 
 def hra_vein_tubes(sex, near_pts, pad=0.02, names=None):
     """Marched outer-wall tubes of the HRA veins near the given points: every open ring of each HRA vein mesh (merged
-    double-wall loops) marched inward (vessels_geom.march), [(name, P, R)]."""
-    S = source(f'hra-{sex}')
+    double-wall loops) marched inward (vessels_geom.march), [(name, P, R)]; the veins lib/inflate.py pushed out of the
+    inflated aorta as pushed (fit/vessels_tubes.hra_source)."""
+    from fit.vessels_tubes import hra_source
+    S = hra_source(sex)
     if names is None:
         import json as _json
         from fit.common import FIT

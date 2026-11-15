@@ -144,41 +144,87 @@ def reseat_gland(sex, s, mesh, own=(), log_=log):
                                              lift_search=gaps, moved_mm=round(float(np.linalg.norm(v2 - v, axis=1).max() * 1000), 2))
 
 
-def settle_diaphragm(sex, mesh, own, iters=18, log_=log):
-    """own: [(name, Field)] our stomach, oesophagus and glands. Returns (v, f), report (with the room the HRA bodies
-    leave between the lung bases / the heart's inferior surface and the liver, spleen and colon)."""
+EDGE_CAP = 0.006          # no diaphragm edge longer than this after the final settle
+SETTLE_LUNGS = False      # the final settle also keeps the sheet out of the lung bases
+SETTLE_ROUNDS = 4         # the settle runs in rounds, the edges stretched over SPLIT_EDGE re-split before each
+
+
+def max_edge(v, f):
+    e = np.concatenate([f[:, [0, 1]], f[:, [1, 2]], f[:, [2, 0]]])
+    return float(np.linalg.norm(v[e[:, 0]] - v[e[:, 1]], axis=1).max())
+
+
+def _sheet_pairs(v, f):
+    """Facing vertices of the sheet's two faces (thoracic P, abdominal Q), unit thickness axes and thicknesses."""
     from fit.organs_diaphragm import sides
-    from fit.organs_settle import settle
     from scipy.spatial import cKDTree
-    from fit.organs_geom import refine_long_edges
-    v, f = mesh
-    # triangles longer than SPLIT_EDGE (at the openings and along the crura: up to 23 mm, bridging across the aorta at
-    # T10 and the caval rim) are split first, so that the settle's per-triangle test points (centroid and edge
-    # midpoints) see what passes through them
-    n0 = len(v)
-    v, f = refine_long_edges(v, f, SPLIT_EDGE)
-    f = orient_outward(v, f)
     thor = sides(v, f)
     T = np.flatnonzero(thor); A = np.flatnonzero(~thor)
     d, j = cKDTree(v[A]).query(v[T])
     m = d < 0.010
     P, Q = T[m], A[j[m]]
     ax = v[P] - v[Q]; th = np.linalg.norm(ax, axis=1); ax /= np.maximum(th, 1e-12)[:, None]
-    fields = [(k, field(sex, k), None) for k in DIA_NB if has_hra(sex, k)] + [(k, fl, None) for k, fl in own]
+    return P, Q, ax, th
+
+
+def settle_diaphragm(sex, mesh, own, iters=20, log_=log):
+    """own: [(name, Field)] our stomach, oesophagus and glands. Returns (v, f), report (with the room the HRA bodies
+    leave between the lung bases / the heart's inferior surface and the liver, spleen and colon).
+    The settle runs in SETTLE_ROUNDS rounds; before each, every edge longer than SPLIT_EDGE is split at its midpoint
+    (shape unchanged), so that the settle's per-triangle test points (centroid and edge midpoints, at most SPLIT_EDGE / 2
+    apart) see the aorta and the oesophagus wherever the previous round stretched the sheet round them (one split before
+    a single 18-round settle left edges of 24-37 mm at the hiatus, whose interiors crossed the aortic lumen by 6.5 mm);
+    a last split caps every edge at SPLIT_EDGE (EDGE_CAP is the report's limit)."""
+    from fit.organs_settle import settle
+    from fit.organs_geom import refine_long_edges
+    v, f = mesh
+    n0 = len(v)
+    fields = [(k, field(sex, k) if k != 'aorta' else aorta_field(sex), None) for k in DIA_NB if has_hra(sex, k)] + [(k, fl, None) for k, fl in own]
+    if SETTLE_LUNGS:
+        # the lung bases as closed lobes (organs_lungs.LungBed: a point inside leaves under the base), so that the pushes
+        # at the hiatus cannot lift the sheet into the lungs
+        from fit.organs_lungs import LungBed
+        fields.append(('lungs', LungBed(field(sex, 'lungs')), None))
     # (not the heart and the liver as assembled, heart + HEART_CARVE carved out, under the heart: tried with the sheet
     # within 30 mm of the heart; in the female body, where the stage-3 dome passes 11.6 mm into the heart, the settle
     # did not converge in 18 rounds (heart 9 mm, carved liver 13 mm left), moved the sheet up to 56 mm and folded it
     # through itself; the dome has to be fitted against the carved liver in the diaphragm stage itself)
-    v2, rep = settle(v, f, fields, clear=0.0004, iters=iters, pairs=(P, Q, ax), min_thick=np.minimum(th, MIN_THICK), pair_split=0.5,
-                     w=30.0, inward=False, log=log_, label='diaphragm settle')
-    th2 = np.einsum('ij,ij->i', v2[P] - v2[Q], ax)
-    mv = np.linalg.norm(v2 - v, axis=1)
-    rep['thickness_mm'] = dict(before_p5=round(float(np.percentile(th, 5) * 1000), 2), after_p5=round(float(np.percentile(th2, 5) * 1000), 2),
+    vstart, rounds, per = None, [], max(1, int(np.ceil(iters / SETTLE_ROUNDS)))
+    th0 = None
+    for rnd in range(SETTLE_ROUNDS):
+        v, f = refine_long_edges(v, f, SPLIT_EDGE)
+        f = orient_outward(v, f)
+        P, Q, ax, th = _sheet_pairs(v, f)
+        if th0 is None: th0 = th; vstart = v.copy(); nstart = len(v)
+        v2, rep = settle(v, f, fields, clear=0.0004, iters=per, pairs=(P, Q, ax), min_thick=np.minimum(th, MIN_THICK), pair_split=0.5,
+                         w=30.0, inward=False, log=log_, label=f'diaphragm settle round {rnd}')
+        mv = np.linalg.norm(v2 - v, axis=1)
+        v = v2
+        el = max_edge(v, f)
+        rounds.append(dict(round=rnd, vertices=int(len(v)), iterations=rep['iterations'], residual_mm=rep['residual_mm'],
+                           max_move_mm=round(float(mv.max() * 1000), 2), longest_edge_mm=round(el * 1000, 2)))
+        log_(f'    settle round {rnd}: {rounds[-1]}')
+        if max(rep['residual_mm'].values(), default=0.0) <= 0.05 and el <= SPLIT_EDGE + 1e-9: break
+    # the edge cap: the last round's stretched edges split (midpoints: shape unchanged)
+    v, f = refine_long_edges(v, f, SPLIT_EDGE)
+    f = orient_outward(v, f)
+    P, Q, ax, th2 = _sheet_pairs(v, f)
+    rep = dict(rounds=rounds, iterations=int(sum(r['iterations'] for r in rounds)), residual_mm=rounds[-1]['residual_mm'])
+    rep['thickness_mm'] = dict(before_p5=round(float(np.percentile(th0, 5) * 1000), 2), after_p5=round(float(np.percentile(th2, 5) * 1000), 2),
                                after_min=round(float(th2.min() * 1000), 2))
-    rep['move_mm'] = dict(p95=round(float(np.percentile(mv, 95) * 1000), 2), max=round(float(mv.max() * 1000), 2))
-    rep['split_long_edges'] = dict(max_edge_mm=SPLIT_EDGE * 1000, vertices_before=n0, vertices_after=len(v))
+    rep['move_mm'] = dict(max=round(float(max(r['max_move_mm'] for r in rounds)), 2))
+    rep['split_long_edges'] = dict(max_edge_mm=SPLIT_EDGE * 1000, vertices_before=n0, vertices_after=len(v), longest_edge_mm=round(max_edge(v, f) * 1000, 2))
     rep['hra_room'] = hra_room(sex)
-    return (v2, orient_outward(v2, f)), rep
+    return (v, orient_outward(v, f)), rep
+
+
+def aorta_field(sex):
+    """The descending aorta the sheet must clear: the inflated one where lib.inflate inflates it (organs_data.hra).
+    The sheet's points inside it leave through the nearest wall. (Tried: an exit forwards or sideways only, never
+    through the back wall, by a march from the vessel's axis: in the female the long marches dragged the sheet up to
+    41 mm, edges re-stretched to 62 mm and 9.7 % of the sheet ended inside the aorta; removed.)"""
+    from fit.organs_data import field as _f
+    return _f(sex, 'aorta')
 
 
 def hra_room(sex):
@@ -189,7 +235,8 @@ def hra_room(sex):
     from fit.organs_data import cache_dir
     out = {}
     hv, hf = hra(sex, 'heart'); H = sample_surface(hv, hf, 20000, seed=2); H = H[H[:, 1] < hv[:, 1].min() + 0.025]
-    for nm, X in (('lung_bases', np.load(os.path.join(cache_dir(sex), 'lung-base.npz'))['p']), ('heart_inferior', H)):
+    from fit.organs_lungs import lung_base
+    for nm, X in (('lung_bases', lung_base(sex)), ('heart_inferior', H)):
         d = np.full(len(X), np.inf); who = np.full(len(X), '', object)
         for k in ('liver', 'spleen', 'colon'):
             dk = field(sex, k).coarse(X); m = dk < d; d[m] = dk[m]; who[m] = k
