@@ -8,6 +8,8 @@ Status: November 2026. The engine, the app's Sources page and the MCP tool are b
 - **The navigator:** every other portal is reached through Claude, which is off unless Anthropic credentials are set.
 - **Withings, through its API** (`server/src/records/api/withings.ts`, §5.3): the person signs in on Withings' own page, and each check brings in one value per day from their scale, blood pressure monitor, thermometer or oximeter. It is on when `WITHINGS_CLIENT_ID` and `WITHINGS_CLIENT_SECRET` are set, and is not yet tried with a real Withings account.
 - **Oura and Ultrahuman, through their APIs** (`server/src/records/api/oura.ts`, `ultrahuman.ts`, §5.4): the same sign-in on the provider's page, with one value per day for resting heart rate, SpO2 and breathing rate during sleep, and Ultrahuman M1 glucose once Ultrahuman grants that scope. They are on when `OURA_CLIENT_ID`/`OURA_CLIENT_SECRET` or `ULTRAHUMAN_CLIENT_ID`/`ULTRAHUMAN_CLIENT_SECRET` are set, and are not yet tried with real accounts.
+- **Gmail and Outlook, through their APIs** (`server/src/records/api/mail.ts`, §5.5): read-only sign-in on Google's or Microsoft's page; each check saves the PDF reports from health emails (known lab, hospital and pharmacy senders, or subjects naming a lab report, prescription or discharge summary), never the emails. On when `GMAIL_CLIENT_ID`/`GMAIL_CLIENT_SECRET` or `OUTLOOK_CLIENT_ID`/`OUTLOOK_CLIENT_SECRET` are set; not yet tried with real mailboxes.
+- **DigiLocker, through its Authorized Partner API** (`server/src/records/api/digilocker.ts`, §5.6), when `DIGILOCKER_CLIENT_ID`/`DIGILOCKER_CLIENT_SECRET` are set; otherwise DigiLocker stays a browser source. Only health documents are brought in, and each check starts on DigiLocker's page. Needs LotusPond's registration as a DigiLocker Requester; not yet run against the real service.
 - **ABHA, with no browser:** through Eka Care's ABDM Connect (`server/src/records/abdm/`, docs/abdm.md). The same runs and questions: an OTP to sign in, the ABHA consent PIN to approve LotusPond's consent request. The records come in as FHIR files. It is on when `EKA_CLIENT_ID` and `EKA_CLIENT_SECRET` are set, and is waiting on LotusPond's ABDM Connect onboarding.
 
 The record agent brings a family's reports in from the portals where they live: labs, hospitals, government services, pharmacies and insurers.
@@ -283,6 +285,60 @@ Tests: `server/test/oura-ultrahuman.test.ts` runs against copies of both APIs. `
 Assumed, and to be checked with real accounts:
 - The shape of Ultrahuman's CGM summary entries (`object.value`), which its samples don't show.
 - Whether Oura's `lowest_heart_rate` is what people expect as resting heart rate.
+
+### 5.5 Gmail and Outlook (official APIs, OAuth)
+
+Many Indian labs email the report as a PDF. The email sources bring those PDFs in, touching as little mail as they can:
+
+1. **Sign-in.** On Google's or Microsoft's page, with read-only mail access:
+   - Gmail: scope `gmail.readonly`, with `access_type=offline` and `prompt=consent`, without which Google sends no refresh token;
+   - Outlook: `offline_access Mail.Read`, for personal and work accounts.
+   
+   The shared `oauthSession()` in `records/api/oauth2.ts` handles both. Google keeps the same refresh token, which is kept as it is; Microsoft rotates it, and the new one is kept at once.
+2. **Which emails.** Emails with attachments received since the last check (a day of overlap; a year back the first time), worked through **oldest first**. Only health emails are opened further:
+   - a sender on a known lab, hospital, pharmacy or health-app domain (`HEALTH_SENDER_DOMAINS`, subdomains included, look-alikes not);
+   - or a subject naming a lab, test, blood, diagnostic, scan, X-ray, MRI, radiology or health-check report or result, a discharge summary, a prescription, or "report is ready".
+   
+   One list (`HEALTH_SUBJECT_PHRASES`) makes both that rule and Gmail's own search (`has:attachment filename:pdf after:… {from:… OR subject:(…)}`), so the search never drops a subject the rule accepts.
+3. **Only headers decide.**
+   - Gmail: `format=metadata` (From, Subject, date) for every email. Only for a health email is the part tree read, and then without body data (`format=full&fields=…`). The one exception is a PDF Gmail carries inline instead of as an attachment: then that health email is fetched whole and only that part is kept.
+   - Outlook: `$select=id,subject,from,receivedDateTime`.
+4. **Which attachments.** PDFs only, not invoices, receipts, bills, brochures or price lists, within the upload size limit, and not already saved (they are not downloaded again):
+   - Gmail: keyed by message id and part, because Gmail's attachment ids change between requests;
+   - Outlook: keyed by message and attachment id; only file attachments, not attached emails.
+5. **Limits and resuming.** A check stops at the agent's report limit (50) or after 200 emails. It moves the cursor only to the last email it finished, and says there is more, so a large backlog comes in over several checks with nothing skipped. The cursor is kept only once the reports are saved.
+6. **Never kept.** Email bodies, other emails, and other attachments.
+7. **Password-protected PDFs.** These are common: Indian labs often use the name and date of birth as the password. They are saved, and the run notes how many there were.
+
+Setting up:
+- **Gmail:** a Google Cloud OAuth client with the Gmail API on. `gmail.readonly` is a restricted scope: until Google verifies LotusPond and a third-party security assessment is passed, the app works only for up to 100 test users added in the Google Cloud console.
+- **Outlook:** a Microsoft Entra app registration for "accounts in any organisation and personal Microsoft accounts", with the delegated Graph permission `Mail.Read`. A work account's administrator may have to allow it.
+- **Redirect URIs:** `PUBLIC_URL/records/oauth/gmail/callback` and `PUBLIC_URL/records/oauth/outlook/callback`.
+
+Tests: `server/test/mail.test.ts` runs against copies of the Gmail API and Graph.
+
+### 5.6 DigiLocker (Authorized Partner API, OAuth)
+
+DigiLocker's partner API is run by NeGD, with Meri Pehchaan sign-in. It follows the *Authorized Partner API Specification v2.0* (September 2022). When it is configured it takes over from the browser for the `digilocker` source: a source's own API wins over its browser access.
+
+1. **Sign-in.** `GET /public/oauth2/1/authorize` with `scope=openid` and PKCE (S256). The code verifier is an HMAC of the one-time state under the client secret, so nothing extra is stored. The token comes from `POST /public/oauth2/2/token` with the `code_verifier`.
+2. **One hour, no refresh.** Version 2.0 removed refresh tokens, and an access token lasts 3600 seconds. So DigiLocker is a one-time source (`oneTime` on the fetcher, shown to the app on the source):
+   - connecting, and Check now, always open DigiLocker's page;
+   - there is no schedule: `refreshDays` is kept empty, a schedule is refused with `no_schedule`, and Check now answers `oauth_needed`, which the app turns into the redirect.
+3. **Which documents.**
+   - **Issued** (`GET /public/oauth2/2/files/issued`): only health ones, by type, name or issuer. That covers vaccination certificates, health insurance and mediclaim policies, Ayushman / PM-JAY and ABHA cards, disability (UDID) certificates, CGHS and ESIC cards. Only PDFs are taken.
+   - **Uploaded** (`GET /public/oauth2/1/files/[id]`, two folder levels down): files whose names say they are medical, matched as whole words (a lab, blood, scan or X-ray report or result, a prescription, a discharge summary, an MRI, …). "contract.pdf" or "latest bank statement" don't match.
+   - Issued insurance counts only when it is health insurance or mediclaim, not life or motor insurance.
+   - **Never:** identity and other documents (Aadhaar, PAN, licences, voter ID, passport, ration card, mark sheets, vehicle, income, caste, birth certificates). An identity word in the name always wins.
+4. **Limits and resuming.** Documents already saved are not downloaded again, and an approval saves at most the agent's report limit. An account with more health documents brings the rest in on the next approval, and the run says so.
+5. **Integrity.** Each file (`GET /public/oauth2/1/file/{uri}`) comes with an `hmac` header: Base64 HMAC-SHA256 of the bytes under the client secret. It is checked before saving, and files that fail are not saved; the run notes how many.
+
+**Getting access.** Register LotusPond as a DigiLocker *Requester* on DigiLocker's partner portal (see digilocker.gov.in → Partners → Requesters; the API is listed on API Setu). This is not self-serve. Then:
+- register the redirect URI `PUBLIC_URL/records/oauth/digilocker/callback`;
+- set `DIGILOCKER_CLIENT_ID` and `DIGILOCKER_CLIENT_SECRET`;
+- set `DIGILOCKER_API_URL` if DigiLocker gives a sandbox address.
+
+Tests: `server/test/digilocker.test.ts` runs against a copy of the API. It covers PKCE (a wrong verifier is refused), the document filter (identity documents and bills never downloaded), a tampered file not saved, and the one-time behaviour.
 
 ## 6. Trying it
 

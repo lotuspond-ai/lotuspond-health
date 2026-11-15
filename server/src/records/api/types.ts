@@ -22,6 +22,10 @@ export interface ApiContext {
   note(text: string): void;
   signal: AbortSignal;
   maxBytes: number;
+  /** New reports one check saves, at most: a source with more should return the oldest and resume next time. */
+  maxReports: number;
+  /** Whether a report with this key was already brought in on this connection (skip downloading it again). */
+  alreadySaved(key: string): Promise<boolean>;
 }
 
 export interface ApiFetcher {
@@ -33,8 +37,13 @@ export interface ApiFetcher {
 export interface OAuthFetcher extends ApiFetcher {
   /** The provider's sign-in page, carrying our one-time `state`. */
   authorizeUrl(state: string): string;
-  /** The code the provider sent back → the sign-in to keep (sealed) and a reference for webhooks. */
-  exchange(code: string): Promise<{ session: string; ref?: string }>;
+  /** The code the provider sent back (with the state it carried) → the sign-in to keep (sealed) and a webhook reference. */
+  exchange(code: string, state: string): Promise<{ session: string; ref?: string }>;
+  /**
+   * The provider gives no refresh token (DigiLocker: an access token lasts an hour), so every check starts on its
+   * sign-in page: connecting or Check now sends the person there, and no check is scheduled.
+   */
+  oneTime?: boolean;
 }
 
 export const isOAuth = (f: ApiFetcher): f is OAuthFetcher => typeof (f as OAuthFetcher).authorizeUrl === 'function';

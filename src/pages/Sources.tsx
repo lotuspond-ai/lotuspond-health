@@ -65,7 +65,7 @@ export default function SourcesPage() {
         <section className="panel" aria-labelledby="connected-h">
           <h2 id="connected-h">Connected</h2>
           <ul className="sources__connected">
-            {conns.map(c => <Connection key={c.id} conn={c} onChange={reload} />)}
+            {conns.map(c => <Connection key={c.id} conn={c} onChange={reload} oneTime={!!info?.sources.find(s => s.id === c.sourceId)?.oneTime} />)}
           </ul>
         </section>
       )}
@@ -105,7 +105,7 @@ export default function SourcesPage() {
 }
 
 /** One connected source: its schedule, its last run (live while it runs) and what can be done with it. */
-function Connection({ conn, onChange }: { conn: RecordConnectionView; onChange: () => void }) {
+function Connection({ conn, onChange, oneTime = false }: { conn: RecordConnectionView; onChange: () => void; oneTime?: boolean }) {
   const profiles = useSession(s => s.profiles);
   const [run, setRun] = useState<RecordRunView | null>(conn.lastRun);
   // A reload brings a newer last run: show it (adjusting state while rendering, not in an effect).
@@ -128,21 +128,22 @@ function Connection({ conn, onChange }: { conn: RecordConnectionView; onChange: 
         <div className="agents__row-actions">
           {!live && <button type="button" className="btn btn--small btn--primary" onClick={async () => {
             try {
-              if (conn.status !== 'needs_sign_in') { setRun(await backend.runRecordConnection(conn.id)); return; }
-              // Signing in again: a source with its own sign-in page sends the person there; the others start a run.
+              if (conn.status !== 'needs_sign_in' && !oneTime) { setRun(await backend.runRecordConnection(conn.id)); return; }
+              // Signing in again, or a source that asks each time (DigiLocker): a source with its own sign-in page sends
+              // the person there; the others start a run.
               const r = await backend.connectRecordSource({ sourceId: conn.sourceId, profileId: conn.profileId, refreshDays: conn.refreshDays, ...(conn.portalUrl ? { portalUrl: conn.portalUrl } : {}) });
               if (r.authorizeUrl) { location.assign(r.authorizeUrl); return; }
               if (r.run) setRun(r.run);
             } catch (e) { toast.error(errorMessage(e)); }
-          }}>{conn.status === 'needs_sign_in' ? 'Sign in' : 'Check now'}</button>}
-          <label><span className="sr-only">How often to check {conn.sourceName}</span>
+          }}>{conn.status === 'needs_sign_in' && !oneTime ? 'Sign in' : 'Check now'}</button>}
+          {!oneTime && <label><span className="sr-only">How often to check {conn.sourceName}</span>
             <select value={conn.refreshDays ?? 'never'} onChange={async e => {
               const v = e.target.value === 'never' ? null : Number(e.target.value);
               try { await backend.updateRecordConnection(conn.id, { refreshDays: v }); onChange(); } catch (err) { toast.error(errorMessage(err)); }
             }}>
               {REFRESH_CHOICES.map(c => <option key={c.days ?? 'never'} value={c.days ?? 'never'}>{c.label}</option>)}
             </select>
-          </label>
+          </label>}
           <ConfirmButton confirmText={`Disconnect ${conn.sourceName}? Reports already saved stay in Files.`} busyText="Disconnecting…" className="btn btn--small btn--danger"
             onConfirm={async () => { try { await backend.disconnectRecordSource(conn.id); toast.info(`${conn.sourceName} disconnected.`); onChange(); } catch (e) { toast.error(errorMessage(e)); } }}>Disconnect</ConfirmButton>
         </div>
@@ -247,7 +248,7 @@ function ConnectDialog({ source, info, onClose }: { source: SourceView; info: So
     if (source.needsUrl && !/^https:\/\//i.test(portalUrl.trim())) { setError('Give the portal’s full address, starting with https://'); return; }
     setBusy(true);
     try {
-      const r = await backend.connectRecordSource({ sourceId: source.id, profileId, refreshDays: refresh, ...(source.needsUrl ? { portalUrl: portalUrl.trim() } : {}) });
+      const r = await backend.connectRecordSource({ sourceId: source.id, profileId, refreshDays: source.oneTime ? null : refresh, ...(source.needsUrl ? { portalUrl: portalUrl.trim() } : {}) });
       // A source with its own sign-in page (Withings): the person signs in there and comes back to Sources.
       if (r.authorizeUrl) { location.assign(r.authorizeUrl); return; }
       setRun(r.run);
@@ -271,9 +272,19 @@ function ConnectDialog({ source, info, onClose }: { source: SourceView; info: So
             <ul className="sources__notice">
               {source.availability === 'api' ? (<>
                 <li>You sign in on {source.name}’s own page and choose what to share. LotusPond never sees your {source.name} password.</li>
-                <li>LotusPond reads your measurements through {source.name}’s official API, one value per day, and never writes anything back.</li>
-                <li>It keeps the sign-in, encrypted, to check again on the schedule you choose. Disconnect to forget it; you can also remove LotusPond in your {source.name} account.</li>
-                <li>New readings are saved to Files. They join your records only after you check them.</li>
+                {source.category === 'inbox' ? (<>
+                  <li>LotusPond asks for read-only access. It looks only at emails from labs, hospitals and pharmacies, or whose subject names a lab report, test result, prescription or discharge summary.</li>
+                  <li>From those it saves the PDF reports. It does not read or keep the emails themselves, and skips bills and invoices.</li>
+                </>) : source.category === 'government' ? (<>
+                  <li>LotusPond reads the list of documents in your {source.name} through its official API and downloads only the health ones: vaccination certificates, health insurance policies, Ayushman and ABHA cards, disability certificates and medical files you uploaded.</li>
+                  <li>It never downloads Aadhaar, PAN, licences, mark sheets or other documents, and checks each file’s integrity code before saving it.</li>
+                </>) : (
+                  <li>LotusPond reads your measurements through {source.name}’s official API, one value per day, and never writes anything back.</li>
+                )}
+                {source.oneTime
+                  ? <li>{source.name} gives LotusPond access for an hour at a time, so there is no schedule: each Check now opens {source.name}’s page to approve again.</li>
+                  : <li>It keeps the sign-in, encrypted, to check again on the schedule you choose. Disconnect to forget it; you can also remove LotusPond in your {source.name} account.</li>}
+                <li>{source.category === 'wearable' ? 'New readings' : 'New reports'} are saved to Files. They join your records only after you check them.</li>
               </>) : source.availability === 'abdm' ? (<>
                 <li>LotusPond signs in to your ABHA through Eka Care, which connects apps to ABDM. There is no browser: it asks you here for your ABHA address or number and the OTP ABDM sends.</li>
                 <li>It asks ABDM for your consent to read the records hospitals and labs linked to your ABHA, and you approve it here with your ABHA consent PIN (or in your ABHA app). It never keeps codes or PINs.</li>
@@ -294,11 +305,11 @@ function ConnectDialog({ source, info, onClose }: { source: SourceView; info: So
                   {profiles.map(p => <option key={p.id} value={p.id}>{p.displayName}{p.relationship === 'self' ? ' (you)' : ''}</option>)}
                 </select>
               )}</Field>
-              <Field label="Check for new reports">{id => (
+              {!source.oneTime && <Field label="Check for new reports">{id => (
                 <select id={id} value={refresh ?? 'never'} onChange={e => setRefresh(e.target.value === 'never' ? null : Number(e.target.value))}>
                   {REFRESH_CHOICES.map(c => <option key={c.days ?? 'never'} value={c.days ?? 'never'}>{c.label}</option>)}
                 </select>
-              )}</Field>
+              )}</Field>}
               {source.needsUrl && (
                 <Field label="Portal address" hint="The page where you sign in to see your reports." wide>{id => (
                   <input id={id} type="url" inputMode="url" placeholder="https://reports.yourlab.in" value={portalUrl} onChange={e => setPortalUrl(e.target.value)} />

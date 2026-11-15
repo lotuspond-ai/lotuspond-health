@@ -170,8 +170,9 @@ export function createRecordAgent(opts: RecordAgentOptions): RecordAgent {
   };
 
   function availability(s: SourceInfo): SourceAvailability {
-    if (s.access === 'abdm') return apis.has(s.id) ? 'abdm' : 'unavailable';
-    if (s.access === 'api') return apis.has(s.id) ? 'api' : 'unavailable';
+    // A source's own API, when it is set up, takes over from the browser (DigiLocker).
+    if (apis.has(s.id)) return s.access === 'abdm' ? 'abdm' : 'api';
+    if (s.access === 'abdm' || s.access === 'api') return 'unavailable';
     if (s.access !== 'browser') return 'unavailable';
     if (!s.startUrl && s.id !== DEMO_SOURCE_ID && !opts.config.typedPortals) return 'unavailable';
     if (recipes.has(s.id)) return 'recipe';
@@ -263,7 +264,7 @@ export function createRecordAgent(opts: RecordAgentOptions): RecordAgent {
       return;
     }
     // ABHA goes through an API (no browser); portals through a recipe, or the navigator when there is none.
-    const api = source.access === 'abdm' || source.access === 'api' ? apis.get(source.id) ?? null : null;
+    const api = apis.get(source.id) ?? null;
     const recipe = api ? null : recipes.get(source.id) ?? (opts.navigator && source.access === 'browser' ? navigatorRecipe(source.id, opts.navigator) : null);
     if (!api && !recipe) {
       await setRun(cell, job.runId, { status: 'failed', error: 'The record agent cannot fetch from this source yet.', finishedAt: new Date(now()) });
@@ -297,6 +298,12 @@ export function createRecordAgent(opts: RecordAgentOptions): RecordAgent {
       if (api) {
         const ctx: ApiContext = {
           source, identifier, session: storage, signal: l.abort.signal, maxBytes: opts.maxBytes, remember,
+          maxReports: opts.maxReports ?? MAX_REPORTS,
+          alreadySaved: async key => {
+            const itemKey = createHash('sha256').update(`${source.id}\u0000${key}`).digest('hex');
+            const [hit] = await cell.db.select({ k: recordItems.itemKey }).from(recordItems).where(and(eq(recordItems.connectionId, conn.id), eq(recordItems.itemKey, itemKey))).limit(1);
+            return !!hit;
+          },
           step: async text => { await setRun(cell, job.runId, { step: text.slice(0, 120) }); },
           ask: q => ask(cell, job, l, q),
           keep: (s, ref) => { kept = { session: s, ...(ref ? { ref } : {}) }; },
@@ -479,7 +486,11 @@ export function createRecordAgent(opts: RecordAgentOptions): RecordAgent {
     sources(region) {
       return catalogue()
         .filter(s => !region || s.regions.includes(region))
-        .map(s => ({ ...s, availability: availability(s), needsUrl: s.access === 'browser' && !s.startUrl && s.id !== DEMO_SOURCE_ID }));
+        .map(s => {
+          const f = apis.get(s.id);
+          const viaApi = !!f;
+          return { ...s, availability: availability(s), needsUrl: !viaApi && s.access === 'browser' && !s.startUrl && s.id !== DEMO_SOURCE_ID, ...(f && isOAuth(f) && f.oneTime ? { oneTime: true } : {}) };
+        });
     },
 
     async connections(cell, userId) {
@@ -516,9 +527,13 @@ export function createRecordAgent(opts: RecordAgentOptions): RecordAgent {
       }
       // A source with its own sign-in page, not signed in yet (or no longer): send the person there first.
       const fetcher = apis.get(source.id);
-      if (fetcher && isOAuth(fetcher) && (!conn.sessionCt || conn.status !== 'active')) {
+      if (fetcher && isOAuth(fetcher) && (fetcher.oneTime || !conn.sessionCt || conn.status !== 'active')) {
         const state = randomBytes(32).toString('base64url');
-        const [row] = await cell.db.update(recordConnections).set({ externalRef: stateRef(state), status: 'needs_sign_in', updatedAt: at }).where(eq(recordConnections.id, conn.id)).returning();
+        const [row] = await cell.db.update(recordConnections).set({
+          externalRef: stateRef(state), status: 'needs_sign_in', updatedAt: at,
+          // Nothing can run on a schedule without a refresh token.
+          ...(fetcher.oneTime ? { refreshDays: null, nextRunAt: null } : {}),
+        }).where(eq(recordConnections.id, conn.id)).returning();
         const [view] = await connectionViews(cell, [row]);
         return { connection: view, run: null, authorizeUrl: fetcher.authorizeUrl(state) };
       }
@@ -542,7 +557,7 @@ export function createRecordAgent(opts: RecordAgentOptions): RecordAgent {
         if (now() - conn.updatedAt.getTime() > OAUTH_STATE_MS) return { ok: false, message: `The ${source.name} sign-in took too long. Start again from Sources.` };
         if (q.error || !q.code) return { ok: false, message: `${source.name} was not connected${q.error === 'access_denied' ? ': you chose not to allow access' : ''}.` };
         let got: { session: string; ref?: string };
-        try { got = await fetcher.exchange(q.code); } catch (e) { return { ok: false, message: e instanceof PortalError ? e.message : `${source.name} did not finish the sign-in. Try again.` }; }
+        try { got = await fetcher.exchange(q.code, q.state); } catch (e) { return { ok: false, message: e instanceof PortalError ? e.message : `${source.name} did not finish the sign-in. Try again.` }; }
         const at = new Date(now());
         const [row] = await cell.db.update(recordConnections).set({
           sessionCt: seal(cell, got.session, `session:${conn.id}`), externalRef: got.ref ?? null, status: 'active', updatedAt: at,
@@ -555,6 +570,8 @@ export function createRecordAgent(opts: RecordAgentOptions): RecordAgent {
 
     async update(cell, userId, id, patch) {
       const conn = await connectionRow(cell, userId, id);
+      const fetcher = apis.get(conn.sourceId);
+      if (fetcher && isOAuth(fetcher) && fetcher.oneTime && patch.refreshDays) throw badRequest(`${findSource(conn.sourceId)?.name ?? 'This source'} cannot be checked on a schedule: it asks you to approve each check.`, 'no_schedule');
       const base = conn.lastSuccessAt?.getTime() ?? now();
       const [row] = await cell.db.update(recordConnections).set({
         refreshDays: patch.refreshDays, updatedAt: new Date(now()),
@@ -566,8 +583,9 @@ export function createRecordAgent(opts: RecordAgentOptions): RecordAgent {
     async startRun(cell, user, connectionId) {
       const conn = await connectionRow(cell, user.id, connectionId);
       const fetcher = apis.get(conn.sourceId);
-      if (fetcher && isOAuth(fetcher) && (!conn.sessionCt || conn.status !== 'active')) {
-        throw conflict(`Connect ${findSource(conn.sourceId)?.name ?? 'this source'} again: its sign-in has ended.`, 'oauth_needed');
+      if (fetcher && isOAuth(fetcher) && (fetcher.oneTime || !conn.sessionCt || conn.status !== 'active')) {
+        const name = findSource(conn.sourceId)?.name ?? 'this source';
+        throw conflict(fetcher.oneTime ? `${name} asks you to approve each check on its own page.` : `Connect ${name} again: its sign-in has ended.`, 'oauth_needed');
       }
       const active = await activeRunOf(cell, conn.id);
       return fullRunView(cell, active ?? await newRun(cell, user.id, conn, 'person'));

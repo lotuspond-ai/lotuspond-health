@@ -26,6 +26,8 @@ import { abhaFetcher } from './records/abdm/abha.ts';
 import { withingsFetcher } from './records/api/withings.ts';
 import { ouraFetcher } from './records/api/oura.ts';
 import { ultrahumanFetcher } from './records/api/ultrahuman.ts';
+import { gmailFetcher, outlookFetcher } from './records/api/mail.ts';
+import { digilockerFetcher } from './records/api/digilocker.ts';
 
 // This file runs from server/src (tsx) or server/dist (bundle); both are one level below server/.
 const serverRoot = fileURLToPath(new URL('..', import.meta.url));
@@ -120,6 +122,9 @@ const records = config.records
       ...(config.records.withings ? [withingsFetcher(config.records.withings)] : []),
       ...(config.records.oura ? [ouraFetcher(config.records.oura)] : []),
       ...(config.records.ultrahuman ? [ultrahumanFetcher(config.records.ultrahuman, { cgm: config.records.ultrahuman.cgm })] : []),
+      ...(config.records.gmail ? [gmailFetcher(config.records.gmail)] : []),
+      ...(config.records.outlook ? [outlookFetcher(config.records.outlook)] : []),
+      ...(config.records.digilocker ? [digilockerFetcher(config.records.digilocker, { apiUrl: config.records.digilocker.apiUrl })] : []),
     ],
     ...(config.records.eka ? { abdm: abhaFetcher({ eka: createEka(config.records.eka), ...(config.records.eka.hiu ? { hiu: config.records.eka.hiu } : {}) }) } : {}),
   })

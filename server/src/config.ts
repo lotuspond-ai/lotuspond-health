@@ -131,6 +131,19 @@ const Env = z.object({
   ULTRAHUMAN_CLIENT_ID: z.string().trim().min(8).optional(),
   ULTRAHUMAN_CLIENT_SECRET: z.string().trim().min(8).optional(),
   ULTRAHUMAN_CGM: z.enum(['on', 'off']).default('off'),
+  /* Email, for report PDFs labs send: a Google OAuth client (Gmail API, scope gmail.readonly) and a Microsoft Entra app
+     (Graph, Mail.Read, personal and work accounts). Redirect URIs PUBLIC_URL/records/oauth/gmail/callback and
+     PUBLIC_URL/records/oauth/outlook/callback. */
+  GMAIL_CLIENT_ID: z.string().trim().min(8).optional(),
+  GMAIL_CLIENT_SECRET: z.string().trim().min(8).optional(),
+  OUTLOOK_CLIENT_ID: z.string().trim().min(8).optional(),
+  OUTLOOK_CLIENT_SECRET: z.string().trim().min(8).optional(),
+  /* DigiLocker's Authorized Partner (Requester) API: credentials from DigiLocker's partner portal once LotusPond is
+     registered as a Requester. Redirect URI PUBLIC_URL/records/oauth/digilocker/callback. DIGILOCKER_API_URL points at
+     a sandbox when DigiLocker gives one. */
+  DIGILOCKER_CLIENT_ID: z.string().trim().min(4).optional(),
+  DIGILOCKER_CLIENT_SECRET: z.string().trim().min(8).optional(),
+  DIGILOCKER_API_URL: z.string().url().default('https://digilocker.meripehchaan.gov.in'),
   /** The key Eka signs webhooks with; the webhook at /hooks/eka is served only when it is set. */
   EKA_WEBHOOK_SIGNING_KEY: z.string().trim().min(16).optional(),
   OVERPASS_URL: z.string().url().default('https://overpass-api.de/api/interpreter'),
@@ -214,6 +227,9 @@ export interface RecordAgentConfig {
   withings?: { clientId: string; clientSecret: string; redirectUri: string };
   oura?: { clientId: string; clientSecret: string; redirectUri: string };
   ultrahuman?: { clientId: string; clientSecret: string; redirectUri: string; cgm: boolean };
+  gmail?: { clientId: string; clientSecret: string; redirectUri: string };
+  outlook?: { clientId: string; clientSecret: string; redirectUri: string };
+  digilocker?: { clientId: string; clientSecret: string; redirectUri: string; apiUrl: string };
 }
 
 export interface CellConfig {
@@ -364,6 +380,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     if (withings) records.withings = withings;
     if (oura) records.oura = oura;
     if (ultrahuman) records.ultrahuman = { ...ultrahuman, cgm: e.ULTRAHUMAN_CGM === 'on' };
+    const gmail = oauthClient('GMAIL', e.GMAIL_CLIENT_ID, e.GMAIL_CLIENT_SECRET, 'gmail');
+    const outlook = oauthClient('OUTLOOK', e.OUTLOOK_CLIENT_ID, e.OUTLOOK_CLIENT_SECRET, 'outlook');
+    if (gmail) records.gmail = gmail;
+    if (outlook) records.outlook = outlook;
+    const digilocker = oauthClient('DIGILOCKER', e.DIGILOCKER_CLIENT_ID, e.DIGILOCKER_CLIENT_SECRET, 'digilocker');
+    if (digilocker) records.digilocker = { ...digilocker, apiUrl: e.DIGILOCKER_API_URL.replace(/\/$/, '') };
   }
   const cellVar = (r: DataRegion, name: string) => (e as unknown as Record<string, string | undefined>)[`CELL_${r.toUpperCase()}_${name}`];
   const servedRegions = parseRegions(e.SERVED_REGIONS);

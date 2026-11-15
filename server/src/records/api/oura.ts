@@ -50,6 +50,7 @@ export function ouraFetcher(client: OAuthClient, opts: { apiUrl?: string; author
     sourceId: 'oura', device: 'Oura',
     authorizeUrl: opts.authorizeUrl ?? OURA_AUTHORIZE_URL, tokenUrl: opts.tokenUrl ?? OURA_TOKEN_URL,
     scopes: ['daily', 'heartrate', 'spo2'],
+    forbidden: 'Oura did not share the data: Oura shares data only while your Oura membership is active.',
     firstDays: 365, maxDays: 400,
     async read(get, from, to) {
       async function all<T>(path: string): Promise<T[]> {
