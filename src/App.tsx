@@ -8,6 +8,8 @@ import ProfilePage from './pages/Profile';
 import AccountPage from './pages/Account';
 import Labs from './pages/Labs';
 import Sources from './pages/Sources';
+import Home from './pages/Home';
+import Agents from './pages/Agents';
 import { MarkerDrawer, ScanViewer, UploadDialog } from './components/Overlays';
 import { BookingDialog } from './components/labs/BookingDialog';
 import { ResultReview } from './components/labs/ResultReview';
@@ -26,21 +28,23 @@ import { authModeFromLocation, siteHref, siteLinkProps } from './site/links';
 import { toast } from './state/toast';
 import { CONSENT_CHANGE_SUMMARY } from '../shared/regions';
 import { errorMessage } from './api';
-import { useUI, VIEWS, type View } from './state/ui';
+import { RECORD_VIEWS, useUI, VIEWS, type View } from './state/ui';
 import { useLock } from './native/lock';
 import { sessionReady } from './native';
 
-const NAV: { id: View; label: string }[] = [
-  { id: 'body', label: 'Body map' }, { id: 'markers', label: 'Biomarkers' }, { id: 'scans', label: 'Scans' }, { id: 'files', label: 'Files' },
-  { id: 'sources', label: 'Sources' }, { id: 'labs', label: 'Find a lab' },
+/** Records (results, body map, scans, files) is one place with its own switch; Sources and Agents are where records
+ *  come from and who may use them. Account and Profile are in the profile menu. */
+const NAV: { id: View; label: string; also?: View[] }[] = [
+  { id: 'home', label: 'Home' }, { id: 'markers', label: 'Records', also: RECORD_VIEWS }, { id: 'sources', label: 'Sources' },
+  { id: 'agents', label: 'Agents' }, { id: 'labs', label: 'Find a lab' },
 ];
 
-/** Phone tab bar (shown below 760px): four places and Add in the middle. Scans sit with Files. */
+/** Phone tab bar (shown below 760px): four places and Add in the middle. Labs opens from Home. */
 const TABS: { id: View; label: string; icon: ReactNode; also?: View[] }[] = [
-  { id: 'body', label: 'Body', icon: Icon.body },
-  { id: 'markers', label: 'Results', icon: Icon.markers },
-  { id: 'labs', label: 'Labs', icon: Icon.pin },
-  { id: 'files', label: 'Files', icon: Icon.file, also: ['scans', 'sources'] },
+  { id: 'home', label: 'Home', icon: Icon.home },
+  { id: 'markers', label: 'Records', icon: Icon.markers, also: RECORD_VIEWS },
+  { id: 'sources', label: 'Sources', icon: Icon.file },
+  { id: 'agents', label: 'Agents', icon: Icon.agent },
 ];
 
 export default function App() {
@@ -86,9 +90,9 @@ function Shell({ hidden }: { hidden: boolean }) {
   return (
     <div className="app" hidden={hidden}>
       <header className="topbar">
-        <a className="brand" href="#body" onClick={() => setView('body')}><Logo /><b>LotusPond <span>Health</span></b></a>
+        <a className="brand" href="#home" onClick={() => setView('home')}><Logo /><b>LotusPond <span>Health</span></b></a>
         <nav className="nav" aria-label="Main">
-          {NAV.map(n => <button key={n.id} aria-current={view === n.id ? 'page' : undefined} onClick={() => setView(n.id)}>{n.label}{badge(n.id)}</button>)}
+          {NAV.map(n => <button key={n.id} aria-current={view === n.id || n.also?.includes(view) ? 'page' : undefined} onClick={() => setView(n.id)}>{n.label}{badge(n.id)}</button>)}
         </nav>
         <div className="topbar__end">
           {isPreview && <span className="privacy" title="This preview has no server. Your account and records are saved in this browser only.">{Icon.lock} Preview · saved in this browser</span>}
@@ -101,11 +105,13 @@ function Shell({ hidden }: { hidden: boolean }) {
       <UpdatedTextsNotice />
       <BodyMap hidden={view !== 'body'} />
       {!hidden && <>
-        {(view === 'files' || view === 'scans' || view === 'sources') && <FilesSwitch view={view} />}
+        {RECORD_VIEWS.includes(view) && <RecordsSwitch view={view} />}
+        {view === 'home' && <Home />}
         {view === 'markers' && <Biomarkers />}
         {view === 'scans' && <Scans />}
         {view === 'files' && <Files />}
         {view === 'sources' && <Sources />}
+        {view === 'agents' && <Agents />}
         {view === 'profile' && <ProfilePage />}
         {view === 'account' && <AccountPage />}
         {view === 'labs' && <Labs />}
@@ -148,14 +154,13 @@ function UpdatedTextsNotice() {
   );
 }
 
-/** On phones Files, Scans and Sources share a tab; this switch sits above each of them there. */
-function FilesSwitch({ view }: { view: View }) {
+/** Records: results, the body map, scans and the original files, one switch above each of them. */
+function RecordsSwitch({ view }: { view: View }) {
   const setView = useUI(s => s.setView);
+  const item = (v: View, label: string) => <button aria-pressed={view === v} onClick={() => setView(v)}>{label}</button>;
   return (
-    <div className="files-switch seg" role="group" aria-label="Show">
-      <button aria-pressed={view === 'files'} onClick={() => setView('files')}>Reports and files</button>
-      <button aria-pressed={view === 'scans'} onClick={() => setView('scans')}>Scans</button>
-      <button aria-pressed={view === 'sources'} onClick={() => setView('sources')}>Sources</button>
+    <div className="records-switch seg" role="group" aria-label="Records">
+      {item('markers', 'Results')}{item('body', 'Body map')}{item('scans', 'Scans')}{item('files', 'Files')}
     </div>
   );
 }

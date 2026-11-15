@@ -1,8 +1,10 @@
 import { create } from 'zustand';
 import type { OrganId } from '../types';
 
-export type View = 'body' | 'markers' | 'scans' | 'files' | 'sources' | 'profile' | 'account' | 'labs';
-export const VIEWS: View[] = ['body', 'markers', 'scans', 'files', 'sources', 'profile', 'account', 'labs'];
+export type View = 'home' | 'body' | 'markers' | 'scans' | 'files' | 'sources' | 'agents' | 'profile' | 'account' | 'labs';
+export const VIEWS: View[] = ['home', 'body', 'markers', 'scans', 'files', 'sources', 'agents', 'profile', 'account', 'labs'];
+/** The views under Records: results, the body map, scans and files. */
+export const RECORD_VIEWS: View[] = ['markers', 'body', 'scans', 'files'];
 
 interface UIState {
   view: View;
@@ -40,7 +42,7 @@ export function readReviewLink(): ReviewTarget | null {
 }
 
 export const useUI = create<UIState>(set => ({
-  view: 'body',
+  view: 'home',
   hovered: null,
   layers: { labels: true },
   uploadOpen: false,

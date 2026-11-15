@@ -99,7 +99,7 @@ export function AddProfileDialog() {
     try {
       await createProfile(fromDraft(draft), confirmation);
       close();
-      setView('body');
+      setView('home');
     } catch (err) {
       setError(errorMessage(err));
       setBusy(false);

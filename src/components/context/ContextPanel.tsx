@@ -149,7 +149,7 @@ function greeting(now = new Date()) {
  * The whole-body view: what needs attention, in a few sentences, with the organs lighting up on the body. Everything
  * else (every marker, every system) is one tap away on Biomarkers.
  */
-function HomeBrief({ series }: { series: Series[] }) {
+export function HomeBrief({ series, onHome = false }: { series: Series[]; /** On Home: an organ opens the body map. */ onHome?: boolean }) {
   const measurements = useHealth(s => s.measurements);
   const scans = useHealth(s => s.scans);
   const selectOrgan = useHealth(s => s.selectOrgan), selectMarker = useHealth(s => s.selectMarker);
@@ -182,7 +182,7 @@ function HomeBrief({ series }: { series: Series[] }) {
             return (
               <li key={i.key} className={`brief__item brief__item--${i.level}`}
                 onMouseEnter={() => i.organ && setHovered(i.organ)} onMouseLeave={() => setHovered(null)}>
-                <button type="button" className="brief__main" onClick={() => (i.organ ? selectOrgan(i.organ) : selectMarker(i.seriesKey))}
+                <button type="button" className="brief__main" onClick={() => { if (i.organ) { selectOrgan(i.organ); if (onHome) useUI.getState().setView('body'); } else selectMarker(i.seriesKey); }}
                   aria-label={`${i.name}: ${i.headline.toLowerCase()}. ${i.detail} ${organ ? `Show the ${organ.name.toLowerCase()} on the body.` : ''}`}>
                   <span className="brief__dot" aria-hidden />
                   <span className="brief__text">
