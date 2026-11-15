@@ -4,9 +4,9 @@ import { useUI } from './ui';
 import { useLab } from './lab';
 
 /**
- * Close whatever is on top: scan viewer, marker details, upload, add-a-family-member, then go back to the body map,
- * then close the open organ or system filter. Used by the Android back button. Returns false when there is nothing
- * left to close (the whole body, or the sign-in screen), so the app goes to the background.
+ * Close whatever is on top: scan viewer, marker details, upload, add-a-family-member, then the open organ or system
+ * filter on the body map, then go back to Home. Used by the Android back button. Returns false when there is nothing
+ * left to close (Home, or the sign-in screen), so the app goes to the background.
  */
 export function goBack(): boolean {
   if (useSession.getState().status !== 'signed-in' || useSession.getState().onboarding) return false;
@@ -19,8 +19,8 @@ export function goBack(): boolean {
   if (health.selectedMarkerId) { health.selectMarker(null); return true; }
   if (ui.uploadOpen) { ui.setUploadOpen(false); return true; }
   if (ui.addProfileOpen) { ui.setAddProfileOpen(false); return true; }
-  if (ui.view !== 'body') { ui.setView('body'); return true; }
-  if (health.selectedOrgan) { health.selectOrgan(null); return true; }
-  if (health.activeSystem) { health.setActiveSystem(null); return true; }
+  if (ui.view === 'body' && health.selectedOrgan) { health.selectOrgan(null); return true; }
+  if (ui.view === 'body' && health.activeSystem) { health.setActiveSystem(null); return true; }
+  if (ui.view !== 'home') { ui.setView('home'); return true; }
   return false;
 }

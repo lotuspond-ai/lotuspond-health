@@ -338,3 +338,18 @@
   .bm-table { min-width: 760px; }
   .review { min-width: 720px; }
 }
+
+/* ---------- Records switch and Home ---------- */
+.records-switch { justify-self: start; margin: 14px 24px 0; }
+.home-grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(260px, 1fr); gap: 18px; align-items: start; }
+.home-brief { padding: 22px; }
+.home-side { display: grid; gap: 14px; }
+.home-card { display: grid; gap: 10px; }
+.home-card__title { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 17px; }
+.home-card__title svg { width: 18px; height: 18px; color: var(--lotus); }
+.home-card__body p { margin: 0; }
+.home-card__warn { color: var(--lotus); font-weight: 600; margin-top: 6px !important; }
+.home-card > .btn { justify-self: start; }
+.home-steps { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.home-steps li { display: grid; gap: 8px; align-content: start; }
+.home-steps p { margin: 0; }

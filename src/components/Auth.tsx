@@ -52,10 +52,11 @@ function PondPanel() {
     <section className="auth__pond" aria-hidden={false}>
       <a className="auth__brand" href={siteHref('/')} {...siteLinkProps} aria-label="LotusPond Health home"><Logo /><b>LotusPond <span>Health</span></b></a>
       <div className="auth__pitch">
-        <h1>Your health records, mapped to your body.</h1>
-        <p>Keep lab reports and scans for you and your family in one place, and see every result on the organ it relates to.</p>
+        <h1>Your family’s health records, ready for any AI agent.</h1>
+        <p>Bring your reports in from labs, hospitals, ABHA and your devices, and use them with Claude, ChatGPT or any agent you choose.</p>
         <ul>
-          <li><b>Reads your files</b> Lab report PDFs, CSV and JSON exports, DICOM scans and photos.</li>
+          <li><b>Brings your records in</b> From labs, hospitals, ABHA, DigiLocker and wearables, or a PDF or photo you upload.</li>
+          <li><b>Works with your AI</b> You choose whose records each agent sees, and can disconnect it at any time.</li>
           <li><b>One account, the whole family</b> A separate profile for each person you care for.</li>
           <li><b>Explains, never diagnoses</b> Plain-language notes and typical ranges for 95 common markers.</li>
         </ul>

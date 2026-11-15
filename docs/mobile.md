@@ -6,7 +6,7 @@ The iOS and Android apps are the LotusPond app shell (`app.html`) running in a n
 
 - **Phone layout.** This also applies in phone browsers, below 760px wide:
   - bottom tabs: Body, Results, Add, Labs and Files. Files has a switch between *Reports and files* and *Scans*. The profile menu (family members, profile details, account, sign out) stays at the top right.
-  - the organ and overview panel as a sheet you drag over the body map. The 2D map and the 3D camera fit into the part of the stage the sheet leaves visible.
+  - the organ and overview panel as a sheet you drag over the body map. The map fits into the part of the stage the sheet leaves visible.
   - full-screen dialogs, and a sticky "Add results" bar while you review an upload
   - result and file tables shown as cards
 - **Camera.** Add → *Take a photo* opens the camera for a report or a scan film.
@@ -213,4 +213,3 @@ Turned on from **Account → App lock**, in the apps only. Turning it on or off 
 - **Self-hosted map tiles.** With `MAP_PMTILES_URL` the apps fetch the `.pmtiles` file from the API host in byte ranges, across origins. The server's CORS answer allows `Range` and exposes `Content-Range` and `ETag` for this, but it hasn't been tried in the iOS and Android web views yet.
 - **Later features:**
   - "Open in LotusPond" from Files, Mail and other apps (document types and intent filters)
-  - 3D performance tuning on older phones

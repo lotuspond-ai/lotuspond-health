@@ -10,12 +10,13 @@ const params = new URL(self.location.href).searchParams;
 const VERSION = params.get('v') || 'dev';
 const SHELL_URL = new URL(params.get('shell') || './', self.registration.scope).href;
 const APP = `lotuspond-app-${VERSION}`;   // app page plus its hashed scripts, styles and fonts (one per deploy)
-const MEDIA = 'lotuspond-media-v1';        // body-map images (content-hashed names) and the 3D model (versioned URL)
+const MEDIA = 'lotuspond-media-v1';        // body-map images (content-hashed names)
 const OURS = /^lotuspond-/;
 
 const isApi = url => /^\/api(\/|$)/.test(url.pathname) || url.pathname.includes('/api/');
 const isAsset = url => /\/assets\/[^/]+$/.test(url.pathname);
 const isBodymap = url => /\/bodymap\/[^/]+\.(webp|png)$/.test(url.pathname);
+// The 3D model (models/…) is gone; activate drops any copy cached by an earlier version.
 const isModel = url => /\/models\/[^/]+$/.test(url.pathname);
 
 self.addEventListener('install', event => {
@@ -24,7 +25,7 @@ self.addEventListener('install', event => {
     const res = await fetch(SHELL_URL, { cache: 'no-cache', credentials: 'same-origin' });
     if (!res.ok) throw new Error(`app shell: ${res.status}`);
     await cache.put(SHELL_URL, res.clone());
-    // The shell's own scripts and styles; chunks loaded later (3D stage, PDF reader) are cached on first use.
+    // The shell's own scripts and styles; chunks loaded later (PDF reader, maps) are cached on first use.
     const html = await res.text();
     const assets = [...new Set([...html.matchAll(/(?:src|href)="([^"]+)"/g)].map(m => new URL(m[1], SHELL_URL)))]
       .filter(u => u.origin === self.location.origin && isAsset(u)).map(u => u.href);
@@ -36,6 +37,8 @@ self.addEventListener('install', event => {
 self.addEventListener('activate', event => {
   event.waitUntil((async () => {
     for (const key of await caches.keys()) if (OURS.test(key) && key !== APP && key !== MEDIA) await caches.delete(key);
+    const media = await caches.open(MEDIA);
+    for (const key of await media.keys()) if (isModel(new URL(key.url))) await media.delete(key);
     await self.clients.claim();
   })());
 });
@@ -48,7 +51,6 @@ self.addEventListener('fetch', event => {
   if (req.mode === 'navigate') event.respondWith(page(req));
   else if (isAsset(url)) event.respondWith(cacheFirst(req, APP));
   else if (isBodymap(url)) event.respondWith(cacheFirst(req, MEDIA));
-  else if (isModel(url) && url.searchParams.has('v')) event.respondWith(model(req));
 });
 
 /** Pages: the network first (so a deploy shows at once), the cached shell when offline. */
@@ -72,20 +74,6 @@ async function cacheFirst(req, name) {
   if (hit) return hit;
   const res = await fetch(req);
   if (res.status === 200 && res.type === 'basic') await cache.put(req, res.clone());
-  return res;
-}
-
-/** The 3D model is requested as models/<file>?v=<content hash>: keep one copy, and drop it when the hash changes. */
-async function model(req) {
-  const cache = await caches.open(MEDIA);
-  const hit = await cache.match(req);
-  if (hit) return hit;
-  const res = await fetch(req);
-  if (res.status === 200 && res.type === 'basic') {
-    const path = new URL(req.url).pathname;
-    for (const key of await cache.keys()) if (new URL(key.url).pathname === path && key.url !== req.url) await cache.delete(key);
-    await cache.put(req, res.clone());
-  }
   return res;
 }
 

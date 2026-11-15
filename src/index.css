@@ -41,7 +41,13 @@ p { margin: 0; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 
 /* ---------- shell ---------- */
-.app { display: grid; grid-template-rows: auto 1fr; height: 100%; }
+.app { display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; height: 100%; }
+/* Rows: top bar, the Records switch (when shown), the page, the phone tab bar. Placed explicitly so the page keeps
+   the stretching row whether or not the switch is there. */
+.app > * { grid-row: 3; }
+.app > .topbar { grid-row: 1; }
+.app > .records-switch { grid-row: 2; }
+.app > .tabbar { grid-row: 4; }
 .app[hidden] { display: none; }
 .topbar { display: flex; align-items: center; gap: 28px; padding: 14px 24px; }
 .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; color: var(--ink); }

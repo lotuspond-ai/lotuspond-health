@@ -2,9 +2,9 @@
 
 **Your family's health records, ready for any AI agent.** LotusPond keeps lab results, scans, conditions and medications for you and each family member, turns them into a summary an agent can use, and lets the agents you choose read it: Claude, ChatGPT, Gemini, Grok, Meta AI, or your own. You decide whose records each agent sees and whether it may add to them. You can disconnect any agent at any time.
 
-It works with any agent that speaks the [Model Context Protocol](https://modelcontextprotocol.io): the server is a remote MCP server at `/mcp`, with OAuth 2.1 sign-in so agents connect like any other connector. The app around it is a full personal health record: upload reports, see results on a 3D body map, book a home sample collection.
+It works with any agent that speaks the [Model Context Protocol](https://modelcontextprotocol.io): the server is a remote MCP server at `/mcp`, with OAuth 2.1 sign-in so agents connect like any other connector. The app around it is a full personal health record: upload reports, see results on a body map, book a home sample collection.
 
-See [docs/agents.md](docs/agents.md) for how agents connect, the tools they get, and the safety model.
+See [docs/agents.md](docs/agents.md) for how agents connect, the tools they get, and the safety model. Every outside system it reaches is a connector of the connector core ([docs/connectors.md](docs/connectors.md)), listed publicly at `GET /v1/connectors`.
 
 ## What it does
 
@@ -19,15 +19,9 @@ See [docs/agents.md](docs/agents.md) for how agents connect, the tools they get,
 - **Sources (the record agent).** Connect a lab, hospital, government or insurer portal for any profile. A browser of its own for each run (Chromium on the server, or a hosted browser such as Browserbase or Steel) signs in with you: you type the mobile number and the code the portal sends into LotusPond, which passes them to that browser and never keeps them. It downloads the reports, saves new ones to Files for review, and checks again on the schedule you choose. About 50 sources are listed; Dr Lal PathLabs, Thyrocare, Metropolis and Apollo 24|7 have recipes (not yet tried with real accounts), and the others are reached by Claude finding its way around the portal (beta) when it is set up ([docs/record-agent.md](docs/record-agent.md)).
 - **Accounts and profiles.** Sign up with email, password and the country you live in, which decides where your records are stored and which rules apply (see [Data residency](#data-residency)). One account holds your own profile plus any family members you add (children, partner, parents). Each profile keeps date of birth, sex, height, weight (with BMI), blood type, conditions, medications, allergies and notes. Switch between people from the menu at the top.
 - **Upload** lab report PDFs, photos and scans of reports, CSV/JSON exports, FHIR R4 lab records (the format of India's ABDM network and ABHA apps; [docs/abdm.md](docs/abdm.md)), DICOM files (`.dcm`) and scan photos. Photos and scanned PDFs are read with text recognition on the device; when that read is poor, the person can choose to have Claude read that one file ([docs/report-reading.md](docs/report-reading.md)). Files are read in the browser and every value is shown for review before it is saved. The original file is kept with the values read from it. In the iOS and Android apps, **Import from Apple Health / Health Connect** brings in blood pressure, glucose, weight and other home measurements as one value per day, through the same review ([docs/health-import.md](docs/health-import.md)).
-- **Body map**: a 3D anatomy with 33 structures, including:
-  - a four-chambered heart with valves and coronary vessels
-  - lungs with their fissures and a bronchial tree
-  - kidneys with cortex, medullary pyramids and calyces
-  - a brain with gyri and ventricles
-  - liver vessels and bile ducts
-  - skeleton and diaphragm
+- **Body map**: a simple figure of the body, turned with a drag, showing where results sit. The glow view (the default) puts a soft halo on each organ with results and a grade per body system; open an organ for a close-up with labelled landmarks and its results.
 
-  Organs with results outside their range glow on the body: amber when outside, coral when far outside (a quarter of the range or more). Their pins pulse, and the healthy organs step back. Open an organ to fly in, read labelled landmarks, switch to x-ray, or cut a cross-section (front, side or top).
+  Organs with results outside their range glow on the body: amber when outside, coral when far outside (a quarter of the range or more). Their pins pulse, and the healthy organs step back.
 - **Ask LotusPond**: a chat with LotusPond's own assistant (Claude, after a one-time opt-in that names what it may read). It explains results, adds readings you tell it, prepares lab bookings, and shows on the body what it is talking about. Voice in where the browser supports it, and read-aloud ([docs/assistant.md](docs/assistant.md)).
 - **On WhatsApp**: link your number by sending a code from it, then ask the assistant there, tell it readings, or send a photo or PDF of a report; it is saved to your files for review in the app ([docs/whatsapp.md](docs/whatsapp.md)).
 - **Home brief**: beside the body, a few sentences instead of lists: how many results to look at, and for each one its value, its change since the last result, the organ, and a plain next step. Tests that may be due follow, from the profile's conditions. The same rules feed the summary agents read (`shared/synthesis.ts`, `src/lib/attention.ts`), and everything else is one tap away on Biomarkers.
@@ -43,7 +37,7 @@ Reference ranges come from your report when it prints one; otherwise a typical a
 
 | Layer | Choice |
 | --- | --- |
-| Frontend | React 19, Vite, TypeScript, React Three Fiber, zustand |
+| Frontend | React 19, Vite, TypeScript, zustand |
 | API | Node.js 22, [Hono](https://hono.dev), Zod validation (`server/`, an npm workspace) |
 | Database | PostgreSQL via Drizzle ORM. Without `DATABASE_URL` the server uses embedded [PGlite](https://pglite.dev) (Postgres in WebAssembly), so development needs no database install |
 | Sign-in | Email and password hashed with Argon2id; server-side sessions in an HttpOnly, SameSite=Lax cookie |
@@ -265,7 +259,6 @@ The product's own site, **https://health.lotuspond.ai**, is built by the same Vi
 
 | Path | What it holds |
 | --- | --- |
-| `src/three/` | React Three Fiber stage: tissue materials, pond floor, camera, x-ray and cross-sections, adaptive quality |
 | `src/components/bodymap2d/`, `public/bodymap/` | Pre-rendered body map (default view) and its images |
 | `src/anatomy/organs.ts` | Organ metadata: meshes, tissues, landmarks, linked body systems |
 | `src/lib/` | File parsers, the records store (the biomarker catalog is in `shared/catalog.ts`, used by the agent summaries too) |
@@ -281,30 +274,10 @@ The product's own site, **https://health.lotuspond.ai**, is built by the same Vi
 | `shared/` | Types and limits used by both sides |
 | `tools/anatomy/` | Python generator for `public/models/anatomy.glb` (signed-distance modelling, surface nets, quadric decimation) |
 
-## Rebuilding the anatomy model
+## Body map images
 
-Requires Python 3 with NumPy.
-
-```bash
-cd tools/anatomy
-python3 gen_body.py && python3 gen_organs.py && python3 gen_gut.py && python3 gen_skel.py
-python3 gen_organs.py kidneys && python3 gen_detail.py     # high-detail structures (overrides heart, brain, kidneys)
-python3 build_glb.py decimate $(python3 -c "from build_glb import T; print(' '.join(T))")
-python3 build_glb.py write anatomy_raw.glb
-cd ../.. && npx gltf-transform meshopt tools/anatomy/anatomy_raw.glb public/models/anatomy.glb --level medium
-```
-
-Model coordinates are metres with `+x` toward the person's left, `+y` up and `+z` toward the front.
-
-### Pre-rendered body map
-
-The body map opens as images rendered ahead of time, so it needs no WebGL; "Explore in 3D" loads the interactive model on request. After changing the model or the look of the stage, render the images again (headless Chromium, a few minutes) and commit `public/bodymap/` and `src/components/bodymap2d/manifest.json`:
-
-```bash
-node tools/render-bodymap.mjs              # 16 angles + a close-up per organ, two sizes, ID maps, manifest
-node tools/measure-bodymap.mjs http://localhost:8787/ --3d   # first-view downloads and 3D frame cost
-```
+The body map is a set of images rendered ahead of time (16 angles, a close-up per organ, two sizes, and ID maps that say which organ each pixel belongs to), committed in `public/bodymap/` with `src/components/bodymap2d/manifest.json`. It needs no WebGL. The 3D model and the tools that rendered these images were removed in November 2026, when the work moved to the agent and integration APIs; the images are kept as they are.
 
 ## Server-less preview
 
-`npm run build:artifact` writes `dist-artifact/`: the app alone (`vite build --mode artifact`, relative paths) built with `VITE_BACKEND=browser`, which keeps accounts, profiles, records and files in the visitor's browser (IndexedDB) instead of on a server. It is meant for static hosts such as a Claude artifact. Such hosts have no server routes and only pass a `#hash` into the page, so the preview's `index.html` is the app: it opens sign-in, or sign-up with `#signup`, and its links to the website (home, Privacy, Terms, Trust) open the live site in a new tab. The 3D model ships as base64 text (`models/anatomy.b64.txt`) for hosts that don't serve `.glb` files, and `index.html` is body-only. Check it locally with `npx vite preview --outDir dist-artifact` and the browser walk-through.
+`npm run build:artifact` writes `dist-artifact/`: the app alone (`vite build --mode artifact`, relative paths) built with `VITE_BACKEND=browser`, which keeps accounts, profiles, records and files in the visitor's browser (IndexedDB) instead of on a server. It is meant for static hosts such as a Claude artifact. Such hosts have no server routes and only pass a `#hash` into the page, so the preview's `index.html` is the app: it opens sign-in, or sign-up with `#signup`, and its links to the website (home, Privacy, Terms, Trust) open the live site in a new tab. `index.html` is body-only. Check it locally with `npx vite preview --outDir dist-artifact` and the browser walk-through.
