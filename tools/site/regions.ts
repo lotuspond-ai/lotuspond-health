@@ -1,6 +1,6 @@
 // HTML snippets about storage regions, laws and availability, rendered at build time from shared/regions.ts so the
 // public pages always match the policy the app enforces at sign-up.
-import { COUNTRY_CODES, REGIONS, countryName, countryPolicy, type CountryPolicy, type DataRegion } from '../../shared/regions.ts';
+import { COUNTRY_CODES, LEGAL_RESTRICTIONS, REGIONS, countryName, countryPolicy, type CountryPolicy, type DataRegion } from '../../shared/regions.ts';
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const name = (code: string) => countryName(code, 'en');
@@ -15,15 +15,21 @@ function listInWords(items: string[]): string {
 }
 
 const policies: CountryPolicy[] = COUNTRY_CODES.map(c => countryPolicy(c));
+/** Countries where sign-up is open now (shared/regions.ts OPEN_COUNTRIES). */
 const available = policies.filter(p => p.available);
-const unavailable = policies.filter(p => !p.available).sort((a, b) => byName(name(a.code), name(b.code)));
+/** Every country that can open, with the region and laws it will have: what each region is built for. */
+const planned = COUNTRY_CODES.map(c => countryPolicy(c, COUNTRY_CODES)).filter(p => p.available);
+/** Countries kept closed by local law or other restrictions, with the reason sign-up shows. */
+const unavailable = policies.filter(p => LEGAL_RESTRICTIONS[p.code]).sort((a, b) => byName(name(a.code), name(b.code)));
+const isOpen = (region: DataRegion) => available.some(p => p.region === region);
+const openNames = () => listInWords(available.map(p => inSentence(p.code)).sort(byName));
 
 /** Who each region holds, in plain words. Home countries are fixed; cross-border countries come from the policy. */
 const HOME: Record<DataRegion, string> = {
   in: 'People living in India',
   eu: 'People in the European Union and the European Economic Area',
   us: 'People in the United States and its territories',
-  global: 'People in every other country where LotusPond Health is available',
+  global: 'People in every other country where LotusPond Health opens',
 };
 
 const ORDER: DataRegion[] = ['in', 'eu', 'us', 'global'];
@@ -36,23 +42,29 @@ const HOME_SHORT: Record<DataRegion, string> = {
   global: 'Other countries',
 };
 
-function crossBorderNames(region: DataRegion): string[] {
+function crossBorderNames(region: DataRegion, from: CountryPolicy[] = available): string[] {
   if (region === 'global') return [];
-  return available.filter(p => p.region === region && p.crossBorder).sort((a, b) => byName(name(a.code), name(b.code))).map(p => inSentence(p.code));
+  return from.filter(p => p.region === region && p.crossBorder).sort((a, b) => byName(name(a.code), name(b.code))).map(p => inSentence(p.code));
 }
 
-function globalExamples(): string[] {
+function globalExamples(from: CountryPolicy[]): string[] {
   const picks = ['AU', 'BR', 'JP', 'SG', 'ZA'];
-  return picks.filter(c => available.some(p => p.code === c && p.region === 'global')).map(name);
+  return picks.filter(c => from.some(p => p.code === c && p.region === 'global')).map(name);
 }
 
+/** Whose records a region holds. A region that is not open yet says whom it is built for and that it opens later. */
 function whoText(region: DataRegion): string {
-  const extra = crossBorderNames(region);
+  const open = isOpen(region);
+  const from = open ? available : planned;
+  const extra = crossBorderNames(region, from);
+  let who: string;
   if (region === 'global') {
-    const count = available.filter(p => p.region === 'global').length;
-    return `${HOME.global}: ${count} countries and territories, such as ${listInWords(globalExamples())}.`;
+    const count = from.filter(p => p.region === 'global').length;
+    who = `${HOME.global}: ${count} countries and territories, such as ${listInWords(globalExamples(from))}.`;
+  } else {
+    who = extra.length ? `${HOME[region]}, plus ${listInWords(extra)}.` : `${HOME[region]}.`;
   }
-  return extra.length ? `${HOME[region]}, plus ${listInWords(extra)}.` : `${HOME[region]}.`;
+  return open ? who : `Not open yet. It will hold records for ${who.charAt(0).toLowerCase()}${who.slice(1)}`;
 }
 
 /** Laws that apply to the people stored in a region, as the sign-up policy lists them. */
@@ -80,8 +92,9 @@ const REGION_ICON: Record<DataRegion, string> = {
 /** Landing page: one card per region. */
 function regionCards(): string {
   return ORDER.map(id => `
-        <li class="region">
+        <li class="region${isOpen(id) ? '' : ' region--later'}">
           <span class="region__code" aria-hidden="true">${REGION_ICON[id]}</span>
+          <span class="region__status">${isOpen(id) ? 'Open now' : 'Opens later'}</span>
           <h3>${esc(REGIONS[id].name)}</h3>
           <p class="region__where">Stored on ${esc(REGIONS[id].storage)}</p>
           <p class="region__who">${esc(whoText(id))}</p>
@@ -108,7 +121,7 @@ function unavailableTable(): string {
 function storageTable(): string {
   const rows = ORDER.map(id => {
     const extra = crossBorderNames(id);
-    const notice = id === 'global' || extra.length
+    const notice = isOpen(id) && (id === 'global' || extra.length)
       ? `<br><span class="muted">${id === 'global' ? 'Records are stored outside the person’s country, so sign-up names the region and asks for agreement.' : `For ${esc(listInWords(extra))}, records are stored outside the country, so sign-up says where and asks for agreement.`}</span>`
       : '';
     return `
@@ -123,7 +136,7 @@ function storageTable(): string {
 
 /** Trust page: laws by region. */
 function lawsTable(): string {
-  const rows = ORDER.flatMap(id => {
+  const rows = ORDER.filter(isOpen).flatMap(id => {
     const groups = id === 'global' ? [] : lawsFor(id);
     if (id === 'global') {
       const local = available.filter(p => p.region === 'global' && !p.laws.includes('Local data-protection law'))
@@ -150,6 +163,7 @@ const BLOCKS: Record<string, () => string> = {
   'storage-table': storageTable,
   'laws-table': lawsTable,
   'available-count': () => String(available.length),
+  'open-names': () => esc(openNames()),
 };
 
 /** Replace `<!-- @regions name -->` markers with generated HTML. Unknown names fail the build. */

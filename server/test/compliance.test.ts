@@ -53,7 +53,7 @@ before(async () => {
   euCell = { id: 'eu', db: await open(process.env.TEST_CELL_EU_DATABASE_URL), files: fileStore(filesRoot.eu, key()) };
   const cells = new CellRegistry(globalCell, [['in', inCell], ['eu', euCell], ['global', globalCell]]);
   const config = loadConfig({
-    NODE_ENV: 'test', TRUST_PROXY: 'true', SERVED_REGIONS: 'in,eu,global',
+    NODE_ENV: 'test', TRUST_PROXY: 'true', SERVED_REGIONS: 'in,eu,global', OPEN_COUNTRIES: 'all', // every region's cell rules, as if all were open
     GRIEVANCE_CONTACT: 'Grievance Officer, grievance@lotuspond.example', DPO_CONTACT: 'dpo@lotuspond.example',
   });
   app = createApp({ db: main, files: globalCell.files, config, cells, secrets });

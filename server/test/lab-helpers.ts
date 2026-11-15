@@ -45,7 +45,8 @@ export function labEnv(database: Database, filesDir: string, opts: { tags?: Fake
   let t = Date.now();
   const now = () => t;
   const log = memoryLogger();
-  const config = loadConfig({ NODE_ENV: 'test', TRUST_PROXY: 'true' });
+  // OPEN_COUNTRIES=all: accounts outside India test the lab's region rules.
+  const config = loadConfig({ NODE_ENV: 'test', TRUST_PROXY: 'true', OPEN_COUNTRIES: 'all' });
   const files = new DiskFileStore(filesDir);
   const cells = singleCell(database.db, files, config.servedRegions);
   const secrets = ephemeralSecrets();

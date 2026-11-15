@@ -1,6 +1,6 @@
 // Runtime configuration from environment variables. See server/.env.example.
 import { z } from 'zod';
-import type { DataRegion } from '../../shared/regions.ts';
+import { COUNTRY_CODES, LEGAL_RESTRICTIONS, OPEN_COUNTRIES, isCountryCode, type DataRegion } from '../../shared/regions.ts';
 
 const bool = z.enum(['true', 'false', '1', '0']).transform(v => v === 'true' || v === '1');
 
@@ -161,6 +161,8 @@ const Env = z.object({
 
   /** Data-residency cells this deployment holds records for: "all" or a comma-separated list of in, eu, us, global. */
   SERVED_REGIONS: z.string().default('all'),
+  /** Countries where sign-up is open: a comma-separated list of ISO codes, or `all`. Empty: shared/regions.ts OPEN_COUNTRIES (India). */
+  OPEN_COUNTRIES: z.string().default(''),
   /** HMAC key for the email directory (and, derived from it, for hashing addresses in the audit log). */
   DIRECTORY_SECRET: z.string().trim().min(32, 'Use at least 32 characters, e.g. from `openssl rand -base64 32`.').optional(),
   /** AES-256-GCM key for uploaded files. Required in production unless FILE_ENCRYPTION=off. */
@@ -270,6 +272,8 @@ export interface Config {
   whatsapp: { phoneNumberId: string; number: string; accessToken: string; appSecret: string; verifyToken: string; graphUrl: string } | undefined;
   map: MapConfig;
   servedRegions: DataRegion[];
+  /** Countries where this server accepts sign-up (OPEN_COUNTRIES; India by default). */
+  openCountries: string[];
   /** Settings for each served region. A region with neither databaseUrl nor dataDir is kept in the default cell. */
   cells: CellConfig[];
   directorySecret: string | undefined;
@@ -311,6 +315,18 @@ function parseRegions(raw: string): DataRegion[] {
   const unknown = out.filter(r => !DATA_REGIONS.includes(r as DataRegion));
   if (unknown.length) throw new Error(`Invalid configuration: SERVED_REGIONS: unknown region ${unknown.join(', ')} (use in, eu, us, global or all)`);
   return [...new Set(out)] as DataRegion[];
+}
+
+function parseOpenCountries(raw: string): string[] {
+  const v = raw.trim().toUpperCase();
+  if (v === '') return [...OPEN_COUNTRIES];
+  if (v === 'ALL') return COUNTRY_CODES.filter(c => !LEGAL_RESTRICTIONS[c]);
+  const out = [...new Set(list(v))];
+  const unknown = out.filter(c => !isCountryCode(c));
+  if (unknown.length) throw new Error(`Invalid configuration: OPEN_COUNTRIES: unknown country ${unknown.join(', ')} (use ISO codes such as IN, or all)`);
+  const restricted = out.filter(c => LEGAL_RESTRICTIONS[c]);
+  if (restricted.length) throw new Error(`Invalid configuration: OPEN_COUNTRIES: ${restricted.join(', ')} cannot open (shared/regions.ts LEGAL_RESTRICTIONS)`);
+  return out;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -457,6 +473,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       tilesDir: e.MAP_TILES_DIR,
     },
     servedRegions,
+    openCountries: parseOpenCountries(e.OPEN_COUNTRIES),
     cells,
     directorySecret: e.DIRECTORY_SECRET,
     fileEncryption: e.FILE_ENCRYPTION === 'on',
