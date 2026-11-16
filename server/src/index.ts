@@ -28,6 +28,8 @@ import { ouraFetcher } from './records/api/oura.ts';
 import { ultrahumanFetcher } from './records/api/ultrahuman.ts';
 import { gmailFetcher, outlookFetcher } from './records/api/mail.ts';
 import { digilockerFetcher } from './records/api/digilocker.ts';
+import { createOrganisation, createOrganisationKey, ORGANISATION_OPERATIONS, revokeOrganisationKey } from './connectors/organisations.ts';
+import type { OperationId } from './connectors/types.ts';
 
 // This file runs from server/src (tsx) or server/dist (bundle); both are one level below server/.
 const serverRoot = fileURLToPath(new URL('..', import.meta.url));
@@ -65,7 +67,34 @@ if (command === 'files:rekey') {
   await opened.close();
   process.exit(failed ? 1 : 0);
 }
-if (command) fail(`Unknown command "${command}". The only command is files:rekey.`);
+// Organisations of the connector core (docs/connectors.md), kept in the default database:
+//   org:create "<name>" [region]                        prints the new organisation's id
+//   org:key <organisation id> "<key name>" <op,op|all>  prints a new API key, once
+//   org:revoke <key id>
+if (command === 'org:create' || command === 'org:key' || command === 'org:revoke') {
+  const [a, b, c] = process.argv.slice(3);
+  const db = registry.defaultCell.db;
+  try {
+    if (command === 'org:create') {
+      if (!a) fail('Usage: org:create "<name>" [region]');
+      const region = (b ?? 'in') as keyof typeof REGIONS;
+      if (!(region in REGIONS)) fail(`Unknown region "${region}". Use one of: ${Object.keys(REGIONS).join(', ')}.`);
+      const org = await createOrganisation(db, a, region);
+      console.log(`Organisation ${org.name} (${org.region}): ${org.id}`);
+    } else if (command === 'org:key') {
+      if (!a || !b || !c) fail(`Usage: org:key <organisation id> "<key name>" <operation,operation|all>. Operations: ${ORGANISATION_OPERATIONS.join(', ')}.`);
+      const ops = (c === 'all' ? ORGANISATION_OPERATIONS : c.split(',').map(x => x.trim())) as OperationId[];
+      const { key, row } = await createOrganisationKey(db, a, b, ops);
+      console.log(`Key ${row.name} (${row.id}) for ${row.operations.join(', ')}. Shown once, keep it safe:\n${key}`);
+    } else {
+      if (!a) fail('Usage: org:revoke <key id>');
+      console.log((await revokeOrganisationKey(db, a)) ? 'Key revoked.' : 'No active key with that id.');
+    }
+  } catch (e) { await opened.close(); fail(e); }
+  await opened.close();
+  process.exit(0);
+}
+if (command) fail(`Unknown command "${command}". Commands: files:rekey, org:create, org:key, org:revoke.`);
 
 async function sweep() {
   for (const cell of allCells) {
