@@ -1,11 +1,13 @@
 # The connector core
 
-One description of every outside system LotusPond reaches: what it can do there, and on whose authority. It is what both products are built on:
+One description of every outside system LotusPond Health reaches: what it can do there, and on whose authority. LotusPond Health has two sides, and both are built on it, in this repository:
 
-- **LotusPond Health** (people and families). A person connects their own sources (lab portals, ABHA, DigiLocker, wearables, email) and chooses which AI agents see what. Every connection runs on the **person's** authority.
-- **LotusPond Works** (hospitals, clinics, insurers and health-tech builders). An organisation reaches its own systems through one API and MCP server: hospital information systems and EMRs, and insurer and TPA portals. Every connection runs on the **organisation's** contracted or delegated access.
+- **People and families.** A person connects their own sources (lab portals, ABHA, DigiLocker, wearables, email) and chooses which AI agents see what. Every connection runs on the **person's** authority.
+- **Organisations** (healthcare startups, hospitals, clinics, insurers and other health-tech builders). An organisation reaches any portal or record system through one API and MCP server, instead of integrating with each one: hospital information systems and EMRs, and insurer and TPA portals. Every connection runs on the **organisation's** contracted or delegated access.
 
-The code is in `server/src/connectors/`. It depends on nothing in the consumer app, so it can move into a package shared with Works.
+The code is in `server/src/connectors/`. It depends on nothing in the consumer app, so the organisation API can be served from it without touching people's records.
+
+LotusPond Works is a separate product: automation of an organisation's administrative processes, not an API. A hospital may use Works to automate its administration; API access to health record systems is LotusPond Health. Works never hosts, proxies or calls this API, and this code is not shared with Works ([ADR-0018, decision 11](https://github.com/lotuspond-ai/lotuspond/blob/main/docs/architecture/0018-one-lotuspond-account.md)).
 
 ## Model
 
@@ -48,4 +50,4 @@ A portal the person names by address is offered only where `typedPortals` allows
 1. **Organisations and API keys.** An `organisations` table in its own cell or tenant (never in a person's records), hashed API keys with scopes per operation, and an audit of every call.
 2. **The organisation API.** `/v1/connections` (an organisation's links to its systems, with sealed credentials and health status), and `/v1/operations/{id}` for running an operation. Calls are idempotent and asynchronous with webhooks, and writes go through an approvals queue. The same operations are served as MCP tools for organisations' agents.
 3. **First adapters, with a pilot.** Either EHR write-back for one AI-scribe customer across two authorised HIS vendors, or claims status and pre-authorisation for one hospital, preferring NHCX where the payer is on it (`docs/abdm.md`; the plan in Notion).
-4. **LotusPond Link.** A Works customer can ask a person to share records from LotusPond Health. The person approves in their consent centre and can revoke it there.
+4. **LotusPond Link.** An organisation using the organisation API can ask a person to share records from their LotusPond Health account. The person approves in their consent centre and can revoke it there.

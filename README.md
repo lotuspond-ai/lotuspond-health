@@ -4,6 +4,8 @@
 
 It works with any agent that speaks the [Model Context Protocol](https://modelcontextprotocol.io): the server is a remote MCP server at `/mcp`, with OAuth 2.1 sign-in so agents connect like any other connector. The app around it is a full personal health record: upload reports, see results on a body map, book a home sample collection.
 
+LotusPond Health has a second side, for organisations (planned): healthcare startups and other organisations get one API and MCP server to reach any portal or electronic health record (EHR) system, instead of integrating with each one. Both sides live in this repository. LotusPond Works, the company's other product, automates administrative processes and is not an API ([docs/connectors.md](docs/connectors.md)).
+
 See [docs/agents.md](docs/agents.md) for how agents connect, the tools they get, and the safety model. Every outside system it reaches is a connector of the connector core ([docs/connectors.md](docs/connectors.md)), listed publicly at `GET /v1/connectors`.
 
 ## What it does
