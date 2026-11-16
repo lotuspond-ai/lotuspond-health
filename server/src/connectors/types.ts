@@ -1,7 +1,8 @@
 // The connector core: one description of every outside system LotusPond reaches (a lab portal, ABHA, a wearable's
 // API, and later a hospital information system or an insurer/TPA portal), what it can do there, and on whose
-// authority. LotusPond Health uses it for a person's own records; the organisation side (LotusPond Works: hospitals,
-// clinics, insurers and health-tech builders) uses the same connectors under an organisation's contracted access.
+// authority. LotusPond Health has two sides, both in this repository: a person's own records, and the organisation
+// API (healthcare startups, hospitals, clinics and insurers), which uses the same connectors under an organisation's
+// contracted access. LotusPond Works is a separate automation product and does not host this API.
 // See docs/connectors.md.
 import type { SourceCategory, SourceSignIn } from '../../../shared/sources.ts';
 import type { DataRegion } from '../../../shared/regions.ts';
@@ -12,7 +13,7 @@ import type { Recipe } from '../records/recipes/types.ts';
  * Whose say-so a connection runs on. Never mixed: an organisation's credential never reaches a person's own records,
  * and a person's consent never lets an organisation act in their name.
  *   person        the person (or a parent for a family member) signs in and consents; LotusPond Health
- *   organisation  an organisation's contracted or delegated access to its own systems; LotusPond Works
+ *   organisation  an organisation's contracted or delegated access to its own systems; the Health organisation API
  */
 export type Authority = 'person' | 'organisation';
 
