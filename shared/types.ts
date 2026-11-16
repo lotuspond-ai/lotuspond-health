@@ -14,7 +14,7 @@ export type Status = 'low' | 'normal' | 'high' | 'unknown';
 export interface RefRange {
   low?: number;
   high?: number;
-  /** Original text as printed, e.g. "13.0 - 17.0" or "<200". */
+  /** Text as printed, e.g. "13.0 - 17.0" or "<200". When the value was converted to another unit, the numbers are converted too ("4000 - 11000" cells/cumm → "4 - 11"). */
   text?: string;
   /** 'report' = taken from the user's file; 'typical' = generic adult range from the catalog. */
   source: 'report' | 'typical';
