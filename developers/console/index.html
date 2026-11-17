@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <!-- @include page-head -->
+    <title>Developer console · LotusPond Health</title>
+    <meta name="description" content="Make an organisation, create API keys, approve uploads and see every call to LotusPond Health's organisation API." />
+    <meta name="robots" content="noindex" />
+    <link rel="canonical" href="%SITE_URL%/developers/console/" />
+    <script type="module" src="/src/console/main.ts"></script>
+  </head>
+  <body class="home">
+    <!-- Drawn in the LotusPond design system, like the landing page (home.css and pages.css). The panels below
+         are built by src/console/main.ts with DOM calls, never HTML strings. -->
+    <!-- @include dev-nav -->
+    <main id="main">
+      <section class="doc-hero" aria-labelledby="hero-title">
+        <div class="home-wrap">
+          <p class="home-kicker"><b>Developer console</b> <span>Keys, approvals and every call</span></p>
+          <h1 class="home-d-lg" id="hero-title">Your organisation’s API.</h1>
+          <p class="home-lede">Make API keys for the organisation API and its MCP server, approve uploads that wait for a clinician, and see every call. New organisations start in the sandbox hospital. The <a class="home-link" href="/developers/">developer guide</a> has the details.</p>
+        </div>
+      </section>
+      <div class="home-wrap dev-console" id="console" aria-live="polite">
+        <p class="dev-account">Loading…</p>
+        <noscript><p>The console needs JavaScript.</p></noscript>
+      </div>
+    </main>
+    <!-- @include dev-footer -->
+  </body>
+</html>
