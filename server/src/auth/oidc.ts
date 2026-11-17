@@ -73,7 +73,7 @@ export class AccountsClient {
     return m as IssuerMetadata;
   }
 
-  async authorizeUrl(p: { redirectUri: string; state: string; nonce: string; verifier: string; signUp?: boolean }): Promise<string> {
+  async authorizeUrl(p: { redirectUri: string; state: string; nonce: string; verifier: string; signUp?: boolean; silent?: boolean }): Promise<string> {
     const m = await this.metadata();
     const q = new URLSearchParams({
       response_type: 'code',
@@ -87,6 +87,8 @@ export class AccountsClient {
     });
     // OpenID Connect's prompt=create asks the issuer to open on its sign-up page.
     if (p.signUp) q.set('prompt', 'create');
+    // prompt=none: only if the person is already signed in at Accounts; it answers login_required otherwise.
+    else if (p.silent) q.set('prompt', 'none');
     return `${m.authorization_endpoint}?${q}`;
   }
 

@@ -3,13 +3,16 @@
 // before Accounts exists. Its page asks for an email and lets you choose the claims Accounts would send. It keeps
 // nothing on disk: codes live in memory for a minute and the signing key is new each time the server starts.
 import { createHash, generateKeyPairSync, randomBytes, sign, type KeyObject } from 'node:crypto';
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
+import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { DATA_REGIONS } from '../config.ts';
 import { pkceChallenge, type Fetch, type IssuerMetadata } from './oidc.ts';
 
 export const FAKE_ACCOUNTS_PATH = '/api/dev-accounts';
 export const FAKE_ACCOUNTS_ISSUER = 'urn:lotuspond:dev-accounts';
 const CODE_TTL_MS = 60_000;
+/** The stand-in's own remembered sign-in, in this browser only (development; not signed). */
+const SIGNED_IN_COOKIE = 'dev_accounts_signed_in';
 
 interface PendingCode {
   clientId: string; redirectUri: string; challenge: string; nonce: string; claims: Record<string, unknown>; expiresAt: number;
@@ -56,6 +59,15 @@ export function fakeAccounts(clientId: string): FakeAccounts {
       : !q.redirect_uri || !/^https?:\/\//.test(q.redirect_uri) ? 'redirect_uri is missing.'
       : !q.state || !q.nonce ? 'state and nonce are required.' : null;
     if (problem) return c.html(page(`<p class="err">${esc(problem)}</p>`), 400);
+    // prompt=none: answer at once from the remembered sign-in, or say there is none (login_required).
+    if (q.prompt === 'none') {
+      const remembered = rememberedOf(c);
+      if (remembered) return issue(c, { redirectUri: q.redirect_uri, state: q.state, nonce: q.nonce, challenge: q.code_challenge }, remembered);
+      const to = new URL(q.redirect_uri);
+      to.searchParams.set('error', 'login_required');
+      to.searchParams.set('state', q.state);
+      return c.redirect(to.toString(), 302);
+    }
     const hidden = ['client_id', 'redirect_uri', 'state', 'nonce', 'code_challenge']
       .map(k => `<input type="hidden" name="${k}" value="${esc(q[k] ?? '')}">`).join('');
     const regions = DATA_REGIONS.map(r => `<option value="${r}"${r === 'in' ? ' selected' : ''}>${r}</option>`).join('');
@@ -77,6 +89,7 @@ export function fakeAccounts(clientId: string): FakeAccounts {
     const q = c.req.query();
     if (q.client_id !== clientId) return c.html(page('<p class="err">Unknown client_id.</p>'), 400);
     const back = q.post_logout_redirect_uri && /^https?:\/\//.test(q.post_logout_redirect_uri) ? q.post_logout_redirect_uri : null;
+    deleteCookie(c, SIGNED_IN_COOKIE, { path: FAKE_ACCOUNTS_PATH });
     return c.html(page(`<h1>Signed out of your LotusPond account</h1>
       <p class="note">Stand-in for LotusPond Accounts, for development only.</p>
       ${back ? `<p><a href="${esc(back)}">Back to LotusPond Health</a></p>` : ''}
@@ -105,24 +118,34 @@ export function fakeAccounts(clientId: string): FakeAccounts {
     if (f.client_id !== clientId || !f.redirect_uri || !f.code_challenge || !f.state || !f.nonce) return c.text('Bad request', 400);
     const email = (f.email ?? '').trim().toLowerCase();
     if (!email.includes('@')) return c.text('An email address is needed.', 400);
-    const code = randomBytes(24).toString('base64url');
-    codes.set(code, {
-      clientId, redirectUri: f.redirect_uri, challenge: f.code_challenge, nonce: f.nonce, expiresAt: Date.now() + CODE_TTL_MS,
-      claims: {
-        sub: fakeSubject(email),
-        // A new Accounts session for each sign-in, so a back-channel logout can name one.
-        sid: `dev-sid-${randomBytes(9).toString('base64url')}`,
-        email,
-        email_verified: f.email_verified === 'true',
-        ...(f.region ? { region: f.region } : {}),
-        ...(f.enterprise === 'true' ? { enterprise_connection: 'dev-company-sso' } : {}),
-      },
-    });
-    const to = new URL(f.redirect_uri);
-    to.searchParams.set('code', code);
-    to.searchParams.set('state', f.state);
-    return c.redirect(to.toString(), 302);
+    const claims: Record<string, unknown> = {
+      sub: fakeSubject(email),
+      // A new Accounts session for each sign-in, so a back-channel logout can name one.
+      sid: `dev-sid-${randomBytes(9).toString('base64url')}`,
+      email,
+      email_verified: f.email_verified === 'true',
+      ...(f.region ? { region: f.region } : {}),
+      ...(f.enterprise === 'true' ? { enterprise_connection: 'dev-company-sso' } : {}),
+    };
+    // Remember the sign-in in this browser, as Accounts would: a later prompt=none answers from it.
+    setCookie(c, SIGNED_IN_COOKIE, Buffer.from(JSON.stringify(claims)).toString('base64url'), { httpOnly: true, sameSite: 'Lax', path: FAKE_ACCOUNTS_PATH });
+    return issue(c, { redirectUri: f.redirect_uri, state: f.state, nonce: f.nonce, challenge: f.code_challenge }, claims);
   });
+
+  function issue(c: Context, req: { redirectUri: string; state: string; nonce: string; challenge: string }, claims: Record<string, unknown>) {
+    const code = randomBytes(24).toString('base64url');
+    codes.set(code, { clientId, redirectUri: req.redirectUri, challenge: req.challenge, nonce: req.nonce, expiresAt: Date.now() + CODE_TTL_MS, claims });
+    const to = new URL(req.redirectUri);
+    to.searchParams.set('code', code);
+    to.searchParams.set('state', req.state);
+    return c.redirect(to.toString(), 302);
+  }
+
+  function rememberedOf(c: Context): Record<string, unknown> | null {
+    const raw = getCookie(c, SIGNED_IN_COOKIE);
+    if (!raw) return null;
+    try { return JSON.parse(Buffer.from(raw, 'base64url').toString('utf8')) as Record<string, unknown>; } catch { return null; }
+  }
 
   app.post('/token', async c => {
     const f = await c.req.parseBody() as Record<string, string>;

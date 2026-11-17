@@ -285,6 +285,9 @@ button.primary{background:var(--accent);border-color:var(--accent);color:#fff}.n
     const session = await signedIn(c);
     if (!session) {
       const next = `/oauth/authorize?${new URLSearchParams(q as Record<string, string>)}`;
+      // With LotusPond Accounts: someone already signed in there comes straight back here, without a sign-in page
+      // (prompt=none); anyone else gets Health's sign-in page, which offers Accounts too (routes/accounts.ts).
+      if (config.accounts) return c.redirect(`/api/auth/accounts/start?${new URLSearchParams({ intent: 'login', prompt: 'none', next })}`, 302);
       return c.redirect(`/login?next=${encodeURIComponent(next)}`, 302);
     }
     const { db } = session.cell;

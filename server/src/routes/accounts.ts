@@ -33,7 +33,7 @@ import { readJson, type AppEnv, type Ctx, type Deps } from '../http.ts';
 import { publicOrigin } from '../agents/oauth.ts';
 import { AccountsAppExchangeBody, AccountsCompleteBody } from '../schemas.ts';
 import { insertAccount, isUniqueViolation, sessionInfo } from './auth.ts';
-import { ACCOUNTS_ERRORS, APP_ACCOUNTS_REDIRECT, APP_LINK_PATH, type AccountsErrorCode } from '../../../shared/identity.ts';
+import { ACCOUNTS_ERRORS, agentConsentNext, APP_ACCOUNTS_REDIRECT, APP_LINK_PATH, type AccountsErrorCode } from '../../../shared/identity.ts';
 
 const FLOW_COOKIE = 'lp_accounts_flow';
 /** Set by Health's own sign-out (routes/auth.ts) so that only it, not a link from another site, signs out of Accounts. */
@@ -52,6 +52,10 @@ interface Flow {
   app?: string;
   /** The website: this sign-in was handed over from another regional host, so it is not handed on again. */
   hop?: boolean;
+  /** The website: an agent's consent page to return to after signing in (shared/identity.ts, agentConsentNext). */
+  next?: string;
+  /** Only if the person is already signed in at Accounts (prompt=none); otherwise on to Health's sign-in page. */
+  silent?: boolean;
 }
 type Pending = AccountsIdentity & { exp: number };
 /** The one-time code handed to an app: a session for an account, or an identity waiting to finish sign-up. */
@@ -169,7 +173,11 @@ export function accountsRoutes(deps: Deps, runtime: AccountsRuntime) {
 
   const redirectUri = (c: Ctx) => `${publicOrigin(c, config)}${COOKIE_PATH}/callback`;
   const back = (c: Ctx, path: string) => c.redirect(`${publicOrigin(c, config)}${path}`, 302);
-  const fail = (c: Ctx, code: keyof typeof ACCOUNTS_ERRORS, signUp = false) => back(c, `/${signUp ? 'signup' : 'login'}?accounts_error=${code}`);
+  const withNext = (next: string | undefined) => next ? `&${new URLSearchParams({ next })}` : '';
+  const fail = (c: Ctx, code: keyof typeof ACCOUNTS_ERRORS, signUp = false, next?: string) =>
+    back(c, `/${signUp ? 'signup' : 'login'}?accounts_error=${code}${withNext(next)}`);
+  /** Errors Accounts gives prompt=none when it would have to show a page: the person is not signed in there. */
+  const NEEDS_INTERACTION = new Set(['login_required', 'interaction_required', 'consent_required', 'account_selection_required']);
 
   /** Start Health's own session: a cookie for the website, a token in the answer for the apps. */
   async function signIn(c: Ctx, cell: Cell, user: UserRow, forApp: boolean, sid: string | undefined) {
@@ -238,13 +246,17 @@ a{display:inline-block;margin-top:1rem;padding:.8rem 1.4rem;border-radius:.6rem;
     const forApp = c.req.query('client') === 'app';
     const appChallenge = c.req.query('code_challenge') ?? '';
     if (forApp && !CHALLENGE.test(appChallenge)) return c.text('The app sent no valid code_challenge (PKCE, S256).', 400);
+    const next = forApp ? null : agentConsentNext(c.req.query('next'));
+    const silent = !forApp && !signUp && c.req.query('prompt') === 'none';
     const flow: Flow = {
       state: randomToken(), nonce: randomToken(), verifier: randomToken(), signUp, exp: inSeconds(FLOW_TTL_S),
       ...(forApp ? { app: appChallenge } : {}),
       ...(!forApp && c.req.query('hop') === '1' ? { hop: true } : {}),
+      ...(next ? { next } : {}),
+      ...(silent ? { silent: true } : {}),
     };
     put(c, FLOW_COOKIE, flow, FLOW_TTL_S);
-    return c.redirect(await client.authorizeUrl({ redirectUri: redirectUri(c), state: flow.state, nonce: flow.nonce, verifier: flow.verifier, signUp }), 302);
+    return c.redirect(await client.authorizeUrl({ redirectUri: redirectUri(c), state: flow.state, nonce: flow.nonce, verifier: flow.verifier, signUp, silent }), 302);
   });
 
   app.get('/callback', async c => {
@@ -252,8 +264,10 @@ a{display:inline-block;margin-top:1rem;padding:.8rem 1.4rem;border-radius:.6rem;
     drop(c, FLOW_COOKIE);
     const q = c.req.query();
     if (!flow || q.state !== flow.state) return fail(c, 'expired');
-    if (q.error) return fail(c, q.error === 'access_denied' ? 'cancelled' : 'sign_in_failed', flow.signUp);
-    if (!q.code) return fail(c, 'sign_in_failed', flow.signUp);
+    // A silent check that found nobody signed in at Accounts: on to Health's sign-in page, as if nothing happened.
+    if (q.error && flow.silent && NEEDS_INTERACTION.has(q.error)) return back(c, `/login${flow.next ? `?${new URLSearchParams({ next: flow.next })}` : ''}`);
+    if (q.error) return fail(c, q.error === 'access_denied' ? 'cancelled' : 'sign_in_failed', flow.signUp, flow.next);
+    if (!q.code) return fail(c, 'sign_in_failed', flow.signUp, flow.next);
 
     let id: AccountsIdentity;
     try {
@@ -261,7 +275,7 @@ a{display:inline-block;margin-top:1rem;padding:.8rem 1.4rem;border-radius:.6rem;
     } catch (e) {
       if (!(e instanceof OidcError)) throw e;
       console.warn(`[accounts] sign-in refused: ${e.code}: ${e.message}`);
-      return fail(c, 'sign_in_failed', flow.signUp);
+      return fail(c, 'sign_in_failed', flow.signUp, flow.next);
     }
     const outcome = await resolve(c, id);
 
@@ -281,17 +295,18 @@ a{display:inline-block;margin-top:1rem;padding:.8rem 1.4rem;border-radius:.6rem;
     // The browser starts again on that host (LotusPond Accounts remembers the person, so it does not ask again),
     // rather than carrying a code across hosts that only the URL would protect. Handed over once at most.
     if (outcome.kind === 'elsewhere') {
-      if (flow.hop) return fail(c, 'wrong_region', flow.signUp);
-      return c.redirect(`${outcome.origin}${COOKIE_PATH}/start?${new URLSearchParams({ intent: flow.signUp ? 'signup' : 'login', hop: '1' })}`, 302);
+      if (flow.hop) return fail(c, 'wrong_region', flow.signUp, flow.next);
+      // An agent's consent is answered on the host that holds the account: its consent page is the same path there.
+      return c.redirect(`${outcome.origin}${COOKIE_PATH}/start?${new URLSearchParams({ intent: flow.signUp ? 'signup' : 'login', hop: '1', ...(flow.next ? { next: flow.next } : {}) })}`, 302);
     }
-    if (outcome.kind === 'error') return fail(c, outcome.code, flow.signUp);
+    if (outcome.kind === 'error') return fail(c, outcome.code, flow.signUp, flow.next);
     if (outcome.kind === 'account') {
       await signIn(c, outcome.cell, outcome.user, false, id.sessionId);
-      return back(c, '/app');
+      return back(c, flow.next ?? '/app');
     }
-    // Someone new to Health: finish sign-up on Health's page.
+    // Someone new to Health: finish sign-up on Health's page (then on to the agent's consent page, if one is waiting).
     put(c, PENDING_COOKIE, { ...outcome.id, exp: inSeconds(PENDING_TTL_S) } satisfies Pending, PENDING_TTL_S);
-    return back(c, '/signup?accounts=continue');
+    return back(c, `/signup?accounts=continue${withNext(flow.next)}`);
   });
 
   /** Logout tokens already acted on, by jti, until they are too old to be accepted anyway. One instance only, as for

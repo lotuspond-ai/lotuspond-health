@@ -31,5 +31,14 @@ export const APP_ACCOUNTS_REDIRECT = `${APP_ID}:/accounts`;
 export const APP_LINKS_HOST = 'open.health.lotuspond.ai';
 export const APP_LINK_PATH = '/accounts-return';
 
-/** Where the website starts a sign-in through LotusPond Accounts. */
-export const accountsStartPath = (intent: 'signup' | 'login') => `/api/auth/accounts/start?intent=${intent}`;
+/**
+ * Where to go after signing in when an agent sent the person to approve a connection: only this site's consent page
+ * (/oauth/authorize?…), so the parameter cannot send anyone elsewhere. Null for anything else.
+ */
+export function agentConsentNext(next: string | null | undefined): string | null {
+  return next && /^\/oauth\/authorize\?[^\\]*$/.test(next) && !next.includes('//') ? next : null;
+}
+
+/** Where the website starts a sign-in through LotusPond Accounts; `next` brings an agent's consent page back after. */
+export const accountsStartPath = (intent: 'signup' | 'login', next?: string | null) =>
+  `/api/auth/accounts/start?${new URLSearchParams({ intent, ...(agentConsentNext(next) ? { next: next! } : {}) })}`;

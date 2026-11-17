@@ -13,7 +13,7 @@ import { startAccountsSignIn } from '../native/accounts';
 import { ACCOUNTS_ERRORS, accountsStartPath } from '../../shared/identity';
 import { ServerPicker } from './ServerPicker';
 import { Icon, Logo } from './ui';
-import { onAuthHash, showAuthMode, siteHref, siteLinkProps, type AuthMode } from '../site/links';
+import { oauthReturn, onAuthHash, showAuthMode, siteHref, siteLinkProps, type AuthMode } from '../site/links';
 import '../styles/auth-site.css';
 
 const ALL_REGIONS = ['in', 'eu', 'us', 'global'] as const;
@@ -177,7 +177,7 @@ export function AuthScreen({ initialMode = 'in' }: { initialMode?: AuthMode }) {
                   setError(null);
                   startAccountsSignIn(mode === 'up' ? 'signup' : 'login').catch(e => setError(errorMessage(e).replace(/^\w+: /, '')));
                 }}>Continue with LotusPond Account</button>
-              ) : <a className="btn btn--block" href={accountsStartPath(mode === 'up' ? 'signup' : 'login')}>Continue with LotusPond Account</a>}
+              ) : <a className="btn btn--block" href={accountsStartPath(mode === 'up' ? 'signup' : 'login', oauthReturn())}>Continue with LotusPond Account</a>}
             </>
           )}
           <p className="auth__switch">

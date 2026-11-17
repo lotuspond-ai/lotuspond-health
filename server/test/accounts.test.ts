@@ -16,7 +16,7 @@ import { loadConfig } from '../src/config.ts';
 import { openDatabase, type Database } from '../src/db/client.ts';
 import { auditEvents, sessions, users } from '../src/db/schema.ts';
 import { DiskFileStore } from '../src/lib/files.ts';
-import { AccountsClient, OidcError } from '../src/auth/oidc.ts';
+import { AccountsClient, OidcError, pkceChallenge } from '../src/auth/oidc.ts';
 import { fakeAccounts } from '../src/auth/fake-accounts.ts';
 import type { AppEnv } from '../src/http.ts';
 import type { SessionInfo } from '../../shared/types.ts';
@@ -297,6 +297,67 @@ describe('LotusPond Accounts sign-in from the apps', () => {
     assert.equal(refused.error, 'enterprise_account');
     assert.equal((await browser().go('GET', '/api/auth/accounts/start?client=app')).status, 400);
     assert.equal((await appCall('POST', '/api/auth/accounts/app-exchange', { code: 'made-up', verifier: randomBytes(32).toString('base64url') })).status, 400);
+  });
+});
+
+describe('an agent\'s consent page with LotusPond Accounts', () => {
+  async function registerAgent() {
+    const res = await app.request('http://health.test/oauth/register', { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ client_name: 'Claude', redirect_uris: ['https://claude.example/callback'], token_endpoint_auth_method: 'none' }) });
+    assert.equal(res.status, 201, await res.clone().text());
+    return (await res.json() as { client_id: string }).client_id;
+  }
+  const consentUrl = (clientId: string) => `/oauth/authorize?${new URLSearchParams({
+    response_type: 'code', client_id: clientId, redirect_uri: 'https://claude.example/callback',
+    code_challenge: pkceChallenge(randomBytes(32).toString('base64url')), code_challenge_method: 'S256', state: 'xyz', scope: 'health:read',
+  })}`;
+  /** Follow Health's redirects (on this host) until a page answers; returns the path it ended on and the answer. */
+  async function follow(b: ReturnType<typeof browser>, url: string) {
+    for (let i = 0; i < 8; i++) {
+      const res = await b.go('GET', url);
+      if (res.status !== 302) return { path: new URL(url, 'http://health.test'), res };
+      url = new URL(res.headers.get('location')!, 'http://health.test').toString();
+    }
+    throw new Error('too many redirects');
+  }
+
+  test('signed out everywhere: a silent check at Accounts, then Health\'s sign-in page, which keeps the consent page', async () => {
+    const consent = consentUrl(await registerAgent());
+    const first = await browser().go('GET', consent);
+    const start = new URL(first.headers.get('location')!, 'http://health.test');
+    assert.equal(start.pathname, '/api/auth/accounts/start');
+    assert.equal(start.searchParams.get('prompt'), 'none');
+    assert.equal(start.searchParams.get('next'), consent);
+    const { path } = await follow(browser(), consent);
+    assert.equal(path.pathname, '/login');
+    assert.equal(path.searchParams.get('next'), consent);
+  });
+
+  test('signing in with Accounts from there returns to the consent page; later, Accounts\' own sign-in is enough', async () => {
+    const consent = consentUrl(await registerAgent());
+    const address = email('agent');
+    assert.equal((await browser().json('POST', '/api/auth/register', registration(address))).status, 201);
+    const b = browser();
+    const back = await throughAccounts(b, { email: address }, `intent=login&${new URLSearchParams({ next: consent })}`);
+    assert.equal(new URL(back.headers.get('location')!).pathname + new URL(back.headers.get('location')!).search, consent);
+    assert.equal((await b.go('GET', consent)).status, 200, 'the consent page shows');
+
+    // Health's session ends (signed out of Health only); Accounts still remembers this browser.
+    b.jar.delete('lp_session');
+    const { path, res } = await follow(b, consent);
+    assert.equal(path.pathname + path.search, consent, 'back on the consent page without a sign-in page');
+    assert.match(await res.text(), /<form/);
+  });
+
+  test('only this site\'s consent page is a place to return to', async () => {
+    for (const next of ['https://evil.example/oauth/authorize?x=1', '//evil.example/oauth/authorize?x', '/app', '/oauth/authorize?a=1//b']) {
+      const b = browser();
+      const start = await b.go('GET', `/api/auth/accounts/start?${new URLSearchParams({ intent: 'login', prompt: 'none', next })}`);
+      const authorize = new URL(start.headers.get('location')!, 'http://health.test');
+      assert.equal(authorize.searchParams.get('prompt'), 'none');
+      const res = await b.go('GET', `/api/auth/accounts/callback?error=login_required&state=${authorize.searchParams.get('state')}`);
+      assert.equal(res.headers.get('location'), 'http://health.test/login', `${next} is dropped`);
+    }
   });
 });
 

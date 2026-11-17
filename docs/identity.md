@@ -45,12 +45,12 @@ Health's side works for the website and the apps, against a stand-in for Account
 | `ACCOUNTS_CLIENT_ID` | Health's client id at Accounts (`lotuspond-health` for the stand-in). |
 | `ACCOUNTS_CLIENT_SECRET` | Optional. Without it Health is a public client and relies on PKCE alone. |
 
-To try it: `ACCOUNTS_ISSUER=fake npm run dev`, open `/signup` and choose **Continue with LotusPond Account**. The stand-in's page asks for an email and lets you choose what Accounts would say: whether the email is verified, the region, and whether the account came from a company's single sign-on.
+To try it: `ACCOUNTS_ISSUER=fake npm run dev`, open `/signup` and choose **Continue with LotusPond Account**. The stand-in's page asks for an email and lets you choose what Accounts would say: whether the email is verified, the region, and whether the account came from a company's single sign-on. It remembers the sign-in in that browser until you sign out at it, so `prompt=none` can be tried.
 
 - **Flow** (`server/src/routes/accounts.ts`, `server/src/auth/oidc.ts`). Authorization code with PKCE (S256), state and nonce, kept for 10 minutes in a signed, HttpOnly cookie. The ID token is checked against the issuer's published keys (RS256 or ES256), with its issuer, audience, expiry and nonce. Then Health starts its own session, as for a password sign-in.
 - **First sign-in.** Health still asks its own questions: name, country, age, Terms and Privacy, and the health-data consent. The email comes from Accounts and there is no Health password (`users.password_hash` is null; `users.accounts_subject` holds the Accounts `sub`). The Accounts identity waits for 30 minutes in a signed cookie while the person answers.
 - **Existing Health accounts** with the same email are linked on their first Accounts sign-in, only when Accounts says the email is verified. They keep their password until the reviewed migration removes it.
-- **Regional hosts on the website** (`REGION_API_ORIGINS`, where each regional host is its own site and API). If the account is held in a region another host serves, the callback sends the browser to `/api/auth/accounts/start?hop=1` on that host, which signs it in on its own site with its own session. No code or token crosses between hosts: Accounts remembers the person, so the second pass does not ask again. Each regional host's `/api/auth/accounts/callback` must be registered as a redirect URI at Accounts. A sign-in is handed on once at most, then refused with `wrong_region`. With the stand-in issuer, which remembers no one, the second host asks for the email again.
+- **Regional hosts on the website** (`REGION_API_ORIGINS`, where each regional host is its own site and API). If the account is held in a region another host serves, the callback sends the browser to `/api/auth/accounts/start?hop=1` on that host, which signs it in on its own site with its own session. No code or token crosses between hosts: Accounts remembers the person, so the second pass does not ask again. Each regional host's `/api/auth/accounts/callback` must be registered as a redirect URI at Accounts. A sign-in is handed on once at most, then refused with `wrong_region`. The stand-in issuer remembers a sign-in only on the host it ran on, so the second host asks for the email again.
 - **Signing out** (OpenID Connect RP-Initiated Logout 1.0). Sessions record whether they came from Accounts (`sessions.via_accounts`). Signing out of such a session on the website ends Health's session, then sends the browser to Accounts' `end_session_endpoint`, which returns it to Health's `/login` page.
   - That page must be registered at Accounts as a post-logout redirect URI.
   - The trip to Accounts needs a 2-minute ticket that only Health's own sign-out sets, so a link from another site cannot sign anyone out of Accounts.
@@ -68,6 +68,12 @@ To try it: `ACCOUNTS_ISSUER=fake npm run dev`, open `/signup` and choose **Conti
   - **Registration:** register the endpoint at Accounts as Health's `backchannel_logout_uri`, with `backchannel_logout_session_required`. With regional hosts, register each host's, since each ends only the sessions in its own cells.
   - **Replays:** used tokens are remembered in memory, so with several instances of one host a replay could reach another. It could only end sessions the first delivery already ended.
   - **Stand-in:** its sign-out page has **Sign out everywhere**, which sends Health a logout token for an email.
+- **An agent's consent page** (`/oauth/authorize`). Someone an agent sends who is not signed in to Health is first checked silently at Accounts (`prompt=none`).
+  - **Already signed in at Accounts** (for example from LotusPond Works): Health signs them in and returns them to the consent page, with no sign-in page.
+  - **Not signed in at Accounts** (`login_required`): they get Health's sign-in page.
+  - **The consent address** (`next`) is kept through that page's Accounts button, a first sign-up, refusals and a regional hand-off. Only this site's `/oauth/authorize?…` is accepted (`agentConsentNext`, shared/identity.ts).
+  - The consent itself stays in Health, with Health's session.
+  - In development, `npm run dev` forwards `/oauth` as well as `/api`, so the whole path works on one origin.
 - **Refused:** accounts from a company's single sign-on; a region this server does not serve; a country whose region differs from the one Accounts holds the account in; a Health account already linked to another Accounts subject.
 - **Accounts without a Health password** cannot use the password form (it says to use Accounts) or change a password here. They can delete their account within 10 minutes of signing in with Accounts, instead of typing a password.
 - **The apps** sign in through the system browser (RFC 8252): Custom Tabs on Android and SFSafariViewController on iOS (`@capacitor/browser`), never the app's own web view.
@@ -104,7 +110,6 @@ Health reads `sub`, `email` and `email_verified`, plus two LotusPond claims whos
 
 - **One-time codes across several server instances.** A traded code is remembered in memory, so with several instances it could be traded twice within its 2 minutes, and still only by the app holding the PKCE verifier.
 - **The `directory` moving into Accounts.** Health still keeps its email directory; the `region` claim is checked against it.
-- **The agents' consent page** (`/oauth/authorize`) still uses Health's session, not the Accounts session.
 - **Removing passwords** for linked accounts, after the reviewed migration.
 
 ## Before launch
