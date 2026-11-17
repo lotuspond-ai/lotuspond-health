@@ -11,6 +11,7 @@ import { resolveSecrets } from './compliance/secrets.ts';
 import { purgeOldEvents } from './compliance/audit.ts';
 import { EncryptedFileStore } from './lib/files-encrypted.ts';
 import { purgeExpiredSessions } from './auth/sessions.ts';
+import { purgeExpiredConsoleSessions } from './connectors/console-accounts.ts';
 import { purgeExpiredAgentSecrets } from './agents/grants.ts';
 import { purgeOldNotifications } from './notifications.ts';
 import { claudeAssistant } from './assistant/agent.ts';
@@ -31,7 +32,7 @@ import { digilockerFetcher } from './records/api/digilocker.ts';
 import { createOrganisation, createOrganisationKey, ORGANISATION_OPERATIONS, revokeOrganisationKey } from './connectors/organisations.ts';
 import type { OperationId } from './connectors/types.ts';
 import { organisationRuntime } from './connectors/runtime.ts';
-import { organisations } from './db/schema.ts';
+import { organisationAccounts, organisationMembers, organisations, type OrganisationRole } from './db/schema.ts';
 import { eq } from 'drizzle-orm';
 
 // This file runs from server/src (tsx) or server/dist (bundle); both are one level below server/.
@@ -76,10 +77,13 @@ if (command === 'files:rekey') {
 //   org:revoke <key id>
 //   org:requests                                        organisations that asked for live access, and what they asked for
 //   org:live <organisation id>                          give live access, once its written authority is checked
+//   org:member <organisation id> <email> [role]         add an organisation account to an organisation (role: owner,
+//                                                       admin, editor or viewer; owner by default). The person signs up
+//                                                       in the developer console first.
 //   org:connect <organisation id> <connector> "<name>" <base url>
 //       adds a connection to a real system (fhir, bahmni, trakcare). Credentials come from the environment, never the
 //       command line: ORG_CONNECTION_TOKEN (bearer), or ORG_CONNECTION_USER and ORG_CONNECTION_PASSWORD (HTTP Basic).
-if (['org:create', 'org:key', 'org:revoke', 'org:requests', 'org:live', 'org:connect'].includes(command ?? '')) {
+if (['org:create', 'org:key', 'org:revoke', 'org:requests', 'org:live', 'org:connect', 'org:member'].includes(command ?? '')) {
   const [a, b, c] = process.argv.slice(3);
   const db = registry.defaultCell.db;
   try {
@@ -98,6 +102,14 @@ if (['org:create', 'org:key', 'org:revoke', 'org:requests', 'org:live', 'org:con
       if (!a) fail('Usage: org:live <organisation id>');
       const rows = await db.update(organisations).set({ access: 'live' }).where(eq(organisations.id, a)).returning({ id: organisations.id });
       console.log(rows.length ? 'The organisation has live access. Add its connections with org:connect.' : 'No such organisation.');
+    } else if (command === 'org:member') {
+      const role = (c ?? 'owner') as OrganisationRole;
+      if (!a || !b || !['owner', 'admin', 'editor', 'viewer'].includes(role)) fail('Usage: org:member <organisation id> <email> [owner|admin|editor|viewer]');
+      const [account] = await db.select().from(organisationAccounts).where(eq(organisationAccounts.email, b.trim().toLowerCase())).limit(1);
+      if (!account) fail(`No organisation account for ${b}. The person makes one in the developer console first.`);
+      await db.insert(organisationMembers).values({ organisationId: a, accountId: account.id, role, approves: role === 'owner' })
+        .onConflictDoUpdate({ target: [organisationMembers.organisationId, organisationMembers.accountId], set: { role } });
+      console.log(`${account.email} is ${role === 'owner' || role === 'admin' ? 'an' : 'a'} ${role} of organisation ${a}.`);
     } else if (command === 'org:connect') {
       const [, , name, baseUrl] = process.argv.slice(3);
       if (!a || !b || !name || !baseUrl) fail('Usage: org:connect <organisation id> <fhir|bahmni|trakcare> "<name>" <FHIR base url>  (credentials in ORG_CONNECTION_TOKEN, or ORG_CONNECTION_USER and ORG_CONNECTION_PASSWORD)');
@@ -120,7 +132,7 @@ if (['org:create', 'org:key', 'org:revoke', 'org:requests', 'org:live', 'org:con
   await opened.close();
   process.exit(0);
 }
-if (command) fail(`Unknown command "${command}". Commands: files:rekey, org:create, org:key, org:revoke, org:requests, org:live, org:connect.`);
+if (command) fail(`Unknown command "${command}". Commands: files:rekey, org:create, org:key, org:revoke, org:requests, org:live, org:connect, org:member.`);
 
 async function sweep() {
   for (const cell of allCells) {
@@ -129,6 +141,7 @@ async function sweep() {
     await purgeExpiredAgentSecrets(cell.db);
     await purgeOldNotifications(cell.db);
   }
+  await purgeExpiredConsoleSessions(registry.defaultCell.db);
 }
 await sweep();
 

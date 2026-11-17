@@ -1,19 +1,33 @@
-// The developer console (/developers/console/): a small page on the public site that talks to /api/console with the
-// person's LotusPond session cookie. Everything is built with DOM calls and textContent, never HTML strings, so names
+// The developer console (/developers/console/): a small page on the public site that talks to /api/console with an
+// organisation account's session cookie. Organisation accounts work like LotusPond Works': a person signs up, makes an
+// organisation or is added to one, and works in it with a role. They are separate from personal LotusPond Health
+// accounts, so an employer never controls the account that holds someone's own health records. Everything is built with DOM calls and textContent, never HTML strings, so names
 // and summaries from the server cannot inject markup, and the page fits the site's script-only policy.
 
 type OperationId = 'patients.search' | 'encounters.list' | 'documents.upload' | 'claims.status' | 'preauth.submit';
 interface Operation { id: OperationId; summary: string; writes: boolean; stage: 'live' | 'planned' }
-interface OrgSummary { id: string; name: string; region: string; access: 'sandbox' | 'live'; role: string }
-interface Overview { account: { email: string }; organisations: OrgSummary[]; operations: Operation[] }
+type Role = 'owner' | 'admin' | 'editor' | 'viewer';
+interface OrgSummary { id: string; name: string; region: string; access: 'sandbox' | 'live'; role: Role; approves: boolean }
+interface Region { id: string; name: string }
+interface Overview { account: { email: string; name: string }; organisations: OrgSummary[]; regions: Region[]; operations: Operation[] }
+interface Member { id: string; name: string; email: string; role: Role; approves: boolean; you: boolean }
 interface Key { id: string; name: string; prefix: string; operations: string[]; createdAt: string; lastUsedAt: string | null; revokedAt: string | null }
 interface Connection { id: string; connector: string; name: string; sandbox: boolean; status: string; operations: string[]; lastOkAt: string | null; lastError: string | null }
 interface Approval { id: string; operation: string; summary: string; status: string; error: string | null; decidedBy: string | null; createdAt: string }
 interface Call { id: string; operation: string; outcome: string; at: string }
 interface OrgPage {
   organisation: OrgSummary & { liveRequestedAt: string | null };
-  keys: Key[]; connections: Connection[]; approvals: Approval[]; calls: Call[];
+  members: Member[]; keys: Key[]; connections: Connection[]; approvals: Approval[]; calls: Call[];
 }
+
+const RANK: Record<Role, number> = { viewer: 0, editor: 1, admin: 2, owner: 3 };
+const ROLE_TEXT: Record<Role, string> = {
+  owner: 'Owner: everything, including other owners',
+  admin: 'Admin: members, keys and live access',
+  editor: 'Editor: API keys',
+  viewer: 'Viewer: reads the console',
+};
+const can = (o: OrgSummary, least: Role) => RANK[o.role] >= RANK[least];
 
 const root = document.getElementById('console')!;
 const ORIGIN = location.origin;
@@ -70,33 +84,90 @@ function showError(e: unknown) {
   errorBox.hidden = false;
 }
 
-function signedOut() {
-  const next = encodeURIComponent('/developers/console/');
-  root.replaceChildren(el('section', { class: 'home-sheet' },
-    el('h2', { class: 'home-d-sm' }, 'Sign in to use the console'),
-    el('p', {}, 'The console uses your LotusPond account. Anyone with an account can make an organisation and start in the sandbox hospital.'),
-    el('div', { class: 'dev-actions' },
-      el('a', { class: 'home-btn home-btn-sm home-btn-ink', href: `/login?next=${next}` }, 'Sign in'),
-      el('a', { class: 'home-btn home-btn-sm home-btn-light', href: `/signup?next=${next}` }, 'Create an account')),
-  ));
+function field(label: string, input: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement, hint?: string): HTMLLabelElement {
+  return el('label', {}, label, input, hint ? el('small', {}, hint) : null);
+}
+
+function regionSelect(regions: Region[]): HTMLSelectElement {
+  return el('select', { name: 'region', required: true }, ...regions.map(r => el('option', { value: r.id, selected: r.id === 'in' }, r.name)));
+}
+
+/** Signed out: sign in, or make an organisation account (with its first organisation), as in LotusPond Works. */
+function signedOut(mode: 'signin' | 'signup' = 'signin') {
+  errorBox = el('p', { class: 'dev-error', role: 'alert', hidden: true });
+  const tabs = el('div', { class: 'dev-tabs', role: 'tablist', 'aria-label': 'Organisation account' },
+    ...(['signin', 'signup'] as const).map(m => {
+      const b = el('button', { type: 'button', role: 'tab', class: 'dev-tab', 'aria-selected': m === mode ? 'true' : 'false' }, m === 'signin' ? 'Sign in' : 'Make an organisation account');
+      b.addEventListener('click', () => signedOut(m));
+      return b;
+    }));
+  const email = el('input', { type: 'email', name: 'email', required: true, maxlength: '254', autocomplete: 'email' });
+  const password = el('input', { type: 'password', name: 'password', required: true, minlength: mode === 'signup' ? '10' : false, maxlength: '256', autocomplete: mode === 'signup' ? 'new-password' : 'current-password' });
+  let form: HTMLFormElement;
+  if (mode === 'signin') {
+    form = el('form', { class: 'dev-form' }, field('Work email', email), field('Password', password),
+      el('div', { class: 'dev-actions' }, el('button', { type: 'submit', class: 'home-btn home-btn-sm home-btn-ink' }, 'Sign in')));
+    form.addEventListener('submit', async ev => {
+      ev.preventDefault();
+      try { await api('POST', '/auth/login', { email: email.value, password: password.value }); await load(); } catch (e) { showError(e); }
+    });
+  } else {
+    const name = el('input', { type: 'text', name: 'name', required: true, maxlength: '120', autocomplete: 'name' });
+    const joining = el('input', { type: 'checkbox', name: 'joining' });
+    const orgName = el('input', { type: 'text', name: 'organisation', required: true, minlength: '2', maxlength: '120', autocomplete: 'organization' });
+    const region = regionSelect([{ id: 'in', name: 'India' }]);
+    const orgFields = el('fieldset', {}, el('legend', {}, 'Your organisation'), field('Organisation name', orgName), field('Data region', region, 'Where its keys, calls and approvals are kept.'));
+    joining.addEventListener('change', () => { orgFields.hidden = joining.checked; orgName.required = !joining.checked; });
+    const terms = el('input', { type: 'checkbox', name: 'terms', required: true });
+    form = el('form', { class: 'dev-form' },
+      field('Your name', name), field('Work email', email), field('Password', password, 'At least 10 characters.'),
+      orgFields,
+      el('label', { class: 'dev-check' }, joining, el('span', {}, 'I am joining an organisation that is already here', el('small', {}, 'An owner or admin adds you by this email once your account exists.'))),
+      el('label', { class: 'dev-check' }, terms, el('span', {}, 'I agree to the ', el('a', { class: 'home-link', href: '/terms/' }, 'Terms of Use'), ' and the ', el('a', { class: 'home-link', href: '/privacy/' }, 'Privacy Policy'), ' on behalf of my organisation.')),
+      el('div', { class: 'dev-actions' }, el('button', { type: 'submit', class: 'home-btn home-btn-sm home-btn-ink' }, 'Make the account')));
+    form.addEventListener('submit', async ev => {
+      ev.preventDefault();
+      try {
+        const made = await api<{ organisation: { id: string } | null }>('POST', '/auth/register', {
+          name: name.value, email: email.value, password: password.value, terms: terms.checked,
+          ...(joining.checked ? {} : { organisation: { name: orgName.value, region: region.value } }),
+        });
+        current = made.organisation?.id ?? null;
+        await load();
+      } catch (e) { showError(e); }
+    });
+  }
+  root.replaceChildren(el('section', { class: 'home-sheet dev-signin' },
+    el('h2', { class: 'home-d-sm' }, mode === 'signin' ? 'Sign in with your organisation account' : 'Make an organisation account'),
+    el('p', {}, 'The console uses organisation accounts, like LotusPond Works: your own sign-in, with organisations you make or are added to, each with a role. They are separate from personal LotusPond Health accounts, so your employer never controls the account that holds your own health records.'),
+    tabs, errorBox, form));
+}
+
+async function signOut() {
+  await api('POST', '/auth/logout');
+  overview = null; page = null; current = null; freshKey = null;
+  signedOut();
 }
 
 function createOrgForm(first: boolean): HTMLElement {
   const name = el('input', { type: 'text', name: 'name', required: true, minlength: '2', maxlength: '120', autocomplete: 'organization' });
+  const region = regionSelect(overview!.regions);
   const form = el('form', { class: 'dev-form' },
-    el('label', {}, 'Organisation name', name),
+    field('Organisation name', name), field('Data region', region, 'Where its keys, calls and approvals are kept.'),
     el('div', { class: 'dev-actions' }, el('button', { type: 'submit', class: 'home-btn home-btn-sm home-btn-ink' }, 'Make the organisation')));
   form.addEventListener('submit', async ev => {
     ev.preventDefault();
     try {
-      const made = await api<OrgSummary>('POST', '/organisations', { name: name.value });
+      const made = await api<OrgSummary>('POST', '/organisations', { name: name.value, region: region.value });
       current = made.id;
       await load();
     } catch (e) { showError(e); }
   });
   return el('section', { class: 'home-sheet' },
     el('h2', { class: 'home-d-sm' }, first ? 'Make your organisation' : 'Make another organisation'),
-    el('p', {}, 'Your company or team. It starts with sandbox access: its keys reach LotusPond’s sandbox hospital, with synthetic patients, until we check your hospital’s written authority.'),
+    el('p', {}, first
+      ? 'You are not in an organisation yet. Make one for your company or team and you become its owner, or ask an owner or admin to add you by your email. A new organisation starts with sandbox access: its keys reach LotusPond’s sandbox hospital, with synthetic patients, until we check your hospital’s written authority.'
+      : 'Another company or team. You become its owner; this one and its keys stay separate.'),
     form);
 }
 
@@ -130,7 +201,7 @@ function keysPanel(page: OrgPage): HTMLElement {
         el('th', { scope: 'row' }, k.name, el('br'), el('code', {}, `${k.prefix}…`)),
         el('td', {}, k.operations.join(', ')),
         el('td', {}, k.revokedAt ? badge('Revoked', 'rejected') : when(k.lastUsedAt)),
-        el('td', {}, k.revokedAt ? '' : button('Revoke', async () => {
+        el('td', {}, k.revokedAt || !can(page.organisation, 'editor') ? '' : button('Revoke', async () => {
           if (!confirm(`Revoke "${k.name}"? Anything using it stops working at once.`)) return;
           await api('DELETE', `/organisations/${page.organisation.id}/keys/${k.id}`);
           await load();
@@ -142,7 +213,10 @@ function keysPanel(page: OrgPage): HTMLElement {
     el('code', {}, freshKey.key),
     el('div', { class: 'dev-actions' }, button('Copy', async () => { await navigator.clipboard.writeText(freshKey!.key); }), button('Done', () => { freshKey = null; render(); }))) : null;
 
-  return el('section', { class: 'home-sheet', id: 'keys' }, el('h2', { class: 'home-d-sm' }, 'API keys'), secret, list, el('h3', {}, 'Make a key'), form);
+  const maker = can(page.organisation, 'editor')
+    ? [el('h3', {}, 'Make a key'), form]
+    : [el('p', { class: 'dev-muted' }, 'Editors, admins and owners make and revoke keys.')];
+  return el('section', { class: 'home-sheet', id: 'keys' }, el('h2', { class: 'home-d-sm' }, 'API keys'), secret, list, ...maker);
 }
 
 function connectionsPanel(page: OrgPage): HTMLElement {
@@ -164,7 +238,7 @@ function approvalsPanel(page: OrgPage): HTMLElement {
   const row = (a: Approval) => el('tr', {},
     el('th', { scope: 'row' }, a.summary),
     el('td', {}, when(a.createdAt)),
-    el('td', {}, a.status === 'pending'
+    el('td', {}, a.status === 'pending' && page.organisation.approves
       ? el('div', { class: 'dev-actions' },
         button('Approve and send', async () => {
           if (!confirm('Approve this upload? It is sent to the hospital system now.')) return;
@@ -172,13 +246,16 @@ function approvalsPanel(page: OrgPage): HTMLElement {
           await load();
         }, 'primary'),
         button('Reject', async () => { await api('POST', `/organisations/${page.organisation.id}/approvals/${a.id}`, { decision: 'reject' }); await load(); }))
+      : a.status === 'pending' ? el('span', { class: 'dev-muted' }, 'Waiting for an approver')
       : el('span', {}, badge(a.status, a.status), a.error ? el('span', { class: 'dev-error' }, ` ${a.error}`) : '', a.decidedBy ? ` by ${a.decidedBy}` : '')));
   const table = (rows: Approval[]) => el('div', { class: 'table-wrap' }, el('table', { class: 'table' },
     el('thead', {}, el('tr', {}, el('th', { scope: 'col' }, 'Write'), el('th', { scope: 'col' }, 'Asked'), el('th', { scope: 'col' }, 'Decision'))),
     el('tbody', {}, ...rows.map(row))));
   return el('section', { class: 'home-sheet', id: 'approvals' },
     el('h2', { class: 'home-d-sm' }, 'Approvals'),
-    el('p', {}, 'Uploads wait here until a clinician in your organisation approves them. Check what the summary says before you approve.'),
+    el('p', {}, page.organisation.approves
+      ? 'Uploads wait here until a clinician in your organisation approves them. You are an approver: check what the summary says before you approve.'
+      : 'Uploads wait here until a clinician in your organisation approves them. Members marked as approvers on Members decide.'),
     pending.length ? table(pending) : el('p', { class: 'dev-empty' }, 'Nothing is waiting.'),
     past.length ? el('h3', {}, 'Decided') : null,
     past.length ? table(past) : null);
@@ -196,6 +273,7 @@ function callsPanel(page: OrgPage): HTMLElement {
 function livePanel(page: OrgPage): HTMLElement | null {
   const o = page.organisation;
   if (o.access === 'live') return null;
+  if (!o.liveRequestedAt && !can(o, 'admin')) return null;
   if (o.liveRequestedAt) {
     return el('section', { class: 'home-sheet' }, el('h2', { class: 'home-d-sm' }, 'Live access'),
       el('p', {}, `You asked for live access on ${when(o.liveRequestedAt)}. We will write to you about the hospital’s written authority and the connection details.`));
@@ -213,6 +291,65 @@ function livePanel(page: OrgPage): HTMLElement | null {
   return el('section', { class: 'home-sheet', id: 'live' }, el('h2', { class: 'home-d-sm' }, 'Go live with a hospital'),
     el('p', {}, 'To reach a real system we need the hospital’s written authority, a service account from its IT team, and a data-processing agreement. We never sign in as staff or work around a system’s access controls.'),
     form);
+}
+
+function membersPanel(page: OrgPage): HTMLElement {
+  const o = page.organisation;
+  const manage = can(o, 'admin');
+  const roleSelect = (value: Role, disabled: boolean) => el('select', { 'aria-label': 'Role', disabled },
+    ...(['owner', 'admin', 'editor', 'viewer'] as const).filter(r => r !== 'owner' || o.role === 'owner' || value === 'owner')
+      .map(r => el('option', { value: r, selected: r === value }, r[0].toUpperCase() + r.slice(1))));
+  const rows = page.members.map(m => {
+    const locked = !manage || (m.role === 'owner' && o.role !== 'owner');
+    const role = roleSelect(m.role, locked);
+    role.addEventListener('change', async () => {
+      try { await api('PATCH', `/organisations/${o.id}/members/${m.id}`, { role: role.value }); await load(); } catch (e) { showError(e); role.value = m.role; }
+    });
+    const approves = el('input', { type: 'checkbox', checked: m.approves, disabled: locked, 'aria-label': `${m.name} approves writes` });
+    approves.addEventListener('change', async () => {
+      try { await api('PATCH', `/organisations/${o.id}/members/${m.id}`, { approves: approves.checked }); await load(); } catch (e) { showError(e); approves.checked = m.approves; }
+    });
+    const remove = m.you
+      ? button('Leave', async () => {
+        if (!confirm(`Leave ${o.name}? You lose access until someone adds you again.`)) return;
+        await api('DELETE', `/organisations/${o.id}/members/${m.id}`);
+        current = null; await load();
+      })
+      : locked ? null : button('Remove', async () => {
+        if (!confirm(`Remove ${m.email} from ${o.name}?`)) return;
+        await api('DELETE', `/organisations/${o.id}/members/${m.id}`);
+        await load();
+      });
+    return el('tr', {},
+      el('th', { scope: 'row' }, m.name, m.you ? ' (you)' : '', el('br'), el('small', {}, m.email)),
+      el('td', {}, role),
+      el('td', {}, approves),
+      el('td', {}, remove));
+  });
+  const table = el('div', { class: 'table-wrap' }, el('table', { class: 'table' },
+    el('thead', {}, el('tr', {}, el('th', { scope: 'col' }, 'Member'), el('th', { scope: 'col' }, 'Role'), el('th', { scope: 'col' }, 'Approves writes'), el('th', { scope: 'col' }, ''))),
+    el('tbody', {}, ...rows)));
+
+  let add: HTMLElement | null = null;
+  if (manage) {
+    const email = el('input', { type: 'email', required: true, maxlength: '254', autocomplete: 'off' });
+    const role = roleSelect('editor', false);
+    const approves = el('input', { type: 'checkbox' });
+    const form = el('form', { class: 'dev-form' },
+      field('Their email', email, 'They need an organisation account first: send them to this page to make one, choosing “I am joining an organisation”.'),
+      field('Role', role),
+      el('label', { class: 'dev-check' }, approves, el('span', {}, 'Approves writes', el('small', {}, 'A clinician who may approve or reject uploads before they reach a hospital system.'))),
+      el('div', { class: 'dev-actions' }, el('button', { type: 'submit', class: 'home-btn home-btn-sm home-btn-ink' }, 'Add the member')));
+    form.addEventListener('submit', async ev => {
+      ev.preventDefault();
+      try { await api('POST', `/organisations/${o.id}/members`, { email: email.value, role: role.value, approves: approves.checked }); await load(); } catch (e) { showError(e); }
+    });
+    add = el('div', {}, el('h3', {}, 'Add a member'), form);
+  }
+  return el('section', { class: 'home-sheet', id: 'members' },
+    el('h2', { class: 'home-d-sm' }, 'Members'),
+    el('ul', { class: 'dev-roles' }, ...(Object.keys(ROLE_TEXT) as Role[]).map(r => el('li', {}, ROLE_TEXT[r]))),
+    table, add);
 }
 
 function quickstart(page: OrgPage): HTMLElement {
@@ -233,7 +370,9 @@ let page: OrgPage | null = null;
 function render() {
   if (!overview) return;
   errorBox = el('p', { class: 'dev-error', role: 'alert', hidden: true });
-  const head = el('p', { class: 'dev-account' }, `Signed in as ${overview.account.email}`);
+  const head = el('div', { class: 'dev-account' },
+    el('span', {}, `Signed in as ${overview.account.name} (${overview.account.email}), with an organisation account`),
+    button('Sign out', signOut));
   if (!overview.organisations.length) { root.replaceChildren(head, errorBox, createOrgForm(true)); return; }
   const picker = overview.organisations.length > 1 ? (() => {
     const s = el('select', { 'aria-label': 'Organisation' }, ...overview!.organisations.map(o => el('option', { value: o.id, selected: o.id === current }, o.name)));
@@ -244,8 +383,8 @@ function render() {
   const o = page.organisation;
   const title = el('section', { class: 'home-sheet' },
     el('div', { class: 'dev-panel-head' }, el('h2', { class: 'home-d-sm' }, o.name), el('div', { class: 'dev-actions' }, picker, o.access === 'live' ? badge('Live access', 'live') : badge('Sandbox access', 'sandbox'))),
-    el('p', { class: 'dev-muted' }, `Your role: ${o.role}. Data region: ${o.region}.`));
-  root.replaceChildren(head, errorBox, title, keysPanel(page), connectionsPanel(page), approvalsPanel(page), callsPanel(page), quickstart(page), ...[livePanel(page)].filter(Boolean) as HTMLElement[], createOrgForm(false));
+    el('p', { class: 'dev-muted' }, `Your role: ${o.role}${o.approves ? ', and you approve writes' : ''}. Data region: ${overview.regions.find(r => r.id === o.region)?.name ?? o.region}.`));
+  root.replaceChildren(head, errorBox, title, keysPanel(page), connectionsPanel(page), approvalsPanel(page), callsPanel(page), membersPanel(page), quickstart(page), ...[livePanel(page)].filter(Boolean) as HTMLElement[], createOrgForm(false));
 }
 
 async function load() {

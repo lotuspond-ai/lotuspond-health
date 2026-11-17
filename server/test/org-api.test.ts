@@ -60,11 +60,19 @@ const mcp = (key: string, method: string, params?: unknown) => app.request('/v1/
   body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, ...(params ? { params } : {}) }),
 });
 
+/** An organisation account in the console, the way LotusPond Works makes one: name, email, password, and optionally the organisation. */
+const orgSignup = (email: string, organisation?: { name: string; region: string }) => ({ name: 'Dev Person', email, password: 'correct horse battery', terms: true, ...(organisation ? { organisation } : {}) });
+
+async function consoleAccount(email: string) {
+  const person = makeClient(app);
+  await person.json('POST', '/api/console/auth/register', orgSignup(email), 201);
+  return person;
+}
+
 async function consoleOrg(email: string) {
   const person = makeClient(app);
-  await person.json('POST', '/api/auth/register', registration(email), 201);
-  const org = await person.json<{ id: string; access: string; role: string }>('POST', '/api/console/organisations', { name: 'Scribe Startup' }, 201);
-  return { person, org };
+  const made = await person.json<{ organisation: { id: string; access: string; role: string } }>('POST', '/api/console/auth/register', orgSignup(email, { name: 'Scribe Startup', region: 'in' }), 201);
+  return { person, org: made.organisation };
 }
 
 describe('organisation API: sandbox, console, MCP', () => {
@@ -138,8 +146,7 @@ describe('organisation API: sandbox, console, MCP', () => {
 
   test('organisations are private to their members', async () => {
     const { org } = await consoleOrg('owner3@example.com');
-    const other = makeClient(app);
-    await other.json('POST', '/api/auth/register', registration('other3@example.com'), 201);
+    const other = await consoleAccount('other3@example.com');
     assert.equal((await other.error('GET', `/api/console/organisations/${org.id}`)).status, 404);
     assert.equal((await other.error('POST', `/api/console/organisations/${org.id}/keys`, { name: 'x', operations: ['patients.search'] })).status, 404);
     const anonymous = makeClient(app);
@@ -226,5 +233,94 @@ describe('organisation API: sandbox, console, MCP', () => {
     assert.equal(body.systems.find(s => s.id === 'akhil')?.runsHere, false);
     const eu = await (await app.request('/v1/connectors?region=eu')).json() as { systems: unknown[] };
     assert.equal(eu.systems.length, 0);
+  });
+});
+
+describe('organisation accounts in the developer console', () => {
+  test('organisation accounts are separate from personal Health accounts, both ways', async () => {
+    const personal = makeClient(app);
+    await personal.json('POST', '/api/auth/register', registration('both@example.com'), 201);
+    assert.equal((await personal.call('GET', '/api/console')).status, 401, 'a personal Health session does not open the console');
+
+    const org = makeClient(app);
+    assert.equal((await org.call('POST', '/api/console/auth/login', { email: 'both@example.com', password: 'correct horse battery' })).status, 401, 'nor does a personal password');
+    await org.json('POST', '/api/console/auth/register', orgSignup('both@example.com', { name: 'Clinic Co', region: 'in' }), 201);
+    assert.match(org.cookie, /^lp_org_session=lpo\./);
+    const me = await org.json<{ account: { email: string; name: string }; organisations: { role: string; approves: boolean }[]; regions: { id: string }[] }>('GET', '/api/console');
+    assert.equal(me.account.email, 'both@example.com');
+    assert.deepEqual(me.organisations.map(o => [o.role, o.approves]), [['owner', true]]);
+    assert.ok(me.regions.some(r => r.id === 'in'));
+    assert.equal(await org.json('GET', '/api/auth/me'), null, 'and a console session opens no one\'s records');
+
+    assert.equal((await makeClient(app).call('POST', '/api/console/auth/register', orgSignup('BOTH@example.com'))).status, 409);
+    const again = makeClient(app);
+    assert.equal((await again.call('POST', '/api/console/auth/login', { email: 'both@example.com', password: 'wrong password!!' })).status, 401);
+    await again.json('POST', '/api/console/auth/login', { email: 'Both@Example.com', password: 'correct horse battery' });
+    await again.json('GET', '/api/console');
+    assert.equal((await again.call('POST', '/api/console/auth/logout')).status, 204);
+    assert.equal((await again.call('GET', '/api/console')).status, 401);
+  });
+
+  test('sign-up needs the terms, a long enough password and a served region', async () => {
+    const c = makeClient(app);
+    assert.equal((await c.call('POST', '/api/console/auth/register', { ...orgSignup('t1@example.com'), terms: false })).status, 400);
+    assert.equal((await c.call('POST', '/api/console/auth/register', { ...orgSignup('t1@example.com'), password: 'short' })).status, 400);
+    assert.equal((await c.call('POST', '/api/console/auth/register', orgSignup('t1@example.com', { name: 'Nowhere', region: 'mars' }))).status, 400);
+  });
+
+  test('members join by email with a role, as in LotusPond Works, and roles limit what they can do', async () => {
+    const { person: owner, org } = await consoleOrg('owner7@example.com');
+    const viewer = await consoleAccount('viewer7@example.com');
+    const editor = await consoleAccount('editor7@example.com');
+    const admin = await consoleAccount('admin7@example.com');
+    const base = `/api/console/organisations/${org.id}`;
+
+    assert.equal((await owner.error('POST', `${base}/members`, { email: 'nobody7@example.com', role: 'viewer' })).status, 400, 'needs an organisation account first');
+    await owner.json('POST', `${base}/members`, { email: 'viewer7@example.com', role: 'viewer' }, 201);
+    await owner.json('POST', `${base}/members`, { email: 'editor7@example.com', role: 'editor' }, 201);
+    const a = await owner.json<{ id: string }>('POST', `${base}/members`, { email: 'admin7@example.com', role: 'admin' }, 201);
+    assert.equal((await owner.error('POST', `${base}/members`, { email: 'viewer7@example.com', role: 'editor' })).status, 409, 'already in');
+
+    // viewer: reads, nothing else
+    const seen = await viewer.json<{ organisation: { role: string }; members: { email: string; role: string }[] }>('GET', base);
+    assert.equal(seen.organisation.role, 'viewer');
+    assert.deepEqual(seen.members.map(m => m.role), ['owner', 'viewer', 'editor', 'admin']);
+    assert.equal((await viewer.error('POST', `${base}/keys`, { name: 'x', operations: ['patients.search'] })).status, 403);
+    // editor: keys, but not members or live access
+    await editor.json('POST', `${base}/keys`, { name: 'Editor key', operations: ['patients.search'] }, 201);
+    assert.equal((await editor.error('POST', `${base}/members`, { email: 'viewer7@example.com', role: 'viewer' })).status, 403);
+    assert.equal((await editor.error('POST', `${base}/live-request`, { systems: 'Bahmni', hospital: 'X Hospital' })).status, 403);
+    // admin: members and live access, but never owners
+    const viewerRow = seen.members.find(m => m.email === 'viewer7@example.com') as unknown as { id: string };
+    await admin.json('PATCH', `${base}/members/${viewerRow.id}`, { role: 'editor' });
+    assert.equal((await admin.error('PATCH', `${base}/members/${viewerRow.id}`, { role: 'owner' })).status, 403);
+    const ownerRow = seen.members.find(m => m.role === 'owner') as unknown as { id: string };
+    assert.equal((await admin.error('DELETE', `${base}/members/${ownerRow.id}`)).status, 403);
+    await admin.json('POST', `${base}/live-request`, { systems: 'Bahmni', hospital: 'X Hospital, Pune' });
+
+    // the last owner can neither leave nor be demoted
+    assert.equal((await owner.error('PATCH', `${base}/members/${ownerRow.id}`, { role: 'admin' })).status, 409);
+    assert.equal((await owner.error('DELETE', `${base}/members/${ownerRow.id}`)).status, 409);
+    await owner.json('PATCH', `${base}/members/${a.id}`, { role: 'owner' });
+    await owner.json('DELETE', `${base}/members/${ownerRow.id}`);
+    assert.equal((await owner.error('GET', base)).status, 404, 'gone once they leave');
+    // anyone may leave
+    await viewer.json('DELETE', `${base}/members/${viewerRow.id}`);
+    assert.equal((await viewer.error('GET', base)).status, 404);
+  });
+
+  test('only members marked as approvers decide on held writes', async () => {
+    const { person: owner, org } = await consoleOrg('owner8@example.com');
+    const dev = await consoleAccount('dev8@example.com');
+    const base = `/api/console/organisations/${org.id}`;
+    const m = await owner.json<{ id: string; approves: boolean }>('POST', `${base}/members`, { email: 'dev8@example.com', role: 'editor' }, 201);
+    assert.equal(m.approves, false);
+    const { key } = await dev.json<{ key: string }>('POST', `${base}/keys`, { name: 'W', operations: ['documents.upload'] }, 201);
+    const { connections } = await (await api('/v1/connections', key)).json() as { connections: { id: string }[] };
+    const held = await (await api('/v1/operations/documents.upload', key, { connection: connections[0].id, patient: 'sbx-p-1002', encounter: 'sbx-e-2003', title: 'Note', contentType: 'text/plain', data: Buffer.from('x').toString('base64') })).json() as { approval: { id: string } };
+    assert.equal((await dev.error('POST', `${base}/approvals/${held.approval.id}`, { decision: 'approve' })).status, 403);
+    await owner.json('PATCH', `${base}/members/${m.id}`, { approves: true });
+    const done = await dev.json<{ status: string }>('POST', `${base}/approvals/${held.approval.id}`, { decision: 'reject' });
+    assert.equal(done.status, 'rejected');
   });
 });
