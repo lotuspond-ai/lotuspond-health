@@ -10,6 +10,11 @@ export interface HisSecret {
   /** Sent as HTTP Basic. */
   username?: string;
   password?: string;
+  /** An API client's credentials, exchanged for an access token (Eka Care). */
+  clientId?: string;
+  clientSecret?: string;
+  /** A key a clinic gives so the client can reach its own workspace (Eka Care). */
+  sharingKey?: string;
 }
 
 export interface HisContext {
