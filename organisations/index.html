@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <!-- @include meta -->
+    <meta name="theme-color" content="#9caf88" />
+    <link rel="stylesheet" href="/src/site/home.css" />
+    <title>LotusPond Health for organisations: one API for India’s hospital systems and insurers</title>
+    <meta name="description" content="One API and one MCP server for hospital information systems, EMRs, ABDM and insurer and TPA portals in India, instead of an integration for each. Records arrive as FHIR R4, and every call is on the record. In development." />
+    <link rel="canonical" href="%SITE_URL%/organisations/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="%SITE_URL%/organisations/" />
+    <meta property="og:title" content="LotusPond Health for organisations: one API for India’s hospital systems and insurers" />
+    <meta property="og:description" content="One API and one MCP server for hospital systems, EMRs, ABDM and insurer and TPA portals in India. In development: join the waitlist." />
+    <meta name="twitter:title" content="LotusPond Health for organisations: one API for India’s hospital systems and insurers" />
+    <meta name="twitter:description" content="One API and one MCP server for hospital systems, EMRs, ABDM and insurer and TPA portals in India. In development: join the waitlist." />
+  </head>
+  <body class="home">
+    <!-- The organisation side of LotusPond Health (docs/connectors.md). Same design system and rules as the family page
+         (index.html); the two pitches stay on separate pages. Keep the operations table in step with
+         server/src/connectors (also served at /v1/connectors). The page runs no JavaScript. -->
+    <a class="home-skip" href="#main">Skip to content</a>
+    <header class="home-nav">
+      <div class="home-wrap home-nav-in">
+        <a class="home-wordmark" href="/" aria-label="LotusPond Health home">LotusPond <b>Health</b><i aria-hidden="true"></i></a>
+        <nav class="home-nav-links" aria-label="Main">
+          <a href="#operations">Operations</a>
+          <a href="#access">How access works</a>
+          <a href="#people">People’s records</a>
+          <a href="#systems">Systems</a>
+          <a href="/">For families</a>
+        </nav>
+        <div class="home-nav-actions">
+          <a class="home-btn home-btn-ink home-btn-sm" href="https://lotuspond.ai/#register">Join the waitlist</a>
+        </div>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="hero home-hero" aria-labelledby="hero-title">
+        <div class="home-wrap">
+          <div class="home-hero-grid">
+            <div>
+              <p class="home-kicker"><b>LotusPond Health</b> <span>For organisations · In development</span></p>
+              <h1 class="home-d-xl" id="hero-title">One API for India’s hospital systems and <span class="home-u home-u-draw">insurers.<svg viewBox="0 0 200 20" preserveAspectRatio="none" aria-hidden="true" focusable="false"><path pathLength="1" d="M3 12C38 4 86 17 128 9s52-3 69 2" /></svg></span></h1>
+            </div>
+            <div class="home-hero-side">
+              <p class="home-lede">Healthcare startups, hospitals, clinics and insurers get one API key and one MCP server to reach hospital information systems, EMRs, ABDM and insurer and TPA portals, instead of building an integration for each. Records arrive in one format, FHIR R4.</p>
+              <div class="home-cta">
+                <a class="home-btn home-btn-ink" href="https://lotuspond.ai/#register">Join the API waitlist <span aria-hidden="true">→</span></a>
+                <a class="home-btn home-btn-light" href="/v1/connectors">Connector catalogue (JSON)</a>
+              </div>
+              <p class="home-note">Keys, permissions and the audit log are built. The first operations go live with a pilot customer.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="home-sheet" id="operations" aria-labelledby="operations-title">
+        <div class="home-wrap">
+          <div class="home-head">
+            <h2 class="home-d-lg" id="operations-title">The same operations for every system.</h2>
+            <p class="home-lede">Each operation is one typed contract with FHIR R4 output, whichever system answers it. Writes that touch clinical records wait for a clinician’s approval.</p>
+          </div>
+          <div class="home-table-wrap">
+            <table class="home-table">
+              <thead>
+                <tr><th scope="col">Operation</th><th scope="col">What it does</th><th scope="col">Returns</th><th scope="col">Approval</th><th scope="col">Stage</th></tr>
+              </thead>
+              <tbody>
+                <tr><th scope="row"><code>patients.search</code></th><td>Find a patient in a hospital information system by identifiers you already hold</td><td>Patient</td><td>None (read)</td><td><span class="home-tag">Planned</span></td></tr>
+                <tr><th scope="row"><code>encounters.list</code></th><td>List a patient’s visits and admissions, with their documents</td><td>Encounter, DocumentReference</td><td>None (read)</td><td><span class="home-tag">Planned</span></td></tr>
+                <tr><th scope="row"><code>documents.upload</code></th><td>Attach a note, discharge summary or report to a patient or encounter</td><td>DocumentReference</td><td>A clinician</td><td><span class="home-tag">Planned</span></td></tr>
+                <tr><th scope="row"><code>claims.status</code></th><td>Read the status of a cashless or reimbursement claim with an insurer or TPA</td><td>ClaimResponse</td><td>None (read)</td><td><span class="home-tag">Planned</span></td></tr>
+                <tr><th scope="row"><code>preauth.submit</code></th><td>Submit a pre-authorisation request, with its documents, to an insurer or TPA</td><td>Claim, ClaimResponse</td><td>A clinician</td><td><span class="home-tag">Planned</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="home-fine">The contracts are defined before the first adapter, so the docs, the API and every adapter agree. The same operations will be served as MCP tools for your own agents.</p>
+        </div>
+      </section>
+
+      <section class="home-sheet" id="access" aria-labelledby="access-title">
+        <div class="home-wrap">
+          <div class="home-head">
+            <h2 class="home-d-lg" id="access-title">How access works.</h2>
+            <p class="home-lede">LotusPond connects with the access you already have. It never goes around a system’s sign-in, its security checks or its vendor’s terms.</p>
+          </div>
+          <ol class="home-steps">
+            <li><h3 class="home-d-sm">Your access, not ours</h3><p>Every connection runs on your organisation’s contracted or delegated access to a system. An adapter for a system is built only with a customer who has written authority to use it.</p></li>
+            <li><h3 class="home-d-sm">One key for each use</h3><p>A key lists the operations it may call. It is shown once, only a fingerprint of it is stored, and it can be revoked at any time.</p></li>
+            <li><h3 class="home-d-sm">Every call on the record</h3><p>Each call, allowed or refused, is logged with the organisation, the key, the operation and the outcome.</p></li>
+          </ol>
+          <div class="home-code" role="group" aria-label="Example request">
+            <pre><code><span class="home-code-c"># Who this key belongs to, and what it may call</span>
+curl https://health.lotuspond.ai/v1/organisation \
+  -H "Authorization: Bearer lpk_…"
+
+<span class="home-code-c"># Run an operation</span>
+curl -X POST https://health.lotuspond.ai/v1/operations/claims.status \
+  -H "Authorization: Bearer lpk_…"</code></pre>
+          </div>
+          <p class="home-fine">An operation outside the key’s list is refused, and so is one that only a person can authorise. Until an operation’s first adapter is live it answers <code>501 operation_not_offered</code>.</p>
+        </div>
+      </section>
+
+      <section class="home-sheet home-deep" id="people" aria-labelledby="people-title">
+        <div class="home-wrap">
+          <div class="home-head">
+            <h2 class="home-d-lg" id="people-title">People’s records stay theirs.</h2>
+            <p class="home-lede">LotusPond Health also keeps records for people and families. The two sides never mix.</p>
+          </div>
+          <ul class="home-points">
+            <li><b>Separate authority.</b> An organisation’s key never reaches a person’s own records, and a person’s consent never lets an organisation act in their name.</li>
+            <li><b>Sharing only when they say yes.</b> With LotusPond Link (planned), your app can ask a person to share records from their LotusPond Health account. They approve it in their consent centre, and can revoke it there.</li>
+            <li><b>Kept apart.</b> Organisations and their keys live in their own database, never in a person’s records.</li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="home-sheet" id="systems" aria-labelledby="systems-title">
+        <div class="home-wrap">
+          <div class="home-head">
+            <h2 class="home-d-lg" id="systems-title">Where we start.</h2>
+            <p class="home-lede">India has no dominant hospital system, so the order follows reach: one connection that reads many systems, then the systems the large private chains run.</p>
+          </div>
+          <ul class="home-points">
+            <li><b>ABDM.</b> Consented records from any ABDM-certified system through one FHIR R4 contract, including the public hospital systems medical colleges are integrating.</li>
+            <li><b>Hospital information systems.</b> Adapters for writes and operations, starting with Akhil Systems Miracle and InterSystems TrakCare. One adapter usually reaches every hospital in a chain.</li>
+            <li><b>Insurers and TPAs.</b> Claim status and pre-authorisation, through NHCX where the payer is on it.</li>
+          </ul>
+          <p class="home-fine">Each starts with a pilot customer. Tell us which systems you need when you join the waitlist.</p>
+        </div>
+      </section>
+
+      <section class="home-close" aria-labelledby="closing-title">
+        <div class="home-wrap">
+          <h2 class="home-d-xl" id="closing-title">One integration, every <span class="home-u">system.<svg viewBox="0 0 200 20" preserveAspectRatio="none" aria-hidden="true" focusable="false"><path pathLength="1" d="M3 12C38 4 86 17 128 9s52-3 69 2" /></svg></span></h2>
+          <p class="home-lede">Join the waitlist to get early access, or to run the first pilot with us.</p>
+          <div class="home-cta">
+            <a class="home-btn home-btn-ink" href="https://lotuspond.ai/#register">Join the API waitlist <span aria-hidden="true">→</span></a>
+            <a class="home-btn home-btn-light" href="/">LotusPond Health for families</a>
+          </div>
+          <p class="home-fine">Running a hospital or clinic and want to automate its admin work, such as referral intake and appointments? That is <a class="home-link" href="https://lotuspond.ai" rel="noopener">LotusPond Works</a>.</p>
+        </div>
+      </section>
+    </main>
+
+    <footer class="home-footer">
+      <div class="home-wrap home-foot">
+        <div class="home-foot-about">
+          <a class="home-wordmark" href="/" aria-label="LotusPond Health home">LotusPond <b>Health</b><i aria-hidden="true"></i></a>
+          <p>One API and MCP server for India’s hospital systems and insurers, and health records for families, ready for any AI agent.</p>
+          <p>A product of <a href="https://lotuspond.ai" rel="noopener">LotusPond</a></p>
+        </div>
+        <nav aria-label="Organisations">
+          <h2 class="home-label">Organisations</h2>
+          <ul>
+            <li><a href="https://lotuspond.ai/#register">Join the API waitlist</a></li>
+            <li><a href="#operations">Operations</a></li>
+            <li><a href="#access">How access works</a></li>
+            <li><a href="/v1/connectors">Connector catalogue</a></li>
+          </ul>
+        </nav>
+        <nav aria-label="Families">
+          <h2 class="home-label">Families</h2>
+          <ul>
+            <li><a href="/">LotusPond Health</a></li>
+            <li><a href="/signup">Create free account</a></li>
+            <li><a href="/login">Sign in</a></li>
+          </ul>
+        </nav>
+        <nav aria-label="Legal">
+          <h2 class="home-label">Legal</h2>
+          <ul>
+            <li><a href="/privacy/">Privacy Policy</a></li>
+            <li><a href="/terms/">Terms of Use</a></li>
+            <li><a href="/trust/">Trust and compliance</a></li>
+          </ul>
+        </nav>
+      </div>
+      <div class="home-wrap home-foot-base">
+        <p>© 2026 LotusPond. LotusPond Health is a LotusPond product.</p>
+        <p><a href="https://lotuspond.ai" rel="noopener">lotuspond.ai</a></p>
+      </div>
+    </footer>
+  </body>
+</html>
