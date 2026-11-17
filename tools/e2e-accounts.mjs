@@ -31,7 +31,8 @@ page.on('console', m => {
   if (/^https:\/\/tile\.openstreetmap\.org\//.test(m.location()?.url ?? '')) return;
   // Without internet access (and without FACILITY_PROVIDER=fixture) area and nearby search answer 503; the app explains it.
   if (m.text().includes('status of 503') && /\/api\/(geo|facilities)\b/.test(m.location()?.url ?? '')) return;
-  problems.push(`console (${page.url()}): ${m.text().slice(0, 300)}`);
+  const failed = m.text().startsWith('Failed to load resource') ? ` [${m.location()?.url}]` : ''; // which request it was
+  problems.push(`console (${page.url()}): ${m.text().slice(0, 300)}${failed}`);
 });
 page.on('pageerror', e => problems.push(`page error (${page.url()}): ${e.message}`));
 
@@ -42,6 +43,10 @@ function expect(ok, what) { if (!ok) problems.push(`FAILED: ${what}`); console.l
 const text = sel => page.locator(sel).first().innerText();
 const sideScroll = () => page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1);
 const pathOf = () => new URL(page.url()).pathname;
+// The app: Home (a brief of what needs a look), Records (results, body map, scans, files), Sources, Agents, Find a lab.
+const mainNav = name => page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name, exact: true }).click();
+const brief = () => page.getByRole('heading', { name: /results? to look at$|^Everything is within range$/ }).first();
+async function openRecordsTab(tab) { await mainNav('Records'); await page.getByRole('button', { name: tab, exact: true }).click(); }
 
 const email = `asha.${Date.now()}@example.com`;
 const password = 'lotus pond lily pad';
@@ -54,7 +59,7 @@ console.log(hasSite ? 'Public website found; checking it first.' : 'No public we
 
 if (hasSite) {
   const dev = await page.locator('script[src*="@vite/client"]').count() > 0;
-  expect(await page.getByRole('heading', { level: 1 }).innerText() === 'Your health records, mapped to your body.', 'landing page has its headline');
+  expect(/^Your family’s health records, ready for any AI agent\.$/.test((await page.getByRole('heading', { level: 1 }).innerText()).trim()), 'landing page has its headline');
   expect(await page.locator('link[rel=canonical]').getAttribute('href') === 'https://health.lotuspond.ai/' || !!process.env.SITE_URL, 'landing page has a canonical URL');
   expect((await page.locator('meta[property="og:image"]').getAttribute('content'))?.endsWith('/site/og.png'), 'landing page has a social preview image');
   const ld = await page.locator('script[type="application/ld+json"]').textContent();
@@ -67,7 +72,7 @@ if (hasSite) {
   const robots = await (await page.request.get(at('/robots.txt'))).text();
   expect(/Sitemap: https?:\/\/\S+\/sitemap\.xml/.test(robots), 'robots.txt names the sitemap');
   const sitemap = await (await page.request.get(at('/sitemap.xml'))).text();
-  expect(['/', '/privacy/', '/terms/', '/trust/'].every(p => sitemap.includes(`${p}</loc>`)), 'sitemap.xml lists the public pages');
+  expect(['/', '/privacy/', '/terms/', '/trust/', '/developers/'].every(p => sitemap.includes(`${p}</loc>`)), 'sitemap.xml lists the public pages');
 
   // Keyboard: the first Tab reaches the skip link, which shows with a focus outline.
   await page.keyboard.press('Tab');
@@ -75,11 +80,12 @@ if (hasSite) {
   expect(focus.text === 'Skip to content' && focus.outline !== 'none' && focus.top >= 0, 'skip link is reachable and visibly focused');
 
   const pages = [
-    { path: '/', name: 'landing', h1: /mapped to your body/ },
+    { path: '/', name: 'landing', h1: /ready for any AI agent/ },
     { path: '/privacy/', name: 'privacy', h1: /Privacy Policy/ },
     { path: '/terms/', name: 'terms', h1: /Terms of Use/ },
     { path: '/trust/', name: 'trust', h1: /look after your records/ },
-    { path: '/no-such-page', name: '404', h1: /drifted off/, status: 404 },
+    { path: '/developers/', name: 'developers', h1: /One API for India’s hospital/ },
+    { path: '/no-such-page', name: '404', h1: /drifted/, status: 404 },
   ];
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: width > 500 ? 900 : 844 });
@@ -123,9 +129,6 @@ await shot('create-account');
 await page.getByLabel('Your name').fill('Asha Rao');
 await page.getByLabel('Email', { exact: true }).fill(email);
 await page.getByLabel('Password', { exact: true }).fill('short');
-await page.getByRole('button', { name: 'Create account', exact: true }).click();
-expect((await text('.form-error')).includes('at least 10'), 'short password is refused before sending');
-await page.getByLabel('Password', { exact: true }).fill(password);
 
 const country = page.getByRole('combobox', { name: 'Country you live in' });
 async function chooseCountry(typed, name) {
@@ -133,15 +136,24 @@ async function chooseCountry(typed, name) {
   await page.getByRole('option', { name: new RegExp(`^${name}`) }).click();
 }
 const createButton = page.getByRole('button', { name: 'Create account', exact: true });
+// Sign-up opens country by country (shared/regions.ts, OPEN_COUNTRIES; India first). A country that is not open yet,
+// and one closed by its own law, both explain why and keep the button off.
+await chooseCountry('united st', 'United States');
+expect((await text('.residency')).includes('not available in the United States yet'), 'a country that is not open yet says so');
+expect(await createButton.isDisabled(), 'sign-up is blocked for a country that is not open yet');
 await chooseCountry('emirates', 'United Arab Emirates');
 expect((await text('.residency')).includes('stored inside the UAE'), 'an unavailable country explains why');
 expect(await createButton.isDisabled(), 'sign-up is blocked for an unavailable country');
 await shot('signup-unavailable', true);
+// Where the United Kingdom is open (OPEN_COUNTRIES=IN,GB on the server), records go to the EU with consent.
 await chooseCountry('united k', 'United Kingdom');
-expect((await text('.residency')).includes('servers in the European Union'), 'a cross-border country says where records go');
-expect(await page.getByLabel(/my records being stored on servers in the European Union/).isVisible(), 'cross-border consent is asked');
-await page.getByRole('radio', { name: 'Yes' }).check();
-await shot('signup-cross-border', true);
+if ((await text('.residency')).includes('servers in the European Union')) {
+  expect(await page.getByLabel(/my records being stored on servers in the European Union/).isVisible(), 'cross-border consent is asked');
+  await page.getByRole('radio', { name: 'Yes' }).check();
+  await shot('signup-cross-border', true);
+} else {
+  console.log('note the United Kingdom is not open on this server; skipping the cross-border consent checks');
+}
 await chooseCountry('ind', 'India');
 expect((await text('.residency')).includes('Your records will be stored on servers in India'), 'India stores records in India');
 expect(await page.getByLabel(/my records being stored on/).count() === 0, 'no cross-border consent for India');
@@ -149,6 +161,9 @@ await page.getByRole('radio', { name: 'No' }).check();
 expect((await text('.age .residency')).includes('parent or guardian'), 'under-age people are pointed to family profiles');
 expect(await createButton.isDisabled(), 'sign-up is blocked under the minimum age');
 await page.getByRole('radio', { name: 'Yes' }).check();
+await createButton.click();
+expect((await text('.form-error')).includes('at least 10'), 'short password is refused before sending');
+await page.getByLabel('Password', { exact: true }).fill(password);
 await createButton.click();
 expect((await text('.form-error')).includes('Terms'), 'Terms and Privacy must be agreed first');
 await page.getByLabel(/I agree to the Terms of Use/).check();
@@ -182,16 +197,24 @@ if (areaFound) {
   await page.getByRole('button', { name: 'Skip for now' }).click();
 }
 
-// 3. Body map, sample data
+// 3. Home, then sample data from the body map (offered there while a profile has no results)
+await page.getByRole('heading', { name: 'Welcome to LotusPond Health' }).waitFor();
+expect(true, 'onboarding ends on Home');
+await shot('home-empty');
+await openRecordsTab('Body map');
 await page.getByRole('heading', { name: 'See your results where they happen' }).waitFor();
 await page.waitForTimeout(2500);
 await shot('body-welcome');
 await page.getByRole('button', { name: 'Explore with sample data' }).click();
-await page.getByRole('heading', { name: 'Overview' }).waitFor();
-expect((await text('.tally')).includes('markers tracked'), 'sample results are saved and shown');
+await brief().waitFor();
+expect(await page.getByText(/\d+ markers, \d+ in range/).first().isVisible(), 'sample results are saved and shown');
+await mainNav('Home');
+await brief().waitFor();
+expect(true, 'Home shows the brief of results to look at');
+await shot('home');
 
 // 4. Upload a lab report PDF and a DICOM scan
-await page.getByRole('button', { name: 'Upload', exact: true }).click();
+await page.getByRole('button', { name: 'Upload', exact: true }).first().click();
 await page.locator('input[type=file][multiple]').setInputFiles([path.join(fixtures, 'sample-lab-report.pdf'), path.join(fixtures, 'chest-xray-synthetic.dcm')]);
 await page.getByRole('heading', { name: 'Check what was read' }).waitFor({ timeout: 60000 });
 await shot('upload-review');
@@ -200,15 +223,24 @@ await page.locator('.toast').filter({ hasText: /Added/ }).waitFor();
 const added = await page.locator('.toast').filter({ hasText: /Added/ }).first().innerText(); // the sample-data toast may still be showing
 expect(added.match(/Added \d+ results? and 1 scan/) !== null, `upload saved results and a scan (${added})`);
 
-// 5. Files page
-await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Files' }).click();
+// 5. Files: Records, Files
+await openRecordsTab('Files');
 await page.getByRole('heading', { name: 'Files', exact: true }).waitFor();
 const rows = await page.locator('main.page [data-file]').count(); // file cards, or rows in the table layout
 expect(rows === 2, `files page lists the report and the scan (${rows})`);
 await shot('files');
 
 // 5b. Find a lab: the saved home area is searched; cards come with directions; filters narrow the list.
-await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Find a lab' }).click();
+await mainNav('Find a lab');
+// Where lab booking serves the account's region, the page opens on Home collection, with Near you beside it.
+const homeTab = page.getByRole('group', { name: 'Find a lab' }).getByRole('button', { name: /^Home collection/ });
+if (await homeTab.isVisible().catch(() => false)) {
+  await page.getByRole('heading', { name: 'Home tests', exact: true }).waitFor();
+  await page.waitForTimeout(1500);
+  expect(!(await page.getByRole('heading', { name: 'Home tests could not be loaded' }).isVisible()), 'Home collection loads (the server has lab booking, LAB_PARTNERS)');
+  await shot('labs-home');
+  await page.getByRole('group', { name: 'Find a lab' }).getByRole('button', { name: 'Near you' }).click();
+}
 await page.getByRole('heading', { name: 'Find a lab', exact: true }).waitFor();
 if (areaFound) {
   expect((await text('.lbar__place')).includes('Indiranagar, Bengaluru'), 'labs page searches the saved home area');
@@ -262,27 +294,32 @@ const dialog = page.getByRole('dialog', { name: 'Add a family member' });
 await dialog.getByLabel('Name').fill('Mira Rao');
 await dialog.getByLabel('Who are they to you?').selectOption('child');
 await dialog.getByLabel('Date of birth').fill('2019-06-01');
+await dialog.getByRole('radio', { name: 'Female' }).click();
+await dialog.locator('.confirm-check input').check();
 await shot('add-family');
 await dialog.getByRole('button', { name: 'Add and open their records' }).click();
+await page.getByRole('heading', { name: 'Welcome to LotusPond Health' }).waitFor();
+expect((await text('.pmenu__trigger')).includes('Mira'), 'menu shows the open profile');
+await openRecordsTab('Body map');
 await page.getByRole('heading', { name: 'Start Mira’s record' }).waitFor();
 expect((await text('.stage__title h2')) === 'Mira’s body, mapped', 'stage title follows the open profile');
-expect((await text('.pmenu__trigger')).includes('Mira'), 'menu shows the open profile');
 await shot('family-body');
 
 // 8. Reload keeps the session and the open profile
 await page.reload({ waitUntil: 'networkidle' });
-await page.getByRole('heading', { name: 'Start Mira’s record' }).waitFor();
+await page.locator('.pmenu__trigger').filter({ hasText: 'Mira' }).waitFor();
 expect(true, 'reload keeps the session and the open profile');
 if (hasSite) {
   await page.goto(at('/login'), { waitUntil: 'networkidle' });
-  await page.getByRole('heading', { name: 'Start Mira’s record' }).waitFor();
+  await page.locator('.pmenu__trigger').filter({ hasText: 'Mira' }).waitFor();
   expect(pathOf() === '/app', 'a signed-in visit to /login goes to /app');
 }
 
 // 9. Switch back; records are separate
 await page.locator('.pmenu__trigger').click();
 await page.getByRole('menuitemradio', { name: /Asha Rao/ }).click();
-await page.getByRole('heading', { name: 'Overview' }).waitFor();
+await mainNav('Home');
+await brief().waitFor();
 expect(true, 'switching back shows Asha’s records');
 
 // 10. Account: change password, sign out, sign in with the new password
@@ -318,7 +355,7 @@ expect((await page.locator('.form-error').first().innerText({ timeout: 10000 }))
 expectRejectedSignIn = false;
 await page.getByLabel('Password', { exact: true }).fill('a brand new lily pad');
 await page.getByRole('button', { name: 'Sign in', exact: true }).click();
-await page.getByRole('heading', { name: 'Overview' }).waitFor();
+await page.locator('.pmenu__trigger').waitFor();
 expect(true, 'signs in with the new password');
 if (hasSite) expect(pathOf() === '/app', 'after sign-in the address is /app');
 
@@ -329,8 +366,10 @@ await page.getByRole('menuitem', { name: 'Profile details' }).click();
 await page.waitForTimeout(400);
 expect(!(await sideScroll()), 'profile page has no sideways scroll at phone width');
 await shot('profile-phone', true);
-// On phones the top navigation becomes a bottom tab bar, where this page is the "Labs" tab.
-await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: /^(Find a lab|Labs)$/ }).click();
+// On phones the top navigation becomes a bottom tab bar (Home, Records, Add, Sources, Agents); labs open from Home.
+await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Home', exact: true }).click();
+await page.getByRole('button', { name: 'Find a lab', exact: true }).first().click();
+if (await homeTab.isVisible().catch(() => false)) await page.getByRole('group', { name: 'Find a lab' }).getByRole('button', { name: 'Near you' }).click();
 await page.getByRole('heading', { name: 'Find a lab', exact: true }).waitFor();
 await page.waitForTimeout(1200);
 expect(!(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1)), 'labs page has no sideways scroll at phone width');
@@ -347,13 +386,15 @@ await page.getByRole('heading', { name: 'Welcome back' }).waitFor();
 expect(!(await sideScroll()), 'sign-in screen has no sideways scroll at phone width');
 await shot('signin-phone', true);
 await page.getByRole('tab', { name: 'Create account' }).click();
-await chooseCountry('united k', 'United Kingdom');
+await chooseCountry('ind', 'India');
 await page.getByRole('radio', { name: 'Yes' }).check();
 expect(!(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1)), 'sign-up has no sideways scroll at phone width');
 await shot('signup-phone', true);
 
 } catch (e) {
-  problems.push(`STOPPED: ${e.message.split('\n')[0]}`);
+  // The first line says what timed out; the call log's first entry names the locator it was waiting for.
+  const waiting = e.message.split('\n').find(l => /waiting for/.test(l))?.replace(/\x1b\[[0-9;]*m/g, '').trim();
+  problems.push(`STOPPED: ${e.message.split('\n')[0]}${waiting ? ` (${waiting})` : ''}`);
   await page.screenshot({ path: `${out}/failure.png` }).catch(() => {});
 }
 
