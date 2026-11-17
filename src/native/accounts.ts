@@ -35,6 +35,6 @@ export function handleAccountsReturn(url: string): boolean {
     return true;
   }
   if (!kept) { session.showNotice(ACCOUNTS_ERRORS.expired); return true; }
-  void session.accountsAppExchange(back.code, kept).catch(e => session.showNotice(errorMessage(e).replace(/^\w+: /, '')));
+  void session.accountsAppExchange(back.code, kept, back.apiOrigin).catch(e => session.showNotice(errorMessage(e).replace(/^\w+: /, '')));
   return true;
 }

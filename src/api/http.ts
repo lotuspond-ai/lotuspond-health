@@ -102,10 +102,26 @@ export class HttpBackend implements Backend {
     await this.app.ready;
     return appStartUrl(this.app.origin, intent, challenge);
   }
-  async accountsAppExchange(code: string, verifier: string) {
+  async accountsAppExchange(code: string, verifier: string, apiOrigin?: string) {
     if (!this.app) throw new ApiError(400, 'not_supported', 'Only the apps trade a sign-in code.');
-    const r = await this.request<AppSignIn & { pending?: { email: string; region: string | null }; pendingToken?: string }>(
-      'POST', '/auth/accounts/app-exchange', { code, verifier });
+    const before = this.app.origin;
+    if (apiOrigin) {
+      // The account is held by another regional host. Go there only if it is one the server publishes: the
+      // verifier must never be sent to a host named only in a link.
+      if (!Object.keys(this.apiOrigins).length) await this.service().catch(() => undefined);
+      const listed = Object.values(this.apiOrigins).map(o => o?.replace(/\/+$/, ''));
+      if (!listed.includes(apiOrigin.replace(/\/+$/, ''))) {
+        throw new ApiError(400, 'unknown_host', 'The sign-in pointed to a server this app does not know. Sign in again.');
+      }
+      this.app.useOrigin(apiOrigin);
+    }
+    let r: AppSignIn & { pending?: { email: string; region: string | null }; pendingToken?: string };
+    try {
+      r = await this.request('POST', '/auth/accounts/app-exchange', { code, verifier });
+    } catch (e) {
+      this.app.useOrigin(before);
+      throw e;
+    }
     if (r.pending && r.pendingToken) {
       this.appAccountsPending = { ...r.pending, token: r.pendingToken };
       return { pending: r.pending };
@@ -129,6 +145,9 @@ export class HttpBackend implements Backend {
     if (!this.app) return this.request<SessionInfo>('POST', '/auth/accounts/complete', input);
     const pending = this.appAccountsPending;
     if (!pending) throw new ApiError(409, 'accounts_expired', 'That sign-up took too long. Continue with LotusPond Account again.');
+    // As for sign-up with a password: the account is created on the host for the country's data region. Regional
+    // hosts share the key that opens the sign-up token.
+    this.app.useOrigin(this.app.originForRegion(countryPolicy(input.country).region, this.apiOrigins));
     const info = await this.appSignIn('/auth/accounts/complete', { ...input, pendingToken: pending.token });
     this.appAccountsPending = null;
     return info;

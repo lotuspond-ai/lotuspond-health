@@ -31,7 +31,7 @@ interface SessionState {
   /** The apps: a sign-up with LotusPond Accounts waiting for Health's own questions (the sign-in screen shows them). */
   accountsPending: boolean;
   /** The apps: trade the one-time code the system browser handed back (src/native/accounts.ts). */
-  accountsAppExchange: (code: string, verifier: string) => Promise<void>;
+  accountsAppExchange: (code: string, verifier: string, apiOrigin?: string) => Promise<void>;
   /** Show a message on the sign-in screen. */
   showNotice: (notice: string) => void;
   signOut: () => Promise<void>;
@@ -123,9 +123,9 @@ export const useSession = create<SessionState>((set, get) => {
 
     accountsPending: false,
 
-    accountsAppExchange: async (code, verifier) => {
+    accountsAppExchange: async (code, verifier, apiOrigin) => {
       if (!backend.accountsAppExchange) throw new Error('Sign-in with LotusPond Accounts needs the LotusPond server.');
-      const r = await backend.accountsAppExchange(code, verifier);
+      const r = await backend.accountsAppExchange(code, verifier, apiOrigin);
       if ('session' in r) start(r.session);
       else set({ accountsPending: true, notice: null });
     },

@@ -19,7 +19,8 @@ export function appStartUrl(apiOrigin: string, intent: 'signup' | 'login', chall
   return `${apiOrigin.replace(/\/+$/, '')}/api/auth/accounts/start?${q}`;
 }
 
-export type AppReturn = { code: string } | { error: AccountsErrorCode | string };
+/** `apiOrigin`: the regional host to trade the code at, when the account is held by another region's host. */
+export type AppReturn = { code: string; apiOrigin?: string } | { error: AccountsErrorCode | string };
 
 /** The code or error in a link that opened the app (the private-use scheme or an https app link), or null when the
  *  link is not a sign-in return. */
@@ -34,6 +35,7 @@ export function readAppReturn(url: string): AppReturn | null {
     q = parsed.searchParams;
   }
   const code = q.get('code');
-  if (code) return { code };
+  const apiOrigin = q.get('api_origin');
+  if (code) return apiOrigin ? { code, apiOrigin } : { code };
   return { error: q.get('error') || 'sign_in_failed' };
 }

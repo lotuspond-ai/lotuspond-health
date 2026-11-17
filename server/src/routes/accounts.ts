@@ -47,7 +47,10 @@ type Pending = AccountsIdentity & { exp: number };
 /** The one-time code handed to an app: a session for an account, or an identity waiting to finish sign-up. */
 type AppCode =
   | { k: 'session'; uid: string; region: DataRegion; ch: string; jti: string; exp: number }
-  | { k: 'pending'; id: AccountsIdentity; ch: string; jti: string; exp: number };
+  | { k: 'pending'; id: AccountsIdentity; ch: string; jti: string; exp: number }
+  /** For another regional host (REGION_API_ORIGINS), which decides for itself. Hosts share DIRECTORY_SECRET, so it
+   *  can open the code; the app goes there only if the host is one the server publishes (apiOrigins). */
+  | { k: 'identity'; id: AccountsIdentity; ch: string; jti: string; exp: number };
 /** An app holds its sign-up in progress as this token (it has no cookies across sites). */
 type AppPending = Pending & { k: 'app-pending' };
 
@@ -57,7 +60,9 @@ const CHALLENGE = /^[A-Za-z0-9_-]{43}$/;
 type Outcome =
   | { kind: 'account'; cell: Cell; user: UserRow }
   | { kind: 'new'; id: AccountsIdentity }
-  | { kind: 'error'; code: AccountsErrorCode };
+  | { kind: 'error'; code: AccountsErrorCode }
+  /** The account is held by a region another host of this deployment serves. */
+  | { kind: 'elsewhere'; origin: string };
 
 
 export interface AccountsRuntime { client: AccountsClient; fake?: FakeAccounts }
@@ -160,14 +165,18 @@ a{display:inline-block;margin-top:1rem;padding:.8rem 1.4rem;border-radius:.6rem;
   async function resolve(c: Ctx, id: AccountsIdentity): Promise<Outcome> {
     // An employer can suspend, reset or audit an account made through its single sign-on: never for health records.
     if (id.enterpriseConnection) return { kind: 'error', code: 'enterprise_account' };
-    if (id.region && !cells.forRegion(id.region)) return { kind: 'error', code: 'wrong_region' };
+    const elsewhere = (region: DataRegion): Outcome => {
+      const origin = config.regionApiOrigins[region];
+      return origin ? { kind: 'elsewhere', origin } : { kind: 'error', code: 'wrong_region' };
+    };
+    if (id.region && !cells.forRegion(id.region)) return elsewhere(id.region);
     const linked = await bySubject(id);
     if (linked) return { kind: 'account', ...linked };
     // A Health account with this email from before Accounts: linked when Accounts has verified the address
     // (settled by the owner, 2026-11-17).
     const found = await locate(deps, id.email);
     if (found) {
-      if (!found.cell) return { kind: 'error', code: 'wrong_region' };
+      if (!found.cell) return elsewhere(found.region);
       if (found.user.accountsSubject) return { kind: 'error', code: 'already_linked' };
       if (!id.emailVerified) return { kind: 'error', code: 'email_unverified' };
       if (id.region && id.region !== found.region) return { kind: 'error', code: 'wrong_region' };
@@ -224,12 +233,17 @@ a{display:inline-block;margin-top:1rem;padding:.8rem 1.4rem;border-radius:.6rem;
     if (flow.app) {
       const ch = flow.app;
       if (outcome.kind === 'error') return toApp(c, { error: outcome.code });
+      if (outcome.kind === 'elsewhere') {
+        const code: AppCode = { k: 'identity', id, ch, jti: randomToken(), exp: inSeconds(APP_CODE_TTL_S) };
+        return toApp(c, { code: box(code), api_origin: outcome.origin });
+      }
       const code: AppCode = outcome.kind === 'account'
         ? { k: 'session', uid: outcome.user.id, region: outcome.user.region, ch, jti: randomToken(), exp: inSeconds(APP_CODE_TTL_S) }
         : { k: 'pending', id: outcome.id, ch, jti: randomToken(), exp: inSeconds(APP_CODE_TTL_S) };
       return toApp(c, { code: box(code) });
     }
-    if (outcome.kind === 'error') return fail(c, outcome.code, flow.signUp);
+    // The website does not move between regional hosts here: an account held elsewhere is refused, as before.
+    if (outcome.kind === 'error' || outcome.kind === 'elsewhere') return fail(c, outcome.kind === 'error' ? outcome.code : 'wrong_region', flow.signUp);
     if (outcome.kind === 'account') {
       await signIn(c, outcome.cell, outcome.user);
       return back(c, '/app');
@@ -248,15 +262,27 @@ a{display:inline-block;margin-top:1rem;padding:.8rem 1.4rem;border-radius:.6rem;
     const challenge = createHash('sha256').update(body.verifier).digest('base64url');
     if (challenge.length !== code.ch.length || !timingSafeEqual(Buffer.from(challenge), Buffer.from(code.ch))) throw expired();
     if (!spend(code.jti, code.exp)) throw expired();
-    if (code.k === 'pending') {
-      const pending: AppPending = { ...code.id, k: 'app-pending', exp: inSeconds(PENDING_TTL_S) };
-      return c.json({ pending: { email: code.id.email, region: code.id.region }, pendingToken: box(pending) });
+    const startSignUp = (id: AccountsIdentity) => {
+      const pending: AppPending = { ...id, k: 'app-pending', exp: inSeconds(PENDING_TTL_S) };
+      return c.json({ pending: { email: id.email, region: id.region }, pendingToken: box(pending) });
+    };
+    const startSession = async (cell: Cell, user: UserRow) => {
+      const session = await signIn(c, cell, user, true);
+      return c.json({ ...(await sessionInfo(cell.db, user)), ...session });
+    };
+    if (code.k === 'pending') return startSignUp(code.id);
+    if (code.k === 'identity') {
+      // Handed over by another regional host: decide here, where the account's region is served.
+      const outcome = await resolve(c, code.id);
+      if (outcome.kind === 'account') return startSession(outcome.cell, outcome.user);
+      if (outcome.kind === 'new') return startSignUp(outcome.id);
+      const reason = outcome.kind === 'error' ? outcome.code : 'wrong_region';
+      throw new HttpError(409, reason, ACCOUNTS_ERRORS[reason]);
     }
     const cell = cells.forRegion(code.region);
     const [user] = cell ? await cell.db.select().from(users).where(eq(users.id, code.uid)).limit(1) : [];
     if (!cell || !user) throw expired();
-    const session = await signIn(c, cell, user, true);
-    return c.json({ ...(await sessionInfo(cell.db, user)), ...session });
+    return startSession(cell, user);
   });
 
   app.get('/pending', c => {

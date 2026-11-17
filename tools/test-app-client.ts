@@ -284,6 +284,17 @@ describe('app client: sign-in with LotusPond Accounts', () => {
     assert.ok(again.store.value?.token);
   });
 
+  it('follows a regional host only when the server lists it, so the verifier never goes elsewhere', async () => {
+    assert.deepEqual(readAppReturn('ai.lotuspond.health:/accounts?code=c1&api_origin=https%3A%2F%2Fin.health.lotuspond.test'),
+      { code: 'c1', apiOrigin: 'https://in.health.lotuspond.test' });
+    const { backend, session } = client();
+    sent = [];
+    await assert.rejects(backend.accountsAppExchange('c1', 'v'.repeat(43), 'https://evil.example'),
+      (e: unknown) => e instanceof ApiError && e.code === 'unknown_host');
+    assert.ok(!sent.some(r => r.url.startsWith('https://evil.example')), 'nothing was sent to the unlisted host');
+    assert.equal(session.origin, API, 'the app stays on its host');
+  });
+
   it('a refusal comes back as an error code the app shows', async () => {
     const { backend } = client();
     const pkce = await createPkce();

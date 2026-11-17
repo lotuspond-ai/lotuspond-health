@@ -58,7 +58,8 @@ To try it: `ACCOUNTS_ISSUER=fake npm run dev`, open `/signup` and choose **Conti
   3. The code is encrypted, lasts 2 minutes, works once, and is bound to the app's PKCE challenge, so another app that catches the link cannot use it. The app trades it with its verifier at `POST /api/auth/accounts/app-exchange` for a token session, the same kind a password sign-in gives it (`src/native/accounts.ts`).
   4. Someone new answers Health's questions in the app. The exchange gives the app an encrypted sign-up token, valid for 30 minutes, which it sends with `POST /api/auth/accounts/complete`.
   - **Universal links and app links.** With `APP_LINKS_ORIGIN` set, the return is the https link `https://open.health.lotuspond.ai/accounts-return?code=…` instead, which the apps claim: Associated Domains in `ios/App/App/App.entitlements`, and an `autoVerify` intent filter in `AndroidManifest.xml`. Only another app on the device could catch the private-use scheme, so the https link is the stronger return. It needs a host of its own, because iOS keeps a link in the browser when it stays on the domain already open, and the sign-in runs on `health.lotuspond.ai`. The private-use scheme stays registered as the fallback: if the link opens in the browser, `/accounts-return` on that host offers it with the same code.
-  - Tested in `server/test/accounts.test.ts` and `server/test/app-links.test.ts`, and from the app client through a stand-in web view and system browser in `tools/test-app-client.ts`. **Not yet run on a phone** (docs/mobile.md, "Not done yet").
+  - **Regional hosts** (`REGION_API_ORIGINS`). The app starts on its current host. If the account is held in a region another host serves (from the `region` claim, or the shared directory for an existing account), the return link carries a code for that host and `api_origin=<that host>`. The app goes there only if the host is one `/api/auth/config` lists, so its verifier is never sent to a host named only in a link. That host opens the code, which works because the hosts share `DIRECTORY_SECRET`, as they already must for the directory. It then signs in, links or starts sign-up in its own region. A new person finishes sign-up on the host for the country they choose, as with a password.
+  - Tested in `server/test/accounts.test.ts`, `server/test/accounts-regions.test.ts` and `server/test/app-links.test.ts`, and from the app client through a stand-in web view and system browser in `tools/test-app-client.ts`. **Not yet run on a phone** (docs/mobile.md, "Not done yet").
 
 ### Setting up universal links and app links
 
@@ -83,7 +84,7 @@ Health reads `sub`, `email` and `email_verified`, plus two LotusPond claims whos
 
 ### Not built yet
 
-- **Regional hosts in the apps.** The app starts the sign-in on its current API host. An account held by another regional host is refused with `wrong_region`, instead of being followed there as a password sign-in is.
+- **Regional hosts on the website.** The website refuses an account held by another regional host with `wrong_region`, as before. The apps follow it.
 - **One-time codes across several server instances.** A traded code is remembered in memory, so with several instances it could be traded twice within its 2 minutes, and still only by the app holding the PKCE verifier.
 - **The `directory` moving into Accounts.** Health still keeps its email directory; the `region` claim is checked against it.
 - **The agents' consent page** (`/oauth/authorize`) still uses Health's session, not the Accounts session.
