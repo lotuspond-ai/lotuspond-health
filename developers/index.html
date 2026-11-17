@@ -57,7 +57,7 @@
                   <tr data-integration="fhir"><th scope="row">Any FHIR R4 server</th><td><span class="dev-status dev-status-on_request">Available on request</span></td><td>FHIR R4 REST: Patient, Encounter and DocumentReference</td><td>Hospitals whose HIS exposes FHIR R4</td></tr>
                   <tr data-integration="bahmni"><th scope="row">Bahmni and OpenMRS</th><td><span class="dev-status dev-status-on_request">Available on request</span></td><td>OpenMRS FHIR2 module (FHIR R4)</td><td>Public and non-profit hospitals and clinics</td></tr>
                   <tr data-integration="trakcare"><th scope="row">InterSystems TrakCare</th><td><span class="dev-status dev-status-on_request">Available on request</span></td><td>FHIR R4 through the hospital’s InterSystems interoperability toolkit</td><td>Manipal Hospitals, Sir Ganga Ram Hospital</td></tr>
-                  <tr data-integration="eka"><th scope="row">Eka Care EMR</th><td><span class="dev-status dev-status-in_build">In build</span></td><td>Eka’s published developer APIs, with the clinic’s consent</td><td>Clinics and doctors using Eka</td></tr>
+                  <tr data-integration="eka"><th scope="row">Eka Care EMR</th><td><span class="dev-status dev-status-on_request">Available on request</span></td><td>Eka’s published EMR APIs, with the clinic’s sharing key for its Eka workspace</td><td>Clinics and doctors using Eka</td></tr>
                   <tr data-integration="abdm"><th scope="row">ABDM-certified HIS (consented records)</th><td><span class="dev-status dev-status-planned">Planned</span></td><td>ABDM health-information-user flow, with each patient’s consent</td><td>C-DAC e-Sushrut, NIC NextGen eHospital and other certified systems</td></tr>
                   <tr data-integration="nhcx"><th scope="row">NHCX claims exchange</th><td><span class="dev-status dev-status-planned">Planned</span></td><td>National Health Claims Exchange (FHIR claim profiles)</td><td>Insurers and TPAs on NHCX</td></tr>
                   <tr data-integration="akhil"><th scope="row">Akhil Systems Miracle HIS</th><td><span class="dev-status dev-status-planned">Planned</span></td><td>Needs Akhil Systems’ partnership</td><td>Aster, Paras, probably CARE</td></tr>
@@ -70,7 +70,7 @@
             </div>
             <dl>
               <dt>Available</dt><dd>Works today with an API key.</dd>
-              <dt>Available on request</dt><dd>Works today through FHIR R4. We set it up for your hospital once it confirms your access in writing and its IT team switches the interface on.</dd>
+              <dt>Available on request</dt><dd>Works today through FHIR R4 or the vendor’s published API. We set it up for your hospital or clinic once it confirms your access in writing and gives the access its system needs: an interface switched on, or a sharing key.</dd>
               <dt>In build</dt><dd>The vendor publishes developer access; our connector is being built.</dd>
               <dt>Planned</dt><dd>Needs the vendor’s partnership or a national network’s onboarding first.</dd>
             </dl>
@@ -129,7 +129,7 @@ curl https://health.lotuspond.ai/v1/operations/patients.search \
             <p>New organisations reach only the sandbox. To reach a real hospital system, ask for live access in the console and tell us which hospital and which system. Before we add the connection we need:</p>
             <ul>
               <li>The hospital’s written authority for your organisation to read or write the records you named.</li>
-              <li>A service account or token from the hospital’s IT team, and the interface switched on (FHIR R4 for TrakCare, Bahmni and other FHIR systems).</li>
+              <li>A service account or token from the hospital’s IT team, and the interface switched on (FHIR R4 for TrakCare, Bahmni and other FHIR systems). For an Eka Care clinic: a sharing key for its Eka workspace.</li>
               <li>A data-processing agreement between your organisation and LotusPond.</li>
             </ul>
             <p>We never sign in as a hospital’s staff, never work around multi-factor sign-in or a vendor’s access controls, and never use a system against its vendor’s terms.</p>

@@ -52,8 +52,8 @@ export const INTEGRATIONS: readonly Integration[] = [
     operations: ['patients.search', 'encounters.list', 'documents.upload'],
   },
   {
-    id: 'eka', name: 'Eka Care EMR', vendor: 'Eka Care', kind: 'vendor_api', status: 'in_build',
-    how: "Eka's published developer APIs, with the clinic's consent", usedBy: 'Clinics and doctors using Eka',
+    id: 'eka', name: 'Eka Care EMR', vendor: 'Eka Care', kind: 'vendor_api', status: 'on_request',
+    how: "Eka's published EMR APIs, with the clinic's sharing key for its Eka workspace", usedBy: 'Clinics and doctors using Eka',
     operations: ['patients.search', 'encounters.list'],
   },
   {
@@ -95,7 +95,7 @@ export const INTEGRATIONS: readonly Integration[] = [
 
 export const INTEGRATION_STATUS_TEXT: Record<IntegrationStatus, { label: string; detail: string }> = {
   available: { label: 'Available', detail: 'Works today with an API key.' },
-  on_request: { label: 'Available on request', detail: "Works today through FHIR R4. We set it up for your hospital once it confirms your access in writing and its IT team switches the interface on." },
+  on_request: { label: 'Available on request', detail: "Works today through FHIR R4 or the vendor's published API. We set it up for your hospital or clinic once it confirms your access in writing and gives the access its system needs (an interface switched on, or a sharing key)." },
   in_build: { label: 'In build', detail: 'The vendor publishes developer access; our connector is being built.' },
   planned: { label: 'Planned', detail: "Needs the vendor's partnership or a national network's onboarding first." },
 };

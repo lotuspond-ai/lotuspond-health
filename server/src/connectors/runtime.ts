@@ -186,6 +186,12 @@ export function organisationRuntime(o: OrganisationRuntimeOptions) {
       await record({ organisationId, keyId, operation: op, outcome: 'refused' });
       throw e;
     }
+    // A connection that cannot run this operation is refused now, not after a person has approved the write.
+    const adapter = HIS_ADAPTERS.get(c.connectorId);
+    if (!adapter || !adapter.operations.includes(op)) {
+      await record({ organisationId, keyId, operation: op, outcome: 'refused', connectionId: c.id });
+      throw new HttpError(422, 'not_supported', `${integrationById(c.connectorId)?.name ?? c.connectorId} does not run ${op}.`, { operation: op });
+    }
     if (spec.writes && spec.approval !== 'none') {
       const summary = summarise(op, input as Record<string, unknown>);
       const [a] = await db.insert(organisationApprovals).values({
