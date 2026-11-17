@@ -2,7 +2,7 @@
 
 Status: **accepted on 2026-11-16, not built yet.** The decisions are recorded here:
 - [ADR-0001, one LotusPond account for Health and Works](https://github.com/lotuspond-ai/lotuspond/blob/main/docs/architecture/0001-one-lotuspond-account.md), in the company repository (it was Works ADR-0018);
-- [ADR-0019, databases, tenancy and placement](https://github.com/lotuspond-ai/lotuspond-works/blob/main/docs/architecture/0019-database-tenancy-and-placement.md), in the Works repository.
+- [ADR-0002, separate databases for Accounts, Health and Works](https://github.com/lotuspond-ai/lotuspond/blob/main/docs/architecture/0002-account-and-product-databases.md), in the company repository (it was part of Works ADR-0019).
 
 This page says what the decision changes for Health.
 
