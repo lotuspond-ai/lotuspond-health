@@ -182,6 +182,16 @@ export const auditEvents = pgTable('audit_events', {
 }, t => [index('audit_events_user_idx').on(t.userId, t.createdAt)]);
 
 /**
+ * One-time tokens already used, so each works once across every instance and regional host: app sign-in codes and
+ * back-channel logout tokens from LotusPond Accounts (routes/accounts.ts). Keyed by a SHA-256 of the kind and the
+ * token's id; kept until the token could no longer be accepted anyway. Default database only; no personal data.
+ */
+export const spentTokens = pgTable('spent_tokens', {
+  id: text('id').primaryKey(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+}, t => [index('spent_tokens_expires_idx').on(t.expiresAt)]);
+
+/**
  * Which cell holds each account, keyed by an HMAC of the email (DIRECTORY_SECRET) so no address is stored in plain
  * text outside its cell. Lives in the default database only; cells leave theirs empty.
  */

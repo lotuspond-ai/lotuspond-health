@@ -16,6 +16,7 @@ import { users } from '../src/db/schema.ts';
 import { CellRegistry, fileStore, type Cell } from '../src/cells.ts';
 import { ephemeralSecrets } from '../src/compliance/secrets.ts';
 import { pkceChallenge } from '../src/auth/oidc.ts';
+import { purgeSpentTokens, spendOnce } from '../src/auth/spent-tokens.ts';
 import type { SessionInfo } from '../../shared/types.ts';
 import { registration } from './helpers.ts';
 
@@ -26,6 +27,9 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lotuspond-accounts-regions-')
 const dbs: Database[] = [];
 let inDb: Db;
 let hostIn: ReturnType<typeof createApp>;
+/** A second instance of the India host: same databases and secrets, its own memory. */
+let hostIn2: ReturnType<typeof createApp>;
+let directoryDb: Db;
 let hostEu: ReturnType<typeof createApp>;
 
 async function open() {
@@ -37,6 +41,7 @@ async function open() {
 
 before(async () => {
   const directory = await open();
+  directoryDb = directory;
   inDb = await open();
   const euDb = await open();
   const secrets = ephemeralSecrets(); // shared, as DIRECTORY_SECRET is across the hosts
@@ -45,6 +50,7 @@ before(async () => {
   const euCell: Cell = { id: 'eu', db: euDb, files: fileStore(path.join(tmp, 'eu'), key()) };
   const settings = { NODE_ENV: 'test', RECORD_AGENT: 'off', ACCOUNTS_ISSUER: 'fake', OPEN_COUNTRIES: 'all', REGION_API_ORIGINS: `in=${IN},eu=${EU}` } as const;
   hostIn = createApp({ db: directory, files: inCell.files, config: loadConfig({ ...settings, SERVED_REGIONS: 'in' }), cells: new CellRegistry(inCell, [['in', inCell]]), secrets });
+  hostIn2 = createApp({ db: directory, files: inCell.files, config: loadConfig({ ...settings, SERVED_REGIONS: 'in' }), cells: new CellRegistry(inCell, [['in', inCell]]), secrets });
   hostEu = createApp({ db: directory, files: euCell.files, config: loadConfig({ ...settings, SERVED_REGIONS: 'eu' }), cells: new CellRegistry(euCell, [['eu', euCell]]), secrets });
 });
 after(async () => { await Promise.all(dbs.map(d => d.close())); fs.rmSync(tmp, { recursive: true, force: true }); });
@@ -182,6 +188,28 @@ describe('LotusPond Accounts across regional hosts', () => {
     const { to, hosts } = await webSignIn(EU, { email: address, region: 'eu' });
     assert.deepEqual(hosts, [EU, IN]);
     assert.equal(to.searchParams.get('accounts_error'), 'wrong_region');
+  });
+
+  test('an app code works once across instances of a host, not once per instance', async () => {
+    const address = email('instances');
+    const back = await signInFromApp(IN, { email: address, region: 'in' });
+    assert.equal((await appCall(IN, 'POST', '/api/auth/accounts/app-exchange', { code: back.code, verifier: back.verifier })).status, 200);
+    const replay = await hostIn2.request(`${IN}/api/auth/accounts/app-exchange`, {
+      method: 'POST', body: JSON.stringify({ code: back.code, verifier: back.verifier }),
+      headers: { 'x-lotuspond-client': 'app', origin: 'capacitor://localhost', 'content-type': 'application/json' },
+    });
+    assert.equal(replay.status, 400, 'the other instance refuses it too');
+  });
+
+  test('spent tokens: once each, kinds apart, forgotten after they expire', async () => {
+    const soon = new Date(Date.now() + 60_000);
+    assert.equal(await spendOnce(directoryDb, 'logout-token', 'jti-1', soon), true);
+    assert.equal(await spendOnce(directoryDb, 'logout-token', 'jti-1', soon), false);
+    assert.equal(await spendOnce(directoryDb, 'app-code', 'jti-1', soon), true, 'another kind with the same id is separate');
+    await spendOnce(directoryDb, 'logout-token', 'old', new Date(Date.now() - 1000));
+    await purgeSpentTokens(directoryDb);
+    assert.equal(await spendOnce(directoryDb, 'logout-token', 'old', soon), true, 'an expired record is gone');
+    assert.equal(await spendOnce(directoryDb, 'logout-token', 'jti-1', soon), false, 'a live one stays');
   });
 
   test('the link back offers only hosts this deployment lists', async () => {

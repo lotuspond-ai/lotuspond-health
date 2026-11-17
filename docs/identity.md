@@ -66,7 +66,7 @@ To try it: `ACCOUNTS_ISSUER=fake npm run dev`, open `/signup` and choose **Conti
   - **What stays:** password sessions are separate sign-ins and stay.
   - **Audit:** each account affected gets an `accounts_signed_out` event ("Signed out from LotusPond Accounts").
   - **Registration:** register the endpoint at Accounts as Health's `backchannel_logout_uri`, with `backchannel_logout_session_required`. With regional hosts, register each host's, since each ends only the sessions in its own cells.
-  - **Replays:** used tokens are remembered in memory, so with several instances of one host a replay could reach another. It could only end sessions the first delivery already ended.
+  - **Replays:** a token is refused if it was already used, on any instance or regional host (see one-time tokens below).
   - **Stand-in:** its sign-out page has **Sign out everywhere**, which sends Health a logout token for an email.
 - **An agent's consent page** (`/oauth/authorize`). Someone an agent sends who is not signed in to Health is first checked silently at Accounts (`prompt=none`).
   - **Already signed in at Accounts** (for example from LotusPond Works): Health signs them in and returns them to the consent page, with no sign-in page.
@@ -84,6 +84,13 @@ To try it: `ACCOUNTS_ISSUER=fake npm run dev`, open `/signup` and choose **Conti
   - **Universal links and app links.** With `APP_LINKS_ORIGIN` set, the return is the https link `https://open.health.lotuspond.ai/accounts-return?code=…` instead, which the apps claim: Associated Domains in `ios/App/App/App.entitlements`, and an `autoVerify` intent filter in `AndroidManifest.xml`. Only another app on the device could catch the private-use scheme, so the https link is the stronger return. It needs a host of its own, because iOS keeps a link in the browser when it stays on the domain already open, and the sign-in runs on `health.lotuspond.ai`. The private-use scheme stays registered as the fallback: if the link opens in the browser, `/accounts-return` on that host offers it with the same code.
   - **Regional hosts** (`REGION_API_ORIGINS`). The app starts on its current host. If the account is held in a region another host serves (from the `region` claim, or the shared directory for an existing account), the return link carries a code for that host and `api_origin=<that host>`. The app goes there only if the host is one `/api/auth/config` lists, so its verifier is never sent to a host named only in a link. That host opens the code, which works because the hosts share `DIRECTORY_SECRET`, as they already must for the directory. It then signs in, links or starts sign-up in its own region. A new person finishes sign-up on the host for the country they choose, as with a password.
   - Tested in `server/test/accounts.test.ts`, `server/test/accounts-regions.test.ts` and `server/test/app-links.test.ts`, and from the app client through a stand-in web view and system browser in `tools/test-app-client.ts`. **Not yet run on a phone** (docs/mobile.md, "Not done yet").
+
+### One-time tokens
+
+App sign-in codes and back-channel logout tokens each work once, across every instance and regional host. Using one is recorded in `spent_tokens` (migration 0018) in the default database they share: a SHA-256 of the token's kind and id, and when it expires.
+- **One insert:** the record is a single insert that does nothing if the row exists, so two instances racing on one token cannot both win.
+- **Only where it can be used:** an app code is marked used only by a host that can use it, so a wrong host does not burn it for the right one.
+- **Clean-up:** the server's sweep removes records once the token could no longer be accepted anyway.
 
 ### Setting up universal links and app links
 
@@ -128,7 +135,6 @@ Health's side is built; running it is a decision, and the privacy texts need rev
 
 ### Not built yet
 
-- **One-time codes across several server instances.** A traded code is remembered in memory, so with several instances it could be traded twice within its 2 minutes, and still only by the app holding the PKCE verifier.
 - **Dropping the `directory` table and `users.password_hash`**, after the reviewed migration and a period with `PASSWORD_SIGN_IN=off`.
 
 ## Before launch

@@ -11,6 +11,7 @@ import { resolveSecrets } from './compliance/secrets.ts';
 import { purgeOldEvents } from './compliance/audit.ts';
 import { EncryptedFileStore } from './lib/files-encrypted.ts';
 import { purgeExpiredSessions } from './auth/sessions.ts';
+import { purgeSpentTokens } from './auth/spent-tokens.ts';
 import { purgeExpiredAgentSecrets } from './agents/grants.ts';
 import { purgeOldNotifications } from './notifications.ts';
 import { claudeAssistant } from './assistant/agent.ts';
@@ -122,6 +123,7 @@ if (command === 'accounts:export' || command === 'accounts:link') {
 if (command) fail(`Unknown command "${command}". Commands: files:rekey, org:create, org:key, org:revoke, accounts:export, accounts:link.`);
 
 async function sweep() {
+  await purgeSpentTokens(registry.defaultCell.db);
   for (const cell of allCells) {
     await purgeExpiredSessions(cell.db);
     await purgeOldEvents(cell.db, config.auditRetentionMs);

@@ -32,6 +32,7 @@ import { conflict, HttpError, notFound } from '../lib/errors.ts';
 import { readJson, type AppEnv, type Ctx, type Deps } from '../http.ts';
 import { publicOrigin } from '../agents/oauth.ts';
 import { AccountsAppExchangeBody, AccountsCompleteBody } from '../schemas.ts';
+import { spendOnce } from '../auth/spent-tokens.ts';
 import { insertAccount, isUniqueViolation, sessionInfo } from './auth.ts';
 import { ACCOUNTS_ERRORS, agentConsentNext, APP_ACCOUNTS_REDIRECT, APP_LINK_PATH, type AccountsErrorCode } from '../../../shared/identity.ts';
 
@@ -155,16 +156,8 @@ export function accountsRoutes(deps: Deps, runtime: AccountsRuntime) {
       return v.exp * 1000 > Date.now() ? v : null;
     } catch { return null; }
   };
-  /** Codes already traded, until they expire. One server instance only; with several, a code could be replayed
-   *  within its two minutes, still only by the app holding the PKCE verifier. */
-  const usedCodes = new Map<string, number>();
-  const spend = (jti: string, exp: number) => {
-    const now = Date.now();
-    for (const [k, until] of usedCodes) if (until < now) usedCodes.delete(k);
-    if (usedCodes.has(jti)) return false;
-    usedCodes.set(jti, exp * 1000);
-    return true;
-  };
+  /** Mark an app code traded, in the default database every instance and regional host shares: it works once. */
+  const spend = (jti: string, exp: number) => spendOnce(deps.db, 'app-code', jti, new Date(exp * 1000));
   const inSeconds = (s: number) => Math.floor(Date.now() / 1000) + s;
 
   const put = (c: Ctx, name: string, value: object, ttl: number) =>
@@ -310,10 +303,6 @@ a{display:inline-block;margin-top:1rem;padding:.8rem 1.4rem;border-radius:.6rem;
     return back(c, `/signup?accounts=continue${withNext(flow.next)}`);
   });
 
-  /** Logout tokens already acted on, by jti, until they are too old to be accepted anyway. One instance only, as for
-   *  app codes; a replay could at most end sessions that the first delivery already ended. */
-  const seenLogouts = new Map<string, number>();
-
   /**
    * Accounts says a person signed out there (OpenID Connect Back-Channel Logout 1.0). End the Health sessions that came
    * from that Accounts session (`sid`), or, when only the account (`sub`) is named, every session from Accounts for
@@ -321,10 +310,10 @@ a{display:inline-block;margin-top:1rem;padding:.8rem 1.4rem;border-radius:.6rem;
    */
   async function backchannelLogout(token: string): Promise<number> {
     const t = await client.verifyLogoutToken(token);
-    const now = Date.now();
-    for (const [k, until] of seenLogouts) if (until < now) seenLogouts.delete(k);
-    if (seenLogouts.has(t.jti)) throw new OidcError('invalid_token', 'This logout token was already used.');
-    seenLogouts.set(t.jti, (t.iat + LOGOUT_TOKEN_MAX_AGE_S + 60) * 1000);
+    // Acted on once, across instances and hosts, until it is too old to be accepted anyway.
+    if (!(await spendOnce(deps.db, 'logout-token', t.jti, new Date((t.iat + LOGOUT_TOKEN_MAX_AGE_S + 60) * 1000)))) {
+      throw new OidcError('invalid_token', 'This logout token was already used.');
+    }
     let ended = 0;
     for (const cell of cells.cells) {
       const owners = t.subject ? (await cell.db.select({ id: users.id }).from(users).where(eq(users.accountsSubject, t.subject))).map(u => u.id) : null;
@@ -386,7 +375,6 @@ a{display:inline-block;margin-top:1rem;padding:.8rem 1.4rem;border-radius:.6rem;
     if (!code) throw expired();
     const challenge = createHash('sha256').update(body.verifier).digest('base64url');
     if (challenge.length !== code.ch.length || !timingSafeEqual(Buffer.from(challenge), Buffer.from(code.ch))) throw expired();
-    if (!spend(code.jti, code.exp)) throw expired();
     const startSignUp = (id: AccountsIdentity) => {
       const pending: AppPending = { ...id, k: 'app-pending', exp: inSeconds(PENDING_TTL_S) };
       return c.json({ pending: { email: id.email, region: id.region }, pendingToken: box(pending) });
@@ -395,18 +383,25 @@ a{display:inline-block;margin-top:1rem;padding:.8rem 1.4rem;border-radius:.6rem;
       const session = await signIn(c, cell, user, true, sid);
       return c.json({ ...(await sessionInfo(cell.db, user)), ...session });
     };
-    if (code.k === 'pending') return startSignUp(code.id);
+    // The code is marked used only by a host that can use it, so a host that cannot does not burn it for the right
+    // one; and always before a session or a sign-up starts, so it works once across every instance and host.
+    const use = async () => { if (!(await spend(code.jti, code.exp))) throw expired(); };
+    if (code.k === 'pending') { await use(); return startSignUp(code.id); }
     if (code.k === 'identity') {
-      // Handed over by another regional host: decide here, where the account's region is served.
+      // Handed over by another regional host: decide here, where the account's region is served. Linking an existing
+      // account by verified email may happen before the code is marked used; doing it twice changes nothing.
       const outcome = await resolve(c, code.id);
-      if (outcome.kind === 'account') return startSession(outcome.cell, outcome.user, code.id.sessionId);
-      if (outcome.kind === 'new') return startSignUp(outcome.id);
-      const reason = outcome.kind === 'error' ? outcome.code : 'wrong_region';
-      throw new HttpError(409, reason, ACCOUNTS_ERRORS[reason]);
+      if (outcome.kind === 'error' || outcome.kind === 'elsewhere') {
+        const reason = outcome.kind === 'error' ? outcome.code : 'wrong_region';
+        throw new HttpError(409, reason, ACCOUNTS_ERRORS[reason]);
+      }
+      await use();
+      return outcome.kind === 'account' ? startSession(outcome.cell, outcome.user, code.id.sessionId) : startSignUp(outcome.id);
     }
     const cell = cells.forRegion(code.region);
     const [user] = cell ? await cell.db.select().from(users).where(eq(users.id, code.uid)).limit(1) : [];
     if (!cell || !user) throw expired();
+    await use();
     return startSession(cell, user, code.sid);
   });
 
