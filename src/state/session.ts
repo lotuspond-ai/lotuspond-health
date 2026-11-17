@@ -133,7 +133,10 @@ export const useSession = create<SessionState>((set, get) => {
     showNotice: notice => set({ notice }),
 
     signOut: async () => {
-      try { await backend.logout(); } finally { reset(); }
+      let next: string | undefined;
+      try { next = (await backend.logout())?.accountsSignOut; } finally { reset(); }
+      // Signed in with LotusPond Accounts: sign out there too, then come back to the sign-in page.
+      if (next?.startsWith('/api/auth/accounts/')) location.assign(next);
     },
 
     sessionEnded: () => reset('You were signed out. Sign in again to continue.'),

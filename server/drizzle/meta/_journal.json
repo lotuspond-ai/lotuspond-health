@@ -113,6 +113,13 @@
       "when": 1794915773021,
       "tag": "0015_accounts_sign_in",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1794920898206,
+      "tag": "0016_accounts_sessions",
+      "breakpoints": true
     }
   ]
 }

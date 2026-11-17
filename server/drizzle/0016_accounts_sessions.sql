@@ -1,0 +1,1 @@
+ALTER TABLE "sessions" ADD COLUMN "via_accounts" boolean DEFAULT false NOT NULL;

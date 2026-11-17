@@ -33,6 +33,11 @@ import { insertAccount, isUniqueViolation, sessionInfo } from './auth.ts';
 import { ACCOUNTS_ERRORS, APP_ACCOUNTS_REDIRECT, APP_LINK_PATH, type AccountsErrorCode } from '../../../shared/identity.ts';
 
 const FLOW_COOKIE = 'lp_accounts_flow';
+/** Set by Health's own sign-out (routes/auth.ts) so that only it, not a link from another site, signs out of Accounts. */
+const SIGN_OUT_COOKIE = 'lp_accounts_sign_out';
+const SIGN_OUT_TTL_S = 2 * 60;
+/** Where the website goes after signing out of Health, to sign out of Accounts too. */
+export const ACCOUNTS_SIGN_OUT_PATH = '/api/auth/accounts/sign-out';
 const PENDING_COOKIE = 'lp_accounts_pending';
 const COOKIE_PATH = '/api/auth/accounts';
 const FLOW_TTL_S = 10 * 60;
@@ -81,11 +86,21 @@ export function accountsRuntime(deps: Pick<Deps, 'config'>): AccountsRuntime | n
 
 export { FAKE_ACCOUNTS_PATH };
 
+const cookieKeyOf = (deps: Pick<Deps, 'secrets'>) => createHmac('sha256', deps.secrets.directoryKey).update('lotuspond:accounts-cookies:v1').digest();
+
+/** Health's sign-out of a session that came from Accounts: allow one trip to Accounts' sign-out in the next 2 minutes. */
+export function issueSignOutTicket(c: Ctx, deps: Pick<Deps, 'secrets' | 'config'>): string {
+  const body = Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + SIGN_OUT_TTL_S })).toString('base64url');
+  const sealed = `${body}.${createHmac('sha256', cookieKeyOf(deps)).update(body).digest('base64url')}`;
+  setCookie(c, SIGN_OUT_COOKIE, sealed, { httpOnly: true, sameSite: 'Lax', secure: deps.config.cookieSecure, path: COOKIE_PATH, maxAge: SIGN_OUT_TTL_S });
+  return ACCOUNTS_SIGN_OUT_PATH;
+}
+
 export function accountsRoutes(deps: Deps, runtime: AccountsRuntime) {
   const { config, cells } = deps;
   const { client } = runtime;
   const app = new Hono<AppEnv>();
-  const cookieKey = createHmac('sha256', deps.secrets.directoryKey).update('lotuspond:accounts-cookies:v1').digest();
+  const cookieKey = cookieKeyOf(deps);
 
   const seal = (value: object) => {
     const body = Buffer.from(JSON.stringify(value)).toString('base64url');
@@ -141,7 +156,7 @@ export function accountsRoutes(deps: Deps, runtime: AccountsRuntime) {
 
   /** Start Health's own session: a cookie for the website, a token in the answer for the apps. */
   async function signIn(c: Ctx, cell: Cell, user: UserRow, forApp = false) {
-    const { token, expiresAt } = await createSession(cell.db, user.region, user.id, config.sessionTtlMs, c.req.header('user-agent'));
+    const { token, expiresAt } = await createSession(cell.db, user.region, user.id, config.sessionTtlMs, c.req.header('user-agent'), true);
     if (!forApp) writeSessionCookie(c, token, expiresAt, config.cookieSecure);
     await recordEvent(cell.db, eventContext(c, deps), user.id, 'sign_in');
     return { token, expiresAt: expiresAt.toISOString() };
@@ -262,6 +277,18 @@ a{display:inline-block;margin-top:1rem;padding:.8rem 1.4rem;border-radius:.6rem;
     return back(c, '/signup?accounts=continue');
   });
 
+  /** After Health's own sign-out (with its ticket): sign out of Accounts too, then back to the sign-in page. */
+  app.get('/sign-out', async c => {
+    const ticket = open<{ exp: number }>(getCookie(c, SIGN_OUT_COOKIE));
+    drop(c, SIGN_OUT_COOKIE);
+    if (!ticket) return back(c, '/login');
+    const url = await client.endSessionUrl(`${publicOrigin(c, config)}/login`).catch(e => {
+      console.warn(`[accounts] sign-out at Accounts unavailable: ${(e as Error).message}`);
+      return null;
+    });
+    return url ? c.redirect(url, 302) : back(c, '/login');
+  });
+
   /** The apps: trade the one-time code from the system browser, with the PKCE verifier only the app holds. */
   app.post('/app-exchange', async c => {
     const body = await readJson(c, AccountsAppExchangeBody);
@@ -331,7 +358,7 @@ a{display:inline-block;margin-top:1rem;padding:.8rem 1.4rem;border-radius:.6rem;
     }
     if (!forApp) drop(c, PENDING_COOKIE);
     await recordEvent(cell.db, eventContext(c, deps), user.id, 'account_created');
-    const { token, expiresAt } = await createSession(cell.db, user.region, user.id, config.sessionTtlMs, c.req.header('user-agent'));
+    const { token, expiresAt } = await createSession(cell.db, user.region, user.id, config.sessionTtlMs, c.req.header('user-agent'), true);
     if (forApp) return c.json({ ...(await sessionInfo(cell.db, user)), token, expiresAt: expiresAt.toISOString() }, 201);
     writeSessionCookie(c, token, expiresAt, config.cookieSecure);
     return c.json(await sessionInfo(cell.db, user), 201);

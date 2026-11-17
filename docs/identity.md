@@ -51,6 +51,11 @@ To try it: `ACCOUNTS_ISSUER=fake npm run dev`, open `/signup` and choose **Conti
 - **First sign-in.** Health still asks its own questions: name, country, age, Terms and Privacy, and the health-data consent. The email comes from Accounts and there is no Health password (`users.password_hash` is null; `users.accounts_subject` holds the Accounts `sub`). The Accounts identity waits for 30 minutes in a signed cookie while the person answers.
 - **Existing Health accounts** with the same email are linked on their first Accounts sign-in, only when Accounts says the email is verified. They keep their password until the reviewed migration removes it.
 - **Regional hosts on the website** (`REGION_API_ORIGINS`, where each regional host is its own site and API). If the account is held in a region another host serves, the callback sends the browser to `/api/auth/accounts/start?hop=1` on that host, which signs it in on its own site with its own session. No code or token crosses between hosts: Accounts remembers the person, so the second pass does not ask again. Each regional host's `/api/auth/accounts/callback` must be registered as a redirect URI at Accounts. A sign-in is handed on once at most, then refused with `wrong_region`. With the stand-in issuer, which remembers no one, the second host asks for the email again.
+- **Signing out** (OpenID Connect RP-Initiated Logout 1.0). Sessions record whether they came from Accounts (`sessions.via_accounts`). Signing out of such a session on the website ends Health's session, then sends the browser to Accounts' `end_session_endpoint`, which returns it to Health's `/login` page.
+  - That page must be registered at Accounts as a post-logout redirect URI.
+  - The trip to Accounts needs a 2-minute ticket that only Health's own sign-out sets, so a link from another site cannot sign anyone out of Accounts.
+  - No ID token is kept, so Accounts may ask the person to confirm.
+  - Password sessions sign out of Health only.
 - **Refused:** accounts from a company's single sign-on; a region this server does not serve; a country whose region differs from the one Accounts holds the account in; a Health account already linked to another Accounts subject.
 - **Accounts without a Health password** cannot use the password form (it says to use Accounts) or change a password here. They can delete their account within 10 minutes of signing in with Accounts, instead of typing a password.
 - **The apps** sign in through the system browser (RFC 8252): Custom Tabs on Android and SFSafariViewController on iOS (`@capacitor/browser`), never the app's own web view.
@@ -88,7 +93,8 @@ Health reads `sub`, `email` and `email_verified`, plus two LotusPond claims whos
 - **One-time codes across several server instances.** A traded code is remembered in memory, so with several instances it could be traded twice within its 2 minutes, and still only by the app holding the PKCE verifier.
 - **The `directory` moving into Accounts.** Health still keeps its email directory; the `region` claim is checked against it.
 - **The agents' consent page** (`/oauth/authorize`) still uses Health's session, not the Accounts session.
-- **Sign-out at Accounts** (RP-initiated logout). Signing out of Health ends only Health's session.
+- **Sign-out at Accounts from the apps.** An app's sign-out ends Health's session only; the Accounts sign-in in the system browser stays.
+- **Back-channel logout.** Signing out at Accounts, or Accounts ending an account, does not yet end Health's sessions (OpenID Connect Back-Channel Logout 1.0).
 - **Removing passwords** for linked accounts, after the reviewed migration.
 
 ## Before launch

@@ -13,6 +13,8 @@ export interface IssuerMetadata {
   authorization_endpoint: string;
   token_endpoint: string;
   jwks_uri: string;
+  /** OpenID Connect RP-Initiated Logout 1.0: where Health sends the browser to sign out of Accounts too. */
+  end_session_endpoint?: string;
 }
 
 /**
@@ -81,6 +83,18 @@ export class AccountsClient {
     // OpenID Connect's prompt=create asks the issuer to open on its sign-up page.
     if (p.signUp) q.set('prompt', 'create');
     return `${m.authorization_endpoint}?${q}`;
+  }
+
+  /**
+   * Where to sign out of Accounts (RP-Initiated Logout), coming back to `postLogoutRedirectUri`, which must be
+   * registered at Accounts. Null when Accounts publishes no end-session endpoint. Without an ID token hint, Accounts
+   * may ask the person to confirm.
+   */
+  async endSessionUrl(postLogoutRedirectUri: string): Promise<string | null> {
+    const m = await this.metadata();
+    if (!m.end_session_endpoint) return null;
+    const q = new URLSearchParams({ client_id: this.config.clientId, post_logout_redirect_uri: postLogoutRedirectUri });
+    return `${m.end_session_endpoint}?${q}`;
   }
 
   /** Trade the code for tokens and return the checked identity. */

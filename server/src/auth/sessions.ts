@@ -17,12 +17,14 @@ const TOKEN = /^(?:(in|eu|us|global)\.)?([\w-]{20,100})$/;
 
 const digest = (token: string) => createHash('sha256').update(token).digest('hex');
 
-export interface ActiveSession { id: string; user: UserRow; cell: Cell }
+export interface ActiveSession { id: string; user: UserRow; cell: Cell; viaAccounts: boolean }
 
-export async function createSession(db: Db, region: DataRegion, userId: string, ttlMs: number, userAgent: string | undefined): Promise<{ token: string; expiresAt: Date }> {
+export async function createSession(
+  db: Db, region: DataRegion, userId: string, ttlMs: number, userAgent: string | undefined, viaAccounts = false,
+): Promise<{ token: string; expiresAt: Date }> {
   const token = `${region}.${randomBytes(32).toString('base64url')}`;
   const expiresAt = new Date(Date.now() + ttlMs);
-  await db.insert(sessions).values({ id: digest(token), userId, expiresAt, userAgent: userAgent?.slice(0, 300) ?? null });
+  await db.insert(sessions).values({ id: digest(token), userId, expiresAt, userAgent: userAgent?.slice(0, 300) ?? null, viaAccounts });
   return { token, expiresAt };
 }
 
@@ -53,7 +55,7 @@ export async function findSession(cells: CellRegistry, token: string, ttlMs: num
   if (now - row.session.lastSeenAt.getTime() > REFRESH_AFTER_MS) {
     await db.update(sessions).set({ lastSeenAt: new Date(now), expiresAt: new Date(now + ttlMs) }).where(eq(sessions.id, id));
   }
-  return { id, user: row.user, cell: found.cell };
+  return { id, user: row.user, cell: found.cell, viaAccounts: row.session.viaAccounts };
 }
 
 export async function deleteSession(db: Db, id: string): Promise<void> {

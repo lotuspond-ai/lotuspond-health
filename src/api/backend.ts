@@ -46,7 +46,8 @@ export interface Backend {
   /** The apps: trade the one-time code from the system browser for a session, or for a sign-up to finish. */
   accountsAppExchange?(code: string, verifier: string, apiOrigin?: string): Promise<{ session: SessionInfo } | { pending: { email: string; region: string | null } }>;
   login(input: { email: string; password: string }): Promise<SessionInfo>;
-  logout(): Promise<void>;
+  /** Sign out. `accountsSignOut`: the website signed in with LotusPond Accounts, and goes there next to sign out too. */
+  logout(): Promise<void | { accountsSignOut?: string }>;
   changePassword(currentPassword: string, newPassword: string): Promise<void>;
   signOutOtherSessions(): Promise<void>;
   deleteAccount(password: string): Promise<void>;

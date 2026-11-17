@@ -35,6 +35,7 @@ export function fakeAccounts(clientId: string): FakeAccounts {
     authorization_endpoint: `${FAKE_ACCOUNTS_PATH}/authorize`,
     token_endpoint: `${FAKE_ACCOUNTS_PATH}/token`,
     jwks_uri: `${FAKE_ACCOUNTS_PATH}/jwks`,
+    end_session_endpoint: `${FAKE_ACCOUNTS_PATH}/logout`,
   };
 
   app.get('/.well-known/openid-configuration', c => c.json({ ...metadata, response_types_supported: ['code'], code_challenge_methods_supported: ['S256'] }));
@@ -61,6 +62,17 @@ export function fakeAccounts(clientId: string): FakeAccounts {
         <label><input type="checkbox" name="enterprise" value="true"> Created through a company's single sign-on</label>
         <button>Continue</button>
       </form>`));
+  });
+
+  // Signing out. The stand-in keeps no sign-in of its own, so there is nothing to end: it shows that it was asked,
+  // then goes back to Health.
+  app.get('/logout', c => {
+    const q = c.req.query();
+    if (q.client_id !== clientId) return c.html(page('<p class="err">Unknown client_id.</p>'), 400);
+    const back = q.post_logout_redirect_uri && /^https?:\/\//.test(q.post_logout_redirect_uri) ? q.post_logout_redirect_uri : null;
+    return c.html(page(`<h1>Signed out of your LotusPond account</h1>
+      <p class="note">Stand-in for LotusPond Accounts, for development only.</p>
+      ${back ? `<p><a href="${esc(back)}">Back to LotusPond Health</a></p>` : ''}`));
   });
 
   app.post('/authorize', async c => {

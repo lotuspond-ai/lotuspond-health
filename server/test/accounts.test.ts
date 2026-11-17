@@ -193,6 +193,37 @@ describe('LotusPond Accounts sign-in', () => {
     assert.equal(expired.status, 409);
   });
 
+  test('signing out of a session from Accounts goes on to sign out there, once, and only from Health\'s own sign-out', async () => {
+    const b = browser();
+    const address = email('signout');
+    await signInWithAccounts(b, { email: address }, 'signup');
+    assert.equal((await b.json('POST', '/api/auth/accounts/complete', finish())).status, 201);
+    const out = await b.go('POST', '/api/auth/logout');
+    assert.equal(out.status, 200);
+    assert.deepEqual(await out.json(), { accountsSignOut: '/api/auth/accounts/sign-out' });
+    assert.equal((await (await b.go('GET', '/api/auth/me')).json()), null, 'Health\'s session has ended');
+
+    const toAccounts = await b.go('GET', '/api/auth/accounts/sign-out');
+    assert.equal(toAccounts.status, 302);
+    const end = new URL(toAccounts.headers.get('location')!, 'http://health.test');
+    assert.equal(end.pathname, '/api/dev-accounts/logout');
+    assert.equal(end.searchParams.get('client_id'), 'lotuspond-health');
+    assert.equal(end.searchParams.get('post_logout_redirect_uri'), 'http://health.test/login');
+    assert.equal((await b.go('GET', `${end.pathname}${end.search}`)).status, 200, 'the stand-in shows its sign-out page');
+    const again = await b.go('GET', '/api/auth/accounts/sign-out');
+    assert.equal(new URL(again.headers.get('location')!).pathname, '/login', 'the ticket works once');
+
+    // A link from another site, without Health's sign-out first, only goes to the sign-in page.
+    const stranger = await browser().go('GET', '/api/auth/accounts/sign-out');
+    assert.equal(new URL(stranger.headers.get('location')!).pathname, '/login');
+  });
+
+  test('signing out of a password session stays on Health', async () => {
+    const b = browser();
+    assert.equal((await b.json('POST', '/api/auth/register', registration(email('pw-out')))).status, 201);
+    assert.equal((await b.go('POST', '/api/auth/logout')).status, 204);
+  });
+
   test('an account without a Health password can delete itself only soon after signing in', async () => {
     const b = browser();
     const address = email('delete');
@@ -238,6 +269,7 @@ describe('LotusPond Accounts sign-in from the apps', () => {
     assert.equal(info.account.email, address);
     assert.equal(info.account.hasPassword, false);
     assert.equal(((await (await appCall('GET', '/api/auth/me', undefined, info.token)).json()) as SessionInfo).account.email, address);
+    assert.equal((await appCall('POST', '/api/auth/logout', undefined, info.token)).status, 204, 'the app gets no website sign-out page');
     // The website's cookie-held sign-up cannot be finished with an app token, nor the other way round.
     assert.equal((await browser().json('POST', '/api/auth/accounts/complete', { ...finish(), pendingToken: started.pendingToken })).status, 409);
   });

@@ -178,7 +178,10 @@ export class HttpBackend implements Backend {
     return { account: r.account, profiles: r.profiles };
   }
   async logout() {
-    try { await this.request<void>('POST', '/auth/logout'); } finally { if (this.app) await this.app.clear(); }
+    try {
+      const r = await this.request<{ accountsSignOut?: string } | undefined>('POST', '/auth/logout');
+      return r?.accountsSignOut && !this.app ? { accountsSignOut: r.accountsSignOut } : undefined;
+    } finally { if (this.app) await this.app.clear(); }
   }
   changePassword(currentPassword: string, newPassword: string) { return this.request<void>('POST', '/auth/password', { currentPassword, newPassword }); }
   signOutOtherSessions() { return this.request<void>('DELETE', '/auth/sessions'); }

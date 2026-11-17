@@ -36,6 +36,8 @@ export const sessions = pgTable('sessions', {
   lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
   expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
   userAgent: text('user_agent'),
+  /** Started by a sign-in with LotusPond Accounts: signing out also signs out there (routes/accounts.ts). */
+  viaAccounts: boolean('via_accounts').notNull().default(false),
 }, t => [index('sessions_user_idx').on(t.userId)]);
 
 export const profiles = pgTable('profiles', {
