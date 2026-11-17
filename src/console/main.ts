@@ -124,7 +124,7 @@ function keysPanel(page: OrgPage): HTMLElement {
   });
 
   const list = page.keys.length
-    ? el('div', { class: 'dev-table-wrap' }, el('table', { class: 'dev-table' },
+    ? el('div', { class: 'table-wrap' }, el('table', { class: 'table' },
       el('thead', {}, el('tr', {}, el('th', { scope: 'col' }, 'Key'), el('th', { scope: 'col' }, 'May do'), el('th', { scope: 'col' }, 'Last used'), el('th', { scope: 'col' }, ''))),
       el('tbody', {}, ...page.keys.map(k => el('tr', {},
         el('th', { scope: 'row' }, k.name, el('br'), el('code', {}, `${k.prefix}…`)),
@@ -149,7 +149,7 @@ function connectionsPanel(page: OrgPage): HTMLElement {
   return el('section', { class: 'home-sheet', id: 'connections' },
     el('h2', { class: 'home-d-sm' }, 'Connections'),
     el('p', {}, 'Every call names one connection. Use its id as "connection".'),
-    el('div', { class: 'dev-table-wrap' }, el('table', { class: 'dev-table' },
+    el('div', { class: 'table-wrap' }, el('table', { class: 'table' },
       el('thead', {}, el('tr', {}, el('th', { scope: 'col' }, 'Connection'), el('th', { scope: 'col' }, 'Id'), el('th', { scope: 'col' }, 'Can do'), el('th', { scope: 'col' }, 'Last worked'))),
       el('tbody', {}, ...page.connections.map(c => el('tr', {},
         el('th', { scope: 'row' }, c.name, ' ', c.sandbox ? badge('Sandbox', 'sandbox') : badge('Live', 'live'), c.status !== 'active' ? badge('Off', 'rejected') : null),
@@ -173,7 +173,7 @@ function approvalsPanel(page: OrgPage): HTMLElement {
         }, 'primary'),
         button('Reject', async () => { await api('POST', `/organisations/${page.organisation.id}/approvals/${a.id}`, { decision: 'reject' }); await load(); }))
       : el('span', {}, badge(a.status, a.status), a.error ? el('span', { class: 'dev-error' }, ` ${a.error}`) : '', a.decidedBy ? ` by ${a.decidedBy}` : '')));
-  const table = (rows: Approval[]) => el('div', { class: 'dev-table-wrap' }, el('table', { class: 'dev-table' },
+  const table = (rows: Approval[]) => el('div', { class: 'table-wrap' }, el('table', { class: 'table' },
     el('thead', {}, el('tr', {}, el('th', { scope: 'col' }, 'Write'), el('th', { scope: 'col' }, 'Asked'), el('th', { scope: 'col' }, 'Decision'))),
     el('tbody', {}, ...rows.map(row))));
   return el('section', { class: 'home-sheet', id: 'approvals' },
@@ -187,7 +187,7 @@ function approvalsPanel(page: OrgPage): HTMLElement {
 function callsPanel(page: OrgPage): HTMLElement {
   return el('section', { class: 'home-sheet', id: 'calls' },
     el('h2', { class: 'home-d-sm' }, 'Recent calls'),
-    page.calls.length ? el('div', { class: 'dev-table-wrap' }, el('table', { class: 'dev-table' },
+    page.calls.length ? el('div', { class: 'table-wrap' }, el('table', { class: 'table' },
       el('thead', {}, el('tr', {}, el('th', { scope: 'col' }, 'When'), el('th', { scope: 'col' }, 'Operation'), el('th', { scope: 'col' }, 'Outcome'))),
       el('tbody', {}, ...page.calls.map(c => el('tr', {}, el('th', { scope: 'row' }, when(c.at)), el('td', {}, el('code', {}, c.operation)), el('td', {}, badge(c.outcome.replace('_', ' '), c.outcome)))))))
       : el('p', { class: 'dev-empty' }, 'No calls yet. Try the quickstart below.'));
