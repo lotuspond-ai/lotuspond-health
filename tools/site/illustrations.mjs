@@ -1,5 +1,6 @@
-// Health pictures in the LotusPond "one thread" style (design-system/project/README.md, Illustration), drawn from the
-// same shapes as the approved set in design-system/project/assets/Illustrations: the thread, seeds, the bloom on an
+// Health pictures in the LotusPond "one thread" style (design-system/project/README.md in lotuspond-ai/lotuspond, Illustration), drawn from the
+// same shapes as the approved set in design-system/project/assets/Illustrations there (the-journey.svg is
+// copied beside this file): the thread, seeds, the bloom on an
 // off-white disc, the hand, and Health's things (a record folder, a pulse card, a pill bottle, a capsule, a vial and
 // a lab report). Writes them to src/site/illustrations/:
 //
@@ -16,7 +17,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const set = path.join(root, 'design-system/project/assets/Illustrations');
+const here = path.dirname(fileURLToPath(import.meta.url));
 const out = path.join(root, 'src/site/illustrations');
 
 const C = { sage500: '#9CAF88', sage300: '#B9C7A9', sage200: '#D5DFCA', sage700: '#55694A', pine: '#18211B', paper: '#F7F5EF', tomato: '#E8412C' };
@@ -71,7 +72,7 @@ const svg = (w, h, body) =>
   `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}">\n<rect width="${w}" height="${h}" fill="${C.sage500}"/>\n${body.join('\n')}\n</svg>\n`;
 
 // The closing strip. The tangle is the approved one from the-journey.svg, so both strips are drawn by one hand.
-const journey = fs.readFileSync(path.join(set, 'the-journey.svg'), 'utf8');
+const journey = fs.readFileSync(path.join(here, 'the-journey.svg'), 'utf8');
 const tangle = journey.split('\n').find(l => l.startsWith('<path d="M299.3'));
 if (!tangle) throw new Error('the tangle in the-journey.svg was not found');
 
