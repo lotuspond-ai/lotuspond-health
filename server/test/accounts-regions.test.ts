@@ -75,6 +75,41 @@ async function signInFromApp(origin: string, who: { email: string; region?: stri
   return { verifier, code: link.searchParams.get('code'), apiOrigin: link.searchParams.get('api_origin'), error: link.searchParams.get('error') };
 }
 
+/** A browser on the website: cookies per host, as browsers keep them; goes through the stand-in Accounts page on
+ *  whichever host it is sent to. Returns the final redirect from Health and the cookies each host set. */
+async function webSignIn(startOrigin: string, who: { email: string; region?: string }, intent = 'login') {
+  const jars = new Map<string, string[]>();
+  const go = async (url: string, init: RequestInit = {}) => {
+    const u = new URL(url);
+    const jar = jars.get(u.origin) ?? [];
+    jars.set(u.origin, jar);
+    const headers = new Headers(init.headers);
+    headers.set('sec-fetch-site', 'same-origin');
+    if (jar.length) headers.set('cookie', jar.join('; '));
+    const res = await hostFor(u.origin).request(u.toString(), { ...init, headers });
+    for (const line of res.headers.getSetCookie()) { const pair = line.split(';')[0]; if (!pair.endsWith('=')) jar.push(pair); }
+    return res;
+  };
+  let next = `${startOrigin}/api/auth/accounts/start?intent=${intent}`;
+  const hosts: string[] = [];
+  for (let i = 0; i < 3; i++) {
+    const origin = new URL(next).origin;
+    hosts.push(origin);
+    const start = await go(next);
+    assert.equal(start.status, 302, await start.clone().text());
+    const authorize = new URL(start.headers.get('location')!, origin);
+    const form = new URLSearchParams({ email: who.email, email_verified: 'true' });
+    if (who.region) form.set('region', who.region);
+    for (const k of ['client_id', 'redirect_uri', 'state', 'nonce', 'code_challenge']) form.set(k, authorize.searchParams.get(k)!);
+    const issued = await go(`${origin}${authorize.pathname}`, { method: 'POST', body: form.toString(), headers: { 'content-type': 'application/x-www-form-urlencoded' } });
+    const done = await go(issued.headers.get('location')!);
+    const to = new URL(done.headers.get('location')!, origin);
+    if (!to.pathname.endsWith('/accounts/start')) return { to, hosts, jars };
+    next = to.toString();
+  }
+  throw new Error('handed between hosts more than twice');
+}
+
 const appCall = (origin: string, method: string, url: string, body?: unknown, token?: string) => hostFor(origin).request(new URL(url, origin).toString(), {
   method,
   headers: { 'x-lotuspond-client': 'app', origin: 'capacitor://localhost', ...(token ? { authorization: `Bearer ${token}` } : {}), ...(body ? { 'content-type': 'application/json' } : {}) },
@@ -116,6 +151,37 @@ describe('LotusPond Accounts across regional hosts', () => {
     const done = await appCall(IN, 'POST', '/api/auth/accounts/complete', { ...answers, pendingToken: started.pendingToken });
     assert.equal(done.status, 201, await done.clone().text());
     assert.equal((await inDb.select().from(users).where(eq(users.email, address))).length, 1);
+  });
+
+  test('the website: an India account signing in on the Europe site is sent to sign in on the India site', async () => {
+    const address = email('web-india');
+    assert.equal((await hostIn.request(`${IN}/api/auth/register`, {
+      method: 'POST', body: JSON.stringify(registration(address, 'IN')),
+      headers: { 'content-type': 'application/json', 'sec-fetch-site': 'same-origin' },
+    })).status, 201);
+    const { to, hosts, jars } = await webSignIn(EU, { email: address });
+    assert.deepEqual(hosts, [EU, IN], 'started on Europe, finished on India');
+    assert.equal(to.toString(), `${IN}/app`);
+    assert.ok((jars.get(IN) ?? []).some(c => /^lp_session=in\./.test(c)), 'the India site holds the session');
+    assert.ok(!(jars.get(EU) ?? []).some(c => c.startsWith('lp_session=')), 'the Europe site holds none');
+  });
+
+  test('the website: someone new whose LotusPond account is in India finishes sign-up on the India site', async () => {
+    const { to, hosts } = await webSignIn(EU, { email: email('web-new'), region: 'in' }, 'signup');
+    assert.deepEqual(hosts, [EU, IN]);
+    assert.equal(`${to.origin}${to.pathname}${to.search}`, `${IN}/signup?accounts=continue`);
+  });
+
+  test('the website is handed on once at most', async () => {
+    // Accounts says Europe while the shared directory holds the account in India: India must not send it back.
+    const address = email('web-loop');
+    await hostIn.request(`${IN}/api/auth/register`, {
+      method: 'POST', body: JSON.stringify(registration(address, 'IN')),
+      headers: { 'content-type': 'application/json', 'sec-fetch-site': 'same-origin' },
+    });
+    const { to, hosts } = await webSignIn(EU, { email: address, region: 'eu' });
+    assert.deepEqual(hosts, [EU, IN]);
+    assert.equal(to.searchParams.get('accounts_error'), 'wrong_region');
   });
 
   test('the link back offers only hosts this deployment lists', async () => {

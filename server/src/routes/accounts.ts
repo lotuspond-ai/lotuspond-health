@@ -42,6 +42,8 @@ interface Flow {
   state: string; nonce: string; verifier: string; signUp: boolean; exp: number;
   /** The app's PKCE challenge, when an app started this sign-in in the system browser. */
   app?: string;
+  /** The website: this sign-in was handed over from another regional host, so it is not handed on again. */
+  hop?: boolean;
 }
 type Pending = AccountsIdentity & { exp: number };
 /** The one-time code handed to an app: a session for an account, or an identity waiting to finish sign-up. */
@@ -207,6 +209,7 @@ a{display:inline-block;margin-top:1rem;padding:.8rem 1.4rem;border-radius:.6rem;
     const flow: Flow = {
       state: randomToken(), nonce: randomToken(), verifier: randomToken(), signUp, exp: inSeconds(FLOW_TTL_S),
       ...(forApp ? { app: appChallenge } : {}),
+      ...(!forApp && c.req.query('hop') === '1' ? { hop: true } : {}),
     };
     put(c, FLOW_COOKIE, flow, FLOW_TTL_S);
     return c.redirect(await client.authorizeUrl({ redirectUri: redirectUri(c), state: flow.state, nonce: flow.nonce, verifier: flow.verifier, signUp }), 302);
@@ -242,8 +245,14 @@ a{display:inline-block;margin-top:1rem;padding:.8rem 1.4rem;border-radius:.6rem;
         : { k: 'pending', id: outcome.id, ch, jti: randomToken(), exp: inSeconds(APP_CODE_TTL_S) };
       return toApp(c, { code: box(code) });
     }
-    // The website does not move between regional hosts here: an account held elsewhere is refused, as before.
-    if (outcome.kind === 'error' || outcome.kind === 'elsewhere') return fail(c, outcome.kind === 'error' ? outcome.code : 'wrong_region', flow.signUp);
+    // The website: an account held by another regional host signs in there, on that host's own site and session.
+    // The browser starts again on that host (LotusPond Accounts remembers the person, so it does not ask again),
+    // rather than carrying a code across hosts that only the URL would protect. Handed over once at most.
+    if (outcome.kind === 'elsewhere') {
+      if (flow.hop) return fail(c, 'wrong_region', flow.signUp);
+      return c.redirect(`${outcome.origin}${COOKIE_PATH}/start?${new URLSearchParams({ intent: flow.signUp ? 'signup' : 'login', hop: '1' })}`, 302);
+    }
+    if (outcome.kind === 'error') return fail(c, outcome.code, flow.signUp);
     if (outcome.kind === 'account') {
       await signIn(c, outcome.cell, outcome.user);
       return back(c, '/app');
