@@ -11,6 +11,10 @@ The links work once [lotuspond-ai/lotuspond#49](https://github.com/lotuspond-ai/
 - **Health opens in India only at first.** Health sign-up accepts only people resident in India. Their accounts and records are kept in the India cell. The other cells stay in the code and open later by configuration.
 - **Domains.** Accounts is at `accounts.lotuspond.ai`, Health stays at `health.lotuspond.ai`, and hosted Works is at `works.lotuspond.ai`.
 
+## Settled by the owner, 2026-11-17
+
+- **Existing Health accounts are linked by verified email.** The first time someone signs in with LotusPond Accounts, a Health account with the same email is joined to it when Accounts says that email is verified. No sign-in with the old Health password is asked for.
+
 ## What changes
 
 - **Sign-up and sign-in move to LotusPond Accounts.**
