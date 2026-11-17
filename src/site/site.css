@@ -317,9 +317,6 @@ p, li { text-wrap: pretty; }
 .callout ul { margin-top: 10px; }
 .callout--medical { border-left-color: var(--pollen); background: #fbf6e9; }
 .muted { color: var(--ink-2); }
-/* Code samples on the developers pages. */
-pre.code { margin-top: 14px; padding: 16px 18px; border-radius: 14px; background: var(--pond); color: var(--foam); overflow-x: auto; font: 13.5px/1.55 ui-monospace, 'SF Mono', Menlo, Consolas, monospace; }
-pre.code code { background: none; padding: 0; color: inherit; font: inherit; }
 code { font: 0.88em/1.4 ui-monospace, 'SF Mono', Menlo, Consolas, monospace; background: var(--mist-2); border-radius: 4px; padding: 1px 5px; overflow-wrap: anywhere; }
 .ph { background: var(--pollen-soft); color: #5e4105; border-radius: 4px; padding: 1px 5px; font-weight: 600; font-size: 0.94em; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
 .table-wrap { overflow-x: auto; border-radius: 14px; box-shadow: inset 0 0 0 1px var(--line); background: var(--paper); }

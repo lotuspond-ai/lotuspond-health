@@ -214,7 +214,7 @@ describe('organisation API: sandbox, console, MCP', () => {
     for (const i of INTEGRATIONS) {
       const row = new RegExp(`<tr data-integration="${i.id}">(.*?)</tr>`).exec(html)?.[1];
       assert.ok(row, `${i.id} has a row`);
-      assert.match(row, new RegExp(`<td>(<b>)?${INTEGRATION_STATUS_TEXT[i.status].label}(</b>)?</td>`), `${i.id} shows "${INTEGRATION_STATUS_TEXT[i.status].label}"`);
+      assert.match(row, new RegExp(`<span class="dev-status dev-status-${i.status}">${INTEGRATION_STATUS_TEXT[i.status].label}</span>`), `${i.id} shows "${INTEGRATION_STATUS_TEXT[i.status].label}"`);
     }
     assert.equal((html.match(/data-integration=/g) ?? []).length, INTEGRATIONS.length, 'no system the catalogue does not list');
   });

@@ -1,7 +1,10 @@
 <!doctype html>
 <html lang="en">
   <head>
-    <!-- @include head -->
+    <!-- @include meta -->
+    <meta name="theme-color" content="#9caf88" />
+    <link rel="stylesheet" href="/src/site/home.css" />
+    <link rel="stylesheet" href="/src/site/developers.css" />
     <title>Developers · LotusPond Health</title>
     <meta name="description" content="One API and one MCP server for hospital information systems in India. Start in the sandbox hospital today with an API key from the developer console." />
     <link rel="canonical" href="%SITE_URL%/developers/" />
@@ -12,24 +15,27 @@
     <meta name="twitter:title" content="Developers · LotusPond Health" />
     <meta name="twitter:description" content="One API and one MCP server for hospital information systems in India." />
   </head>
-  <body>
-    <!-- @include header -->
+  <body class="home">
+    <!-- Drawn in the LotusPond design system, like the landing page: home.css for the tokens, type, buttons, sheets,
+         header and footer, and developers.css for the tables, code and status pills. -->
+    <!-- @include dev-nav -->
     <main id="main">
-      <header class="doc-hero">
-        <div class="wrap">
-          <p class="eyebrow">For developers and healthcare companies</p>
-          <h1>One API for India’s hospital systems</h1>
-          <p class="doc-hero__lede">Find patients, list their visits, attach documents and check claims through one REST API and one MCP server, on your organisation’s authority. Results come back as FHIR R4. Start today in our sandbox hospital, with no sales call.</p>
-          <div class="hero__actions">
-            <a class="button button--primary" href="/developers/console/">Open the developer console</a>
-            <a class="button button--ghost" href="#quickstart">Read the quickstart</a>
+      <section class="dev-hero" aria-labelledby="hero-title">
+        <div class="home-wrap">
+          <p class="home-kicker"><b>LotusPond Health for developers</b> <span>Sandbox open</span></p>
+          <h1 class="home-d-xl" id="hero-title">One API for India’s hospital <span class="home-u home-u-draw">systems.<svg viewBox="0 0 200 20" preserveAspectRatio="none" aria-hidden="true" focusable="false"><path pathLength="1" d="M3 12C38 4 86 17 128 9s52-3 69 2" /></svg></span></h1>
+          <p class="home-lede">Find patients, list their visits, attach documents and check claims through one REST API and one MCP server, on your organisation’s authority. Results come back as FHIR R4. Start today in our sandbox hospital, with no sales call.</p>
+          <div class="home-cta">
+            <a class="home-btn home-btn-ink" href="/developers/console/">Open the developer console <span aria-hidden="true">→</span></a>
+            <a class="home-btn home-btn-light" href="#quickstart">Read the quickstart</a>
           </div>
         </div>
-      </header>
+      </section>
 
-      <div class="wrap doc">
-        <nav class="toc" aria-label="On this page">
-          <h2>On this page</h2>
+      <section class="home-sheet" aria-label="Developer guide">
+      <div class="home-wrap dev-doc">
+        <nav class="dev-toc" aria-label="On this page">
+          <h2 class="home-label">On this page</h2>
           <ol>
             <li><a href="#systems">Systems you can reach</a></li>
             <li><a href="#quickstart">Quickstart</a></li>
@@ -40,28 +46,28 @@
           </ol>
         </nav>
 
-        <div class="prose">
+        <div class="dev-prose">
           <section id="systems" aria-labelledby="systems-title">
-            <h2 id="systems-title">Systems you can reach</h2>
+            <h2 class="home-d-md" id="systems-title">Systems you can reach</h2>
             <p>The status of each system is stated plainly. We do not have partnership agreements with these vendors; product names are used only to say which systems a connection can reach. The same list is published as JSON at <a href="/v1/connectors?region=in"><code>/v1/connectors</code></a>.</p>
-            <div class="table-wrap">
-              <table class="table table--stack">
+            <div class="dev-table-wrap">
+              <table class="dev-table">
                 <thead>
                   <tr><th scope="col">System</th><th scope="col">Status</th><th scope="col">How we reach it</th><th scope="col">Used by</th></tr>
                 </thead>
                 <tbody>
-                  <tr data-integration="sandbox"><th scope="row">LotusPond sandbox hospital</th><td><b>Available</b></td><td>Synthetic patients, visits and claims, for building and testing</td><td>Every new organisation, from the first key</td></tr>
-                  <tr data-integration="fhir"><th scope="row">Any FHIR R4 server</th><td><b>Available on request</b></td><td>FHIR R4 REST: Patient, Encounter and DocumentReference</td><td>Hospitals whose HIS exposes FHIR R4</td></tr>
-                  <tr data-integration="bahmni"><th scope="row">Bahmni and OpenMRS</th><td><b>Available on request</b></td><td>OpenMRS FHIR2 module (FHIR R4)</td><td>Public and non-profit hospitals and clinics</td></tr>
-                  <tr data-integration="trakcare"><th scope="row">InterSystems TrakCare</th><td><b>Available on request</b></td><td>FHIR R4 through the hospital’s InterSystems interoperability toolkit</td><td>Manipal Hospitals, Sir Ganga Ram Hospital</td></tr>
-                  <tr data-integration="eka"><th scope="row">Eka Care EMR</th><td>In build</td><td>Eka’s published developer APIs, with the clinic’s consent</td><td>Clinics and doctors using Eka</td></tr>
-                  <tr data-integration="abdm"><th scope="row">ABDM-certified HIS (consented records)</th><td>Planned</td><td>ABDM health-information-user flow, with each patient’s consent</td><td>C-DAC e-Sushrut, NIC NextGen eHospital and other certified systems</td></tr>
-                  <tr data-integration="nhcx"><th scope="row">NHCX claims exchange</th><td>Planned</td><td>National Health Claims Exchange (FHIR claim profiles)</td><td>Insurers and TPAs on NHCX</td></tr>
-                  <tr data-integration="akhil"><th scope="row">Akhil Systems Miracle HIS</th><td>Planned</td><td>Needs Akhil Systems’ partnership</td><td>Aster, Paras, probably CARE</td></tr>
-                  <tr data-integration="karexpert"><th scope="row">KareXpert</th><td>Planned</td><td>Needs KareXpert’s partnership</td><td>Artemis and mid-size hospitals</td></tr>
-                  <tr data-integration="insta"><th scope="row">Practo Insta HMS</th><td>Planned</td><td>Needs Practo’s partnership</td><td>Clinic chains and hospitals</td></tr>
-                  <tr data-integration="suvarna"><th scope="row">Suvarna HIMS</th><td>Planned</td><td>Needs Suvarna’s partnership</td><td>Probably KIMS; medical colleges</td></tr>
-                  <tr data-integration="mocdoc"><th scope="row">MocDoc</th><td>Planned</td><td>Published REST API; keys come through each MocDoc customer</td><td>Small and mid-size hospitals and clinics</td></tr>
+                  <tr data-integration="sandbox"><th scope="row">LotusPond sandbox hospital</th><td><span class="dev-status dev-status-available">Available</span></td><td>Synthetic patients, visits and claims, for building and testing</td><td>Every new organisation, from the first key</td></tr>
+                  <tr data-integration="fhir"><th scope="row">Any FHIR R4 server</th><td><span class="dev-status dev-status-on_request">Available on request</span></td><td>FHIR R4 REST: Patient, Encounter and DocumentReference</td><td>Hospitals whose HIS exposes FHIR R4</td></tr>
+                  <tr data-integration="bahmni"><th scope="row">Bahmni and OpenMRS</th><td><span class="dev-status dev-status-on_request">Available on request</span></td><td>OpenMRS FHIR2 module (FHIR R4)</td><td>Public and non-profit hospitals and clinics</td></tr>
+                  <tr data-integration="trakcare"><th scope="row">InterSystems TrakCare</th><td><span class="dev-status dev-status-on_request">Available on request</span></td><td>FHIR R4 through the hospital’s InterSystems interoperability toolkit</td><td>Manipal Hospitals, Sir Ganga Ram Hospital</td></tr>
+                  <tr data-integration="eka"><th scope="row">Eka Care EMR</th><td><span class="dev-status dev-status-in_build">In build</span></td><td>Eka’s published developer APIs, with the clinic’s consent</td><td>Clinics and doctors using Eka</td></tr>
+                  <tr data-integration="abdm"><th scope="row">ABDM-certified HIS (consented records)</th><td><span class="dev-status dev-status-planned">Planned</span></td><td>ABDM health-information-user flow, with each patient’s consent</td><td>C-DAC e-Sushrut, NIC NextGen eHospital and other certified systems</td></tr>
+                  <tr data-integration="nhcx"><th scope="row">NHCX claims exchange</th><td><span class="dev-status dev-status-planned">Planned</span></td><td>National Health Claims Exchange (FHIR claim profiles)</td><td>Insurers and TPAs on NHCX</td></tr>
+                  <tr data-integration="akhil"><th scope="row">Akhil Systems Miracle HIS</th><td><span class="dev-status dev-status-planned">Planned</span></td><td>Needs Akhil Systems’ partnership</td><td>Aster, Paras, probably CARE</td></tr>
+                  <tr data-integration="karexpert"><th scope="row">KareXpert</th><td><span class="dev-status dev-status-planned">Planned</span></td><td>Needs KareXpert’s partnership</td><td>Artemis and mid-size hospitals</td></tr>
+                  <tr data-integration="insta"><th scope="row">Practo Insta HMS</th><td><span class="dev-status dev-status-planned">Planned</span></td><td>Needs Practo’s partnership</td><td>Clinic chains and hospitals</td></tr>
+                  <tr data-integration="suvarna"><th scope="row">Suvarna HIMS</th><td><span class="dev-status dev-status-planned">Planned</span></td><td>Needs Suvarna’s partnership</td><td>Probably KIMS; medical colleges</td></tr>
+                  <tr data-integration="mocdoc"><th scope="row">MocDoc</th><td><span class="dev-status dev-status-planned">Planned</span></td><td>Published REST API; keys come through each MocDoc customer</td><td>Small and mid-size hospitals and clinics</td></tr>
                 </tbody>
               </table>
             </div>
@@ -74,13 +80,13 @@
           </section>
 
           <section id="quickstart" aria-labelledby="quickstart-title">
-            <h2 id="quickstart-title">Quickstart</h2>
+            <h2 class="home-d-md" id="quickstart-title">Quickstart</h2>
             <ol>
               <li><a href="/signup">Create a LotusPond account</a>, then open the <a href="/developers/console/">developer console</a> and make an organisation.</li>
               <li>Make an API key and choose what it may do. The key is shown once; keep it in your secret store.</li>
               <li>List your connections. Every organisation has a sandbox hospital with synthetic patients.</li>
             </ol>
-            <pre class="code"><code>curl https://health.lotuspond.ai/v1/connections \
+            <pre class="dev-code"><code>curl https://health.lotuspond.ai/v1/connections \
   -H "Authorization: Bearer lpk_…"
 
 curl https://health.lotuspond.ai/v1/operations/patients.search \
@@ -90,9 +96,9 @@ curl https://health.lotuspond.ai/v1/operations/patients.search \
           </section>
 
           <section id="mcp" aria-labelledby="mcp-title">
-            <h2 id="mcp-title">MCP server</h2>
+            <h2 class="home-d-md" id="mcp-title">MCP server</h2>
             <p>Give your own agents the same operations as tools. Point any MCP client that supports Streamable HTTP at the organisation endpoint and send your key as a bearer token:</p>
-            <pre class="code"><code>{
+            <pre class="dev-code"><code>{
   "mcpServers": {
     "lotuspond-hospitals": {
       "type": "http",
@@ -105,16 +111,16 @@ curl https://health.lotuspond.ai/v1/operations/patients.search \
           </section>
 
           <section id="operations" aria-labelledby="operations-title">
-            <h2 id="operations-title">Operations</h2>
-            <div class="table-wrap">
-              <table class="table table--stack">
+            <h2 class="home-d-md" id="operations-title">Operations</h2>
+            <div class="dev-table-wrap">
+              <table class="dev-table">
                 <thead><tr><th scope="col">Operation</th><th scope="col">Input</th><th scope="col">Returns</th></tr></thead>
                 <tbody>
                   <tr><th scope="row"><code>patients.search</code></th><td><code>connection</code> and an <code>identifier</code> (MRN, UHID or ABHA number), <code>name</code> or <code>phone</code>; optional <code>birthDate</code>, <code>limit</code></td><td>Bundle of Patient</td></tr>
                   <tr><th scope="row"><code>encounters.list</code></th><td><code>connection</code>, <code>patient</code>; optional <code>limit</code></td><td>Bundle of Encounter and DocumentReference</td></tr>
                   <tr><th scope="row"><code>documents.upload</code></th><td><code>connection</code>, <code>patient</code>, <code>title</code>, <code>contentType</code> (PDF, JPEG, PNG or text), base64 <code>data</code> up to 5 MB; optional <code>encounter</code>, <code>author</code></td><td>Held for approval, then DocumentReference</td></tr>
                   <tr><th scope="row"><code>claims.status</code></th><td><code>connection</code>, <code>claim</code></td><td>ClaimResponse (sandbox today; NHCX and TPA portals later)</td></tr>
-                  <tr><th scope="row"><code>preauth.submit</code></th><td>Planned</td><td>Claim and ClaimResponse</td></tr>
+                  <tr><th scope="row"><code>preauth.submit</code></th><td><span class="dev-status dev-status-planned">Planned</span></td><td>Claim and ClaimResponse</td></tr>
                 </tbody>
               </table>
             </div>
@@ -122,7 +128,7 @@ curl https://health.lotuspond.ai/v1/operations/patients.search \
           </section>
 
           <section id="live" aria-labelledby="live-title">
-            <h2 id="live-title">Going live with a hospital</h2>
+            <h2 class="home-d-md" id="live-title">Going live with a hospital</h2>
             <p>New organisations reach only the sandbox. To reach a real hospital system, ask for live access in the console and tell us which hospital and which system. Before we add the connection we need:</p>
             <ul>
               <li>The hospital’s written authority for your organisation to read or write the records you named.</li>
@@ -133,7 +139,7 @@ curl https://health.lotuspond.ai/v1/operations/patients.search \
           </section>
 
           <section id="safety" aria-labelledby="safety-title">
-            <h2 id="safety-title">Safety and records</h2>
+            <h2 class="home-d-md" id="safety-title">Safety and records</h2>
             <ul>
               <li><b>Writes wait for a clinician.</b> An upload is held, with its content encrypted, until someone with approval rights in your organisation approves it in the console. Then it is sent and the held copy is deleted.</li>
               <li><b>Every call is recorded.</b> Each key lists what it may do; every call, allowed or refused, is logged with its outcome and shown in the console.</li>
@@ -143,7 +149,8 @@ curl https://health.lotuspond.ai/v1/operations/patients.search \
           </section>
         </div>
       </div>
+      </section>
     </main>
-    <!-- @include footer -->
+    <!-- @include dev-footer -->
   </body>
 </html>

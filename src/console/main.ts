@@ -51,10 +51,10 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Record<string,
 }
 
 const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : 'never');
-const badge = (text: string, kind: string) => el('span', { class: `badge badge--${kind}` }, text);
+const badge = (text: string, kind: string) => el('span', { class: `dev-status dev-status-${kind}` }, text);
 
 function button(label: string, onClick: () => Promise<void> | void, kind: 'primary' | 'ghost' = 'ghost'): HTMLButtonElement {
-  const b = el('button', { type: 'button', class: `button button--${kind} button--small` }, label);
+  const b = el('button', { type: 'button', class: `home-btn home-btn-sm ${kind === 'primary' ? 'home-btn-ink' : 'home-btn-light'}` }, label);
   b.addEventListener('click', async () => {
     b.disabled = true;
     try { await onClick(); } catch (e) { showError(e); } finally { b.disabled = false; }
@@ -72,20 +72,20 @@ function showError(e: unknown) {
 
 function signedOut() {
   const next = encodeURIComponent('/developers/console/');
-  root.replaceChildren(el('section', { class: 'panel' },
-    el('h2', {}, 'Sign in to use the console'),
+  root.replaceChildren(el('section', { class: 'home-sheet' },
+    el('h2', { class: 'home-d-sm' }, 'Sign in to use the console'),
     el('p', {}, 'The console uses your LotusPond account. Anyone with an account can make an organisation and start in the sandbox hospital.'),
-    el('div', { class: 'row-actions' },
-      el('a', { class: 'button button--primary button--small', href: `/login?next=${next}` }, 'Sign in'),
-      el('a', { class: 'button button--ghost button--small', href: `/signup?next=${next}` }, 'Create an account')),
+    el('div', { class: 'dev-actions' },
+      el('a', { class: 'home-btn home-btn-sm home-btn-ink', href: `/login?next=${next}` }, 'Sign in'),
+      el('a', { class: 'home-btn home-btn-sm home-btn-light', href: `/signup?next=${next}` }, 'Create an account')),
   ));
 }
 
 function createOrgForm(first: boolean): HTMLElement {
   const name = el('input', { type: 'text', name: 'name', required: true, minlength: '2', maxlength: '120', autocomplete: 'organization' });
-  const form = el('form', { class: 'form' },
+  const form = el('form', { class: 'dev-form' },
     el('label', {}, 'Organisation name', name),
-    el('div', { class: 'row-actions' }, el('button', { type: 'submit', class: 'button button--primary button--small' }, 'Make the organisation')));
+    el('div', { class: 'dev-actions' }, el('button', { type: 'submit', class: 'home-btn home-btn-sm home-btn-ink' }, 'Make the organisation')));
   form.addEventListener('submit', async ev => {
     ev.preventDefault();
     try {
@@ -94,8 +94,8 @@ function createOrgForm(first: boolean): HTMLElement {
       await load();
     } catch (e) { showError(e); }
   });
-  return el('section', { class: 'panel' },
-    el('h2', {}, first ? 'Make your organisation' : 'Make another organisation'),
+  return el('section', { class: 'home-sheet' },
+    el('h2', { class: 'home-d-sm' }, first ? 'Make your organisation' : 'Make another organisation'),
     el('p', {}, 'Your company or team. It starts with sandbox access: its keys reach LotusPond’s sandbox hospital, with synthetic patients, until we check your hospital’s written authority.'),
     form);
 }
@@ -106,12 +106,12 @@ function keysPanel(page: OrgPage): HTMLElement {
   const name = el('input', { type: 'text', name: 'name', required: true, maxlength: '60', value: 'Development' });
   const boxes = live.map(o => {
     const box = el('input', { type: 'checkbox', name: 'operations', value: o.id, checked: !o.writes });
-    return { box, row: el('label', { class: 'check' }, box, el('span', {}, el('code', {}, o.id), o.writes ? ' (writes wait for approval)' : '', el('small', {}, o.summary))) };
+    return { box, row: el('label', { class: 'dev-check' }, box, el('span', {}, el('code', {}, o.id), o.writes ? ' (writes wait for approval)' : '', el('small', {}, o.summary))) };
   });
-  const form = el('form', { class: 'form' },
+  const form = el('form', { class: 'dev-form' },
     el('label', {}, 'Key name', name),
     el('fieldset', {}, el('legend', {}, 'What this key may do'), ...boxes.map(b => b.row)),
-    el('div', { class: 'row-actions' }, el('button', { type: 'submit', class: 'button button--primary button--small' }, 'Make the key')));
+    el('div', { class: 'dev-actions' }, el('button', { type: 'submit', class: 'home-btn home-btn-sm home-btn-ink' }, 'Make the key')));
   form.addEventListener('submit', async ev => {
     ev.preventDefault();
     const chosen = boxes.filter(b => b.box.checked).map(b => b.box.value);
@@ -124,7 +124,7 @@ function keysPanel(page: OrgPage): HTMLElement {
   });
 
   const list = page.keys.length
-    ? el('div', { class: 'table-wrap' }, el('table', { class: 'table table--stack' },
+    ? el('div', { class: 'dev-table-wrap' }, el('table', { class: 'dev-table' },
       el('thead', {}, el('tr', {}, el('th', { scope: 'col' }, 'Key'), el('th', { scope: 'col' }, 'May do'), el('th', { scope: 'col' }, 'Last used'), el('th', { scope: 'col' }, ''))),
       el('tbody', {}, ...page.keys.map(k => el('tr', {},
         el('th', { scope: 'row' }, k.name, el('br'), el('code', {}, `${k.prefix}…`)),
@@ -135,27 +135,27 @@ function keysPanel(page: OrgPage): HTMLElement {
           await api('DELETE', `/organisations/${page.organisation.id}/keys/${k.id}`);
           await load();
         })))))))
-    : el('p', { class: 'empty' }, 'No keys yet.');
+    : el('p', { class: 'dev-empty' }, 'No keys yet.');
 
-  const secret = freshKey ? el('div', { class: 'secret', role: 'status' },
+  const secret = freshKey ? el('div', { class: 'dev-secret', role: 'status' },
     el('b', {}, `Your new key "${freshKey.name}". It is shown once: copy it into your secret store now.`),
     el('code', {}, freshKey.key),
-    el('div', { class: 'row-actions' }, button('Copy', async () => { await navigator.clipboard.writeText(freshKey!.key); }), button('Done', () => { freshKey = null; render(); }))) : null;
+    el('div', { class: 'dev-actions' }, button('Copy', async () => { await navigator.clipboard.writeText(freshKey!.key); }), button('Done', () => { freshKey = null; render(); }))) : null;
 
-  return el('section', { class: 'panel', id: 'keys' }, el('h2', {}, 'API keys'), secret, list, el('h3', {}, 'Make a key'), form);
+  return el('section', { class: 'home-sheet', id: 'keys' }, el('h2', { class: 'home-d-sm' }, 'API keys'), secret, list, el('h3', {}, 'Make a key'), form);
 }
 
 function connectionsPanel(page: OrgPage): HTMLElement {
-  return el('section', { class: 'panel', id: 'connections' },
-    el('h2', {}, 'Connections'),
+  return el('section', { class: 'home-sheet', id: 'connections' },
+    el('h2', { class: 'home-d-sm' }, 'Connections'),
     el('p', {}, 'Every call names one connection. Use its id as "connection".'),
-    el('div', { class: 'table-wrap' }, el('table', { class: 'table table--stack' },
+    el('div', { class: 'dev-table-wrap' }, el('table', { class: 'dev-table' },
       el('thead', {}, el('tr', {}, el('th', { scope: 'col' }, 'Connection'), el('th', { scope: 'col' }, 'Id'), el('th', { scope: 'col' }, 'Can do'), el('th', { scope: 'col' }, 'Last worked'))),
       el('tbody', {}, ...page.connections.map(c => el('tr', {},
         el('th', { scope: 'row' }, c.name, ' ', c.sandbox ? badge('Sandbox', 'sandbox') : badge('Live', 'live'), c.status !== 'active' ? badge('Off', 'rejected') : null),
         el('td', {}, el('code', {}, c.id)),
         el('td', {}, c.operations.join(', ')),
-        el('td', {}, c.lastError ? el('span', { class: 'error' }, c.lastError) : when(c.lastOkAt))))))));
+        el('td', {}, c.lastError ? el('span', { class: 'dev-error' }, c.lastError) : when(c.lastOkAt))))))));
 }
 
 function approvalsPanel(page: OrgPage): HTMLElement {
@@ -165,52 +165,52 @@ function approvalsPanel(page: OrgPage): HTMLElement {
     el('th', { scope: 'row' }, a.summary),
     el('td', {}, when(a.createdAt)),
     el('td', {}, a.status === 'pending'
-      ? el('div', { class: 'row-actions' },
+      ? el('div', { class: 'dev-actions' },
         button('Approve and send', async () => {
           if (!confirm('Approve this upload? It is sent to the hospital system now.')) return;
           await api('POST', `/organisations/${page.organisation.id}/approvals/${a.id}`, { decision: 'approve' });
           await load();
         }, 'primary'),
         button('Reject', async () => { await api('POST', `/organisations/${page.organisation.id}/approvals/${a.id}`, { decision: 'reject' }); await load(); }))
-      : el('span', {}, badge(a.status, a.status), a.error ? el('span', { class: 'error' }, ` ${a.error}`) : '', a.decidedBy ? ` by ${a.decidedBy}` : '')));
-  const table = (rows: Approval[]) => el('div', { class: 'table-wrap' }, el('table', { class: 'table table--stack' },
+      : el('span', {}, badge(a.status, a.status), a.error ? el('span', { class: 'dev-error' }, ` ${a.error}`) : '', a.decidedBy ? ` by ${a.decidedBy}` : '')));
+  const table = (rows: Approval[]) => el('div', { class: 'dev-table-wrap' }, el('table', { class: 'dev-table' },
     el('thead', {}, el('tr', {}, el('th', { scope: 'col' }, 'Write'), el('th', { scope: 'col' }, 'Asked'), el('th', { scope: 'col' }, 'Decision'))),
     el('tbody', {}, ...rows.map(row))));
-  return el('section', { class: 'panel', id: 'approvals' },
-    el('h2', {}, 'Approvals'),
+  return el('section', { class: 'home-sheet', id: 'approvals' },
+    el('h2', { class: 'home-d-sm' }, 'Approvals'),
     el('p', {}, 'Uploads wait here until a clinician in your organisation approves them. Check what the summary says before you approve.'),
-    pending.length ? table(pending) : el('p', { class: 'empty' }, 'Nothing is waiting.'),
+    pending.length ? table(pending) : el('p', { class: 'dev-empty' }, 'Nothing is waiting.'),
     past.length ? el('h3', {}, 'Decided') : null,
     past.length ? table(past) : null);
 }
 
 function callsPanel(page: OrgPage): HTMLElement {
-  return el('section', { class: 'panel', id: 'calls' },
-    el('h2', {}, 'Recent calls'),
-    page.calls.length ? el('div', { class: 'table-wrap' }, el('table', { class: 'table table--stack' },
+  return el('section', { class: 'home-sheet', id: 'calls' },
+    el('h2', { class: 'home-d-sm' }, 'Recent calls'),
+    page.calls.length ? el('div', { class: 'dev-table-wrap' }, el('table', { class: 'dev-table' },
       el('thead', {}, el('tr', {}, el('th', { scope: 'col' }, 'When'), el('th', { scope: 'col' }, 'Operation'), el('th', { scope: 'col' }, 'Outcome'))),
       el('tbody', {}, ...page.calls.map(c => el('tr', {}, el('th', { scope: 'row' }, when(c.at)), el('td', {}, el('code', {}, c.operation)), el('td', {}, badge(c.outcome.replace('_', ' '), c.outcome)))))))
-      : el('p', { class: 'empty' }, 'No calls yet. Try the quickstart below.'));
+      : el('p', { class: 'dev-empty' }, 'No calls yet. Try the quickstart below.'));
 }
 
 function livePanel(page: OrgPage): HTMLElement | null {
   const o = page.organisation;
   if (o.access === 'live') return null;
   if (o.liveRequestedAt) {
-    return el('section', { class: 'panel' }, el('h2', {}, 'Live access'),
+    return el('section', { class: 'home-sheet' }, el('h2', { class: 'home-d-sm' }, 'Live access'),
       el('p', {}, `You asked for live access on ${when(o.liveRequestedAt)}. We will write to you about the hospital’s written authority and the connection details.`));
   }
   const systems = el('input', { type: 'text', required: true, maxlength: '300', placeholder: 'e.g. TrakCare, Bahmni, another FHIR R4 system' });
   const hospital = el('input', { type: 'text', required: true, maxlength: '300', placeholder: 'Hospital name and city' });
   const note = el('textarea', { maxlength: '2000', placeholder: 'What you will read or write, and who at the hospital has agreed' });
-  const form = el('form', { class: 'form' },
+  const form = el('form', { class: 'dev-form' },
     el('label', {}, 'Which systems', systems), el('label', {}, 'Which hospital', hospital), el('label', {}, 'Anything else', note),
-    el('div', { class: 'row-actions' }, el('button', { type: 'submit', class: 'button button--primary button--small' }, 'Ask for live access')));
+    el('div', { class: 'dev-actions' }, el('button', { type: 'submit', class: 'home-btn home-btn-sm home-btn-ink' }, 'Ask for live access')));
   form.addEventListener('submit', async ev => {
     ev.preventDefault();
     try { await api('POST', `/organisations/${o.id}/live-request`, { systems: systems.value, hospital: hospital.value, note: note.value }); await load(); } catch (e) { showError(e); }
   });
-  return el('section', { class: 'panel', id: 'live' }, el('h2', {}, 'Go live with a hospital'),
+  return el('section', { class: 'home-sheet', id: 'live' }, el('h2', { class: 'home-d-sm' }, 'Go live with a hospital'),
     el('p', {}, 'To reach a real system we need the hospital’s written authority, a service account from its IT team, and a data-processing agreement. We never sign in as staff or work around a system’s access controls.'),
     form);
 }
@@ -219,12 +219,12 @@ function quickstart(page: OrgPage): HTMLElement {
   const conn = page.connections.find(c => c.sandbox)?.id ?? '<connection id>';
   const curl = `curl ${ORIGIN}/v1/operations/patients.search \\\n  -H "Authorization: Bearer lpk_…" -H "Content-Type: application/json" \\\n  -d '{"connection": "${conn}", "name": "asha"}'`;
   const mcp = JSON.stringify({ mcpServers: { 'lotuspond-hospitals': { type: 'http', url: `${ORIGIN}/v1/mcp`, headers: { Authorization: 'Bearer lpk_…' } } } }, null, 2);
-  return el('section', { class: 'panel', id: 'quickstart' },
-    el('h2', {}, 'Quickstart'),
+  return el('section', { class: 'home-sheet', id: 'quickstart' },
+    el('h2', { class: 'home-d-sm' }, 'Quickstart'),
     el('p', {}, 'Search the sandbox hospital with your key:'),
-    el('pre', { class: 'code' }, el('code', {}, curl)),
+    el('pre', { class: 'dev-code' }, el('code', {}, curl)),
     el('p', {}, 'Or give your agents the same operations through MCP:'),
-    el('pre', { class: 'code' }, el('code', {}, mcp)),
+    el('pre', { class: 'dev-code' }, el('code', {}, mcp)),
     el('p', {}, 'Sandbox patients include Asha Raman (MRN1001) and Vikram Nair (MRN1002); claims CLM-1001, CLM-1002, CLM-1003 and PA-2001.'));
 }
 
@@ -232,8 +232,8 @@ let page: OrgPage | null = null;
 
 function render() {
   if (!overview) return;
-  errorBox = el('p', { class: 'error', role: 'alert', hidden: true });
-  const head = el('div', { class: 'panel__head' }, el('p', { class: 'muted' }, `Signed in as ${overview.account.email}`));
+  errorBox = el('p', { class: 'dev-error', role: 'alert', hidden: true });
+  const head = el('p', { class: 'dev-account' }, `Signed in as ${overview.account.email}`);
   if (!overview.organisations.length) { root.replaceChildren(head, errorBox, createOrgForm(true)); return; }
   const picker = overview.organisations.length > 1 ? (() => {
     const s = el('select', { 'aria-label': 'Organisation' }, ...overview!.organisations.map(o => el('option', { value: o.id, selected: o.id === current }, o.name)));
@@ -242,9 +242,9 @@ function render() {
   })() : null;
   if (!page) { root.replaceChildren(head, errorBox); return; }
   const o = page.organisation;
-  const title = el('section', { class: 'panel' },
-    el('div', { class: 'panel__head' }, el('h2', {}, o.name), el('div', { class: 'row-actions' }, picker, o.access === 'live' ? badge('Live access', 'live') : badge('Sandbox access', 'sandbox'))),
-    el('p', { class: 'muted' }, `Your role: ${o.role}. Data region: ${o.region}.`));
+  const title = el('section', { class: 'home-sheet' },
+    el('div', { class: 'dev-panel-head' }, el('h2', { class: 'home-d-sm' }, o.name), el('div', { class: 'dev-actions' }, picker, o.access === 'live' ? badge('Live access', 'live') : badge('Sandbox access', 'sandbox'))),
+    el('p', { class: 'dev-muted' }, `Your role: ${o.role}. Data region: ${o.region}.`));
   root.replaceChildren(head, errorBox, title, keysPanel(page), connectionsPanel(page), approvalsPanel(page), callsPanel(page), quickstart(page), ...[livePanel(page)].filter(Boolean) as HTMLElement[], createOrgForm(false));
 }
 
@@ -253,7 +253,7 @@ async function load() {
     overview = await api<Overview>('GET', '');
   } catch (e) {
     if (e instanceof ApiError && e.status === 401) return signedOut();
-    root.replaceChildren(el('p', { class: 'error' }, e instanceof Error ? e.message : 'The console could not load.'));
+    root.replaceChildren(el('p', { class: 'dev-error' }, e instanceof Error ? e.message : 'The console could not load.'));
     return;
   }
   if (!current || !overview.organisations.some(o => o.id === current)) current = overview.organisations[0]?.id ?? null;
