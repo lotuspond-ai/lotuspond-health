@@ -212,7 +212,7 @@ html { scroll-padding-top: calc(var(--header, 72px) + 16px); }
 .home-tile-organ .home-tile-media { flex: 1; min-height: 460px; }
 .home-tile-organ .home-tile-media img { position: absolute; inset: 0; object-position: 30% 0; }
 .home-tile-history, .home-tile-files { grid-column: span 5; }
-.home-tile-history .home-tile-media { aspect-ratio: 780 / 776; }
+.home-tile-history .home-tile-media { aspect-ratio: 1; }
 .home-tile-files .home-tile-media { aspect-ratio: 16 / 10; }
 .home-tile-files .home-tile-media img { object-position: 0 0; }
 .home-tile-family { grid-column: span 12; display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); align-items: center; }
