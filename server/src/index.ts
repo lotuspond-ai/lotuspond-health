@@ -179,6 +179,7 @@ const server = serve({ fetch: app.fetch, port: config.port, hostname: config.hos
   else if (config.whatsapp) console.warn('[api] WhatsApp is set up but the assistant is off, so WhatsApp is off too.');
   if (extractor) console.log(`[api] reading reports with Claude: on (${config.aiExtraction.model}), only for uploads the person sends`);
   if (records) console.log(`[api] record agent: on, browsers on ${records.browserLabel}${config.records!.navigator ? `, navigator ${config.records!.navigator.model}` : ', recipes only'}${portal ? '; demo portal at /demo-portal' : ''}`);
+  if (config.accounts) console.log(`[api] LotusPond Accounts sign-in: ${config.accounts.issuer === 'fake' ? 'the stand-in issuer at /api/dev-accounts (development only)' : config.accounts.issuer}`);
   if (labs) console.log(`[api] lab booking: ${[...labs.partners.keys()].join(', ')}${labs.partners.has('fake') ? ` (the simulated lab; orders move a step every ${config.labs.fakeStepMs / 1000} s)` : ''}`);
 });
 

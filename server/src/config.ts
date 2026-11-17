@@ -53,6 +53,14 @@ const Env = z.object({
   LAB_PARTNERS: z.string().optional(),
   LAB_FAKE_STEP_MS: z.coerce.number().int().min(100).max(3_600_000).default(10_000),
   /**
+   * Sign-in through LotusPond Accounts (docs/identity.md): its OpenID Connect issuer URL, or 'fake' for the stand-in
+   * issuer inside this server (development and tests only). Unset keeps Health's own email-and-password sign-in only.
+   */
+  ACCOUNTS_ISSUER: z.string().optional(),
+  ACCOUNTS_CLIENT_ID: z.string().optional(),
+  /** Unset for a public client (PKCE only). */
+  ACCOUNTS_CLIENT_SECRET: z.string().optional(),
+  /**
    * The optional Claude read of photographed and scanned reports (docs/report-reading.md): on when Anthropic
    * credentials are set (ANTHROPIC_API_KEY, read by the SDK), unless AI_EXTRACTION=off.
    */
@@ -180,6 +188,13 @@ const Env = z.object({
   ...Object.assign({}, ...DATA_REGIONS.map(cellEnv)) as Record<string, z.ZodOptional<z.ZodString>>,
 });
 
+export interface AccountsConfig {
+  /** The issuer URL, or 'fake' for the stand-in issuer (auth/fake-accounts.ts). */
+  issuer: string;
+  clientId: string;
+  clientSecret?: string;
+}
+
 export interface FacilityConfig {
   search: boolean;
   provider: 'http' | 'fixture';
@@ -263,6 +278,8 @@ export interface Config {
   facilities: FacilityConfig;
   /** Lab partners switched on (docs/lab-booking-backend.md). */
   labs: { partners: string[]; fakeStepMs: number; orange?: OrangeConfig };
+  /** Sign-in through LotusPond Accounts, when ACCOUNTS_ISSUER is set. */
+  accounts?: AccountsConfig;
   /** The Claude read is on (credentials present and not switched off), and its model. */
   aiExtraction: { enabled: boolean; model: string };
   assistant: { enabled: boolean; model: string };
@@ -403,6 +420,21 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     const digilocker = oauthClient('DIGILOCKER', e.DIGILOCKER_CLIENT_ID, e.DIGILOCKER_CLIENT_SECRET, 'digilocker');
     if (digilocker) records.digilocker = { ...digilocker, apiUrl: e.DIGILOCKER_API_URL.replace(/\/$/, '') };
   }
+  let accounts: AccountsConfig | undefined;
+  if (e.ACCOUNTS_ISSUER) {
+    if (e.ACCOUNTS_ISSUER === 'fake') {
+      if (e.NODE_ENV === 'production') throw new Error('Invalid configuration: ACCOUNTS_ISSUER=fake is the stand-in sign-in service, for development and tests only.');
+      accounts = { issuer: 'fake', clientId: e.ACCOUNTS_CLIENT_ID ?? 'lotuspond-health' };
+    } else {
+      let url: URL;
+      try { url = new URL(e.ACCOUNTS_ISSUER); } catch { throw new Error('Invalid configuration: ACCOUNTS_ISSUER must be a URL, or fake.'); }
+      if (url.protocol !== 'https:' && !(e.NODE_ENV !== 'production' && url.hostname === 'localhost')) {
+        throw new Error('Invalid configuration: ACCOUNTS_ISSUER must use https.');
+      }
+      if (!e.ACCOUNTS_CLIENT_ID) throw new Error('Invalid configuration: ACCOUNTS_ISSUER needs ACCOUNTS_CLIENT_ID.');
+      accounts = { issuer: e.ACCOUNTS_ISSUER.replace(/\/$/, ''), clientId: e.ACCOUNTS_CLIENT_ID, ...(e.ACCOUNTS_CLIENT_SECRET ? { clientSecret: e.ACCOUNTS_CLIENT_SECRET } : {}) };
+    }
+  }
   const cellVar = (r: DataRegion, name: string) => (e as unknown as Record<string, string | undefined>)[`CELL_${r.toUpperCase()}_${name}`];
   const servedRegions = parseRegions(e.SERVED_REGIONS);
 
@@ -460,6 +492,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       timeoutMs: e.GEO_TIMEOUT_MS,
     },
     labs: { partners: labPartners, fakeStepMs: e.LAB_FAKE_STEP_MS, ...(orange ? { orange } : {}) },
+    ...(accounts ? { accounts } : {}),
     aiExtraction: { enabled: e.AI_EXTRACTION === 'on' && !!(env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN), model: e.AI_EXTRACTION_MODEL },
     assistant: { enabled: e.ASSISTANT === 'on' && !!(env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN), model: e.ASSISTANT_MODEL },
     records,

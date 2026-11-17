@@ -37,6 +37,10 @@ export interface Backend {
   /** The signed-in session, or null when signed out. */
   me(): Promise<SessionInfo | null>;
   register(input: RegisterInput): Promise<SessionInfo>;
+  /** Sign-in through LotusPond Accounts (server, website only): the identity waiting to finish sign-up, or null. */
+  accountsPending?(): Promise<{ email: string; region: string | null } | null>;
+  /** Finish sign-up after LotusPond Accounts: Health's own questions, without an email or password. */
+  completeAccountsSignUp?(input: Omit<RegisterInput, 'email' | 'password'>): Promise<SessionInfo>;
   login(input: { email: string; password: string }): Promise<SessionInfo>;
   logout(): Promise<void>;
   changePassword(currentPassword: string, newPassword: string): Promise<void>;

@@ -93,6 +93,17 @@ export class HttpBackend implements Backend {
     this.apiOrigins = info.apiOrigins ?? {};
     return info;
   }
+  async accountsPending() {
+    try {
+      return await this.request<{ email: string; region: string | null }>('GET', '/auth/accounts/pending');
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) return null;
+      throw e;
+    }
+  }
+  completeAccountsSignUp(input: Omit<RegisterInput, 'email' | 'password'>) {
+    return this.request<SessionInfo>('POST', '/auth/accounts/complete', input);
+  }
   register(input: RegisterInput) {
     if (!this.app) return this.request<SessionInfo>('POST', '/auth/register', input);
     // The account is created on the host for the country's data region (one host serves all by default).

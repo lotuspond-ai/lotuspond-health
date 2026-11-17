@@ -34,6 +34,9 @@ export const RegisterBody = z.object({
   }, { error: 'Answer the consent questions.' }),
 });
 
+/** Finishing sign-up after LotusPond Accounts: the same questions without the email and password Accounts holds. */
+export const AccountsCompleteBody = RegisterBody.omit({ email: true, password: true });
+
 export const PreferencesBody = z.object({ unitSystem: z.enum(['conventional', 'si'], { error: 'Choose conventional or SI units.' }) });
 
 export const ConsentPatchBody = z.object({
@@ -51,7 +54,8 @@ export const ChangePasswordBody = z.object({
   newPassword: NewPassword,
 });
 
-export const DeleteAccountBody = z.object({ password: z.string().max(LIMITS.passwordMax) });
+/** The password, or nothing for an account that signs in only through LotusPond Accounts (it needs a recent sign-in instead). */
+export const DeleteAccountBody = z.object({ password: z.string().max(LIMITS.passwordMax).default('') });
 
 /* ---------------- profiles ---------------- */
 

@@ -13,7 +13,10 @@ export const users = pgTable('users', {
   id: uuid('id').primaryKey().defaultRandom(),
   /** Stored lower-cased and trimmed. */
   email: text('email').notNull(),
-  passwordHash: text('password_hash').notNull(),
+  /** Argon2id hash. Null for an account that signs in only through LotusPond Accounts (docs/identity.md). */
+  passwordHash: text('password_hash'),
+  /** The account's subject (`sub`) at LotusPond Accounts, once it has signed in there. */
+  accountsSubject: text('accounts_subject'),
   /** ISO 3166-1 alpha-2 country of residence from sign-up. Null for accounts created before it was asked. */
   country: text('country'),
   /** Data-residency cell that holds this account (shared/regions.ts). */
@@ -23,7 +26,7 @@ export const users = pgTable('users', {
   ageConfirmedAt: timestamp('age_confirmed_at', { withTimezone: true }),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
-}, t => [uniqueIndex('users_email_key').on(t.email)]);
+}, t => [uniqueIndex('users_email_key').on(t.email), uniqueIndex('users_accounts_subject_key').on(t.accountsSubject)]);
 
 export const sessions = pgTable('sessions', {
   /** SHA-256 of the cookie token, so a database leak does not expose live sessions. */

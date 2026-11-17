@@ -69,6 +69,8 @@ Then open **http://localhost:8787**: the public website, with **Create free acco
 
 Delete the data folder to start over with no accounts.
 
+Sign-in through LotusPond Accounts, the one account shared with LotusPond Works, is built on Health's side and off by default. `ACCOUNTS_ISSUER=fake npm run dev` adds **Continue with LotusPond Account** to the sign-in page, backed by a stand-in for Accounts ([docs/identity.md](docs/identity.md#built-so-far)).
+
 **Things to try**
 
 1. Create an account, fill in the short setup step (or skip it).

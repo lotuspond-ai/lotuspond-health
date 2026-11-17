@@ -26,6 +26,8 @@ interface SessionState {
   init: () => Promise<void>;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (input: RegisterInput) => Promise<void>;
+  /** Finish sign-up after LotusPond Accounts (see Backend.completeAccountsSignUp). */
+  completeAccountsSignUp: (input: Omit<RegisterInput, 'email' | 'password'>) => Promise<void>;
   signOut: () => Promise<void>;
   sessionEnded: () => void;
   switchProfile: (id: string) => void;
@@ -106,6 +108,11 @@ export const useSession = create<SessionState>((set, get) => {
     signIn: async (email, password) => start(await backend.login({ email, password })),
 
     signUp: async input => start(await backend.register(input), true),
+
+    completeAccountsSignUp: async input => {
+      if (!backend.completeAccountsSignUp) throw new Error('Sign-in with LotusPond Accounts needs the LotusPond server.');
+      start(await backend.completeAccountsSignUp(input), true);
+    },
 
     signOut: async () => {
       try { await backend.logout(); } finally { reset(); }

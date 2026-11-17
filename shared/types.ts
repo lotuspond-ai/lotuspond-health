@@ -104,6 +104,8 @@ export interface Account {
   region?: 'in' | 'eu' | 'us' | 'global';
   /** How lab values are shown. */
   unitSystem?: 'conventional' | 'si';
+  /** False for an account that signs in only through LotusPond Accounts, which has no LotusPond Health password. */
+  hasPassword?: boolean;
 }
 
 /** Who a profile belongs to, relative to the account holder. */
@@ -217,7 +219,7 @@ export interface ConsentRecord {
 
 /** Account events kept in the audit log and shown as "Recent activity". */
 export type AuditKind =
-  | 'account_created' | 'sign_in' | 'sign_in_failed' | 'sign_out' | 'password_changed' | 'sessions_revoked'
+  | 'account_created' | 'sign_in' | 'sign_in_failed' | 'sign_out' | 'password_changed' | 'sessions_revoked' | 'accounts_linked'
   | 'export' | 'profile_deleted' | 'records_deleted' | 'account_deleted' | 'consent_changed' | 'preferences_changed'
   | 'lab_order_created' | 'lab_order_cancelled' | 'lab_results_saved'
   | 'agent_connected' | 'agent_disconnected' | 'agent_access' | 'agent_wrote' | 'agent_write_undone' | 'assistant_chat'
@@ -271,6 +273,8 @@ export interface ServiceInfo {
   /** API origin for each region, when regions are served by separate regional hosts (REGION_API_ORIGINS). */
   apiOrigins: Partial<Record<'in' | 'eu' | 'us' | 'global', string>>;
   consentVersion: string;
+  /** Sign-in through LotusPond Accounts is on (docs/identity.md). Health's own password sign-in stays available. */
+  accounts?: boolean;
   contacts: {
     /** Grievance officer (India, DPDP Act). */
     grievance: string | null;

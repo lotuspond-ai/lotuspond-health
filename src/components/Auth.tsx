@@ -8,6 +8,8 @@ import { guessCountry } from '../lib/country';
 import { Field } from './forms';
 import { checkSignUp, emptySignUp, signUpBlocked, toChoices, type SignUpDraft } from '../lib/signup';
 import { SignUpDetails } from './SignUpDetails';
+import { AccountsSignUp } from './AccountsSignUp';
+import { ACCOUNTS_ERRORS, accountsStartPath } from '../../shared/identity';
 import { ServerPicker } from './ServerPicker';
 import { Icon, Logo } from './ui';
 import { onAuthHash, showAuthMode, siteHref, siteLinkProps, type AuthMode } from '../site/links';
@@ -86,6 +88,21 @@ export function AuthScreen({ initialMode = 'in' }: { initialMode?: AuthMode }) {
   const [problem, setProblem] = useState<SignUpProblem | null>(null);
   const served = service?.servedRegions ?? ALL_REGIONS;
   const blocked = mode === 'up' && signUpBlocked(details, served);
+  // Sign-in through LotusPond Accounts: on the website, when the server has it switched on (docs/identity.md).
+  const accountsOn = !!service?.accounts && !isPreview && !inApp;
+  const [search] = useState(() => {
+    const read = new URLSearchParams(window.location.search);
+    // The error is shown once; it does not stay in the address.
+    if (read.has('accounts_error')) {
+      const rest = new URLSearchParams(read);
+      rest.delete('accounts_error');
+      try { history.replaceState(history.state, '', `${location.pathname}${rest.size ? `?${rest}` : ''}${location.hash}`); } catch { /* sandboxed frame */ }
+    }
+    return read;
+  });
+  const finishingAccounts = !isPreview && search.get('accounts') === 'continue';
+  const accountsError = search.get('accounts_error');
+  const accountsNotice = accountsError ? (ACCOUNTS_ERRORS as Record<string, string>)[accountsError] ?? ACCOUNTS_ERRORS.sign_in_failed : null;
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -120,6 +137,7 @@ export function AuthScreen({ initialMode = 'in' }: { initialMode?: AuthMode }) {
     <div className="auth">
       <PondPanel />
       <section className="auth__panel">
+        {finishingAccounts ? <div className="auth__card"><AccountsSignUp /></div> : (
         <form className="auth__card" onSubmit={submit} noValidate>
           <div className="seg auth__tabs" role="tablist" aria-label="Account">
             <button type="button" role="tab" aria-selected={mode === 'in'} aria-pressed={mode === 'in'} onClick={() => switchTo('in')}>Sign in</button>
@@ -128,6 +146,7 @@ export function AuthScreen({ initialMode = 'in' }: { initialMode?: AuthMode }) {
           <h2>{mode === 'in' ? 'Welcome back' : 'Start your record'}</h2>
           <p className="muted">{mode === 'in' ? 'Sign in to see your results and scans.' : 'Your account holds your profile and any family members you add.'}</p>
           {notice && <p className="notice" role="status">{notice}</p>}
+          {accountsNotice && <p className="form-error" role="alert">{accountsNotice}</p>}
 
           {mode === 'up' && (
             <Field label="Your name">{id => <input id={id} autoComplete="name" value={name} onChange={e => setName(e.target.value)} required maxLength={80} />}</Field>
@@ -148,6 +167,12 @@ export function AuthScreen({ initialMode = 'in' }: { initialMode?: AuthMode }) {
           <button className="btn btn--primary btn--block" disabled={busy || blocked}>
             {busy ? (mode === 'in' ? 'Signing in…' : 'Creating your account…') : mode === 'in' ? 'Sign in' : 'Create account'}
           </button>
+          {accountsOn && (
+            <>
+              <p className="auth__or"><span>or</span></p>
+              <a className="btn btn--block" href={accountsStartPath(mode === 'up' ? 'signup' : 'login')}>Continue with LotusPond Account</a>
+            </>
+          )}
           <p className="auth__switch">
             {mode === 'in' ? <>New to LotusPond? <button type="button" className="linkish" onClick={() => switchTo('up')}>Create an account</button></>
               : <>Already have an account? <button type="button" className="linkish" onClick={() => switchTo('in')}>Sign in</button></>}
@@ -164,6 +189,7 @@ export function AuthScreen({ initialMode = 'in' }: { initialMode?: AuthMode }) {
             <a href={siteHref('/trust/')} {...siteLinkProps}>Trust and compliance</a>
           </nav>
         </form>
+        )}
         <ServerPicker />
       </section>
     </div>
