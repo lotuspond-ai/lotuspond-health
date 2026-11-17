@@ -392,8 +392,9 @@ expect(!(await page.evaluate(() => document.documentElement.scrollWidth > window
 await shot('signup-phone', true);
 
 } catch (e) {
+  const ANSI = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, 'g'); // Playwright colours its call log
   // The first line says what timed out; the call log's first entry names the locator it was waiting for.
-  const waiting = e.message.split('\n').find(l => /waiting for/.test(l))?.replace(/\x1b\[[0-9;]*m/g, '').trim();
+  const waiting = e.message.split('\n').find(l => /waiting for/.test(l))?.replace(ANSI, '').trim();
   problems.push(`STOPPED: ${e.message.split('\n')[0]}${waiting ? ` (${waiting})` : ''}`);
   await page.screenshot({ path: `${out}/failure.png` }).catch(() => {});
 }
