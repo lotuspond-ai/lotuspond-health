@@ -80,9 +80,11 @@ if (command === 'files:rekey') {
 //   org:member <organisation id> <email> [role]         add an organisation account to an organisation (role: owner,
 //                                                       admin, editor or viewer; owner by default). The person signs up
 //                                                       in the developer console first.
-//   org:connect <organisation id> <connector> "<name>" <base url>
-//       adds a connection to a real system (fhir, bahmni, trakcare). Credentials come from the environment, never the
-//       command line: ORG_CONNECTION_TOKEN (bearer), or ORG_CONNECTION_USER and ORG_CONNECTION_PASSWORD (HTTP Basic).
+//   org:connect <organisation id> <connector> "<name>" [base url]
+//       adds a connection to a real system (fhir, bahmni, trakcare, eka). Credentials come from the environment, never
+//       the command line: ORG_CONNECTION_TOKEN (bearer), or ORG_CONNECTION_USER and ORG_CONNECTION_PASSWORD (HTTP
+//       Basic), or for Eka Care ORG_CONNECTION_CLIENT_ID, ORG_CONNECTION_CLIENT_SECRET and ORG_CONNECTION_SHARING_KEY.
+//       The base url is required for FHIR systems; Eka defaults to https://api.eka.care.
 if (['org:create', 'org:key', 'org:revoke', 'org:requests', 'org:live', 'org:connect', 'org:member'].includes(command ?? '')) {
   const [a, b, c] = process.argv.slice(3);
   const db = registry.defaultCell.db;
@@ -112,12 +114,16 @@ if (['org:create', 'org:key', 'org:revoke', 'org:requests', 'org:live', 'org:con
       console.log(`${account.email} is ${role === 'owner' || role === 'admin' ? 'an' : 'a'} ${role} of organisation ${a}.`);
     } else if (command === 'org:connect') {
       const [, , name, baseUrl] = process.argv.slice(3);
-      if (!a || !b || !name || !baseUrl) fail('Usage: org:connect <organisation id> <fhir|bahmni|trakcare> "<name>" <FHIR base url>  (credentials in ORG_CONNECTION_TOKEN, or ORG_CONNECTION_USER and ORG_CONNECTION_PASSWORD)');
-      const token = process.env.ORG_CONNECTION_TOKEN;
-      const user = process.env.ORG_CONNECTION_USER;
-      const secret = token ? { token } : user ? { username: user, password: process.env.ORG_CONNECTION_PASSWORD ?? '' } : null;
+      if (!a || !b || !name || (!baseUrl && b !== 'eka')) fail('Usage: org:connect <organisation id> <fhir|bahmni|trakcare|eka> "<name>" [base url]  (credentials in ORG_CONNECTION_TOKEN, ORG_CONNECTION_USER and ORG_CONNECTION_PASSWORD, or for Eka ORG_CONNECTION_CLIENT_ID, ORG_CONNECTION_CLIENT_SECRET and ORG_CONNECTION_SHARING_KEY)');
+      const env = process.env;
+      const secret = b === 'eka'
+        ? (env.ORG_CONNECTION_CLIENT_ID && env.ORG_CONNECTION_CLIENT_SECRET
+          ? { clientId: env.ORG_CONNECTION_CLIENT_ID, clientSecret: env.ORG_CONNECTION_CLIENT_SECRET, ...(env.ORG_CONNECTION_SHARING_KEY ? { sharingKey: env.ORG_CONNECTION_SHARING_KEY } : {}) }
+          : fail('An Eka connection needs ORG_CONNECTION_CLIENT_ID and ORG_CONNECTION_CLIENT_SECRET (and the clinic\'s ORG_CONNECTION_SHARING_KEY).'))
+        : env.ORG_CONNECTION_TOKEN ? { token: env.ORG_CONNECTION_TOKEN }
+        : env.ORG_CONNECTION_USER ? { username: env.ORG_CONNECTION_USER, password: env.ORG_CONNECTION_PASSWORD ?? '' } : null;
       const runtime = organisationRuntime({ db, keyrings: secrets.fileKeys });
-      const conn = await runtime.addConnection(a, { connectorId: b, name, settings: { baseUrl }, secret });
+      const conn = await runtime.addConnection(a, { connectorId: b, name, settings: baseUrl ? { baseUrl } : {}, secret });
       console.log(`Connection ${conn.name} (${conn.connector}): ${conn.id}${secret ? ', with sealed credentials' : ', without credentials'}.`);
     } else if (command === 'org:key') {
       if (!a || !b || !c) fail(`Usage: org:key <organisation id> "<key name>" <operation,operation|all>. Operations: ${ORGANISATION_OPERATIONS.join(', ')}.`);

@@ -63,16 +63,17 @@ Organisations reach hospital systems on their own authority, through `/v1` (REST
   npx tsx src/index.ts org:requests                       # who asked, for what
   npx tsx src/index.ts org:live <organisation id>
   ORG_CONNECTION_TOKEN=… npx tsx src/index.ts org:connect <organisation id> trakcare "City Hospital TrakCare" https://his.example.org/fhir/r4
+  ORG_CONNECTION_CLIENT_ID=… ORG_CONNECTION_CLIENT_SECRET=… ORG_CONNECTION_SHARING_KEY=… npx tsx src/index.ts org:connect <organisation id> eka "Sunrise Clinic on Eka"
   ```
 
-  Credentials come from the environment (`ORG_CONNECTION_TOKEN`, or `ORG_CONNECTION_USER` and `ORG_CONNECTION_PASSWORD`), never the command line, and are sealed with the region's file keys. Self-serve organisations can never point the server at an address of their choosing.
+  Credentials come from the environment, never the command line: `ORG_CONNECTION_TOKEN`, or `ORG_CONNECTION_USER` and `ORG_CONNECTION_PASSWORD`, or for Eka Care an API client's `ORG_CONNECTION_CLIENT_ID` and `ORG_CONNECTION_CLIENT_SECRET` with the clinic's `ORG_CONNECTION_SHARING_KEY`. They are sealed with the region's file keys. An Eka connection reaches `https://api.eka.care` unless a base url is given (Eka's sandbox is `https://api.dev.eka.care`). Self-serve organisations can never point the server at an address of their choosing.
 - **Keys.** Kept only as SHA-256 (`lpk_…`), each listing the operations it may call. Made with the console or `org:key`; revoked with the console or `org:revoke`.
 - **Calls.**
   - `GET /v1/organisation`: who the key belongs to, its access and its operations.
   - `GET /v1/connections`: the sandbox and any real systems LotusPond added.
   - `POST /v1/operations/{id}` with `{ "connection": "…", …input }`: inputs are checked by `his/operations.ts` (the same schemas the MCP tools use). Reads answer `200 { status: "done", result }` with FHIR R4.
   - Writes that need a clinician (`documents.upload`) answer `202 { status: "pending_approval", approval }`. The input is sealed until someone in the organisation approves it in the console; then it is sent and the held copy is deleted. `GET /v1/approvals/{id}` reads the outcome.
-- **Refusals.** `403 wrong_authority` (a person-only operation), `403 not_in_key`, `403 not_live` (a live connection from a sandbox organisation), `400 invalid_input`, `404 connection_not_found`, `501 operation_not_offered` (`preauth.submit`). A hospital system's own failure is `502`, or `504` on a timeout, with a message that carries no patient data.
+- **Refusals.** `403 wrong_authority` (a person-only operation), `403 not_in_key`, `422 not_supported` (the connection's system does not run that operation; refused before anything is held), `403 not_live` (a live connection from a sandbox organisation), `400 invalid_input`, `404 connection_not_found`, `501 operation_not_offered` (`preauth.submit`). A hospital system's own failure is `502`, or `504` on a timeout, with a message that carries no patient data.
 - **Audit.** Every call, allowed or refused, is recorded in `organisation_calls` with the key, the connection and the outcome, and shown in the console.
 
 ### Adapters
@@ -81,6 +82,7 @@ Organisations reach hospital systems on their own authority, through `/v1` (REST
 | --- | --- | --- |
 | `sandbox` | `his/sandbox.ts`: synthetic data, uploads kept in memory per connection | Available |
 | `fhir`, `bahmni`, `trakcare` | `his/fhir.ts`: FHIR R4 REST (Patient, Encounter, DocumentReference), bearer or Basic credentials, https only | Available on request |
+| `eka` | `his/eka.ts`: Eka Care's published EMR APIs (patients by mobile, clinic patient id or Eka id; visits from appointments, with prescription PDFs), signed in with an Eka API client and the clinic's sharing key | Available on request (reads only) |
 | Everything else in `shared/integrations.ts` | none: listed with an honest status and refused if called | In build or planned |
 
 `shared/integrations.ts` is the single list of systems and their status. It feeds `GET /v1/connectors` (`systems`), the console, and the developers page (a test checks the page matches it). Add an adapter in `his/index.ts` only together with changing that system's status to available or on request.
