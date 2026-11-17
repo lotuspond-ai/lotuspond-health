@@ -27,7 +27,7 @@ import { AccountsClient, LOGOUT_TOKEN_MAX_AGE_S, OidcError, randomToken, type Ac
 import { fakeAccounts, FAKE_ACCOUNTS_PATH, type FakeAccounts } from '../auth/fake-accounts.ts';
 import { createSession, wantsTokenSession, writeSessionCookie } from '../auth/sessions.ts';
 import { eventContext, recordEvent } from '../compliance/audit.ts';
-import { claim, locate, release } from '../compliance/directory.ts';
+import { claim, findInCells, locate, release } from '../compliance/directory.ts';
 import { conflict, HttpError, notFound } from '../lib/errors.ts';
 import { readJson, type AppEnv, type Ctx, type Deps } from '../http.ts';
 import { publicOrigin } from '../agents/oauth.ts';
@@ -216,7 +216,8 @@ a{display:inline-block;margin-top:1rem;padding:.8rem 1.4rem;border-radius:.6rem;
     if (linked) return { kind: 'account', ...linked };
     // A Health account with this email from before Accounts: linked when Accounts has verified the address
     // (settled by the owner, 2026-11-17).
-    const found = await locate(deps, id.email);
+    // With password sign-in off, Health keeps no email directory: Accounts' region claim has already chosen the host.
+    const found = config.passwordSignIn ? await locate(deps, id.email) : await findInCells(deps, id.email);
     if (found) {
       if (!found.cell) return elsewhere(found.region);
       if (found.user.accountsSubject) return { kind: 'error', code: 'already_linked' };
@@ -433,9 +434,12 @@ a{display:inline-block;margin-top:1rem;padding:.8rem 1.4rem;border-radius:.6rem;
     }
     const cell = cells.forRegion(policy.region)!;
     const taken = 'A LotusPond Health account already uses this email. Sign in with LotusPond Accounts to link it.';
-    if (await locate(deps, pending.email)) throw conflict(taken, 'email_taken');
+    // The directory keeps one email to one account across cells while Health has its own sign-up. Without it,
+    // Accounts does: one LotusPond account per email, and its subject is unique here (users_accounts_subject_key).
+    const useDirectory = config.passwordSignIn;
+    if (await (useDirectory ? locate(deps, pending.email) : findInCells(deps, pending.email))) throw conflict(taken, 'email_taken');
     const userId = crypto.randomUUID();
-    if (!(await claim(deps, pending.email, policy.region, userId))) throw conflict(taken, 'email_taken');
+    if (useDirectory && !(await claim(deps, pending.email, policy.region, userId))) throw conflict(taken, 'email_taken');
     let user: UserRow;
     try {
       user = await insertAccount(cell, { id: userId, email: pending.email, passwordHash: null, accountsSubject: pending.subject }, policy, body.displayName, body.consents.marketing);

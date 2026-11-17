@@ -13,7 +13,9 @@
     "db:migrate": "tsx src/db/migrate-cli.ts",
     "partners:import": "tsx src/facilities/import-cli.ts",
     "partners:import:prod": "node dist/facilities/import-cli.js",
-    "files:rekey": "tsx src/index.ts files:rekey"
+    "files:rekey": "tsx src/index.ts files:rekey",
+    "accounts:export": "tsx src/index.ts accounts:export",
+    "accounts:link": "tsx src/index.ts accounts:link"
   },
   "devDependencies": {
     "@types/pg": "^8.23.1",

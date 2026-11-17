@@ -273,8 +273,10 @@ export interface ServiceInfo {
   /** API origin for each region, when regions are served by separate regional hosts (REGION_API_ORIGINS). */
   apiOrigins: Partial<Record<'in' | 'eu' | 'us' | 'global', string>>;
   consentVersion: string;
-  /** Sign-in through LotusPond Accounts is on (docs/identity.md). Health's own password sign-in stays available. */
+  /** Sign-in through LotusPond Accounts is on (docs/identity.md). */
   accounts?: boolean;
+  /** Health's own email-and-password sign-up and sign-in. False once LotusPond Accounts is the only way in. */
+  passwordSignIn?: boolean;
   contacts: {
     /** Grievance officer (India, DPDP Act). */
     grievance: string | null;

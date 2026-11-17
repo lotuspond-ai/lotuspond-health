@@ -50,6 +50,18 @@ export async function locate(deps: DirDeps, email: string): Promise<Located | nu
   return null;
 }
 
+/**
+ * Find an account by email in this server's own cells, without the directory: for PASSWORD_SIGN_IN=off, when
+ * LotusPond Accounts says which region holds an account and the email directory is no longer kept.
+ */
+export async function findInCells(deps: Pick<Deps, 'cells'>, email: string): Promise<Located | null> {
+  for (const cell of deps.cells.cells) {
+    const [user] = await cell.db.select().from(users).where(eq(users.email, email)).limit(1);
+    if (user) return { region: user.region, cell, user };
+  }
+  return null;
+}
+
 /** Reserve an email for a new account. False when another account already holds it. */
 export async function claim(deps: DirDeps, email: string, region: DataRegion, userId: string): Promise<boolean> {
   const rows = await deps.db.insert(directory)

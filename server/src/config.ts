@@ -61,6 +61,11 @@ const Env = z.object({
   /** Unset for a public client (PKCE only). */
   ACCOUNTS_CLIENT_SECRET: z.string().optional(),
   /**
+   * Health's own email-and-password sign-up and sign-in, and its email directory. 'off' once every account is in
+   * LotusPond Accounts (docs/identity.md, "Moving the directory into Accounts"); needs ACCOUNTS_ISSUER.
+   */
+  PASSWORD_SIGN_IN: z.enum(['on', 'off']).default('on'),
+  /**
    * Universal links (iOS) and verified app links (Android) for returning a sign-in to the apps: the https origin of
    * the host the apps claim (shared/identity.ts, APP_LINKS_HOST), which this server must also answer for. Unset: the
    * apps' private-use scheme only.
@@ -290,6 +295,8 @@ export interface Config {
   labs: { partners: string[]; fakeStepMs: number; orange?: OrangeConfig };
   /** Sign-in through LotusPond Accounts, when ACCOUNTS_ISSUER is set. */
   accounts?: AccountsConfig;
+  /** Health's own password sign-up and sign-in, and the email directory they use. False: LotusPond Accounts only. */
+  passwordSignIn: boolean;
   /** Universal links and app links for the apps (routes/app-links.ts). */
   appLinks: { origin?: string; appleTeamId?: string; androidSha256: string[] };
   /** The Claude read is on (credentials present and not switched off), and its model. */
@@ -451,6 +458,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       accounts = { issuer: e.ACCOUNTS_ISSUER.replace(/\/$/, ''), clientId: e.ACCOUNTS_CLIENT_ID, ...(e.ACCOUNTS_CLIENT_SECRET ? { clientSecret: e.ACCOUNTS_CLIENT_SECRET } : {}) };
     }
   }
+  if (e.PASSWORD_SIGN_IN === 'off' && !accounts) throw new Error('Invalid configuration: PASSWORD_SIGN_IN=off needs ACCOUNTS_ISSUER: without passwords, LotusPond Accounts is the only way to sign in.');
   const cellVar = (r: DataRegion, name: string) => (e as unknown as Record<string, string | undefined>)[`CELL_${r.toUpperCase()}_${name}`];
   const servedRegions = parseRegions(e.SERVED_REGIONS);
 
@@ -509,6 +517,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     },
     labs: { partners: labPartners, fakeStepMs: e.LAB_FAKE_STEP_MS, ...(orange ? { orange } : {}) },
     ...(accounts ? { accounts } : {}),
+    passwordSignIn: e.PASSWORD_SIGN_IN === 'on',
     appLinks: {
       ...(e.APP_LINKS_ORIGIN ? { origin: new URL(e.APP_LINKS_ORIGIN).origin } : {}),
       ...(e.APPLE_TEAM_ID ? { appleTeamId: e.APPLE_TEAM_ID } : {}),

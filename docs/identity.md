@@ -106,11 +106,30 @@ Health reads `sub`, `email` and `email_verified`, plus two LotusPond claims whos
 - `region`: `in`, `eu`, `us` or `global`, the cell that holds the account;
 - `enterprise_connection`: present (any non-empty string) when the account was created through a company's single sign-on.
 
+### Moving the directory into Accounts
+
+Health's side is built; running it is a decision, and the privacy texts need review first ([Before launch](#before-launch)).
+
+1. **Export.** On each regional host, run `npm run accounts:export -w server -- <file>` (production: `node dist/index.js accounts:export <file>`).
+   - It writes every account in that host's cells as JSON Lines: Health's user id, email, Argon2id hash exactly as stored, region, country, creation time, and any Accounts subject already linked.
+   - The file is owner-readable only and is never overwritten. It holds emails and password hashes, so hand it to Accounts over a secure channel and delete it once imported.
+2. **Accounts imports it.** The hashes and regions stay unchanged, so people keep their password, and an email that also has a Works account is joined as described in [Existing accounts](#existing-accounts).
+3. **Link.** Accounts answers with one `{ "health_user_id", "sub" }` line per account. On each host, `accounts:link <file>` links them in one go and records `accounts_linked` for each account. It reports, without changing them:
+   - accounts already linked;
+   - conflicts (linked to another subject, or a subject already used);
+   - ids another host holds;
+   - unreadable lines.
+4. **`PASSWORD_SIGN_IN=off`** (needs `ACCOUNTS_ISSUER`). LotusPond Accounts becomes the only way in:
+   - **Password routes:** `/register`, `/login` and the password change answer `use_accounts`.
+   - **Sign-in page:** shows only Continue with LotusPond Account.
+   - **Deleting an account:** asks for a recent Accounts sign-in instead of a password.
+   - **The email directory is no longer read or written.** An account is found by its Accounts subject. The host comes from the `region` claim. One never linked is found by email in the host's own cells, and a new one is created without a directory entry.
+5. **Later**, after a reviewed migration: drop the `directory` table and `users.password_hash`. The WhatsApp directory, keyed by phone number, stays.
+
 ### Not built yet
 
 - **One-time codes across several server instances.** A traded code is remembered in memory, so with several instances it could be traded twice within its 2 minutes, and still only by the app holding the PKCE verifier.
-- **The `directory` moving into Accounts.** Health still keeps its email directory; the `region` claim is checked against it.
-- **Removing passwords** for linked accounts, after the reviewed migration.
+- **Dropping the `directory` table and `users.password_hash`**, after the reviewed migration and a period with `PASSWORD_SIGN_IN=off`.
 
 ## Before launch
 

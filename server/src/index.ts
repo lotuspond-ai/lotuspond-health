@@ -30,6 +30,7 @@ import { gmailFetcher, outlookFetcher } from './records/api/mail.ts';
 import { digilockerFetcher } from './records/api/digilocker.ts';
 import { createOrganisation, createOrganisationKey, ORGANISATION_OPERATIONS, revokeOrganisationKey } from './connectors/organisations.ts';
 import type { OperationId } from './connectors/types.ts';
+import { exportAccounts, linkAccounts, readJsonLines } from './auth/accounts-migration.ts';
 
 // This file runs from server/src (tsx) or server/dist (bundle); both are one level below server/.
 const serverRoot = fileURLToPath(new URL('..', import.meta.url));
@@ -94,7 +95,31 @@ if (command === 'org:create' || command === 'org:key' || command === 'org:revoke
   await opened.close();
   process.exit(0);
 }
-if (command) fail(`Unknown command "${command}". Commands: files:rekey, org:create, org:key, org:revoke.`);
+// Moving account identity into LotusPond Accounts (docs/identity.md, "Moving the directory into Accounts"):
+//   accounts:export <file>   every account in this server's cells, for Accounts to import (JSON Lines; holds
+//                            emails and password hashes: readable by its owner only; delete it once imported)
+//   accounts:link <file>     Accounts' answer, { "health_user_id", "sub" } per line: link each account
+if (command === 'accounts:export' || command === 'accounts:link') {
+  const file = process.argv[3];
+  if (!file) fail(`Usage: ${command} <file>`);
+  try {
+    if (command === 'accounts:export') {
+      if (fs.existsSync(file)) fail(`${file} already exists; choose a new file name.`);
+      const fd = fs.openSync(file, 'wx', 0o600);
+      const n = await exportAccounts(allCells, line => fs.writeSync(fd, `${line}\n`));
+      fs.closeSync(fd);
+      console.log(`[accounts] ${n} accounts written to ${file} (owner-readable only). It holds emails and password hashes: hand it to LotusPond Accounts over a secure channel and delete it once imported.`);
+    } else {
+      const r = await linkAccounts(allCells, readJsonLines(fs.readFileSync(file, 'utf8')));
+      console.log(`[accounts] linked ${r.linked}, already linked ${r.unchanged}, conflicts ${r.conflicts.length}, not on this server ${r.missing.length}, unreadable lines ${r.invalid}.`);
+      for (const c of r.conflicts) console.log(`[accounts]   conflict: ${c.health_user_id}: ${c.reason}`);
+      if (r.missing.length) console.log(`[accounts]   not on this server (another regional host, or deleted): ${r.missing.join(', ')}`);
+    }
+  } catch (e) { await opened.close(); fail(e); }
+  await opened.close();
+  process.exit(0);
+}
+if (command) fail(`Unknown command "${command}". Commands: files:rekey, org:create, org:key, org:revoke, accounts:export, accounts:link.`);
 
 async function sweep() {
   for (const cell of allCells) {

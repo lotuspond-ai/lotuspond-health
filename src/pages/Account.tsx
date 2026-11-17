@@ -16,9 +16,11 @@ import '../styles/compliance.css';
 const focusDeletePassword = () => document.querySelector<HTMLInputElement>('#delete-account input[type=password]')?.focus();
 
 export default function AccountPage() {
-  const { account, profiles } = useSession();
+  const { account, profiles, service } = useSession();
   const { consents, activity, reload, failed } = useAccountRecords();
   if (!account) return null;
+  // No Health password to use: an account that signs in only with LotusPond Accounts, or password sign-in is off.
+  const noPassword = account.hasPassword === false || service?.passwordSignIn === false;
   return (
     <main className="page page--narrow">
       <div className="page__head">
@@ -39,9 +41,9 @@ export default function AccountPage() {
         <ConsentsPanel consents={consents} failed={failed} onChange={reload} profiles={profiles} />
         <ActivityPanel activity={activity} failed={failed} profiles={profiles} />
         {!isPreview && <ContactsPanel />}
-        {account.hasPassword === false ? <AccountsPasswordPanel /> : <PasswordPanel onChange={reload} />}
+        {noPassword ? <AccountsPasswordPanel /> : <PasswordPanel onChange={reload} />}
         {!isPreview && <DevicesPanel onChange={reload} />}
-        <DeletePanel hasPassword={account.hasPassword !== false} />
+        <DeletePanel hasPassword={!noPassword} />
       </div>
     </main>
   );

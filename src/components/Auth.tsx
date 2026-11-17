@@ -92,6 +92,14 @@ export function AuthScreen({ initialMode = 'in' }: { initialMode?: AuthMode }) {
   // Sign-in through LotusPond Accounts, when the server has it switched on (docs/identity.md): the website goes
   // through its own page, the apps through the system browser (src/native/accounts.ts).
   const accountsOn = !!service?.accounts && !isPreview;
+  // Health's own password form, until LotusPond Accounts is the only way in (PASSWORD_SIGN_IN=off).
+  const passwordOn = service?.passwordSignIn !== false || isPreview;
+  const accountsButton = (primary: boolean) => inApp ? (
+    <button type="button" className={`btn btn--block${primary ? ' btn--primary' : ''}`} onClick={() => {
+      setError(null);
+      startAccountsSignIn(mode === 'up' ? 'signup' : 'login').catch(e => setError(errorMessage(e).replace(/^\w+: /, '')));
+    }}>Continue with LotusPond Account</button>
+  ) : <a className={`btn btn--block${primary ? ' btn--primary' : ''}`} href={accountsStartPath(mode === 'up' ? 'signup' : 'login', oauthReturn())}>Continue with LotusPond Account</a>;
   const [search] = useState(() => {
     const read = new URLSearchParams(window.location.search);
     // The error is shown once; it does not stay in the address.
@@ -150,6 +158,7 @@ export function AuthScreen({ initialMode = 'in' }: { initialMode?: AuthMode }) {
           {notice && <p className="notice" role="status">{notice}</p>}
           {accountsNotice && <p className="form-error" role="alert">{accountsNotice}</p>}
 
+          {passwordOn ? (<>
           {mode === 'up' && (
             <Field label="Your name">{id => <input id={id} autoComplete="name" value={name} onChange={e => setName(e.target.value)} required maxLength={80} />}</Field>
           )}
@@ -172,12 +181,14 @@ export function AuthScreen({ initialMode = 'in' }: { initialMode?: AuthMode }) {
           {accountsOn && (
             <>
               <p className="auth__or"><span>or</span></p>
-              {inApp ? (
-                <button type="button" className="btn btn--block" onClick={() => {
-                  setError(null);
-                  startAccountsSignIn(mode === 'up' ? 'signup' : 'login').catch(e => setError(errorMessage(e).replace(/^\w+: /, '')));
-                }}>Continue with LotusPond Account</button>
-              ) : <a className="btn btn--block" href={accountsStartPath(mode === 'up' ? 'signup' : 'login', oauthReturn())}>Continue with LotusPond Account</a>}
+              {accountsButton(false)}
+            </>
+          )}
+          </>) : (
+            <>
+              <p className="muted">LotusPond Health uses your LotusPond account, the one account for LotusPond Health and LotusPond Works.</p>
+              {error && <p className="form-error" role="alert">{error}</p>}
+              {accountsButton(true)}
             </>
           )}
           <p className="auth__switch">

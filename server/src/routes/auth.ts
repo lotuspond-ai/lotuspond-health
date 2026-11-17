@@ -58,7 +58,11 @@ export async function insertAccount(
   });
 }
 
-export const isUniqueViolation = (e: unknown) => !!e && typeof e === 'object' && 'code' in e && (e as { code: string }).code === '23505';
+/** A unique index refused the row (PostgreSQL 23505). Drizzle wraps the driver's error, so its cause is checked too. */
+export const isUniqueViolation = (e: unknown): boolean => {
+  const err = e as { code?: unknown; cause?: unknown } | null;
+  return !!err && typeof err === 'object' && (err.code === '23505' || (!!err.cause && isUniqueViolation(err.cause)));
+};
 
 export function authRoutes(deps: Deps) {
   const { config, cells } = deps;
@@ -85,11 +89,16 @@ export function authRoutes(deps: Deps) {
     servedRegions: cells.servedRegions,
     consentVersion: CONSENT_VERSION,
     accounts: !!config.accounts,
+    passwordSignIn: config.passwordSignIn,
     contacts: { grievance: config.grievanceContact ?? null, dpo: config.dpoContact ?? null },
     apiOrigins: config.regionApiOrigins,
   }));
 
+  /** With PASSWORD_SIGN_IN=off, LotusPond Accounts is the only way in (docs/identity.md). */
+  const accountsOnly = () => new HttpError(409, 'use_accounts', 'LotusPond Health now uses your LotusPond account. Continue with LotusPond Account.');
+
   app.post('/register', async c => {
+    if (!config.passwordSignIn) throw accountsOnly();
     const wait = registerByIp.hit(clientIp(c, config.trustProxy));
     if (wait) throw tooMany(`Too many new accounts from this network. Try again in ${Math.ceil(wait / 60)} minutes.`);
     const body = await readJson(c, RegisterBody);
@@ -121,6 +130,7 @@ export function authRoutes(deps: Deps) {
   });
 
   app.post('/login', async c => {
+    if (!config.passwordSignIn) throw accountsOnly();
     const body = await readJson(c, LoginBody);
     const ipWait = loginByIp.hit(clientIp(c, config.trustProxy));
     const emailWait = loginByEmail.hit(body.email);
@@ -176,7 +186,7 @@ export function authRoutes(deps: Deps) {
   app.post('/password', auth, async c => {
     const { db } = c.var.cell;
     const body = await readJson(c, ChangePasswordBody);
-    if (!c.var.user.passwordHash) throw new HttpError(409, 'use_accounts', `${USES_ACCOUNTS} Change your password there.`);
+    if (!c.var.user.passwordHash || !config.passwordSignIn) throw new HttpError(409, 'use_accounts', `${USES_ACCOUNTS} Change your password there.`);
     if (!(await verifyPassword(c.var.user.passwordHash, body.currentPassword))) {
       throw new HttpError(400, 'wrong_password', 'Your current password is incorrect.');
     }
@@ -197,7 +207,7 @@ export function authRoutes(deps: Deps) {
     const { db, files } = c.var.cell;
     const user = c.var.user;
     const body = await readJson(c, DeleteAccountBody);
-    if (user.passwordHash) {
+    if (user.passwordHash && config.passwordSignIn) {
       if (!(await verifyPassword(user.passwordHash, body.password))) throw new HttpError(400, 'wrong_password', 'Your password is incorrect.');
     } else {
       const [session] = await db.select({ createdAt: sessions.createdAt }).from(sessions).where(eq(sessions.id, c.var.sessionId)).limit(1);
