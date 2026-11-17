@@ -4,8 +4,8 @@
     <!-- @include meta -->
     <meta name="theme-color" content="#9caf88" />
     <link rel="stylesheet" href="/src/site/home.css" />
-    <title>LotusPond Health: your family’s health records, ready for any AI agent</title>
-    <meta name="description" content="Your family’s health records from labs, hospitals, ABHA and your devices, in one place and ready for any AI agent you choose. Records are stored in your region and never sold." />
+    <title>LotusPond Health: health records for families, and one API for healthcare organisations</title>
+    <meta name="description" content="LotusPond Health works two ways: families keep their health records from labs, hospitals, ABHA and devices, ready for any AI agent they choose; healthcare organisations reach hospital systems through one API and MCP server." />
     <link rel="canonical" href="%SITE_URL%/" />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="%SITE_URL%/" />
@@ -66,8 +66,8 @@
       <div class="home-wrap home-nav-in">
         <a class="home-wordmark" href="/" aria-label="LotusPond Health home">LotusPond <b>Health</b><i aria-hidden="true"></i></a>
         <nav class="home-nav-links" aria-label="Main">
-          <a href="#agents">Your AI</a>
-          <a href="#features">What it does</a>
+          <a href="#ways">Two ways</a>
+          <a href="#agents">For families</a>
           <a href="#how">How it works</a>
           <a href="#labs">Find a lab</a>
           <a href="#privacy">Privacy</a>
@@ -86,22 +86,50 @@
         <div class="home-wrap">
           <div class="home-hero-grid">
             <div>
-              <p class="home-kicker"><b>LotusPond Health</b> <span>Health records for families</span></p>
-              <h1 class="home-d-xl" id="hero-title">Your family’s health records, ready for any AI <span class="home-u home-u-draw">agent.<svg viewBox="0 0 200 20" preserveAspectRatio="none" aria-hidden="true" focusable="false"><path pathLength="1" d="M3 12C38 4 86 17 128 9s52-3 69 2" /></svg></span></h1>
+              <p class="home-kicker"><b>LotusPond Health</b> <span>For families and for healthcare organisations</span></p>
+              <h1 class="home-d-xl" id="hero-title">Health records, ready for any AI <span class="home-u home-u-draw">agent.<svg viewBox="0 0 200 20" preserveAspectRatio="none" aria-hidden="true" focusable="false"><path pathLength="1" d="M3 12C38 4 86 17 128 9s52-3 69 2" /></svg></span></h1>
             </div>
             <div class="home-hero-side">
-              <p class="home-lede">LotusPond brings your reports in from labs, hospitals, ABHA and your devices, keeps them for each person in your family, and lets Claude, ChatGPT or any agent you choose use them. You decide whose records each agent sees.</p>
-              <div class="home-cta">
-                <a class="home-btn home-btn-ink" href="/signup">Create free account <span aria-hidden="true">→</span></a>
-                <a class="home-btn home-btn-light" href="/login">Sign in</a>
-              </div>
-              <p class="home-note">Stored in your region and never sold. LotusPond explains results; it does not diagnose.</p>
+              <p class="home-lede">LotusPond Health works in two directions. Families bring their reports into one record and choose which AI may read it. Healthcare organisations reach hospital systems through one API and one MCP server, instead of one integration per system.</p>
               <a class="home-agents-link" href="#agents">
                 <span class="home-agents-logos" aria-hidden="true"><svg><use href="#ag-claude" /></svg><svg><use href="#ag-openai" /></svg><svg><use href="#ag-gemini" /></svg><svg class="mark-exact"><use href="#ag-grok" /></svg><svg><use href="#ag-muse" /></svg></span>
                 <span><b>Connect your AI.</b> Claude, ChatGPT, Gemini, Grok, Muse and other agents can read the records you choose.</span>
               </a>
             </div>
           </div>
+          <!-- The two directions of LotusPond Health, each with its own kind of account: a personal account for a
+               person's own records, and an organisation account (as in LotusPond Works) for the developer console. -->
+          <div class="home-ways" id="ways" aria-label="Two ways to use LotusPond Health">
+            <article class="home-way" aria-labelledby="way-people-title">
+              <p class="home-way-tag">For people and families · Personal account</p>
+              <h2 class="home-d-md" id="way-people-title">Your family’s records, with the AI you choose.</h2>
+              <p>Reports from labs, hospitals, ABHA and your devices, kept for each person in your family. Claude, ChatGPT or any agent reads only what you share.</p>
+              <ul class="home-way-points">
+                <li>Results, trends and scans for every family member</li>
+                <li>You choose whose records each agent sees</li>
+                <li>Stored in India, never sold, deleted when you ask</li>
+              </ul>
+              <div class="home-cta">
+                <a class="home-btn home-btn-ink" href="/signup">Create free account <span aria-hidden="true">→</span></a>
+                <a class="home-btn home-btn-light" href="/login">Sign in</a>
+              </div>
+            </article>
+            <article class="home-way" aria-labelledby="way-orgs-title">
+              <p class="home-way-tag">For healthcare organisations · Organisation account</p>
+              <h2 class="home-d-md" id="way-orgs-title">One API to reach hospital systems.</h2>
+              <p>Healthcare startups, hospitals and insurers find patients, list visits, attach documents and check claims, in FHIR R4, through one REST API and one MCP server.</p>
+              <ul class="home-way-points">
+                <li>A sandbox hospital from your first API key</li>
+                <li>Your team, with owner, admin, editor and viewer roles</li>
+                <li>Writes wait for your clinician; every call is logged</li>
+              </ul>
+              <div class="home-cta">
+                <a class="home-btn home-btn-ink" href="/developers/console/">Open the developer console <span aria-hidden="true">→</span></a>
+                <a class="home-btn home-btn-light" href="/developers/">Developer guide</a>
+              </div>
+            </article>
+          </div>
+          <p class="home-note home-ways-note">The two use separate accounts, so an employer never controls the account that holds your own health records. LotusPond explains results; it does not diagnose.</p>
           <figure class="home-product">
             <div class="home-window">
               <div class="home-window-bar" aria-hidden="true"><i></i><i></i><i></i><span>health.lotuspond.ai/app</span></div>
@@ -112,7 +140,7 @@
               <img src="/site/phone-agents-390.webp" srcset="/site/phone-agents-390.webp 390w, /site/phone-agents-585.webp 585w" sizes="(min-width: 1300px) 232px, (min-width: 640px) 18vw, 104px" width="390" height="844" loading="lazy" decoding="async"
                 alt="LotusPond on a phone: the Agents page, with the address to give an agent and the assistants you can connect, from Claude and ChatGPT to Gemini and Grok." />
             </div>
-            <figcaption>Home in a browser, and connecting an agent on a phone, showing sample data.</figcaption>
+            <figcaption>For families: Home in a browser, and connecting an agent on a phone, showing sample data.</figcaption>
           </figure>
         </div>
       </section>
@@ -315,6 +343,27 @@
         </div>
       </section>
 
+      <section class="home-sheet" id="companies" aria-labelledby="companies-title">
+        <div class="home-wrap">
+          <p class="home-kicker"><b>For healthcare organisations</b> <span>Sandbox open</span></p>
+          <div class="home-head">
+            <h2 class="home-d-lg" id="companies-title">One API for India’s hospital systems.</h2>
+            <p class="home-lede">Healthcare startups and hospitals get one REST API and one MCP server to find patients, list their visits, attach documents and check claims, with results in FHIR R4. Make a key in the developer console and build against our sandbox hospital today.</p>
+          </div>
+          <ul class="home-points">
+            <li><b>Available now.</b> The sandbox hospital, with synthetic patients, visits and claims, from your first key.</li>
+            <li><b>Available on request.</b> TrakCare, Bahmni and OpenMRS, any FHIR R4 system, and Eka Care clinics, once the hospital or clinic confirms your access in writing.</li>
+            <li><b>Writes wait for a clinician.</b> Uploads are held until someone in your organisation approves them, and every call is logged.</li>
+            <li><b>Organisation accounts, with roles.</b> Sign up for your organisation and add your team by email as owners, admins, editors or viewers, as in LotusPond Works. They are separate from personal accounts.</li>
+          </ul>
+          <div class="home-cta">
+            <a class="home-btn home-btn-ink" href="/developers/console/">Open the developer console <span aria-hidden="true">→</span></a>
+            <a class="home-btn home-btn-light" href="/developers/">See the systems and the API</a>
+          </div>
+          <p class="home-fine">NHCX, ABDM-certified systems and other HIS vendors are planned. The <a class="home-link" href="/developers/#systems">developers page</a> lists each system’s status. Running a hospital or clinic and want to automate its admin work, such as referral intake and appointments? That is <a class="home-link" href="https://lotuspond.ai" rel="noopener">LotusPond Works</a>.</p>
+        </div>
+      </section>
+
       <section class="home-sheet" id="faq" aria-labelledby="faq-title">
         <div class="home-wrap">
           <div class="home-head">
@@ -358,30 +407,11 @@
         </div>
       </section>
 
-      <section class="home-sheet" id="companies" aria-labelledby="companies-title">
-        <div class="home-wrap">
-          <p class="home-kicker"><b>For healthcare companies</b> <span>Sandbox open</span></p>
-          <div class="home-head">
-            <h2 class="home-d-lg" id="companies-title">One API for India’s hospital systems.</h2>
-            <p class="home-lede">Healthcare startups and hospitals get one REST API and one MCP server to find patients, list their visits, attach documents and check claims, with results in FHIR R4. Make a key in the developer console and build against our sandbox hospital today.</p>
-          </div>
-          <ul class="home-points">
-            <li><b>Available now.</b> The sandbox hospital, with synthetic patients, visits and claims, from your first key.</li>
-            <li><b>Available on request.</b> TrakCare, Bahmni and OpenMRS, any FHIR R4 system, and Eka Care clinics, once the hospital or clinic confirms your access in writing.</li>
-            <li><b>Writes wait for a clinician.</b> Uploads are held until someone in your organisation approves them, and every call is logged.</li>
-          </ul>
-          <div class="home-cta">
-            <a class="home-btn home-btn-ink" href="/developers/console/">Open the developer console <span aria-hidden="true">→</span></a>
-            <a class="home-btn home-btn-light" href="/developers/">See the systems and the API</a>
-          </div>
-          <p class="home-fine">NHCX, ABDM-certified systems and other HIS vendors are planned. The <a class="home-link" href="/developers/#systems">developers page</a> lists each system’s status. Running a hospital or clinic and want to automate its admin work, such as referral intake and appointments? That is <a class="home-link" href="https://lotuspond.ai" rel="noopener">LotusPond Works</a>.</p>
-        </div>
-      </section>
 
       <section class="home-close" aria-labelledby="closing-title">
         <div class="home-wrap">
           <h2 class="home-d-xl" id="closing-title">Start your record. Use it <span class="home-u">anywhere.<svg viewBox="0 0 200 20" preserveAspectRatio="none" aria-hidden="true" focusable="false"><path pathLength="1" d="M3 12C38 4 86 17 128 9s52-3 69 2" /></svg></span></h2>
-          <p class="home-lede">Create a free account, bring in your first report, and connect the agent you already use.</p>
+          <p class="home-lede">Create a free account, bring in your first report, and connect the agent you already use. Building for hospitals? <a class="home-link" href="/developers/console/">Open the developer console</a>.</p>
           <div class="home-cta">
             <a class="home-btn home-btn-ink" href="/signup">Create free account <span aria-hidden="true">→</span></a>
             <a class="home-btn home-btn-light" href="/login">Sign in</a>
@@ -395,7 +425,7 @@
       <div class="home-wrap home-foot">
         <div class="home-foot-about">
           <a class="home-wordmark" href="/" aria-label="LotusPond Health home">LotusPond <b>Health</b><i aria-hidden="true"></i></a>
-          <p>Your family’s health records, from labs, hospitals, ABHA and your devices, ready for any AI agent you choose. LotusPond explains results; it does not diagnose.</p>
+          <p>Health records in two directions: families keep theirs and choose which AI may read them, and healthcare organisations reach hospital systems through one API. LotusPond explains results; it does not diagnose.</p>
           <p>A product of <a href="https://lotuspond.ai" rel="noopener">LotusPond</a></p>
         </div>
         <nav aria-label="Product">
@@ -404,6 +434,7 @@
             <li><a href="/signup">Create free account</a></li>
             <li><a href="/login">Sign in</a></li>
             <li><a href="/developers/">Developers</a></li>
+            <li><a href="/developers/console/">Developer console</a></li>
             <li><a href="#agents">Connect your AI</a></li>
             <li><a href="#how">How it works</a></li>
             <li><a href="#labs">Find a lab</a></li>

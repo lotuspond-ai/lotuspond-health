@@ -18,7 +18,7 @@ import type { Deps } from '../src/http.ts';
 import { DiskFileStore } from '../src/lib/files.ts';
 import { organisationRuntime } from '../src/connectors/runtime.ts';
 import { resetEkaTokens } from '../src/connectors/his/eka.ts';
-import { makeClient, registration } from './helpers.ts';
+import { makeClient } from './helpers.ts';
 
 let database: Database;
 let filesDir: string;
@@ -80,8 +80,9 @@ const api = (url: string, key: string, body: unknown) => app.request(url, {
 /** A live organisation with an Eka connection and a key for both reads. */
 async function setup(email: string, secret: Record<string, string> = { clientId: 'EC_1431', clientSecret: 'secret', sharingKey: 'clinic-share-1' }) {
   const person = makeClient(app);
-  await person.json('POST', '/api/auth/register', registration(email), 201);
-  const org = await person.json<{ id: string }>('POST', '/api/console/organisations', { name: 'Clinic Tools' }, 201);
+  // An organisation account in the developer console, with its organisation (not a personal Health account).
+  const { organisation: org } = await person.json<{ organisation: { id: string } }>('POST', '/api/console/auth/register',
+    { name: 'Clinic Dev', email, password: 'correct horse battery', terms: true, organisation: { name: 'Clinic Tools', region: 'in' } }, 201);
   await database.db.update(organisations).set({ access: 'live' }).where(eq(organisations.id, org.id));
   const runtime = organisationRuntime({ db: database.db, keyrings: deps.secrets.fileKeys, fetch: fakeFetch });
   const conn = await runtime.addConnection(org.id, { connectorId: 'eka', name: 'Clinic on Eka', settings: { baseUrl: 'http://localhost/' }, secret });

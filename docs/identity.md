@@ -25,6 +25,14 @@ This page says what the decision changes for Health.
 - **Employer-managed accounts are refused.** An account created through a company's single sign-on (an enterprise connection in Works) cannot open Health. The person is asked to use a personal account, so an employer can never suspend, reset or audit the account that holds their health records.
 - **Works never sees Health data,** nor whether a person uses Health.
 
+## The developer console's organisation accounts
+
+The organisation API's console already has accounts of its own, built like LotusPond Works' (a person's account, with organisations as workspaces and a role in each), and kept apart from personal Health accounts ([connectors.md](connectors.md#the-organisation-api)). When Accounts ships:
+
+- they sign in through Accounts too, and are stored by `(issuer, subject)`;
+- a managed account from a Works enterprise connection may open the console, because it holds no one's health records; it still cannot open personal Health;
+- organisations and memberships stay in Health, as Works keeps its own.
+
 ## Existing accounts
 
 - Health's Argon2id hashes and regions are imported into Accounts unchanged.

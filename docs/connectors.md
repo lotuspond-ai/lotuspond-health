@@ -49,7 +49,14 @@ A portal the person names by address is offered only where `typedPortals` allows
 
 Organisations reach hospital systems on their own authority, through `/v1` (REST) and `/v1/mcp` (MCP). The developer guide for outsiders is the site page `/developers/`; the console is `/developers/console/`.
 
-- **Self-serve, sandbox first.** Anyone with a LotusPond account can make an organisation in the developer console (`/api/console`, `server/src/connectors/console-routes.ts`) and make API keys at once. A new organisation has `access = sandbox`: it reaches only LotusPond's sandbox hospital (`his/sandbox.ts`), with synthetic patients, visits, documents and claims.
+- **Organisation accounts, as in LotusPond Works.** The console has its own accounts (`organisation_accounts`, `server/src/connectors/console-accounts.ts`), kept in the default database and separate from personal Health accounts in the cells: a different table, a cookie (`lp_org_session`) sent only to `/api/console`, no health consent and no family profile. A personal Health session never opens the console, and a console session never opens anyone's records, so an employer never controls the account that holds someone's own health records (company ADR-0001, decision 8). As in Works, a person signs up with a name, email and password and, optionally, their first organisation (`POST /api/console/auth/register`); organisations are workspaces they are members of, with a role:
+  - **owner**: everything, including other owners. An organisation always keeps at least one.
+  - **admin**: members (except owners), keys and live access.
+  - **editor**: API keys.
+  - **viewer**: reads the console.
+
+  Separately from the role, `approves` marks a clinician who may approve or reject writes that wait for one. Owners and admins add members by email; the person makes an organisation account first, as Works requires. When LotusPond Accounts ships, these accounts become Accounts sign-ins (a managed account from an enterprise connection is welcome here, unlike in personal Health), with the same memberships. `org:member <organisation id> <email> [role]` adds a member from the server.
+- **Self-serve, sandbox first.** Anyone with an organisation account can make an organisation in the developer console (`/api/console`, `server/src/connectors/console-routes.ts`) and make API keys at once. A new organisation has `access = sandbox`: it reaches only LotusPond's sandbox hospital (`his/sandbox.ts`), with synthetic patients, visits, documents and claims.
 - **Live access is given by LotusPond, not taken.** An organisation asks in the console (which hospital, which system). LotusPond checks the hospital's written authority and the data-processing agreement, then, on the server:
 
   ```bash
@@ -104,6 +111,6 @@ Akhil Miracle and TrakCare are the strongest first private-sector adapters. Each
 ## Next
 
 1. ~~Organisations and API keys~~: done (above).
-2. ~~Connections, running operations, approvals, the organisation MCP server and the developer console~~: done (above). Still to come: idempotency keys, asynchronous runs with webhooks, and inviting more members (approvers) to an organisation.
+2. ~~Connections, running operations, approvals, the organisation MCP server and the developer console~~: done (above). Members with roles and approvers: done. Still to come: idempotency keys, asynchronous runs with webhooks, and invitations by email to people without an organisation account yet.
 3. **First adapters, with a pilot.** Either EHR write-back for one AI-scribe customer across two authorised HIS vendors (Akhil Miracle and TrakCare first; see "Which hospital systems to build for"), or claims status and pre-authorisation for one hospital, preferring NHCX where the payer is on it (`docs/abdm.md`; the plan in Notion).
 4. **LotusPond Link.** An organisation using the organisation API can ask a person to share records from their LotusPond Health account. The person approves in their consent centre and can revoke it there.

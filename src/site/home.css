@@ -156,6 +156,20 @@ html { scroll-padding-top: calc(var(--header, 72px) + 16px); }
 .home-hero .home-lede, .home-band .home-lede, .home-close .home-lede { color: var(--on-field-muted); }
 .home-cta { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 32px; }
 .home-note { max-width: 34em; margin-top: 22px; padding-top: 16px; border-top: 1.5px solid rgba(24, 33, 27, 0.28); font-size: 15.5px; }
+/* The two directions of LotusPond Health, side by side on the field: one sheet for families, one for organisations. */
+.home-ways { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: clamp(36px, 5vw, 64px); }
+.home-way { display: flex; flex-direction: column; gap: 16px; padding: clamp(26px, 3.4vw, 44px); border-radius: var(--r-lg); background: var(--surface); color: var(--pine-900); box-shadow: var(--shadow-card); }
+.home-way > p { color: var(--ink-muted); }
+.home-way .home-way-tag { color: var(--sage-700); font: 700 14px/1.3 var(--font-sans); letter-spacing: 0.02em; }
+.home-way-points { display: grid; margin: 0; padding: 0; list-style: none; }
+.home-way-points li { padding: 11px 0; border-top: 1px solid var(--line); color: var(--ink-muted); font-size: 16px; }
+.home-way-points li:first-child { border-top: 1.5px solid var(--pine-900); }
+.home-way .home-cta { margin-top: auto; padding-top: 8px; }
+.home-way .home-btn-light { box-shadow: inset 0 0 0 1.5px var(--line-strong); }
+.home-ways-note { margin-top: 18px; color: var(--on-field-muted); }
+@media (max-width: 900px) {
+  .home-ways { grid-template-columns: minmax(0, 1fr); }
+}
 .home-product { position: relative; margin-top: clamp(40px, 6vw, 80px); }
 .home-window { overflow: hidden; border-radius: var(--r-lg); background: var(--surface-raised); box-shadow: var(--shadow-float); }
 .home-window-bar { display: flex; align-items: center; gap: 7px; height: 36px; padding: 0 16px; background: var(--surface-tint); border-bottom: 1px solid var(--line); }

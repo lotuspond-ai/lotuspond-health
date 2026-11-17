@@ -548,20 +548,51 @@ export const organisations = pgTable('organisations', {
 });
 
 /**
- * People who manage an organisation in the developer console. Accounts live in regional cells, so a member is named
- * by region and user id (and the email at the time, for display); nothing here reaches that person's own records.
- *   owner     manages keys, members' requests and approvals
- *   approver  may also approve writes that need a clinician (a clinician on the organisation's side)
+ * Organisation accounts: the people who use the developer console, on behalf of an organisation. They are kept in the
+ * default database and are separate from personal LotusPond Health accounts (which live in a person's cell and hold
+ * their own records), as in LotusPond Works: an account belongs to a person, and organisations are workspaces it is a
+ * member of. An employer therefore never controls the account that holds someone's own health records (company
+ * ADR-0001, decision 8). When LotusPond Accounts ships, these become Accounts sign-ins with the same memberships.
+ */
+export const organisationAccounts = pgTable('organisation_accounts', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  /** Stored lower-cased and trimmed. */
+  email: text('email').notNull(),
+  name: text('name').notNull(),
+  passwordHash: text('password_hash').notNull(),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, t => [uniqueIndex('organisation_accounts_email_key').on(t.email)]);
+
+/** Console sessions: only the SHA-256 of the cookie token is kept, as for personal sessions. */
+export const organisationSessions = pgTable('organisation_sessions', {
+  id: text('id').primaryKey(),
+  accountId: uuid('account_id').notNull().references(() => organisationAccounts.id, { onDelete: 'cascade' }),
+  createdAt: createdAt(),
+  lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  userAgent: text('user_agent'),
+}, t => [index('organisation_sessions_account_idx').on(t.accountId)]);
+
+export type OrganisationRole = 'owner' | 'admin' | 'editor' | 'viewer';
+
+/**
+ * Who is in an organisation, and with which role (the roles of LotusPond Works):
+ *   owner   everything, including other owners and the organisation's live access
+ *   admin   members (except owners), keys and live access
+ *   editor  API keys
+ *   viewer  reads the console
+ * `approves` is separate from the role: it marks a clinician on the organisation's side, who may approve or reject
+ * writes that wait for one.
  */
 export const organisationMembers = pgTable('organisation_members', {
   id: uuid('id').primaryKey().defaultRandom(),
   organisationId: uuid('organisation_id').notNull().references(() => organisations.id, { onDelete: 'cascade' }),
-  userRegion: text('user_region').$type<DataRegion>().notNull(),
-  userId: uuid('user_id').notNull(),
-  email: text('email').notNull(),
-  role: text('role').$type<'owner' | 'approver'>().notNull(),
+  accountId: uuid('account_id').notNull().references(() => organisationAccounts.id, { onDelete: 'cascade' }),
+  role: text('role').$type<OrganisationRole>().notNull(),
+  approves: boolean('approves').notNull().default(false),
   createdAt: createdAt(),
-}, t => [uniqueIndex('organisation_members_user_key').on(t.organisationId, t.userRegion, t.userId), index('organisation_members_user_idx').on(t.userRegion, t.userId)]);
+}, t => [uniqueIndex('organisation_members_account_key').on(t.organisationId, t.accountId), index('organisation_members_account_idx').on(t.accountId)]);
 
 /**
  * An organisation's link to one system (a connector): LotusPond's sandbox hospital, or a real HIS that LotusPond set

@@ -47,7 +47,7 @@ export interface AppEnv {
 export type Ctx = Context<AppEnv>;
 
 /** Parse and validate a JSON body; validation problems become a 400 naming the field. */
-export async function readJson<S extends z.ZodType>(c: Ctx, schema: S): Promise<z.output<S>> {
+export async function readJson<S extends z.ZodType>(c: Context, schema: S): Promise<z.output<S>> {
   let raw: unknown;
   try {
     raw = await c.req.json();
@@ -64,7 +64,7 @@ export async function readJson<S extends z.ZodType>(c: Ctx, schema: S): Promise<
 }
 
 /** Client address for rate limiting. */
-export function clientIp(c: Ctx, trustProxy: boolean): string {
+export function clientIp(c: Context, trustProxy: boolean): string {
   if (trustProxy) {
     const fwd = c.req.header('x-forwarded-for')?.split(',')[0]?.trim();
     if (fwd) return fwd;
