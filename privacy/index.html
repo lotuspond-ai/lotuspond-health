@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en">
   <head>
-    <!-- @include head -->
+    <!-- @include page-head -->
     <title>Privacy Policy · LotusPond Health</title>
     <meta name="description" content="How LotusPond Health collects, uses, stores and protects personal and health data, where records are kept, and your rights in India, Europe, the United States and elsewhere." />
     <link rel="canonical" href="%SITE_URL%/privacy/" />
@@ -12,21 +12,23 @@
     <meta name="twitter:title" content="Privacy Policy · LotusPond Health" />
     <meta name="twitter:description" content="What we collect, why, where it is stored, and the rights you have over your health data." />
   </head>
-  <body>
-    <!-- @include header -->
+  <body class="home">
+    <!-- Drawn in the LotusPond design system, like the landing page: home.css, and pages.css for the reading sheet. -->
+    <!-- @include site-nav -->
     <main id="main">
       <header class="doc-hero">
-        <div class="wrap">
-          <p class="eyebrow">Legal</p>
-          <h1>Privacy Policy</h1>
-          <p class="doc-hero__lede">How we handle your personal and health data, what we never do with it, and how to use your rights. This page includes our Consumer Health Data Privacy Policy for Washington, Nevada and other US states.</p>
+        <div class="home-wrap">
+          <p class="home-kicker"><b>Legal</b></p>
+          <h1 class="home-d-lg">Privacy Policy</h1>
+          <p class="home-lede">How we handle your personal and health data, what we never do with it, and how to use your rights. This page includes our Consumer Health Data Privacy Policy for Washington, Nevada and other US states.</p>
           <p class="doc-meta"><span><b>Last updated</b> <time datetime="2026-11-11">11 November 2026</time></span><span><b>Applies to</b> LotusPond Health on health.lotuspond.ai</span></p>
         </div>
       </header>
 
-      <div class="wrap doc">
+      <section class="home-sheet" aria-label="Privacy Policy">
+      <div class="home-wrap doc">
         <nav class="toc" aria-label="On this page">
-          <h2>On this page</h2>
+          <h2 class="home-label">On this page</h2>
           <ol>
             <li><a href="#summary">The short version</a></li>
             <li><a href="#who-we-are">1. Who we are</a></li>
@@ -49,7 +51,7 @@
 
         <article class="prose">
           <section id="summary" class="callout" aria-labelledby="summary-title">
-            <h2 id="summary-title">The short version</h2>
+            <h2 class="home-d-md" id="summary-title">The short version</h2>
             <ul>
               <li>We collect what you give us: your account details, the profiles you keep for yourself and your family, and the reports and scans you upload.</li>
               <li>We use it to run LotusPond Health for you. We never sell it, and we do not share it for advertising. AI agents see it only if you connect them, and only what you choose.</li>
@@ -62,7 +64,7 @@
           </section>
 
           <section id="who-we-are" aria-labelledby="who-we-are-title">
-            <h2 id="who-we-are-title"><span class="num">1</span>Who we are</h2>
+            <h2 class="home-d-md" id="who-we-are-title"><span class="num">1</span>Who we are</h2>
             <p>LotusPond Health is a product of <a href="https://lotuspond.ai" rel="noopener">LotusPond</a>. The company responsible for your data (the controller under the GDPR, and the data fiduciary under India’s Digital Personal Data Protection Act) is <span class="ph">[Legal entity name — to be completed by LotusPond]</span>, registered at <span class="ph">[Registered address — to be completed by LotusPond]</span>. In this policy, “we” and “us” mean that company.</p>
             <p>This policy covers the website at health.lotuspond.ai and the LotusPond Health app: your account, profiles, uploads, the body map and the lab finder. Partner labs and the maps apps you open for directions have their own policies.</p>
             <dl>
@@ -72,7 +74,7 @@
           </section>
 
           <section id="data-we-collect" aria-labelledby="data-title">
-            <h2 id="data-title"><span class="num">2</span>Data we collect</h2>
+            <h2 class="home-d-md" id="data-title"><span class="num">2</span>Data we collect</h2>
             <h3>Your account</h3>
             <p>Your name, email address and password. We store the password only as an Argon2id hash, so we cannot read it. We also keep your country of residence, your unit preferences and a record of each consent you give (which text, its version, the time and your country).</p>
             <h3>Profiles for you and your family</h3>
@@ -93,7 +95,7 @@
           </section>
 
           <section id="how-we-use-it" aria-labelledby="use-title">
-            <h2 id="use-title"><span class="num">3</span>How we use it</h2>
+            <h2 class="home-d-md" id="use-title"><span class="num">3</span>How we use it</h2>
             <ul>
               <li><b>To provide LotusPond Health:</b> store your records, show them on the body map, explain them with reference ranges and notes, keep your original files and find labs near you.</li>
               <li><b>To keep accounts secure:</b> sign-in, limits on repeated attempts, protection against abuse, and a record of security events.</li>
@@ -104,7 +106,7 @@
           </section>
 
           <section id="legal-bases" aria-labelledby="bases-title">
-            <h2 id="bases-title"><span class="num">4</span>Legal bases and consent</h2>
+            <h2 class="home-d-md" id="bases-title"><span class="num">4</span>Legal bases and consent</h2>
             <div class="table-wrap">
               <table class="table table--stack">
                 <thead><tr><th scope="col">Purpose</th><th scope="col">EU, EEA and UK (GDPR)</th><th scope="col">India (DPDP Act)</th></tr></thead>
@@ -127,7 +129,7 @@
           </section>
 
           <section id="sharing" aria-labelledby="sharing-title">
-            <h2 id="sharing-title"><span class="num">5</span>Sharing</h2>
+            <h2 class="home-d-md" id="sharing-title"><span class="num">5</span>Sharing</h2>
             <p>We do not sell personal data, including health data, and we do not share it with advertisers or data brokers. We disclose data only in these cases:</p>
             <ul>
               <li><b>Service providers</b> that host our servers and storage in each region. They process data only on our instructions, under written contracts with confidentiality and security duties: <span class="ph">[List of service providers and their locations — to be completed by LotusPond]</span>.</li>
@@ -143,14 +145,14 @@
           </section>
 
           <section id="storage" aria-labelledby="storage-title">
-            <h2 id="storage-title"><span class="num">6</span>Where your data is stored</h2>
+            <h2 class="home-d-md" id="storage-title"><span class="num">6</span>Where your data is stored</h2>
             <p>Your country of residence decides where your records are kept. Each region is a separate database and file store. A small directory, kept apart from records, maps a keyed hash of your email address to your region so that sign-in knows where to look. It does not hold your email in readable form.</p>
             <!-- @regions storage-table -->
             <p>Transfers from the United Kingdom and Switzerland to our European region rely on those countries’ recognition of data protection in the EU. For the international region, which is located in <span class="ph">[Location of the international region — to be completed by LotusPond]</span>, we use <span class="ph">[Transfer safeguards, such as standard contractual clauses — to be completed by LotusPond]</span> where your law requires them. The <a href="/trust/#storage">Trust and compliance page</a> lists which countries go where.</p>
           </section>
 
           <section id="retention" aria-labelledby="retention-title">
-            <h2 id="retention-title"><span class="num">7</span>Retention and deletion</h2>
+            <h2 class="home-d-md" id="retention-title"><span class="num">7</span>Retention and deletion</h2>
             <ul>
               <li><b>Records:</b> kept for as long as your account exists, and you decide what to keep.</li>
               <li><b>Deleting:</b> you can delete a file or scan, delete all records of a profile, remove a profile, or delete your whole account. Deletion removes the data from our live systems straight away.</li>
@@ -161,7 +163,7 @@
           </section>
 
           <section id="rights" aria-labelledby="rights-title">
-            <h2 id="rights-title"><span class="num">8</span>Your rights</h2>
+            <h2 class="home-d-md" id="rights-title"><span class="num">8</span>Your rights</h2>
             <h3>Everyone</h3>
             <p>Wherever you live, you can:</p>
             <ul>
@@ -182,7 +184,7 @@
           </section>
 
           <section id="consumer-health-data" aria-labelledby="chd-title">
-            <h2 id="chd-title"><span class="num">9</span>Consumer Health Data Privacy Policy</h2>
+            <h2 class="home-d-md" id="chd-title"><span class="num">9</span>Consumer Health Data Privacy Policy</h2>
             <p>This section is our Consumer Health Data Privacy Policy under the Washington My Health My Data Act (RCW 19.373), Nevada Senate Bill 370 (2023) and similar state laws. It applies to consumer health data about people in those states.</p>
             <h3>Consumer health data we collect</h3>
             <p>Health conditions, medications, allergies and notes you add to a profile; body measurements such as height, weight and blood type; vital signs such as blood pressure, heart rate, oxygen saturation and glucose readings, typed in or imported from your phone; lab results and reference ranges; scans, images and the original medical files you upload; and lab finder searches, which could show that you are looking for health services.</p>
@@ -206,7 +208,7 @@
           </section>
 
           <section id="children" aria-labelledby="children-title">
-            <h2 id="children-title"><span class="num">10</span>Children and family profiles</h2>
+            <h2 class="home-d-md" id="children-title"><span class="num">10</span>Children and family profiles</h2>
             <ul>
               <li>LotusPond accounts are for adults aged 18 or over.</li>
               <li>Children’s records are kept as family profiles added by a parent or guardian, who gives consent on the child’s behalf and manages the records.</li>
@@ -217,7 +219,7 @@
           </section>
 
           <section id="security" aria-labelledby="security-title">
-            <h2 id="security-title"><span class="num">11</span>Security</h2>
+            <h2 class="home-d-md" id="security-title"><span class="num">11</span>Security</h2>
             <ul>
               <li>Passwords are hashed with Argon2id. Sign-in sessions use random 256-bit tokens, and we store only their SHA-256 hash.</li>
               <li>The session cookie is HttpOnly, sent over HTTPS only, and limited to our own site (SameSite=Lax).</li>
@@ -231,7 +233,7 @@
           </section>
 
           <section id="breach" aria-labelledby="breach-title">
-            <h2 id="breach-title"><span class="num">12</span>Breach notification</h2>
+            <h2 class="home-d-md" id="breach-title"><span class="num">12</span>Breach notification</h2>
             <p>If a breach affects your personal data, we will tell you what happened, what it means for you, what we are doing about it and what you can do. Specifically:</p>
             <ul>
               <li><b>EU, EEA and UK:</b> we notify the supervisory authority within 72 hours of becoming aware of a breach, and tell you without undue delay when it is likely to put your rights at high risk.</li>
@@ -242,7 +244,7 @@
           </section>
 
           <section id="cookies" aria-labelledby="cookies-title">
-            <h2 id="cookies-title"><span class="num">13</span>Cookies and local storage</h2>
+            <h2 class="home-d-md" id="cookies-title"><span class="num">13</span>Cookies and local storage</h2>
             <div class="table-wrap">
               <table class="table table--stack">
                 <thead><tr><th scope="col">Name</th><th scope="col">What it does</th><th scope="col">How long</th></tr></thead>
@@ -256,12 +258,12 @@
           </section>
 
           <section id="changes" aria-labelledby="changes-title">
-            <h2 id="changes-title"><span class="num">14</span>Changes to this policy</h2>
+            <h2 class="home-d-md" id="changes-title"><span class="num">14</span>Changes to this policy</h2>
             <p>We will post changes on this page with a new date. If a change is material, we will tell you in the app or by email before it takes effect, and ask for your consent again where the law requires it.</p>
           </section>
 
           <section id="contact" aria-labelledby="contact-title">
-            <h2 id="contact-title"><span class="num">15</span>Contact</h2>
+            <h2 class="home-d-md" id="contact-title"><span class="num">15</span>Contact</h2>
             <dl>
               <dt>Privacy questions and requests</dt><dd><span class="ph">[Privacy contact email — to be completed by LotusPond]</span></dd>
               <dt>Data Protection Officer</dt><dd><span class="ph">[Data Protection Officer name and email — to be completed by LotusPond]</span></dd>
@@ -273,7 +275,8 @@
           </section>
         </article>
       </div>
+      </section>
     </main>
-    <!-- @include footer -->
+    <!-- @include site-footer -->
   </body>
 </html>

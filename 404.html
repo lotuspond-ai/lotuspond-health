@@ -1,27 +1,28 @@
 <!doctype html>
 <html lang="en">
   <head>
-    <!-- @include head -->
+    <!-- @include page-head -->
     <title>Page not found · LotusPond Health</title>
     <meta name="description" content="This page could not be found on LotusPond Health." />
     <meta name="robots" content="noindex" />
   </head>
-  <body>
-    <!-- @include header -->
+  <body class="home">
+    <!-- Drawn in the LotusPond design system, like the landing page (home.css and pages.css). -->
+    <!-- @include site-nav -->
     <main id="main">
       <section class="lost" aria-labelledby="lost-title">
-        <div class="wrap">
-          <p class="eyebrow">Page not found</p>
-          <h1 class="display" id="lost-title">This page has <em>drifted off.</em></h1>
-          <p>The address may be mistyped, or the page may have moved. These might help:</p>
-          <div class="hero__actions">
-            <a class="button button--primary" href="/">LotusPond Health home</a>
-            <a class="button button--ghost" href="/login">Sign in</a>
+        <div class="home-wrap">
+          <p class="home-kicker"><b>Page not found</b></p>
+          <h1 class="home-d-xl" id="lost-title">This page has <span class="home-u home-u-draw">drifted.<svg viewBox="0 0 200 20" preserveAspectRatio="none" aria-hidden="true" focusable="false"><path pathLength="1" d="M3 12C38 4 86 17 128 9s52-3 69 2" /></svg></span></h1>
+          <p class="home-lede">The address may be mistyped, or the page may have moved. These might help:</p>
+          <div class="home-cta">
+            <a class="home-btn home-btn-ink" href="/">LotusPond Health home <span aria-hidden="true">→</span></a>
+            <a class="home-btn home-btn-light" href="/login">Sign in</a>
           </div>
+          <img class="home-illo home-pano" src="/src/site/illustrations/health-journey.svg" alt="" width="1200" height="300" loading="lazy" decoding="async" />
         </div>
-        <!-- @include pads -->
       </section>
     </main>
-    <!-- @include footer -->
+    <!-- @include site-footer -->
   </body>
 </html>

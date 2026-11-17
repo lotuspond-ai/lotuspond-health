@@ -29,6 +29,9 @@ import { oauthRoutes, type OAuthOptions } from './agents/oauth.ts';
 import { recordOAuthRoutes, recordRoutes } from './records/routes.ts';
 import { connectorRoutes } from './connectors/routes.ts';
 import { organisationRoutes } from './connectors/organisation-routes.ts';
+import { organisationMcpRoutes } from './connectors/mcp.ts';
+import { consoleRoutes } from './connectors/console-routes.ts';
+import { organisationRuntime } from './connectors/runtime.ts';
 import { ekaWebhookRoutes } from './records/abdm/webhook.ts';
 import { DEMO_PORTAL_PATH, type DemoPortal } from './records/demo-portal.ts';
 
@@ -74,6 +77,8 @@ export interface AppOptions {
   whatsapp?: { client?: WhatsAppClient; onService?: (s: WhatsAppService) => void };
   /** The pretend lab portal for the record agent (development and tests), served at /demo-portal. */
   demoPortal?: DemoPortal;
+  /** How the organisation API reaches hospital systems (tests pass a fake FHIR server). */
+  orgFetch?: typeof fetch;
 }
 
 export function createApp(input: DepsInput, opts: AppOptions = {}): Hono<AppEnv> {
@@ -85,6 +90,8 @@ export function createApp(input: DepsInput, opts: AppOptions = {}): Hono<AppEnv>
     : undefined;
   if (wa) opts.whatsapp?.onService?.(wa);
   const app = new Hono<AppEnv>();
+  // The organisation API's runtime: shared by /v1, /v1/mcp and the developer console (docs/connectors.md).
+  const orgs = organisationRuntime({ db: deps.db, keyrings: deps.secrets.fileKeys, fetch: opts.orgFetch });
   // Map tiles on the Labs page may come from another host (see facilities/map.ts).
   const appCsp = addCspSources(APP_CSP, mapCspSources(config));
 
@@ -162,6 +169,7 @@ export function createApp(input: DepsInput, opts: AppOptions = {}): Hono<AppEnv>
   app.route('/api/geo', geoRoutes(deps));
   app.route('/api/config', configRoutes(deps));
   app.route('/api/map', mapFileRoutes(deps));
+  app.route('/api/console', consoleRoutes(deps, orgs));
   app.all('/api/*', c => c.json({ error: { code: 'not_found', message: 'No such API route.' } }, 404));
 
   app.onError((err, c) => {
@@ -190,9 +198,27 @@ export function createApp(input: DepsInput, opts: AppOptions = {}): Hono<AppEnv>
   app.route('/mcp', mcpRoutes(deps));
   // The connector core's public catalogue (docs/connectors.md); versioned, outside /api like /mcp.
   app.route('/v1/connectors', connectorRoutes(deps.records?.connectors ?? null));
-  // Health's organisation API: API keys, operations on an organisation's authority. Bodies are small.
-  app.use('/v1/operations/*', bodyLimit({ maxSize: 256 * 1024, onError: () => { throw new HttpError(413, 'too_large', 'This request is too large.'); } }));
-  app.route('/v1', organisationRoutes(deps.db));
+  // Health's organisation API: API keys, operations on an organisation's authority. Uploads carry a document (5 MB, base64).
+  app.use('/v1/operations/*', bodyLimit({ maxSize: 8 * 1024 * 1024, onError: () => { throw new HttpError(413, 'too_large', 'This request is too large.'); } }));
+  // The organisation MCP server: an organisation's API key, CORS open without credentials, like /mcp.
+  app.use('/v1/mcp', async (c, next) => {
+    if (c.req.method === 'OPTIONS') {
+      return c.body(null, 204, {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'POST, GET, DELETE',
+        'Access-Control-Allow-Headers': 'Authorization, Content-Type, Accept, MCP-Protocol-Version, Mcp-Session-Id, Last-Event-ID',
+        'Access-Control-Max-Age': '600',
+      });
+    }
+    await next();
+    c.res.headers.set('Access-Control-Allow-Origin', '*');
+    c.res.headers.set('Access-Control-Expose-Headers', 'WWW-Authenticate, Mcp-Session-Id');
+    c.res.headers.set('Cache-Control', 'no-store');
+  });
+  // Uploads carry a document (up to 5 MB, base64) inside the JSON.
+  app.use('/v1/mcp', bodyLimit({ maxSize: 8 * 1024 * 1024, onError: c => c.json({ jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Request too large.' } }, 413) }));
+  app.route('/v1/mcp', organisationMcpRoutes(deps.db, orgs));
+  app.route('/v1', organisationRoutes(deps.db, orgs));
   app.use('/oauth/*', bodyLimit({ maxSize: 64 * 1024, onError: c => c.json({ error: 'invalid_request', error_description: 'Request too large.' }, 413) }));
   app.route('/', oauthRoutes(deps, opts.oauth));
 

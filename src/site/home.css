@@ -2,7 +2,7 @@
    values from src/site/lotuspond-tokens.json, held to it by tools/test-site-design.ts). A sage field holds the page, reading happens on off-white
    sheets, pine is the ink and the one dark chapter, and tomato is spent once per view: never on the sage field,
    where the main action is the ink button and the underline off-white.
-   The legal pages, the 404 page and the app keep their own styles (site.css, src/index.css).
+   The other public pages (legal, 404, developers) use these tokens too, with src/site/pages.css; the app keeps src/index.css.
    The brand faces are bundled from Fontsource, because the site's content security policy allows fonts only from
    its own origin. Mono is not loaded: the page shows no code. */
 @import '@fontsource-variable/platypi/wght.css';
@@ -418,21 +418,3 @@ html { scroll-padding-top: calc(var(--header, 72px) + 16px); }
 @media (max-width: 520px) {
   .home-foot { grid-template-columns: minmax(0, 1fr); }
 }
-
-/* For organisations (organisations/index.html): the operations table, an example request, and points on the deep sheet */
-.home-table-wrap { margin-top: clamp(32px, 4vw, 48px); overflow-x: auto; border-top: 1.5px solid var(--pine-900); }
-.home-table { width: 100%; min-width: 720px; border-collapse: collapse; font-size: 15px; }
-.home-table th, .home-table td { padding: 14px 16px 14px 0; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
-.home-table thead th { color: var(--ink-muted); font-size: 13px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
-.home-table tbody th { font-weight: 400; white-space: nowrap; }
-.home-table td { color: var(--ink-muted); }
-.home-table code, .home-fine code, .home-code code { font: 500 0.92em/1.5 ui-monospace, 'SF Mono', Menlo, Consolas, monospace; }
-.home-table tbody th code { color: var(--pine-900); font-weight: 600; }
-.home-tag { display: inline-block; padding: 3px 10px; border-radius: 999px; background: var(--surface-tint); color: var(--sage-700); font-size: 13px; font-weight: 700; white-space: nowrap; }
-.home-code { margin-top: clamp(32px, 4vw, 48px); overflow-x: auto; padding: 22px 24px; border-radius: var(--r-md); background: var(--deep); color: var(--on-deep); }
-.home-code pre { margin: 0; font-size: 14px; }
-.home-code-c { color: var(--on-deep-muted); }
-.home-deep .home-points li { border-top-color: var(--deep-line); color: var(--on-deep-muted); }
-.home-deep .home-points li:first-child { border-top-color: var(--on-deep); }
-.home-deep .home-points b { color: var(--on-deep); }
-.home-close .home-fine { color: var(--on-field-muted); }
