@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <!-- @include head -->
+    <title>Developer console · LotusPond Health</title>
+    <meta name="description" content="Make an organisation, create API keys, approve uploads and see every call to LotusPond Health's organisation API." />
+    <meta name="robots" content="noindex" />
+    <link rel="canonical" href="%SITE_URL%/developers/console/" />
+    <link rel="stylesheet" href="/src/site/console.css" />
+    <script type="module" src="/src/console/main.ts"></script>
+  </head>
+  <body>
+    <!-- @include header -->
+    <main id="main">
+      <header class="doc-hero">
+        <div class="wrap">
+          <p class="eyebrow">Developer console</p>
+          <h1>Your organisation’s API</h1>
+          <p class="doc-hero__lede">Make API keys for the organisation API and its MCP server, approve uploads that wait for a clinician, and see every call. New organisations start in the sandbox hospital. The <a class="link" href="/developers/">developer guide</a> has the details.</p>
+        </div>
+      </header>
+      <div class="wrap console" id="console" aria-live="polite">
+        <p class="muted">Loading…</p>
+        <noscript><p>The console needs JavaScript.</p></noscript>
+      </div>
+    </main>
+    <!-- @include footer -->
+  </body>
+</html>

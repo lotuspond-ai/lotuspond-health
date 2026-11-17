@@ -73,11 +73,14 @@ export function leaveApp(): void {
 }
 
 /**
- * Where to go after signing in when an agent sent the person here to approve a connection: /login?next=/oauth/authorize?…
- * Only that same-origin path is followed, so the parameter cannot send anyone elsewhere.
+ * Where to go after signing in when an agent sent the person here to approve a connection (/login?next=/oauth/authorize?…),
+ * or the developer console sent them (/login?next=/developers/console/). Only those same-origin paths are followed, so
+ * the parameter cannot send anyone elsewhere.
  */
 export function oauthReturn(): string | null {
   if (shellOnly || typeof location === 'undefined') return null;
   const next = new URLSearchParams(location.search).get('next');
+  // The developer console (/developers/console/) sends people here to sign in, and back.
+  if (next === '/developers/console/') return next;
   return next && /^\/oauth\/authorize\?[^\\]*$/.test(next) && !next.includes('//') ? next : null;
 }

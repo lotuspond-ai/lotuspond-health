@@ -1,11 +1,14 @@
 // GET /v1/connectors: the public catalogue of the connector core. Which systems LotusPond can reach, on whose
 // authority, with which operations, and whether this server runs each one now. No sign-in: it describes connectors,
-// never connections, people or credentials. ?region=in narrows it to one data region's connectors.
+// never connections, people or credentials. ?region=in narrows it to one data region's connectors. `systems` lists
+// the hospital and clinic systems the organisation API reaches, with each one's status.
 import { Hono } from 'hono';
 import { SOURCES } from '../../../shared/sources.ts';
 import { REGIONS, type DataRegion } from '../../../shared/regions.ts';
 import { connectorRegistry, type ConnectorRegistry } from './registry.ts';
 import { OPERATIONS } from './types.ts';
+import { INTEGRATIONS, INTEGRATION_STATUS_TEXT } from '../../../shared/integrations.ts';
+import { HIS_ADAPTERS } from './his/index.ts';
 
 export function connectorRoutes(registry: ConnectorRegistry | null) {
   // With the record agent off, the same catalogue, with nothing available on this server.
@@ -23,6 +26,11 @@ export function connectorRoutes(registry: ConnectorRegistry | null) {
       version: 1,
       operations: Object.values(OPERATIONS),
       connectors: list.map(x => reg.info(x)),
+      // Hospital and clinic systems for the organisation API, with an honest status each (shared/integrations.ts).
+      // India only for now: these systems, and the organisations reaching them, are in India.
+      systems: !region || region === 'in'
+        ? INTEGRATIONS.map(i => ({ ...i, authority: 'organisation', statusText: INTEGRATION_STATUS_TEXT[i.status].detail, runsHere: HIS_ADAPTERS.has(i.id) }))
+        : [],
     });
   });
   return app;

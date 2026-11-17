@@ -5,7 +5,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { and, eq, isNull } from 'drizzle-orm';
 import type { DataRegion } from '../../../shared/regions.ts';
 import type { Db } from '../db/client.ts';
-import { organisationCalls, organisationKeys, organisations } from '../db/schema.ts';
+import { organisationKeys, organisations } from '../db/schema.ts';
 import { OPERATIONS, type OperationId } from './types.ts';
 
 export type OrganisationRow = typeof organisations.$inferSelect;
@@ -53,8 +53,4 @@ export async function authenticateOrganisation(db: Db, key: string, now = new Da
   if (!org) return null;
   await db.update(organisationKeys).set({ lastUsedAt: now }).where(eq(organisationKeys.id, k.id));
   return { org, key: k };
-}
-
-export async function recordCall(db: Db, c: { organisationId: string; keyId: string; operation: string; outcome: 'done' | 'refused' | 'not_offered' | 'failed' }): Promise<void> {
-  await db.insert(organisationCalls).values(c);
 }

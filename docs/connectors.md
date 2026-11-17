@@ -23,13 +23,13 @@ LotusPond Works is a separate product: automation of an organisation's administr
 | Operation | Authority | Writes | Approval | Stage |
 | --- | --- | --- | --- | --- |
 | `records.fetch` | person | no | none | live: every record agent source |
-| `patients.search` | organisation | no | none | planned |
-| `encounters.list` | organisation | no | none | planned |
-| `documents.upload` | organisation | yes | clinician | planned |
-| `claims.status` | organisation | no | none | planned |
+| `patients.search` | organisation | no | none | live: sandbox, FHIR R4 |
+| `encounters.list` | organisation | no | none | live: sandbox, FHIR R4 |
+| `documents.upload` | organisation | yes | clinician | live: sandbox, FHIR R4 |
+| `claims.status` | organisation | no | none | live: sandbox only |
 | `preauth.submit` | organisation | yes | clinician | planned |
 
-The planned operations are defined before their first adapter, so the docs, the API and the adapters agree on one contract. An adapter is built for a specific system only with written access authority and a pilot customer: no bypassing MFA, anti-bot controls or a vendor's terms.
+Each operation is defined before its first adapter, so the docs, the API and the adapters agree on one contract. An adapter is built for a specific system only with written access authority and a pilot customer: no bypassing MFA, anti-bot controls or a vendor's terms.
 
 ## How records.fetch runs today
 
@@ -47,25 +47,36 @@ A portal the person names by address is offered only where `typedPortals` allows
 
 ## The organisation API
 
-The organisation side of LotusPond Health is in place, with no organisation operation live yet:
+Organisations reach hospital systems on their own authority, through `/v1` (REST) and `/v1/mcp` (MCP). The developer guide for outsiders is the site page `/developers/`; the console is `/developers/console/`.
 
-- **Organisations and keys** live in the default database (`organisations`, `organisation_keys`, migration `0014`), never in a person's cell. A key looks like `lpk_…`. Only its SHA-256 is stored, and the key itself is shown once. Each key lists the operations it may call, and only organisation operations can be given.
-- **Making them**, on the server (the production image has the same commands, `node dist/index.js …`):
+- **Self-serve, sandbox first.** Anyone with a LotusPond account can make an organisation in the developer console (`/api/console`, `server/src/connectors/console-routes.ts`) and make API keys at once. A new organisation has `access = sandbox`: it reaches only LotusPond's sandbox hospital (`his/sandbox.ts`), with synthetic patients, visits, documents and claims.
+- **Live access is given by LotusPond, not taken.** An organisation asks in the console (which hospital, which system). LotusPond checks the hospital's written authority and the data-processing agreement, then, on the server:
 
   ```bash
-  npx tsx src/index.ts org:create "City Hospital" in
-  npx tsx src/index.ts org:key <organisation id> "Pilot" claims.status,preauth.submit   # or: all
-  npx tsx src/index.ts org:revoke <key id>
+  npx tsx src/index.ts org:requests                       # who asked, for what
+  npx tsx src/index.ts org:live <organisation id>
+  ORG_CONNECTION_TOKEN=… npx tsx src/index.ts org:connect <organisation id> trakcare "City Hospital TrakCare" https://his.example.org/fhir/r4
   ```
 
-- **Calls.** Every call sends `Authorization: Bearer lpk_…`, with no cookies or browsers involved.
-  - `GET /v1/organisation`: who the key belongs to, and which operations it may call.
-  - `POST /v1/operations/{id}`: run an operation.
-- **Refusals.**
-  - An operation that runs only on a person's authority answers `403 wrong_authority`; `records.fetch` belongs to LotusPond Health.
-  - One outside the key's list answers `403 not_in_key`.
-  - A planned operation answers `501 operation_not_offered` until its first adapter is live.
-- **Audit.** Every call, allowed or refused, is recorded in `organisation_calls` with the organisation, the key, the operation and the outcome.
+  Credentials come from the environment (`ORG_CONNECTION_TOKEN`, or `ORG_CONNECTION_USER` and `ORG_CONNECTION_PASSWORD`), never the command line, and are sealed with the region's file keys. Self-serve organisations can never point the server at an address of their choosing.
+- **Keys.** Kept only as SHA-256 (`lpk_…`), each listing the operations it may call. Made with the console or `org:key`; revoked with the console or `org:revoke`.
+- **Calls.**
+  - `GET /v1/organisation`: who the key belongs to, its access and its operations.
+  - `GET /v1/connections`: the sandbox and any real systems LotusPond added.
+  - `POST /v1/operations/{id}` with `{ "connection": "…", …input }`: inputs are checked by `his/operations.ts` (the same schemas the MCP tools use). Reads answer `200 { status: "done", result }` with FHIR R4.
+  - Writes that need a clinician (`documents.upload`) answer `202 { status: "pending_approval", approval }`. The input is sealed until someone in the organisation approves it in the console; then it is sent and the held copy is deleted. `GET /v1/approvals/{id}` reads the outcome.
+- **Refusals.** `403 wrong_authority` (a person-only operation), `403 not_in_key`, `403 not_live` (a live connection from a sandbox organisation), `400 invalid_input`, `404 connection_not_found`, `501 operation_not_offered` (`preauth.submit`). A hospital system's own failure is `502`, or `504` on a timeout, with a message that carries no patient data.
+- **Audit.** Every call, allowed or refused, is recorded in `organisation_calls` with the key, the connection and the outcome, and shown in the console.
+
+### Adapters
+
+| Connector | Adapter | Status |
+| --- | --- | --- |
+| `sandbox` | `his/sandbox.ts`: synthetic data, uploads kept in memory per connection | Available |
+| `fhir`, `bahmni`, `trakcare` | `his/fhir.ts`: FHIR R4 REST (Patient, Encounter, DocumentReference), bearer or Basic credentials, https only | Available on request |
+| Everything else in `shared/integrations.ts` | none: listed with an honest status and refused if called | In build or planned |
+
+`shared/integrations.ts` is the single list of systems and their status. It feeds `GET /v1/connectors` (`systems`), the console, and the developers page (a test checks the page matches it). Add an adapter in `his/index.ts` only together with changing that system's status to available or on request.
 
 ## Which hospital systems to build for
 
@@ -91,6 +102,6 @@ Akhil Miracle and TrakCare are the strongest first private-sector adapters. Each
 ## Next
 
 1. ~~Organisations and API keys~~: done (above).
-2. **Connections and running operations.** `/v1/connections` holds an organisation's links to its systems, with sealed credentials and health status. Operations become idempotent and asynchronous, with webhooks, and writes go through an approvals queue. The same operations are served as MCP tools for organisations' agents.
+2. ~~Connections, running operations, approvals, the organisation MCP server and the developer console~~: done (above). Still to come: idempotency keys, asynchronous runs with webhooks, and inviting more members (approvers) to an organisation.
 3. **First adapters, with a pilot.** Either EHR write-back for one AI-scribe customer across two authorised HIS vendors (Akhil Miracle and TrakCare first; see "Which hospital systems to build for"), or claims status and pre-authorisation for one hospital, preferring NHCX where the payer is on it (`docs/abdm.md`; the plan in Notion).
 4. **LotusPond Link.** An organisation using the organisation API can ask a person to share records from their LotusPond Health account. The person approves in their consent centre and can revoke it there.

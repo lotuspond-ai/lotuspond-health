@@ -30,6 +30,9 @@ import { gmailFetcher, outlookFetcher } from './records/api/mail.ts';
 import { digilockerFetcher } from './records/api/digilocker.ts';
 import { createOrganisation, createOrganisationKey, ORGANISATION_OPERATIONS, revokeOrganisationKey } from './connectors/organisations.ts';
 import type { OperationId } from './connectors/types.ts';
+import { organisationRuntime } from './connectors/runtime.ts';
+import { organisations } from './db/schema.ts';
+import { eq } from 'drizzle-orm';
 
 // This file runs from server/src (tsx) or server/dist (bundle); both are one level below server/.
 const serverRoot = fileURLToPath(new URL('..', import.meta.url));
@@ -71,7 +74,12 @@ if (command === 'files:rekey') {
 //   org:create "<name>" [region]                        prints the new organisation's id
 //   org:key <organisation id> "<key name>" <op,op|all>  prints a new API key, once
 //   org:revoke <key id>
-if (command === 'org:create' || command === 'org:key' || command === 'org:revoke') {
+//   org:requests                                        organisations that asked for live access, and what they asked for
+//   org:live <organisation id>                          give live access, once its written authority is checked
+//   org:connect <organisation id> <connector> "<name>" <base url>
+//       adds a connection to a real system (fhir, bahmni, trakcare). Credentials come from the environment, never the
+//       command line: ORG_CONNECTION_TOKEN (bearer), or ORG_CONNECTION_USER and ORG_CONNECTION_PASSWORD (HTTP Basic).
+if (['org:create', 'org:key', 'org:revoke', 'org:requests', 'org:live', 'org:connect'].includes(command ?? '')) {
   const [a, b, c] = process.argv.slice(3);
   const db = registry.defaultCell.db;
   try {
@@ -81,6 +89,24 @@ if (command === 'org:create' || command === 'org:key' || command === 'org:revoke
       if (!(region in REGIONS)) fail(`Unknown region "${region}". Use one of: ${Object.keys(REGIONS).join(', ')}.`);
       const org = await createOrganisation(db, a, region);
       console.log(`Organisation ${org.name} (${org.region}): ${org.id}`);
+    } else if (command === 'org:requests') {
+      const rows = await db.select().from(organisations);
+      const asked = rows.filter(r => r.liveRequestedAt && r.access !== 'live');
+      if (!asked.length) console.log('No organisation is waiting for live access.');
+      for (const r of asked) console.log(`${r.id}  ${r.name}  asked ${r.liveRequestedAt!.toISOString()} by ${r.liveRequest?.by}\n  systems: ${r.liveRequest?.systems}\n  hospital: ${r.liveRequest?.hospital}\n  note: ${r.liveRequest?.note || '-'}`);
+    } else if (command === 'org:live') {
+      if (!a) fail('Usage: org:live <organisation id>');
+      const rows = await db.update(organisations).set({ access: 'live' }).where(eq(organisations.id, a)).returning({ id: organisations.id });
+      console.log(rows.length ? 'The organisation has live access. Add its connections with org:connect.' : 'No such organisation.');
+    } else if (command === 'org:connect') {
+      const [, , name, baseUrl] = process.argv.slice(3);
+      if (!a || !b || !name || !baseUrl) fail('Usage: org:connect <organisation id> <fhir|bahmni|trakcare> "<name>" <FHIR base url>  (credentials in ORG_CONNECTION_TOKEN, or ORG_CONNECTION_USER and ORG_CONNECTION_PASSWORD)');
+      const token = process.env.ORG_CONNECTION_TOKEN;
+      const user = process.env.ORG_CONNECTION_USER;
+      const secret = token ? { token } : user ? { username: user, password: process.env.ORG_CONNECTION_PASSWORD ?? '' } : null;
+      const runtime = organisationRuntime({ db, keyrings: secrets.fileKeys });
+      const conn = await runtime.addConnection(a, { connectorId: b, name, settings: { baseUrl }, secret });
+      console.log(`Connection ${conn.name} (${conn.connector}): ${conn.id}${secret ? ', with sealed credentials' : ', without credentials'}.`);
     } else if (command === 'org:key') {
       if (!a || !b || !c) fail(`Usage: org:key <organisation id> "<key name>" <operation,operation|all>. Operations: ${ORGANISATION_OPERATIONS.join(', ')}.`);
       const ops = (c === 'all' ? ORGANISATION_OPERATIONS : c.split(',').map(x => x.trim())) as OperationId[];
@@ -94,7 +120,7 @@ if (command === 'org:create' || command === 'org:key' || command === 'org:revoke
   await opened.close();
   process.exit(0);
 }
-if (command) fail(`Unknown command "${command}". Commands: files:rekey, org:create, org:key, org:revoke.`);
+if (command) fail(`Unknown command "${command}". Commands: files:rekey, org:create, org:key, org:revoke, org:requests, org:live, org:connect.`);
 
 async function sweep() {
   for (const cell of allCells) {

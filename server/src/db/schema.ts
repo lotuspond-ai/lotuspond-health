@@ -536,8 +536,72 @@ export const organisations = pgTable('organisations', {
   name: text('name').notNull(),
   /** Where its data is held and its systems are reached from. */
   region: text('region').$type<DataRegion>().notNull(),
+  /**
+   * sandbox  self-serve: its keys reach only LotusPond's synthetic sandbox hospital
+   * live     LotusPond has checked its written authority, so connections to real systems may be added for it
+   */
+  access: text('access').$type<'sandbox' | 'live'>().notNull().default('sandbox'),
+  /** When someone in the organisation asked for live access, and what they said they need. */
+  liveRequestedAt: timestamp('live_requested_at', { withTimezone: true }),
+  liveRequest: jsonb('live_request').$type<{ systems: string; hospital: string; note: string; by: string }>(),
   createdAt: createdAt(),
 });
+
+/**
+ * People who manage an organisation in the developer console. Accounts live in regional cells, so a member is named
+ * by region and user id (and the email at the time, for display); nothing here reaches that person's own records.
+ *   owner     manages keys, members' requests and approvals
+ *   approver  may also approve writes that need a clinician (a clinician on the organisation's side)
+ */
+export const organisationMembers = pgTable('organisation_members', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  organisationId: uuid('organisation_id').notNull().references(() => organisations.id, { onDelete: 'cascade' }),
+  userRegion: text('user_region').$type<DataRegion>().notNull(),
+  userId: uuid('user_id').notNull(),
+  email: text('email').notNull(),
+  role: text('role').$type<'owner' | 'approver'>().notNull(),
+  createdAt: createdAt(),
+}, t => [uniqueIndex('organisation_members_user_key').on(t.organisationId, t.userRegion, t.userId), index('organisation_members_user_idx').on(t.userRegion, t.userId)]);
+
+/**
+ * An organisation's link to one system (a connector): LotusPond's sandbox hospital, or a real HIS that LotusPond set
+ * up after checking the organisation's written authority. Credentials are sealed with the default cell's file keys.
+ */
+export const organisationConnections = pgTable('organisation_connections', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  organisationId: uuid('organisation_id').notNull().references(() => organisations.id, { onDelete: 'cascade' }),
+  connectorId: text('connector_id').notNull(),
+  name: text('name').notNull(),
+  /** Non-secret settings: the system's base address, the hospital or facility it serves. */
+  settings: jsonb('settings').$type<Record<string, string>>().notNull().default({}),
+  /** Sealed credentials (a token, or a user name and password), or null for none. */
+  secretCt: text('secret_ct'),
+  status: text('status').$type<'active' | 'disabled'>().notNull().default('active'),
+  lastOkAt: timestamp('last_ok_at', { withTimezone: true }),
+  lastError: text('last_error'),
+  createdAt: createdAt(),
+}, t => [index('organisation_connections_org_idx').on(t.organisationId)]);
+
+/**
+ * A write that waits for a person on the organisation's side (a clinician) before it is sent: the input is sealed until
+ * then, and the outcome is kept so the caller can read it (GET /v1/approvals/:id).
+ */
+export const organisationApprovals = pgTable('organisation_approvals', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  organisationId: uuid('organisation_id').notNull().references(() => organisations.id, { onDelete: 'cascade' }),
+  connectionId: uuid('connection_id').notNull().references(() => organisationConnections.id, { onDelete: 'cascade' }),
+  keyId: uuid('key_id').references(() => organisationKeys.id, { onDelete: 'set null' }),
+  operation: text('operation').notNull(),
+  /** A short, non-clinical line for the console list (operation, patient reference, title). */
+  summary: text('summary').notNull(),
+  inputCt: text('input_ct').notNull(),
+  status: text('status').$type<'pending' | 'rejected' | 'done' | 'failed'>().notNull().default('pending'),
+  result: jsonb('result').$type<unknown>(),
+  error: text('error'),
+  decidedBy: text('decided_by'),
+  decidedAt: timestamp('decided_at', { withTimezone: true }),
+  createdAt: createdAt(),
+}, t => [index('organisation_approvals_org_idx').on(t.organisationId, t.status)]);
 
 /** An organisation's API key: only its SHA-256 is kept; the key is shown once when made. */
 export const organisationKeys = pgTable('organisation_keys', {
@@ -560,7 +624,9 @@ export const organisationCalls = pgTable('organisation_calls', {
   organisationId: uuid('organisation_id').notNull().references(() => organisations.id, { onDelete: 'cascade' }),
   keyId: uuid('key_id').references(() => organisationKeys.id, { onDelete: 'set null' }),
   operation: text('operation').notNull(),
-  /** done, refused (scope or authority), not_offered (planned operation), failed. */
-  outcome: text('outcome').$type<'done' | 'refused' | 'not_offered' | 'failed'>().notNull(),
+  /** done, pending (waiting for approval), refused (scope or authority), not_offered (planned operation), failed. */
+  outcome: text('outcome').$type<'done' | 'pending' | 'refused' | 'not_offered' | 'failed'>().notNull(),
+  /** The connection the call used, when it named one. */
+  connectionId: uuid('connection_id'),
   at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
 }, t => [index('organisation_calls_org_idx').on(t.organisationId, t.at)]);

@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <!-- @include head -->
+    <title>Developers · LotusPond Health</title>
+    <meta name="description" content="One API and one MCP server for hospital information systems in India. Start in the sandbox hospital today with an API key from the developer console." />
+    <link rel="canonical" href="%SITE_URL%/developers/" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="%SITE_URL%/developers/" />
+    <meta property="og:title" content="Developers · LotusPond Health" />
+    <meta property="og:description" content="One API and one MCP server for hospital information systems in India." />
+    <meta name="twitter:title" content="Developers · LotusPond Health" />
+    <meta name="twitter:description" content="One API and one MCP server for hospital information systems in India." />
+  </head>
+  <body>
+    <!-- @include header -->
+    <main id="main">
+      <header class="doc-hero">
+        <div class="wrap">
+          <p class="eyebrow">For developers and healthcare companies</p>
+          <h1>One API for India’s hospital systems</h1>
+          <p class="doc-hero__lede">Find patients, list their visits, attach documents and check claims through one REST API and one MCP server, on your organisation’s authority. Results come back as FHIR R4. Start today in our sandbox hospital, with no sales call.</p>
+          <div class="hero__actions">
+            <a class="button button--primary" href="/developers/console/">Open the developer console</a>
+            <a class="button button--ghost" href="#quickstart">Read the quickstart</a>
+          </div>
+        </div>
+      </header>
+
+      <div class="wrap doc">
+        <nav class="toc" aria-label="On this page">
+          <h2>On this page</h2>
+          <ol>
+            <li><a href="#systems">Systems you can reach</a></li>
+            <li><a href="#quickstart">Quickstart</a></li>
+            <li><a href="#mcp">MCP server</a></li>
+            <li><a href="#operations">Operations</a></li>
+            <li><a href="#live">Going live with a hospital</a></li>
+            <li><a href="#safety">Safety and records</a></li>
+          </ol>
+        </nav>
+
+        <div class="prose">
+          <section id="systems" aria-labelledby="systems-title">
+            <h2 id="systems-title">Systems you can reach</h2>
+            <p>The status of each system is stated plainly. We do not have partnership agreements with these vendors; product names are used only to say which systems a connection can reach. The same list is published as JSON at <a href="/v1/connectors?region=in"><code>/v1/connectors</code></a>.</p>
+            <div class="table-wrap">
+              <table class="table table--stack">
+                <thead>
+                  <tr><th scope="col">System</th><th scope="col">Status</th><th scope="col">How we reach it</th><th scope="col">Used by</th></tr>
+                </thead>
+                <tbody>
+                  <tr data-integration="sandbox"><th scope="row">LotusPond sandbox hospital</th><td><b>Available</b></td><td>Synthetic patients, visits and claims, for building and testing</td><td>Every new organisation, from the first key</td></tr>
+                  <tr data-integration="fhir"><th scope="row">Any FHIR R4 server</th><td><b>Available on request</b></td><td>FHIR R4 REST: Patient, Encounter and DocumentReference</td><td>Hospitals whose HIS exposes FHIR R4</td></tr>
+                  <tr data-integration="bahmni"><th scope="row">Bahmni and OpenMRS</th><td><b>Available on request</b></td><td>OpenMRS FHIR2 module (FHIR R4)</td><td>Public and non-profit hospitals and clinics</td></tr>
+                  <tr data-integration="trakcare"><th scope="row">InterSystems TrakCare</th><td><b>Available on request</b></td><td>FHIR R4 through the hospital’s InterSystems interoperability toolkit</td><td>Manipal Hospitals, Sir Ganga Ram Hospital</td></tr>
+                  <tr data-integration="eka"><th scope="row">Eka Care EMR</th><td>In build</td><td>Eka’s published developer APIs, with the clinic’s consent</td><td>Clinics and doctors using Eka</td></tr>
+                  <tr data-integration="abdm"><th scope="row">ABDM-certified HIS (consented records)</th><td>Planned</td><td>ABDM health-information-user flow, with each patient’s consent</td><td>C-DAC e-Sushrut, NIC NextGen eHospital and other certified systems</td></tr>
+                  <tr data-integration="nhcx"><th scope="row">NHCX claims exchange</th><td>Planned</td><td>National Health Claims Exchange (FHIR claim profiles)</td><td>Insurers and TPAs on NHCX</td></tr>
+                  <tr data-integration="akhil"><th scope="row">Akhil Systems Miracle HIS</th><td>Planned</td><td>Needs Akhil Systems’ partnership</td><td>Aster, Paras, probably CARE</td></tr>
+                  <tr data-integration="karexpert"><th scope="row">KareXpert</th><td>Planned</td><td>Needs KareXpert’s partnership</td><td>Artemis and mid-size hospitals</td></tr>
+                  <tr data-integration="insta"><th scope="row">Practo Insta HMS</th><td>Planned</td><td>Needs Practo’s partnership</td><td>Clinic chains and hospitals</td></tr>
+                  <tr data-integration="suvarna"><th scope="row">Suvarna HIMS</th><td>Planned</td><td>Needs Suvarna’s partnership</td><td>Probably KIMS; medical colleges</td></tr>
+                  <tr data-integration="mocdoc"><th scope="row">MocDoc</th><td>Planned</td><td>Published REST API; keys come through each MocDoc customer</td><td>Small and mid-size hospitals and clinics</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <dl>
+              <dt>Available</dt><dd>Works today with an API key.</dd>
+              <dt>Available on request</dt><dd>Works today through FHIR R4. We set it up for your hospital once it confirms your access in writing and its IT team switches the interface on.</dd>
+              <dt>In build</dt><dd>The vendor publishes developer access; our connector is being built.</dd>
+              <dt>Planned</dt><dd>Needs the vendor’s partnership or a national network’s onboarding first.</dd>
+            </dl>
+          </section>
+
+          <section id="quickstart" aria-labelledby="quickstart-title">
+            <h2 id="quickstart-title">Quickstart</h2>
+            <ol>
+              <li><a href="/signup">Create a LotusPond account</a>, then open the <a href="/developers/console/">developer console</a> and make an organisation.</li>
+              <li>Make an API key and choose what it may do. The key is shown once; keep it in your secret store.</li>
+              <li>List your connections. Every organisation has a sandbox hospital with synthetic patients.</li>
+            </ol>
+            <pre class="code"><code>curl https://health.lotuspond.ai/v1/connections \
+  -H "Authorization: Bearer lpk_…"
+
+curl https://health.lotuspond.ai/v1/operations/patients.search \
+  -H "Authorization: Bearer lpk_…" -H "Content-Type: application/json" \
+  -d '{"connection": "&lt;connection id&gt;", "name": "asha"}'</code></pre>
+            <p>Every answer is JSON: <code>{"status": "done", "result": …}</code> with a FHIR R4 resource or Bundle, or <code>202</code> with <code>{"status": "pending_approval", "approval": …}</code> for a write that waits for a clinician. Errors carry a <code>code</code> and a plain message.</p>
+          </section>
+
+          <section id="mcp" aria-labelledby="mcp-title">
+            <h2 id="mcp-title">MCP server</h2>
+            <p>Give your own agents the same operations as tools. Point any MCP client that supports Streamable HTTP at the organisation endpoint and send your key as a bearer token:</p>
+            <pre class="code"><code>{
+  "mcpServers": {
+    "lotuspond-hospitals": {
+      "type": "http",
+      "url": "https://health.lotuspond.ai/v1/mcp",
+      "headers": { "Authorization": "Bearer lpk_…" }
+    }
+  }
+}</code></pre>
+            <p>The tools follow the key: <code>list_connections</code>, <code>search_patients</code>, <code>list_encounters</code>, <code>upload_document</code>, <code>get_claim_status</code> and <code>get_approval</code>. A key without an operation does not see its tool. This server is for organisations; people connect their own records at <code>/mcp</code> instead.</p>
+          </section>
+
+          <section id="operations" aria-labelledby="operations-title">
+            <h2 id="operations-title">Operations</h2>
+            <div class="table-wrap">
+              <table class="table table--stack">
+                <thead><tr><th scope="col">Operation</th><th scope="col">Input</th><th scope="col">Returns</th></tr></thead>
+                <tbody>
+                  <tr><th scope="row"><code>patients.search</code></th><td><code>connection</code> and an <code>identifier</code> (MRN, UHID or ABHA number), <code>name</code> or <code>phone</code>; optional <code>birthDate</code>, <code>limit</code></td><td>Bundle of Patient</td></tr>
+                  <tr><th scope="row"><code>encounters.list</code></th><td><code>connection</code>, <code>patient</code>; optional <code>limit</code></td><td>Bundle of Encounter and DocumentReference</td></tr>
+                  <tr><th scope="row"><code>documents.upload</code></th><td><code>connection</code>, <code>patient</code>, <code>title</code>, <code>contentType</code> (PDF, JPEG, PNG or text), base64 <code>data</code> up to 5 MB; optional <code>encounter</code>, <code>author</code></td><td>Held for approval, then DocumentReference</td></tr>
+                  <tr><th scope="row"><code>claims.status</code></th><td><code>connection</code>, <code>claim</code></td><td>ClaimResponse (sandbox today; NHCX and TPA portals later)</td></tr>
+                  <tr><th scope="row"><code>preauth.submit</code></th><td>Planned</td><td>Claim and ClaimResponse</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p>Also: <code>GET /v1/organisation</code> (who the key belongs to), <code>GET /v1/connections</code> and <code>GET /v1/approvals/{id}</code>.</p>
+          </section>
+
+          <section id="live" aria-labelledby="live-title">
+            <h2 id="live-title">Going live with a hospital</h2>
+            <p>New organisations reach only the sandbox. To reach a real hospital system, ask for live access in the console and tell us which hospital and which system. Before we add the connection we need:</p>
+            <ul>
+              <li>The hospital’s written authority for your organisation to read or write the records you named.</li>
+              <li>A service account or token from the hospital’s IT team, and the interface switched on (FHIR R4 for TrakCare, Bahmni and other FHIR systems).</li>
+              <li>A data-processing agreement between your organisation and LotusPond.</li>
+            </ul>
+            <p>We never sign in as a hospital’s staff, never work around multi-factor sign-in or a vendor’s access controls, and never use a system against its vendor’s terms.</p>
+          </section>
+
+          <section id="safety" aria-labelledby="safety-title">
+            <h2 id="safety-title">Safety and records</h2>
+            <ul>
+              <li><b>Writes wait for a clinician.</b> An upload is held, with its content encrypted, until someone with approval rights in your organisation approves it in the console. Then it is sent and the held copy is deleted.</li>
+              <li><b>Every call is recorded.</b> Each key lists what it may do; every call, allowed or refused, is logged with its outcome and shown in the console.</li>
+              <li><b>Credentials are sealed.</b> Hospital credentials are encrypted at rest and never returned by the API.</li>
+              <li><b>Data in India.</b> The organisation API runs on servers in India.</li>
+            </ul>
+          </section>
+        </div>
+      </div>
+    </main>
+    <!-- @include footer -->
+  </body>
+</html>
