@@ -1,10 +1,10 @@
 # One LotusPond account
 
-Status: **accepted on 2026-11-16. Health's side is built for the website and the apps, off unless `ACCOUNTS_ISSUER` is set** ([Built so far](#built-so-far)). LotusPond Accounts itself is not built yet. The decision is recorded in the LotusPond Works repository:
-- [ADR-0018, one LotusPond account for Health and Works](https://github.com/lotuspond-ai/lotuspond/blob/main/docs/architecture/0018-one-lotuspond-account.md);
-- [ADR-0019, databases, tenancy and placement](https://github.com/lotuspond-ai/lotuspond/blob/main/docs/architecture/0019-database-tenancy-and-placement.md).
+Status: **accepted on 2026-11-16. Health's side is built for the website and the apps, off unless `ACCOUNTS_ISSUER` is set** ([Built so far](#built-so-far)). LotusPond Accounts itself is not built yet. The decisions are recorded here:
+- [ADR-0001, one LotusPond account for Health and Works](https://github.com/lotuspond-ai/lotuspond/blob/main/docs/architecture/0001-one-lotuspond-account.md), in the company repository (it was Works ADR-0018);
+- [ADR-0002, separate databases for Accounts, Health and Works](https://github.com/lotuspond-ai/lotuspond/blob/main/docs/architecture/0002-account-and-product-databases.md), in the company repository (it was part of Works ADR-0019).
 
-The links work once [lotuspond-ai/lotuspond#49](https://github.com/lotuspond-ai/lotuspond/pull/49) is merged. This page says what the decision changes for Health.
+This page says what the decision changes for Health.
 
 ## Settled by the owner, 2026-11-16
 

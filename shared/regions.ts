@@ -66,7 +66,7 @@ const US_MEASURES = new Set('US LR MM PR GU VI AS MP UM'.split(' '));
 
 /**
  * Countries where sign-up is open. LotusPond Health opens in India first (the owner's decision of 2026-11-16,
- * recorded in lotuspond-ai/lotuspond ADR-0018). Opening a country means adding it here: the sign-up form, the
+ * recorded in lotuspond-ai/lotuspond ADR-0001). Opening a country means adding it here: the sign-up form, the
  * server's default and the public pages all follow. The other regions' rules below stay, so they apply as soon
  * as a country opens. The server's OPEN_COUNTRIES setting can override this list (tests, staged rollouts).
  */

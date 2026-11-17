@@ -7,7 +7,7 @@ One description of every outside system LotusPond Health reaches: what it can do
 
 The code is in `server/src/connectors/`. It depends on nothing in the consumer app, so the organisation API can be served from it without touching people's records.
 
-LotusPond Works is a separate product: automation of an organisation's administrative processes, not an API. A hospital may use Works to automate its administration; API access to health record systems is LotusPond Health. Works never hosts, proxies or calls this API, and this code is not shared with Works ([ADR-0018, decision 11](https://github.com/lotuspond-ai/lotuspond/blob/main/docs/architecture/0018-one-lotuspond-account.md)).
+LotusPond Works is a separate product: automation of an organisation's administrative processes, not an API. A hospital may use Works to automate its administration; API access to health record systems is LotusPond Health. Works never hosts, proxies or calls this API, and this code is not shared with Works ([ADR-0001, decision 11](https://github.com/lotuspond-ai/lotuspond/blob/main/docs/architecture/0001-one-lotuspond-account.md)).
 
 ## Model
 
@@ -67,9 +67,30 @@ The organisation side of LotusPond Health is in place, with no organisation oper
   - A planned operation answers `501 operation_not_offered` until its first adapter is live.
 - **Audit.** Every call, allowed or refused, is recorded in `organisation_calls` with the organisation, the key, the operation and the outcome.
 
+## Which hospital systems to build for
+
+India has no dominant HIS vendor. What the hospitals run decides where adapters pay off. This summary is from research done in November 2026: public sources, job postings, staff profiles and IPO filings. The evidence and sources are on the Notion page "EHR and HIS systems used by Indian hospitals".
+
+**Read first through ABDM.** An ABDM health-information-user connection (milestone M3) reads consented records from any ABDM-certified system through one FHIR R4 contract. Medical colleges must integrate with ABDM (NMC, March 2026), and C-DAC e-Sushrut and NIC NextGen eHospital, the largest public installed base, are integrated. Neither the Manipal nor the Paras 2026 DRHP claims ABDM integration, so this path cannot be assumed to reach the large private chains. Writes and operations (`documents.upload`, `preauth.submit`) need an adapter per system.
+
+**HIS adapters, in order of reach among private chains.** One HIS usually runs a chain's whole network, so one adapter reaches every hospital in it.
+
+| HIS | Chains running it | Confidence |
+| --- | --- | --- |
+| Akhil Systems Miracle | Aster (India), Paras, probably CARE, possibly Yashoda | High for Aster; medium for the rest |
+| InterSystems TrakCare (on IRIS) | Manipal, with Columbia Asia, AMRI, Medica and Sahyadri moving onto it; Sir Ganga Ram | High |
+| KareXpert | Artemis, plus many mid-size hospitals (vendor claims 500+) | High for Artemis |
+| Suvarna HIMS | Probably KIMS; NHCX-certified | Medium |
+| Insta by Practo | Apollo Health & Lifestyle clinics, Motherhood, Cloudnine | Medium |
+| Single-chain vendors | Napier (Jaslok), TrioTree HISTree (AIG), SanHar Mappingtag (Wockhardt), MyHealthcare (Sakra, probably) | Medium |
+
+Chains with their own systems need one agreement each: Apollo (MedMantra), Narayana (Athma, also sold as SaaS), Max (VistA-derived), Fortis, CMC Vellore, Amrita and Tata Memorial. Epic and Oracle Health are not the primary EHR at any Indian chain found.
+
+Akhil Miracle and TrakCare are the strongest first private-sector adapters. Each still needs a pilot customer with written access authority (see Operations).
+
 ## Next
 
 1. ~~Organisations and API keys~~: done (above).
 2. **Connections and running operations.** `/v1/connections` holds an organisation's links to its systems, with sealed credentials and health status. Operations become idempotent and asynchronous, with webhooks, and writes go through an approvals queue. The same operations are served as MCP tools for organisations' agents.
-3. **First adapters, with a pilot.** Either EHR write-back for one AI-scribe customer across two authorised HIS vendors, or claims status and pre-authorisation for one hospital, preferring NHCX where the payer is on it (`docs/abdm.md`; the plan in Notion).
+3. **First adapters, with a pilot.** Either EHR write-back for one AI-scribe customer across two authorised HIS vendors (Akhil Miracle and TrakCare first; see "Which hospital systems to build for"), or claims status and pre-authorisation for one hospital, preferring NHCX where the payer is on it (`docs/abdm.md`; the plan in Notion).
 4. **LotusPond Link.** An organisation using the organisation API can ask a person to share records from their LotusPond Health account. The person approves in their consent centre and can revoke it there.
