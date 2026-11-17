@@ -22,7 +22,14 @@ export interface FakeAccounts {
   metadata: IssuerMetadata;
   /** Routes the server's own calls (token, keys) to the stand-in without a network round trip. */
   fetch: Fetch;
+  /** A signed logout token (Back-Channel Logout) for an account (`sub`), a session (`sid`) or both, with any changes. */
+  logoutToken(who: { sub?: string; sid?: string }, change?: Record<string, unknown>): string;
+  /** Where the stand-in delivers logout tokens: Health's handler, in process (routes/accounts.ts). */
+  onLogoutToken(deliver: (token: string) => Promise<number>): void;
 }
+
+/** The subject the stand-in gives an email: the same email always gets the same one, as a real account would. */
+export const fakeSubject = (email: string) => `dev|${createHash('sha256').update(email.trim().toLowerCase()).digest('hex').slice(0, 24)}`;
 
 export function fakeAccounts(clientId: string): FakeAccounts {
   const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
@@ -72,7 +79,25 @@ export function fakeAccounts(clientId: string): FakeAccounts {
     const back = q.post_logout_redirect_uri && /^https?:\/\//.test(q.post_logout_redirect_uri) ? q.post_logout_redirect_uri : null;
     return c.html(page(`<h1>Signed out of your LotusPond account</h1>
       <p class="note">Stand-in for LotusPond Accounts, for development only.</p>
-      ${back ? `<p><a href="${esc(back)}">Back to LotusPond Health</a></p>` : ''}`));
+      ${back ? `<p><a href="${esc(back)}">Back to LotusPond Health</a></p>` : ''}
+      ${everywhereForm()}`));
+  });
+
+  // Back-channel logout, as Accounts would send it when someone signs out everywhere or their account is closed:
+  // a logout token naming the account, delivered to Health server to server.
+  let deliver: ((token: string) => Promise<number>) | null = null;
+  const everywhereForm = () => `<form method="post" action="${FAKE_ACCOUNTS_PATH}/logout-everywhere">
+      <p class="note">Or sign an account out of LotusPond Health everywhere (back-channel logout):</p>
+      <label>Email <input name="email" type="email" required></label>
+      <button>Sign out everywhere</button></form>`;
+  app.get('/logout-everywhere', c => c.html(page(`<h1>Sign out everywhere</h1>${everywhereForm()}`)));
+  app.post('/logout-everywhere', async c => {
+    const f = await c.req.parseBody() as Record<string, string>;
+    const email = (f.email ?? '').trim().toLowerCase();
+    if (!email.includes('@') || !deliver) return c.text('Bad request', 400);
+    // With `sid` (tests): only that Accounts session, as when someone signs out of one browser.
+    const ended = await deliver(logoutToken(f.sid ? { sub: fakeSubject(email), sid: f.sid } : { sub: fakeSubject(email) }));
+    return c.html(page(`<h1>Signed out everywhere</h1><p>${ended} LotusPond Health ${ended === 1 ? 'session' : 'sessions'} ended for ${esc(email)}.</p>`));
   });
 
   app.post('/authorize', async c => {
@@ -84,8 +109,9 @@ export function fakeAccounts(clientId: string): FakeAccounts {
     codes.set(code, {
       clientId, redirectUri: f.redirect_uri, challenge: f.code_challenge, nonce: f.nonce, expiresAt: Date.now() + CODE_TTL_MS,
       claims: {
-        // The same email always gets the same subject, as a real account would.
-        sub: `dev|${createHash('sha256').update(email).digest('hex').slice(0, 24)}`,
+        sub: fakeSubject(email),
+        // A new Accounts session for each sign-in, so a back-channel logout can name one.
+        sid: `dev-sid-${randomBytes(9).toString('base64url')}`,
         email,
         email_verified: f.email_verified === 'true',
         ...(f.region ? { region: f.region } : {}),
@@ -116,7 +142,13 @@ export function fakeAccounts(clientId: string): FakeAccounts {
     if (!url.startsWith(FAKE_ACCOUNTS_PATH)) throw new Error(`The stand-in Accounts issuer does not serve ${url}`);
     return app.request(url.slice(FAKE_ACCOUNTS_PATH.length) || '/', init);
   };
-  return { app, metadata, fetch: fetchImpl };
+  function logoutToken(who: { sub?: string; sid?: string }, change: Record<string, unknown> = {}): string {
+    return signJwt(privateKey, kid, {
+      iss: FAKE_ACCOUNTS_ISSUER, aud: clientId, iat: Math.floor(Date.now() / 1000), jti: randomBytes(12).toString('base64url'),
+      events: { 'http://schemas.openid.net/event/backchannel-logout': {} }, ...who, ...change,
+    });
+  }
+  return { app, metadata, fetch: fetchImpl, logoutToken, onLogoutToken: d => { deliver = d; } };
 }
 
 function signJwt(key: KeyObject, kid: string, claims: Record<string, unknown>): string {

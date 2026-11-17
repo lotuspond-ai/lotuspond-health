@@ -38,7 +38,9 @@ export const sessions = pgTable('sessions', {
   userAgent: text('user_agent'),
   /** Started by a sign-in with LotusPond Accounts: signing out also signs out there (routes/accounts.ts). */
   viaAccounts: boolean('via_accounts').notNull().default(false),
-}, t => [index('sessions_user_idx').on(t.userId)]);
+  /** The Accounts session (`sid`) it came from, when Accounts sent one: a back-channel logout can name it. */
+  accountsSid: text('accounts_sid'),
+}, t => [index('sessions_user_idx').on(t.userId), index('sessions_accounts_sid_idx').on(t.accountsSid)]);
 
 export const profiles = pgTable('profiles', {
   id: uuid('id').primaryKey().defaultRandom(),

@@ -296,6 +296,7 @@ const ACTIVITY_LABEL: Record<AuditKind, string> = {
   assistant_chat: 'Started a chat with the assistant',
   whatsapp_linked: 'Linked a WhatsApp number',
   accounts_linked: 'Linked to your LotusPond account',
+  accounts_signed_out: 'Signed out from LotusPond Accounts',
   whatsapp_unlinked: 'Unlinked WhatsApp',
   whatsapp_report: 'Sent a report on WhatsApp',
   records_source_connected: 'Connected a record source',

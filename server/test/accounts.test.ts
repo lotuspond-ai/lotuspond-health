@@ -14,7 +14,7 @@ import type { Hono } from 'hono';
 import { createApp } from '../src/app.ts';
 import { loadConfig } from '../src/config.ts';
 import { openDatabase, type Database } from '../src/db/client.ts';
-import { auditEvents, users } from '../src/db/schema.ts';
+import { auditEvents, sessions, users } from '../src/db/schema.ts';
 import { DiskFileStore } from '../src/lib/files.ts';
 import { AccountsClient, OidcError } from '../src/auth/oidc.ts';
 import { fakeAccounts } from '../src/auth/fake-accounts.ts';
@@ -280,6 +280,81 @@ describe('LotusPond Accounts sign-in from the apps', () => {
     assert.equal(refused.error, 'enterprise_account');
     assert.equal((await browser().go('GET', '/api/auth/accounts/start?client=app')).status, 400);
     assert.equal((await appCall('POST', '/api/auth/accounts/app-exchange', { code: 'made-up', verifier: randomBytes(32).toString('base64url') })).status, 400);
+  });
+});
+
+describe('back-channel logout', () => {
+  const everywhere = (address: string, sid?: string) => browser().go('POST', '/api/dev-accounts/logout-everywhere',
+    new URLSearchParams({ email: address, ...(sid ? { sid } : {}) }).toString(), 'application/x-www-form-urlencoded');
+
+  test('signing out everywhere at Accounts ends the website and app sessions from Accounts, not password sessions', async () => {
+    const address = email('bcl');
+    const pw = browser();
+    assert.equal((await pw.json('POST', '/api/auth/register', registration(address))).status, 201);
+    const web = browser();
+    assert.equal((await signInWithAccounts(web, { email: address })).pathname, '/app', 'links the account');
+    const { code, verifier } = await appThroughAccounts({ email: address });
+    const appSession = await (await appCall('POST', '/api/auth/accounts/app-exchange', { code, verifier })).json() as { token: string };
+
+    const res = await everywhere(address);
+    assert.equal(res.status, 200);
+    assert.match(await res.text(), /2 LotusPond Health sessions ended/);
+    assert.equal(await (await web.go('GET', '/api/auth/me')).json(), null, 'the website session from Accounts has ended');
+    assert.equal(await (await appCall('GET', '/api/auth/me', undefined, appSession.token)).json(), null, 'the app session from Accounts has ended');
+    assert.ok(await (await pw.go('GET', '/api/auth/me')).json(), 'the password session stays');
+    const [row] = await database.db.select().from(users).where(eq(users.email, address));
+    const events = await database.db.select().from(auditEvents).where(eq(auditEvents.userId, row.id));
+    assert.ok(events.some(e => e.kind === 'accounts_signed_out'));
+  });
+
+  test('a logout naming one Accounts session ends only the Health sessions from it', async () => {
+    const address = email('bcl-sid');
+    const one = browser();
+    const two = browser();
+    await signInWithAccounts(one, { email: address }, 'signup');
+    assert.equal((await one.json('POST', '/api/auth/accounts/complete', finish())).status, 201);
+    await signInWithAccounts(two, { email: address });
+    const [row] = await database.db.select().from(users).where(eq(users.email, address));
+    const rows = await database.db.select().from(sessions).where(eq(sessions.userId, row.id));
+    assert.equal(rows.length, 2);
+    assert.ok(rows.every(r => r.viaAccounts && r.accountsSid), 'each session keeps its Accounts session');
+    // The first sign-in's session ends; the second stays.
+    const first = rows.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())[0];
+    assert.match(await (await everywhere(address, first.accountsSid!)).text(), /1 LotusPond Health session ended/);
+    assert.equal(await (await one.go('GET', '/api/auth/me')).json(), null);
+    assert.ok(await (await two.go('GET', '/api/auth/me')).json());
+  });
+
+  test('the endpoint refuses a missing token and one signed with another key', async () => {
+    const post = (token?: string) => app.request('http://health.test/api/auth/accounts/backchannel-logout', {
+      method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: token === undefined ? '' : new URLSearchParams({ logout_token: token }).toString(),
+    });
+    assert.equal((await post()).status, 400);
+    const impostor = fakeAccounts('lotuspond-health');
+    const forged = await post(impostor.logoutToken({ sub: 'dev|x' }));
+    assert.equal(forged.status, 400);
+    assert.equal(forged.headers.get('cache-control'), 'no-store');
+  });
+});
+
+describe('logout token checks', () => {
+  const fake = fakeAccounts('lotuspond-health');
+  const client = new AccountsClient({ issuer: 'fake', clientId: 'lotuspond-health' }, fake.fetch, fake.metadata);
+  const refused = (token: string, why: RegExp) => assert.rejects(client.verifyLogoutToken(token), (e: unknown) => e instanceof OidcError && why.test(e.message));
+
+  test('a good token names the account or the session', async () => {
+    assert.deepEqual((({ subject, sessionId }) => ({ subject, sessionId }))(await client.verifyLogoutToken(fake.logoutToken({ sub: 'dev|a' }))), { subject: 'dev|a', sessionId: null });
+    assert.equal((await client.verifyLogoutToken(fake.logoutToken({ sid: 's1' }))).sessionId, 's1');
+  });
+
+  test('refused: no event, a nonce, no jti, neither sub nor sid, too old, another client', async () => {
+    await refused(fake.logoutToken({ sub: 'dev|a' }, { events: {} }), /back-channel logout event/);
+    await refused(fake.logoutToken({ sub: 'dev|a' }, { nonce: 'n' }), /nonce/);
+    await refused(fake.logoutToken({ sub: 'dev|a' }, { jti: undefined }), /jti/);
+    await refused(fake.logoutToken({}), /neither/);
+    await refused(fake.logoutToken({ sub: 'dev|a' }, { iat: Math.floor(Date.now() / 1000) - 3600 }), /too old/);
+    await refused(fake.logoutToken({ sub: 'dev|a' }, { aud: 'someone-else' }), /another service/);
   });
 });
 

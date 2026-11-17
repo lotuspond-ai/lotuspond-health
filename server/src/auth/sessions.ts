@@ -20,11 +20,16 @@ const digest = (token: string) => createHash('sha256').update(token).digest('hex
 export interface ActiveSession { id: string; user: UserRow; cell: Cell; viaAccounts: boolean }
 
 export async function createSession(
-  db: Db, region: DataRegion, userId: string, ttlMs: number, userAgent: string | undefined, viaAccounts = false,
+  db: Db, region: DataRegion, userId: string, ttlMs: number, userAgent: string | undefined,
+  /** Started by a sign-in with LotusPond Accounts, with the Accounts session (`sid`) when it sent one. */
+  accounts?: { sid?: string },
 ): Promise<{ token: string; expiresAt: Date }> {
   const token = `${region}.${randomBytes(32).toString('base64url')}`;
   const expiresAt = new Date(Date.now() + ttlMs);
-  await db.insert(sessions).values({ id: digest(token), userId, expiresAt, userAgent: userAgent?.slice(0, 300) ?? null, viaAccounts });
+  await db.insert(sessions).values({
+    id: digest(token), userId, expiresAt, userAgent: userAgent?.slice(0, 300) ?? null,
+    viaAccounts: !!accounts, accountsSid: accounts?.sid?.slice(0, 200) ?? null,
+  });
   return { token, expiresAt };
 }
 

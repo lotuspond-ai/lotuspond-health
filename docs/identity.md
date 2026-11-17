@@ -56,6 +56,14 @@ To try it: `ACCOUNTS_ISSUER=fake npm run dev`, open `/signup` and choose **Conti
   - The trip to Accounts needs a 2-minute ticket that only Health's own sign-out sets, so a link from another site cannot sign anyone out of Accounts.
   - No ID token is kept, so Accounts may ask the person to confirm.
   - Password sessions sign out of Health only.
+- **Back-channel logout** (OpenID Connect Back-Channel Logout 1.0, migration 0017). When someone signs out at Accounts, or Accounts closes their account, Accounts posts a logout token to `POST /api/auth/accounts/backchannel-logout`.
+  - **Checks:** the token is checked like an ID token (signature, issuer, audience). It must also be at most 5 minutes old, carry the back-channel logout event and a `jti`, and carry no nonce. A token is acted on once.
+  - **What ends:** sessions record the Accounts session (`sessions.accounts_sid`) from the ID token's `sid`. A token naming a `sid` ends the Health sessions from that Accounts session. A token naming only the account (`sub`) ends every session from Accounts for it, on the website and in the apps.
+  - **What stays:** password sessions are separate sign-ins and stay.
+  - **Audit:** each account affected gets an `accounts_signed_out` event ("Signed out from LotusPond Accounts").
+  - **Registration:** register the endpoint at Accounts as Health's `backchannel_logout_uri`, with `backchannel_logout_session_required`. With regional hosts, register each host's, since each ends only the sessions in its own cells.
+  - **Replays:** used tokens are remembered in memory, so with several instances of one host a replay could reach another. It could only end sessions the first delivery already ended.
+  - **Stand-in:** its sign-out page has **Sign out everywhere**, which sends Health a logout token for an email.
 - **Refused:** accounts from a company's single sign-on; a region this server does not serve; a country whose region differs from the one Accounts holds the account in; a Health account already linked to another Accounts subject.
 - **Accounts without a Health password** cannot use the password form (it says to use Accounts) or change a password here. They can delete their account within 10 minutes of signing in with Accounts, instead of typing a password.
 - **The apps** sign in through the system browser (RFC 8252): Custom Tabs on Android and SFSafariViewController on iOS (`@capacitor/browser`), never the app's own web view.
@@ -94,7 +102,6 @@ Health reads `sub`, `email` and `email_verified`, plus two LotusPond claims whos
 - **The `directory` moving into Accounts.** Health still keeps its email directory; the `region` claim is checked against it.
 - **The agents' consent page** (`/oauth/authorize`) still uses Health's session, not the Accounts session.
 - **Sign-out at Accounts from the apps.** An app's sign-out ends Health's session only; the Accounts sign-in in the system browser stays.
-- **Back-channel logout.** Signing out at Accounts, or Accounts ending an account, does not yet end Health's sessions (OpenID Connect Back-Channel Logout 1.0).
 - **Removing passwords** for linked accounts, after the reviewed migration.
 
 ## Before launch

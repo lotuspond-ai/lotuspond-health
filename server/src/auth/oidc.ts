@@ -29,6 +29,8 @@ export interface AccountsIdentity {
   region: DataRegion | null;
   /** Set when the account was created through a company's single sign-on. Health refuses such accounts. */
   enterpriseConnection: string | null;
+  /** The Accounts session (`sid`), when Accounts sends one: a back-channel logout can name it. */
+  sessionId?: string;
 }
 
 export class OidcError extends Error {
@@ -39,6 +41,9 @@ const ALLOWED_ALGS = new Set(['RS256', 'ES256']);
 /** Clock difference allowed between Accounts and this server. */
 const SKEW_S = 60;
 const METADATA_TTL_MS = 60 * 60 * 1000;
+/** Logout tokens older than this are refused, which bounds how long their `jti` must be remembered. */
+export const LOGOUT_TOKEN_MAX_AGE_S = 5 * 60;
+export const BACKCHANNEL_EVENT = 'http://schemas.openid.net/event/backchannel-logout';
 
 const b64url = (b: Buffer) => b.toString('base64url');
 export const randomToken = () => b64url(randomBytes(32));
@@ -115,37 +120,37 @@ export class AccountsClient {
     return this.verifyIdToken(tokens.id_token, p.nonce);
   }
 
-  async verifyIdToken(token: string, nonce: string): Promise<AccountsIdentity> {
+  /** Check a JWT from Accounts: its signature against the published keys, its issuer and its audience. */
+  private async verifySigned(token: string): Promise<Record<string, unknown>> {
     const m = await this.metadata();
     const parts = token.split('.');
-    if (parts.length !== 3) throw new OidcError('invalid_token', 'The sign-in token is malformed.');
+    if (parts.length !== 3) throw new OidcError('invalid_token', 'The token is malformed.');
     const [h, p, sig] = parts;
-    let header: { alg?: string; kid?: string };
+    let header: { alg?: string; kid?: string; typ?: string };
     let claims: Record<string, unknown>;
     try {
       header = JSON.parse(Buffer.from(h, 'base64url').toString('utf8'));
       claims = JSON.parse(Buffer.from(p, 'base64url').toString('utf8'));
     } catch {
-      throw new OidcError('invalid_token', 'The sign-in token is malformed.');
+      throw new OidcError('invalid_token', 'The token is malformed.');
     }
-    if (!header.alg || !ALLOWED_ALGS.has(header.alg)) throw new OidcError('invalid_token', 'The sign-in token uses an algorithm this server does not accept.');
+    if (!header.alg || !ALLOWED_ALGS.has(header.alg)) throw new OidcError('invalid_token', 'The token uses an algorithm this server does not accept.');
     const key = await this.key(m, header.kid);
-    const ok = verify(
-      'sha256',
-      Buffer.from(`${h}.${p}`),
-      header.alg === 'ES256' ? { key, dsaEncoding: 'ieee-p1363' } : key,
-      Buffer.from(sig, 'base64url'),
-    );
-    if (!ok) throw new OidcError('invalid_token', 'The sign-in token signature does not match.');
-
+    const ok = verify('sha256', Buffer.from(`${h}.${p}`), header.alg === 'ES256' ? { key, dsaEncoding: 'ieee-p1363' } : key, Buffer.from(sig, 'base64url'));
+    if (!ok) throw new OidcError('invalid_token', 'The token signature does not match.');
+    const audiences = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
+    if (claims.iss !== m.issuer) throw new OidcError('invalid_token', 'The token is from another issuer.');
+    if (!audiences.includes(this.config.clientId)) throw new OidcError('invalid_token', 'The token is for another service.');
+    if (audiences.length > 1 && claims.azp !== this.config.clientId) throw new OidcError('invalid_token', 'The token is for another service.');
     const now = Math.floor(Date.now() / 1000);
-    const aud = claims.aud;
-    const audiences = Array.isArray(aud) ? aud : [aud];
-    if (claims.iss !== m.issuer) throw new OidcError('invalid_token', 'The sign-in token is from another issuer.');
-    if (!audiences.includes(this.config.clientId)) throw new OidcError('invalid_token', 'The sign-in token is for another service.');
-    if (audiences.length > 1 && claims.azp !== this.config.clientId) throw new OidcError('invalid_token', 'The sign-in token is for another service.');
-    if (typeof claims.exp !== 'number' || claims.exp < now - SKEW_S) throw new OidcError('invalid_token', 'The sign-in token has expired.');
-    if (typeof claims.iat === 'number' && claims.iat > now + SKEW_S) throw new OidcError('invalid_token', 'The sign-in token is dated in the future.');
+    if (claims.exp !== undefined && (typeof claims.exp !== 'number' || claims.exp < now - SKEW_S)) throw new OidcError('invalid_token', 'The token has expired.');
+    if (typeof claims.iat === 'number' && claims.iat > now + SKEW_S) throw new OidcError('invalid_token', 'The token is dated in the future.');
+    return claims;
+  }
+
+  async verifyIdToken(token: string, nonce: string): Promise<AccountsIdentity> {
+    const claims = await this.verifySigned(token);
+    if (typeof claims.exp !== 'number') throw new OidcError('invalid_token', 'The sign-in token has no expiry.');
     if (claims.nonce !== nonce) throw new OidcError('invalid_token', 'The sign-in token does not belong to this sign-in.');
     if (typeof claims.sub !== 'string' || !claims.sub) throw new OidcError('invalid_token', 'The sign-in token names no account.');
     if (typeof claims.email !== 'string' || !claims.email.includes('@')) throw new OidcError('invalid_token', 'LotusPond Accounts did not share an email address.');
@@ -158,7 +163,27 @@ export class AccountsClient {
       emailVerified: claims.email_verified === true,
       region,
       enterpriseConnection: typeof enterprise === 'string' && enterprise ? enterprise : null,
+      ...(typeof claims.sid === 'string' && claims.sid ? { sessionId: claims.sid } : {}),
     };
+  }
+
+  /**
+   * Check a logout token (OpenID Connect Back-Channel Logout 1.0, section 2.6): signed by Accounts for this client,
+   * recent, with the back-channel logout event, naming the account (`sub`), the Accounts session (`sid`) or both,
+   * with a `jti`, and without a nonce. Replays are refused by the caller, by `jti`.
+   */
+  async verifyLogoutToken(token: string): Promise<{ subject: string | null; sessionId: string | null; jti: string; iat: number }> {
+    const claims = await this.verifySigned(token);
+    const now = Math.floor(Date.now() / 1000);
+    if (typeof claims.iat !== 'number' || claims.iat < now - LOGOUT_TOKEN_MAX_AGE_S) throw new OidcError('invalid_token', 'The logout token is too old.');
+    const events = claims.events as Record<string, unknown> | undefined;
+    if (!events || typeof events !== 'object' || typeof events[BACKCHANNEL_EVENT] !== 'object') throw new OidcError('invalid_token', 'The logout token has no back-channel logout event.');
+    if ('nonce' in claims) throw new OidcError('invalid_token', 'A logout token must not carry a nonce.');
+    if (typeof claims.jti !== 'string' || !claims.jti) throw new OidcError('invalid_token', 'The logout token has no jti.');
+    const subject = typeof claims.sub === 'string' && claims.sub ? claims.sub : null;
+    const sessionId = typeof claims.sid === 'string' && claims.sid ? claims.sid : null;
+    if (!subject && !sessionId) throw new OidcError('invalid_token', 'The logout token names neither an account nor a session.');
+    return { subject, sessionId, jti: claims.jti, iat: claims.iat };
   }
 
   /** The signing key named by `kid`, fetching the JWKS again once when it is not known (key rotation). */

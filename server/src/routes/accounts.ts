@@ -6,6 +6,8 @@
 //   GET  /api/auth/accounts/pending                     the Accounts identity waiting to finish sign-up
 //   POST /api/auth/accounts/complete                    finish sign-up: country, age and Health's own consents
 //   POST /api/auth/accounts/app-exchange                the apps: trade the one-time code for a session token
+//   GET  /api/auth/accounts/sign-out                    after Health's own sign-out: sign out of Accounts too
+//   POST /api/auth/accounts/backchannel-logout          Accounts says a person signed out there (Back-Channel Logout)
 //
 // The iOS and Android apps sign in through the system browser (RFC 8252): they open /start?client=app with a PKCE
 // challenge of their own; the callback sends the browser back to the app (APP_ACCOUNTS_REDIRECT) with a one-time
@@ -16,11 +18,11 @@
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { Hono } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
-import { eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { countryPolicy, REGIONS, signUpProblem, type DataRegion } from '../../../shared/regions.ts';
-import { users, type UserRow } from '../db/schema.ts';
+import { sessions, users, type UserRow } from '../db/schema.ts';
 import type { Cell } from '../cells.ts';
-import { AccountsClient, OidcError, randomToken, type AccountsIdentity } from '../auth/oidc.ts';
+import { AccountsClient, LOGOUT_TOKEN_MAX_AGE_S, OidcError, randomToken, type AccountsIdentity } from '../auth/oidc.ts';
 import { fakeAccounts, FAKE_ACCOUNTS_PATH, type FakeAccounts } from '../auth/fake-accounts.ts';
 import { createSession, wantsTokenSession, writeSessionCookie } from '../auth/sessions.ts';
 import { eventContext, recordEvent } from '../compliance/audit.ts';
@@ -53,7 +55,7 @@ interface Flow {
 type Pending = AccountsIdentity & { exp: number };
 /** The one-time code handed to an app: a session for an account, or an identity waiting to finish sign-up. */
 type AppCode =
-  | { k: 'session'; uid: string; region: DataRegion; ch: string; jti: string; exp: number }
+  | { k: 'session'; uid: string; region: DataRegion; sid?: string; ch: string; jti: string; exp: number }
   | { k: 'pending'; id: AccountsIdentity; ch: string; jti: string; exp: number }
   /** For another regional host (REGION_API_ORIGINS), which decides for itself. Hosts share DIRECTORY_SECRET, so it
    *  can open the code; the app goes there only if the host is one the server publishes (apiOrigins). */
@@ -155,8 +157,8 @@ export function accountsRoutes(deps: Deps, runtime: AccountsRuntime) {
   const fail = (c: Ctx, code: keyof typeof ACCOUNTS_ERRORS, signUp = false) => back(c, `/${signUp ? 'signup' : 'login'}?accounts_error=${code}`);
 
   /** Start Health's own session: a cookie for the website, a token in the answer for the apps. */
-  async function signIn(c: Ctx, cell: Cell, user: UserRow, forApp = false) {
-    const { token, expiresAt } = await createSession(cell.db, user.region, user.id, config.sessionTtlMs, c.req.header('user-agent'), true);
+  async function signIn(c: Ctx, cell: Cell, user: UserRow, forApp: boolean, sid: string | undefined) {
+    const { token, expiresAt } = await createSession(cell.db, user.region, user.id, config.sessionTtlMs, c.req.header('user-agent'), { sid });
     if (!forApp) writeSessionCookie(c, token, expiresAt, config.cookieSecure);
     await recordEvent(cell.db, eventContext(c, deps), user.id, 'sign_in');
     return { token, expiresAt: expiresAt.toISOString() };
@@ -256,7 +258,7 @@ a{display:inline-block;margin-top:1rem;padding:.8rem 1.4rem;border-radius:.6rem;
         return toApp(c, { code: box(code), api_origin: outcome.origin });
       }
       const code: AppCode = outcome.kind === 'account'
-        ? { k: 'session', uid: outcome.user.id, region: outcome.user.region, ch, jti: randomToken(), exp: inSeconds(APP_CODE_TTL_S) }
+        ? { k: 'session', uid: outcome.user.id, region: outcome.user.region, ...(id.sessionId ? { sid: id.sessionId } : {}), ch, jti: randomToken(), exp: inSeconds(APP_CODE_TTL_S) }
         : { k: 'pending', id: outcome.id, ch, jti: randomToken(), exp: inSeconds(APP_CODE_TTL_S) };
       return toApp(c, { code: box(code) });
     }
@@ -269,12 +271,59 @@ a{display:inline-block;margin-top:1rem;padding:.8rem 1.4rem;border-radius:.6rem;
     }
     if (outcome.kind === 'error') return fail(c, outcome.code, flow.signUp);
     if (outcome.kind === 'account') {
-      await signIn(c, outcome.cell, outcome.user);
+      await signIn(c, outcome.cell, outcome.user, false, id.sessionId);
       return back(c, '/app');
     }
     // Someone new to Health: finish sign-up on Health's page.
     put(c, PENDING_COOKIE, { ...outcome.id, exp: inSeconds(PENDING_TTL_S) } satisfies Pending, PENDING_TTL_S);
     return back(c, '/signup?accounts=continue');
+  });
+
+  /** Logout tokens already acted on, by jti, until they are too old to be accepted anyway. One instance only, as for
+   *  app codes; a replay could at most end sessions that the first delivery already ended. */
+  const seenLogouts = new Map<string, number>();
+
+  /**
+   * Accounts says a person signed out there (OpenID Connect Back-Channel Logout 1.0). End the Health sessions that came
+   * from that Accounts session (`sid`), or, when only the account (`sub`) is named, every session from Accounts for
+   * that account, website and apps. Password sessions are separate sign-ins and stay. Returns how many ended.
+   */
+  async function backchannelLogout(token: string): Promise<number> {
+    const t = await client.verifyLogoutToken(token);
+    const now = Date.now();
+    for (const [k, until] of seenLogouts) if (until < now) seenLogouts.delete(k);
+    if (seenLogouts.has(t.jti)) throw new OidcError('invalid_token', 'This logout token was already used.');
+    seenLogouts.set(t.jti, (t.iat + LOGOUT_TOKEN_MAX_AGE_S + 60) * 1000);
+    let ended = 0;
+    for (const cell of cells.cells) {
+      const owners = t.subject ? (await cell.db.select({ id: users.id }).from(users).where(eq(users.accountsSubject, t.subject))).map(u => u.id) : null;
+      if (owners && !owners.length) continue;
+      const which = and(
+        eq(sessions.viaAccounts, true),
+        t.sessionId ? eq(sessions.accountsSid, t.sessionId) : undefined,
+        owners ? inArray(sessions.userId, owners) : undefined,
+      );
+      const gone = await cell.db.delete(sessions).where(which).returning({ userId: sessions.userId });
+      ended += gone.length;
+      for (const userId of new Set(gone.map(g => g.userId))) await recordEvent(cell.db, null, userId, 'accounts_signed_out');
+    }
+    return ended;
+  }
+  runtime.fake?.onLogoutToken(backchannelLogout);
+
+  app.post('/backchannel-logout', async c => {
+    c.header('Cache-Control', 'no-store');
+    const form = await c.req.parseBody().catch(() => ({} as Record<string, unknown>));
+    const token = form.logout_token;
+    if (typeof token !== 'string' || !token) return c.json({ error: 'invalid_request', error_description: 'logout_token is missing.' }, 400);
+    try {
+      await backchannelLogout(token);
+    } catch (e) {
+      if (!(e instanceof OidcError)) throw e;
+      console.warn(`[accounts] back-channel logout refused: ${e.message}`);
+      return c.json({ error: 'invalid_request', error_description: e.message }, 400);
+    }
+    return c.body(null, 200);
   });
 
   /** After Health's own sign-out (with its ticket): sign out of Accounts too, then back to the sign-in page. */
@@ -302,15 +351,15 @@ a{display:inline-block;margin-top:1rem;padding:.8rem 1.4rem;border-radius:.6rem;
       const pending: AppPending = { ...id, k: 'app-pending', exp: inSeconds(PENDING_TTL_S) };
       return c.json({ pending: { email: id.email, region: id.region }, pendingToken: box(pending) });
     };
-    const startSession = async (cell: Cell, user: UserRow) => {
-      const session = await signIn(c, cell, user, true);
+    const startSession = async (cell: Cell, user: UserRow, sid: string | undefined) => {
+      const session = await signIn(c, cell, user, true, sid);
       return c.json({ ...(await sessionInfo(cell.db, user)), ...session });
     };
     if (code.k === 'pending') return startSignUp(code.id);
     if (code.k === 'identity') {
       // Handed over by another regional host: decide here, where the account's region is served.
       const outcome = await resolve(c, code.id);
-      if (outcome.kind === 'account') return startSession(outcome.cell, outcome.user);
+      if (outcome.kind === 'account') return startSession(outcome.cell, outcome.user, code.id.sessionId);
       if (outcome.kind === 'new') return startSignUp(outcome.id);
       const reason = outcome.kind === 'error' ? outcome.code : 'wrong_region';
       throw new HttpError(409, reason, ACCOUNTS_ERRORS[reason]);
@@ -318,7 +367,7 @@ a{display:inline-block;margin-top:1rem;padding:.8rem 1.4rem;border-radius:.6rem;
     const cell = cells.forRegion(code.region);
     const [user] = cell ? await cell.db.select().from(users).where(eq(users.id, code.uid)).limit(1) : [];
     if (!cell || !user) throw expired();
-    return startSession(cell, user);
+    return startSession(cell, user, code.sid);
   });
 
   app.get('/pending', c => {
@@ -358,7 +407,7 @@ a{display:inline-block;margin-top:1rem;padding:.8rem 1.4rem;border-radius:.6rem;
     }
     if (!forApp) drop(c, PENDING_COOKIE);
     await recordEvent(cell.db, eventContext(c, deps), user.id, 'account_created');
-    const { token, expiresAt } = await createSession(cell.db, user.region, user.id, config.sessionTtlMs, c.req.header('user-agent'), true);
+    const { token, expiresAt } = await createSession(cell.db, user.region, user.id, config.sessionTtlMs, c.req.header('user-agent'), { sid: pending.sessionId });
     if (forApp) return c.json({ ...(await sessionInfo(cell.db, user)), token, expiresAt: expiresAt.toISOString() }, 201);
     writeSessionCookie(c, token, expiresAt, config.cookieSecure);
     return c.json(await sessionInfo(cell.db, user), 201);
