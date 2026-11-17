@@ -1,5 +1,6 @@
 // The landing page's design tokens (src/site/home.css) against the LotusPond design system
-// (design-system/project/tokens.json) and WCAG 2.2 AA. A colour changed in one place and not the other, or a text,
+// (a copy of design-system/project/tokens.json from lotuspond-ai/lotuspond, kept in src/site/lotuspond-tokens.json)
+// and WCAG 2.2 AA. A colour changed in one place and not the other, or a text,
 // control or tomato pair that drops below its contrast floor, fails here instead of in an audit.
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -7,7 +8,7 @@ import test from 'node:test';
 
 const root = new URL('../', import.meta.url);
 const css = readFileSync(new URL('src/site/home.css', root), 'utf8');
-const system = JSON.parse(readFileSync(new URL('design-system/project/tokens.json', root), 'utf8')) as {
+const system = JSON.parse(readFileSync(new URL('src/site/lotuspond-tokens.json', root), 'utf8')) as {
   color: { tokens: { name: string; value: { light: string; dark: string } }[] };
 };
 
