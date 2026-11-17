@@ -49,7 +49,7 @@
             "browserRequirements": "Requires JavaScript",
             "isAccessibleForFree": true,
             "image": "%SITE_URL%/site/og.png",
-            "screenshot": "%SITE_URL%/site/body-map-1600.webp",
+            "screenshot": "%SITE_URL%/site/home-1600.webp",
             "publisher": { "@id": "%SITE_URL%/#organization" }
           }
         ]
@@ -72,6 +72,7 @@
           <a href="#labs">Find a lab</a>
           <a href="#privacy">Privacy</a>
           <a href="#faq">FAQ</a>
+          <a href="/developers/">For organisations</a>
         </nav>
         <div class="home-nav-actions">
           <a class="home-btn home-btn-quiet home-btn-sm" href="/login">Sign in</a>
@@ -104,14 +105,14 @@
           <figure class="home-product">
             <div class="home-window">
               <div class="home-window-bar" aria-hidden="true"><i></i><i></i><i></i><span>health.lotuspond.ai/app</span></div>
-              <img src="/site/body-map-1600.webp" srcset="/site/body-map-960.webp 960w, /site/body-map-1600.webp 1600w, /site/body-map-2160.webp 2160w" sizes="(min-width: 1280px) 1200px, 92vw" width="1600" height="1000" fetchpriority="high"
-                alt="The LotusPond body map: a figure of the body with dots on the brain, thyroid, heart, liver, spleen and bone marrow where results relate, beside a list of results worth a closer look." />
+              <img src="/site/home-1600.webp" srcset="/site/home-960.webp 960w, /site/home-1600.webp 1600w, /site/home-2160.webp 2160w" sizes="(min-width: 1280px) 1200px, 92vw" width="1600" height="1000" fetchpriority="high"
+                alt="LotusPond Home: three results to look at (blood pressure and LDL cholesterol above their range, with what changed and a note to discuss them at the next check-up), beside cards for Sources, Agents (Claude can see these records) and Labs." />
             </div>
             <div class="home-phone">
-              <img src="/site/phone-body-390.webp" srcset="/site/phone-body-390.webp 390w, /site/phone-body-585.webp 585w" sizes="(min-width: 1300px) 232px, (min-width: 640px) 18vw, 104px" width="390" height="844" loading="lazy" decoding="async"
-                alt="LotusPond on a phone: the body map with dots on the organs where results relate." />
+              <img src="/site/phone-agents-390.webp" srcset="/site/phone-agents-390.webp 390w, /site/phone-agents-585.webp 585w" sizes="(min-width: 1300px) 232px, (min-width: 640px) 18vw, 104px" width="390" height="844" loading="lazy" decoding="async"
+                alt="LotusPond on a phone: the Agents page, with the address to give an agent and the assistants you can connect, from Claude and ChatGPT to Gemini and Grok." />
             </div>
-            <figcaption>The body map in a browser and on a phone, showing sample data.</figcaption>
+            <figcaption>Home in a browser, and connecting an agent on a phone, showing sample data.</figcaption>
           </figure>
         </div>
       </section>
@@ -160,17 +161,17 @@
           <div class="home-tiles">
             <article class="home-tile home-tile-organ">
               <div class="home-tile-media">
-                <img src="/site/organ-heart-1026.webp" srcset="/site/organ-heart-640.webp 640w, /site/organ-heart-1026.webp 1026w" sizes="(min-width: 900px) 640px, 92vw" width="1026" height="1175" loading="lazy" decoding="async"
-                  alt="The heart opened on the body map, with labels for the aortic arch, pulmonary trunk, atria, ventricles and coronary arteries." />
+                <img src="/site/body-map-tile-1026.webp" srcset="/site/body-map-tile-640.webp 640w, /site/body-map-tile-1026.webp 1026w" sizes="(min-width: 900px) 640px, 92vw" width="1026" height="1175" loading="lazy" decoding="async"
+                  alt="The body map: a figure of the body with a soft glow on organs that have results, amber on the heart, beside a grade for each body system, from heart and lipids to vitals." />
               </div>
               <div class="home-tile-text">
-                <h3 class="home-d-sm">Open any organ</h3>
-                <p>Open the heart, lungs, kidneys or brain for a close-up with labelled landmarks. Results that relate to the organ sit beside it.</p>
+                <h3 class="home-d-sm">See where results belong</h3>
+                <p>The body map shows each body system with a grade, and organs glow where results sit outside their range. Open an organ for a close-up and the results that relate to it.</p>
               </div>
             </article>
             <article class="home-tile home-tile-history">
               <div class="home-tile-media">
-                <img src="/site/marker-history-780.webp" srcset="/site/marker-history-520.webp 520w, /site/marker-history-780.webp 780w" sizes="(min-width: 900px) 460px, 92vw" width="780" height="776" loading="lazy" decoding="async"
+                <img src="/site/marker-history-780.webp" srcset="/site/marker-history-520.webp 520w, /site/marker-history-780.webp 780w" sizes="(min-width: 900px) 460px, 92vw" width="780" height="780" loading="lazy" decoding="async"
                   alt="The history of LDL cholesterol: the latest value, its place in the reference range, and a chart of values over time." />
               </div>
               <div class="home-tile-text">
@@ -180,8 +181,8 @@
             </article>
             <article class="home-tile home-tile-files">
               <div class="home-tile-media">
-                <img src="/site/files-1240.webp" srcset="/site/files-720.webp 720w, /site/files-1240.webp 1240w" sizes="(min-width: 900px) 460px, 92vw" width="1240" height="420" loading="lazy" decoding="async"
-                  alt="The Files page listing an uploaded lab report, a results export and a chest x-ray, each with options to open, download or delete." />
+                <img src="/site/files-1240.webp" srcset="/site/files-720.webp 720w, /site/files-1240.webp 1240w" sizes="(min-width: 900px) 460px, 92vw" width="1240" height="775" loading="lazy" decoding="async"
+                  alt="The Files page listing a chest x-ray and a lab report, each with what it is linked to, its size and date, and options to open, download or delete." />
               </div>
               <div class="home-tile-text">
                 <h3 class="home-d-sm">Your originals, kept</h3>
@@ -194,7 +195,7 @@
                 <p>Add a profile for each person you care for, from children to parents. Each person’s records stay separate, and you switch between them from the menu.</p>
               </div>
               <div class="home-tile-media">
-                <img src="/site/family-513.webp" srcset="/site/family-400.webp 400w, /site/family-513.webp 513w" sizes="342px" width="513" height="669" loading="lazy" decoding="async"
+                <img src="/site/family-513.webp" srcset="/site/family-400.webp 400w, /site/family-513.webp 513w" sizes="342px" width="513" height="363" loading="lazy" decoding="async"
                   alt="The profile menu with two people, Asha Rao and her daughter Mira, and an option to add a family member." />
               </div>
             </article>
@@ -359,8 +360,8 @@
 
       <section class="home-sheet" id="companies" aria-labelledby="companies-title">
         <div class="home-wrap">
+          <p class="home-kicker"><b>For healthcare companies</b> <span>Sandbox open</span></p>
           <div class="home-head">
-            <p class="home-kicker"><b>For healthcare companies</b> <span>Sandbox open</span></p>
             <h2 class="home-d-lg" id="companies-title">One API for India’s hospital systems.</h2>
             <p class="home-lede">Healthcare startups and hospitals get one REST API and one MCP server to find patients, list their visits, attach documents and check claims, with results in FHIR R4. Make a key in the developer console and build against our sandbox hospital today.</p>
           </div>

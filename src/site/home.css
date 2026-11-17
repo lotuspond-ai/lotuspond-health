@@ -133,10 +133,10 @@ html { scroll-padding-top: calc(var(--header, 72px) + 16px); }
 .home-nav { position: sticky; top: 0; z-index: 40; background: var(--field); }
 .home-nav-in { display: flex; align-items: center; gap: 28px; height: var(--header); }
 .home-nav-links { display: flex; gap: 4px; margin-left: auto; }
-.home-nav-links a { padding: 10px 14px; border-radius: 999px; font-size: 15px; font-weight: 500; text-decoration: none; }
+.home-nav-links a { padding: 10px 14px; border-radius: 999px; font-size: 15px; font-weight: 500; text-decoration: none; white-space: nowrap; }
 .home-nav-links a:hover { background: rgba(24, 33, 27, 0.1); }
 .home-nav-actions { display: flex; gap: 6px; }
-@media (max-width: 1080px) {
+@media (max-width: 1240px) {
   .home-nav-links { display: none; }
   .home-nav-actions { margin-left: auto; }
 }
@@ -212,7 +212,7 @@ html { scroll-padding-top: calc(var(--header, 72px) + 16px); }
 .home-tile-organ .home-tile-media { flex: 1; min-height: 460px; }
 .home-tile-organ .home-tile-media img { position: absolute; inset: 0; object-position: 30% 0; }
 .home-tile-history, .home-tile-files { grid-column: span 5; }
-.home-tile-history .home-tile-media { aspect-ratio: 780 / 776; }
+.home-tile-history .home-tile-media { aspect-ratio: 1; }
 .home-tile-files .home-tile-media { aspect-ratio: 16 / 10; }
 .home-tile-files .home-tile-media img { object-position: 0 0; }
 .home-tile-family { grid-column: span 12; display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); align-items: center; }
