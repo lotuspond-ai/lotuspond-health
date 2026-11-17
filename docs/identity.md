@@ -57,7 +57,22 @@ To try it: `ACCOUNTS_ISSUER=fake npm run dev`, open `/signup` and choose **Conti
   2. The browser signs in with Accounts. Health's callback then shows a short page that sends the browser back to the app, at `ai.lotuspond.health:/accounts?code=…` (or `?error=…`). This is a private-use URI scheme named after the app id, registered in `AndroidManifest.xml` and `Info.plist`. The page also has a button, in case the browser asks before opening the app.
   3. The code is encrypted, lasts 2 minutes, works once, and is bound to the app's PKCE challenge, so another app that catches the link cannot use it. The app trades it with its verifier at `POST /api/auth/accounts/app-exchange` for a token session, the same kind a password sign-in gives it (`src/native/accounts.ts`).
   4. Someone new answers Health's questions in the app. The exchange gives the app an encrypted sign-up token, valid for 30 minutes, which it sends with `POST /api/auth/accounts/complete`.
-  - Tested in `server/test/accounts.test.ts`, and from the app client through a stand-in web view and system browser in `tools/test-app-client.ts`. **Not yet run on a phone** (docs/mobile.md, "Not done yet").
+  - **Universal links and app links.** With `APP_LINKS_ORIGIN` set, the return is the https link `https://open.health.lotuspond.ai/accounts-return?code=…` instead, which the apps claim: Associated Domains in `ios/App/App/App.entitlements`, and an `autoVerify` intent filter in `AndroidManifest.xml`. Only another app on the device could catch the private-use scheme, so the https link is the stronger return. It needs a host of its own, because iOS keeps a link in the browser when it stays on the domain already open, and the sign-in runs on `health.lotuspond.ai`. The private-use scheme stays registered as the fallback: if the link opens in the browser, `/accounts-return` on that host offers it with the same code.
+  - Tested in `server/test/accounts.test.ts` and `server/test/app-links.test.ts`, and from the app client through a stand-in web view and system browser in `tools/test-app-client.ts`. **Not yet run on a phone** (docs/mobile.md, "Not done yet").
+
+### Setting up universal links and app links
+
+| Setting | Meaning |
+| --- | --- |
+| `APP_LINKS_ORIGIN` | `https://open.health.lotuspond.ai`. Point that name at this server; it serves the files below on any host. |
+| `APPLE_TEAM_ID` | The Apple Developer team id (10 characters). It serves `/.well-known/apple-app-site-association` for `<team>.ai.lotuspond.health`. |
+| `ANDROID_APP_SHA256` | SHA-256 fingerprints of the release signing certificate, comma-separated (`AA:BB:…`). With Play App Signing, use the app signing key from Play Console (*Setup → App integrity*), and the upload key too if you install builds signed with it. It serves `/.well-known/assetlinks.json`. |
+
+Also needed outside the repository:
+- DNS for `open.health.lotuspond.ai` with an https certificate.
+- The *Associated Domains* capability on the `ai.lotuspond.health` App ID in the Apple Developer account. Personal Teams cannot sign it; docs/mobile.md says what to do for those builds.
+
+Apple fetches the file through its CDN, which can take a day to pick up a change.
 
 ### Claims
 
@@ -68,7 +83,6 @@ Health reads `sub`, `email` and `email_verified`, plus two LotusPond claims whos
 
 ### Not built yet
 
-- **App links.** Universal links (iOS) and verified app links (Android) on `health.lotuspond.ai`, instead of the private-use scheme. They need the `apple-app-site-association` and `assetlinks.json` files with the release signing details.
 - **Regional hosts in the apps.** The app starts the sign-in on its current API host. An account held by another regional host is refused with `wrong_region`, instead of being followed there as a password sign-in is.
 - **One-time codes across several server instances.** A traded code is remembered in memory, so with several instances it could be traded twice within its 2 minutes, and still only by the app holding the PKCE verifier.
 - **The `directory` moving into Accounts.** Health still keeps its email directory; the `region` claim is checked against it.

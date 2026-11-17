@@ -30,7 +30,7 @@ import { readJson, type AppEnv, type Ctx, type Deps } from '../http.ts';
 import { publicOrigin } from '../agents/oauth.ts';
 import { AccountsAppExchangeBody, AccountsCompleteBody } from '../schemas.ts';
 import { insertAccount, isUniqueViolation, sessionInfo } from './auth.ts';
-import { ACCOUNTS_ERRORS, APP_ACCOUNTS_REDIRECT, type AccountsErrorCode } from '../../../shared/identity.ts';
+import { ACCOUNTS_ERRORS, APP_ACCOUNTS_REDIRECT, APP_LINK_PATH, type AccountsErrorCode } from '../../../shared/identity.ts';
 
 const FLOW_COOKIE = 'lp_accounts_flow';
 const PENDING_COOKIE = 'lp_accounts_pending';
@@ -140,10 +140,12 @@ export function accountsRoutes(deps: Deps, runtime: AccountsRuntime) {
     return { token, expiresAt: expiresAt.toISOString() };
   }
 
-  /** Back to the app that started the sign-in. A page rather than a bare redirect, with a button in case the
-   *  browser asks before leaving for the app. */
+  /** Back to the app that started the sign-in: its https app link when APP_LINKS_ORIGIN is set (a host of its own,
+   *  so iOS hands the link to the app), else its private-use scheme. A page rather than a bare redirect, with a
+   *  button: iOS opens a universal link for a tap, not always for an automatic redirect. */
   function toApp(c: Ctx, params: Record<string, string>) {
-    const url = `${APP_ACCOUNTS_REDIRECT}?${new URLSearchParams(params)}`;
+    const base = config.appLinks.origin ? `${config.appLinks.origin}${APP_LINK_PATH}` : APP_ACCOUNTS_REDIRECT;
+    const url = `${base}?${new URLSearchParams(params)}`;
     const href = url.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
     c.header('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'");
     c.header('Referrer-Policy', 'no-referrer');

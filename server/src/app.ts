@@ -12,6 +12,7 @@ import type { AppEnv } from './http.ts';
 import { completeDeps, type DepsInput } from './cells.ts';
 import { authRoutes } from './routes/auth.ts';
 import { accountsRoutes, accountsRuntime, FAKE_ACCOUNTS_PATH } from './routes/accounts.ts';
+import { appLinkRoutes } from './routes/app-links.ts';
 import { profileRoutes } from './routes/profiles.ts';
 import { facilityRoutes } from './routes/facilities.ts';
 import { geoRoutes } from './routes/geo.ts';
@@ -207,6 +208,8 @@ export function createApp(input: DepsInput, opts: AppOptions = {}): Hono<AppEnv>
   app.route('/v1', organisationRoutes(deps.db));
   app.use('/oauth/*', bodyLimit({ maxSize: 64 * 1024, onError: c => c.json({ error: 'invalid_request', error_description: 'Request too large.' }, 413) }));
   app.route('/', oauthRoutes(deps, opts.oauth));
+  // Universal links and app links for the apps' sign-in return (docs/identity.md).
+  app.route('/', appLinkRoutes(config));
 
   // Lab partner webhooks: server to server, so outside /api (no browser checks, no CORS).
   if (deps.labs) app.route('/hooks', hookRoutes(deps, deps.labs));

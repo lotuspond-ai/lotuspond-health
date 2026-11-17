@@ -259,6 +259,8 @@ describe('app client: sign-in with LotusPond Accounts', () => {
     const back = readAppReturn(link);
     assert.ok(back && 'code' in back, link);
     assert.equal(readAppReturn('https://example.com/?code=x'), null, 'other links are not sign-in returns');
+    assert.deepEqual(readAppReturn('https://open.health.lotuspond.ai/accounts-return?code=abc'), { code: 'abc' }, 'the universal link / app link form');
+    assert.equal(readAppReturn('http://open.health.lotuspond.ai/accounts-return?code=abc'), null, 'never plain http');
 
     const r = await backend.accountsAppExchange(back.code, pkce.verifier);
     assert.ok('pending' in r);

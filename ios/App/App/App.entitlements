@@ -1,12 +1,18 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!-- HealthKit, read only: Add → Import from Apple Health (src/native/health.ts, docs/health-import.md).
-     No clinical records and no background delivery, so the access list stays empty. -->
+     No clinical records and no background delivery, so the access list stays empty.
+     Associated domains: sign-in with LotusPond Accounts returns to the app as a universal link on
+     open.health.lotuspond.ai (shared/identity.ts, APP_LINKS_HOST; docs/identity.md). -->
 <plist version="1.0">
 <dict>
 	<key>com.apple.developer.healthkit</key>
 	<true/>
 	<key>com.apple.developer.healthkit.access</key>
 	<array/>
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>applinks:open.health.lotuspond.ai</string>
+	</array>
 </dict>
 </plist>

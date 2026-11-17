@@ -13,11 +13,23 @@ export const ACCOUNTS_ERRORS = {
 
 export type AccountsErrorCode = keyof typeof ACCOUNTS_ERRORS;
 
+/** The iOS bundle id and Android package name. */
+export const APP_ID = 'ai.lotuspond.health';
+
 /**
  * Where the system browser hands a sign-in back to the iOS and Android apps (RFC 8252, a private-use URI scheme
  * named after the app id). Registered in android/app/src/main/AndroidManifest.xml and ios/App/App/Info.plist.
  */
-export const APP_ACCOUNTS_REDIRECT = 'ai.lotuspond.health:/accounts';
+export const APP_ACCOUNTS_REDIRECT = `${APP_ID}:/accounts`;
+
+/**
+ * The same return as an https link the apps claim (universal links on iOS, verified app links on Android), on a host
+ * of its own: iOS keeps a link in the browser when it stays on the domain the browser is already showing, and the
+ * sign-in runs on health.lotuspond.ai. The host is APP_LINKS_ORIGIN on the server and is named in
+ * ios/App/App/App.entitlements and android/app/src/main/AndroidManifest.xml.
+ */
+export const APP_LINKS_HOST = 'open.health.lotuspond.ai';
+export const APP_LINK_PATH = '/accounts-return';
 
 /** Where the website starts a sign-in through LotusPond Accounts. */
 export const accountsStartPath = (intent: 'signup' | 'login') => `/api/auth/accounts/start?intent=${intent}`;

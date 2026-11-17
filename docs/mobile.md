@@ -134,6 +134,7 @@ This needs a Mac with Xcode 26 or later, and an iPhone on iOS 16 or later. A fre
 3. **Sign the app.** Select the *App* project, then the *App* target, then *Signing & Capabilities*:
    - Set *Team* to *Your Name (Personal Team)*.
    - Change *Bundle Identifier* to one of your own, for example `ai.lotuspond.health.dev.yourname`. This keeps `ai.lotuspond.health` free for the App Store release. Don't commit this change.
+   - Remove the *Associated Domains* capability (the × beside it): a Personal Team cannot sign it. Sign-in with LotusPond Accounts then comes back through the app's own `ai.lotuspond.health:` link instead of a universal link. Don't commit this change either.
 4. **Connect the iPhone** with a cable, unlock it and tap *Trust*. On iOS 16 and later, turn on *Settings → Privacy & Security → Developer Mode* and let the phone restart. The option appears once the phone has been connected to Xcode.
 5. **Run.** Choose the iPhone as the run destination in Xcode's toolbar and press *Run* (⌘R).
 6. **Trust the developer.** The first launch is refused until you allow it. On the iPhone, go to *Settings → General → VPN & Device Management*, tap your Apple ID and choose *Trust*. Then open LotusPond Health.

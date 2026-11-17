@@ -61,6 +61,16 @@ const Env = z.object({
   /** Unset for a public client (PKCE only). */
   ACCOUNTS_CLIENT_SECRET: z.string().optional(),
   /**
+   * Universal links (iOS) and verified app links (Android) for returning a sign-in to the apps: the https origin of
+   * the host the apps claim (shared/identity.ts, APP_LINKS_HOST), which this server must also answer for. Unset: the
+   * apps' private-use scheme only.
+   */
+  APP_LINKS_ORIGIN: z.string().url().optional(),
+  /** Apple Developer team id, for apple-app-site-association (10 characters, e.g. A1B2C3D4E5). */
+  APPLE_TEAM_ID: z.string().regex(/^[A-Z0-9]{10}$/, 'APPLE_TEAM_ID is the 10-character Apple Developer team id.').optional(),
+  /** SHA-256 fingerprints of the Android app's signing certificates, comma-separated (AA:BB:…), for assetlinks.json. */
+  ANDROID_APP_SHA256: z.string().optional(),
+  /**
    * The optional Claude read of photographed and scanned reports (docs/report-reading.md): on when Anthropic
    * credentials are set (ANTHROPIC_API_KEY, read by the SDK), unless AI_EXTRACTION=off.
    */
@@ -280,6 +290,8 @@ export interface Config {
   labs: { partners: string[]; fakeStepMs: number; orange?: OrangeConfig };
   /** Sign-in through LotusPond Accounts, when ACCOUNTS_ISSUER is set. */
   accounts?: AccountsConfig;
+  /** Universal links and app links for the apps (routes/app-links.ts). */
+  appLinks: { origin?: string; appleTeamId?: string; androidSha256: string[] };
   /** The Claude read is on (credentials present and not switched off), and its model. */
   aiExtraction: { enabled: boolean; model: string };
   assistant: { enabled: boolean; model: string };
@@ -420,6 +432,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     const digilocker = oauthClient('DIGILOCKER', e.DIGILOCKER_CLIENT_ID, e.DIGILOCKER_CLIENT_SECRET, 'digilocker');
     if (digilocker) records.digilocker = { ...digilocker, apiUrl: e.DIGILOCKER_API_URL.replace(/\/$/, '') };
   }
+  const androidSha256 = list(e.ANDROID_APP_SHA256).map(s => s.toUpperCase());
+  const badPrint = androidSha256.find(s => !/^([0-9A-F]{2}:){31}[0-9A-F]{2}$/.test(s));
+  if (badPrint) throw new Error(`Invalid configuration: ANDROID_APP_SHA256: ${badPrint} is not a SHA-256 fingerprint (32 bytes as AA:BB:…).`);
+  if (e.APP_LINKS_ORIGIN && !e.APP_LINKS_ORIGIN.startsWith('https://')) throw new Error('Invalid configuration: APP_LINKS_ORIGIN must use https.');
   let accounts: AccountsConfig | undefined;
   if (e.ACCOUNTS_ISSUER) {
     if (e.ACCOUNTS_ISSUER === 'fake') {
@@ -493,6 +509,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     },
     labs: { partners: labPartners, fakeStepMs: e.LAB_FAKE_STEP_MS, ...(orange ? { orange } : {}) },
     ...(accounts ? { accounts } : {}),
+    appLinks: {
+      ...(e.APP_LINKS_ORIGIN ? { origin: new URL(e.APP_LINKS_ORIGIN).origin } : {}),
+      ...(e.APPLE_TEAM_ID ? { appleTeamId: e.APPLE_TEAM_ID } : {}),
+      androidSha256,
+    },
     aiExtraction: { enabled: e.AI_EXTRACTION === 'on' && !!(env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN), model: e.AI_EXTRACTION_MODEL },
     assistant: { enabled: e.ASSISTANT === 'on' && !!(env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN), model: e.ASSISTANT_MODEL },
     records,
