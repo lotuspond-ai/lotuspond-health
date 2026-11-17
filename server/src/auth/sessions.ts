@@ -11,6 +11,8 @@ import { sessions, users, type UserRow } from '../db/schema.ts';
 import type { Cell, CellRegistry } from '../cells.ts';
 
 export const SESSION_COOKIE = 'lp_session';
+/** The developer console's session (organisation accounts, connectors/console-accounts.ts), sent only to /api/console. */
+export const ORG_SESSION_COOKIE = 'lp_org_session';
 /** Extend a session's expiry at most once a day while it is in use. */
 const REFRESH_AFTER_MS = 24 * 60 * 60 * 1000;
 const TOKEN = /^(?:(in|eu|us|global)\.)?([\w-]{20,100})$/;
@@ -111,7 +113,7 @@ export function readSessionToken(c: Context): { token: string; via: 'bearer' | '
  * only for the app origins. Token sign-ins set no cookie, so they cannot plant a session in someone's browser.
  */
 export function isAppRequest(c: Context): boolean {
-  return !readSessionCookie(c) && (!!bearerToken(c) || wantsTokenSession(c));
+  return !readSessionCookie(c) && !getCookie(c, ORG_SESSION_COOKIE) && (!!bearerToken(c) || wantsTokenSession(c));
 }
 
 export function writeSessionCookie(c: Context, token: string, expiresAt: Date, secure: boolean): void {

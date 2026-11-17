@@ -12,6 +12,7 @@ import { purgeOldEvents } from './compliance/audit.ts';
 import { EncryptedFileStore } from './lib/files-encrypted.ts';
 import { purgeExpiredSessions } from './auth/sessions.ts';
 import { purgeSpentTokens } from './auth/spent-tokens.ts';
+import { purgeExpiredConsoleSessions } from './connectors/console-accounts.ts';
 import { purgeExpiredAgentSecrets } from './agents/grants.ts';
 import { purgeOldNotifications } from './notifications.ts';
 import { claudeAssistant } from './assistant/agent.ts';
@@ -32,6 +33,9 @@ import { digilockerFetcher } from './records/api/digilocker.ts';
 import { createOrganisation, createOrganisationKey, ORGANISATION_OPERATIONS, revokeOrganisationKey } from './connectors/organisations.ts';
 import type { OperationId } from './connectors/types.ts';
 import { exportAccounts, linkAccounts, readJsonLines } from './auth/accounts-migration.ts';
+import { organisationRuntime } from './connectors/runtime.ts';
+import { organisationAccounts, organisationMembers, organisations, type OrganisationRole } from './db/schema.ts';
+import { eq } from 'drizzle-orm';
 
 // This file runs from server/src (tsx) or server/dist (bundle); both are one level below server/.
 const serverRoot = fileURLToPath(new URL('..', import.meta.url));
@@ -73,7 +77,17 @@ if (command === 'files:rekey') {
 //   org:create "<name>" [region]                        prints the new organisation's id
 //   org:key <organisation id> "<key name>" <op,op|all>  prints a new API key, once
 //   org:revoke <key id>
-if (command === 'org:create' || command === 'org:key' || command === 'org:revoke') {
+//   org:requests                                        organisations that asked for live access, and what they asked for
+//   org:live <organisation id>                          give live access, once its written authority is checked
+//   org:member <organisation id> <email> [role]         add an organisation account to an organisation (role: owner,
+//                                                       admin, editor or viewer; owner by default). The person signs up
+//                                                       in the developer console first.
+//   org:connect <organisation id> <connector> "<name>" [base url]
+//       adds a connection to a real system (fhir, bahmni, trakcare, eka). Credentials come from the environment, never
+//       the command line: ORG_CONNECTION_TOKEN (bearer), or ORG_CONNECTION_USER and ORG_CONNECTION_PASSWORD (HTTP
+//       Basic), or for Eka Care ORG_CONNECTION_CLIENT_ID, ORG_CONNECTION_CLIENT_SECRET and ORG_CONNECTION_SHARING_KEY.
+//       The base url is required for FHIR systems; Eka defaults to https://api.eka.care.
+if (['org:create', 'org:key', 'org:revoke', 'org:requests', 'org:live', 'org:connect', 'org:member'].includes(command ?? '')) {
   const [a, b, c] = process.argv.slice(3);
   const db = registry.defaultCell.db;
   try {
@@ -83,6 +97,36 @@ if (command === 'org:create' || command === 'org:key' || command === 'org:revoke
       if (!(region in REGIONS)) fail(`Unknown region "${region}". Use one of: ${Object.keys(REGIONS).join(', ')}.`);
       const org = await createOrganisation(db, a, region);
       console.log(`Organisation ${org.name} (${org.region}): ${org.id}`);
+    } else if (command === 'org:requests') {
+      const rows = await db.select().from(organisations);
+      const asked = rows.filter(r => r.liveRequestedAt && r.access !== 'live');
+      if (!asked.length) console.log('No organisation is waiting for live access.');
+      for (const r of asked) console.log(`${r.id}  ${r.name}  asked ${r.liveRequestedAt!.toISOString()} by ${r.liveRequest?.by}\n  systems: ${r.liveRequest?.systems}\n  hospital: ${r.liveRequest?.hospital}\n  note: ${r.liveRequest?.note || '-'}`);
+    } else if (command === 'org:live') {
+      if (!a) fail('Usage: org:live <organisation id>');
+      const rows = await db.update(organisations).set({ access: 'live' }).where(eq(organisations.id, a)).returning({ id: organisations.id });
+      console.log(rows.length ? 'The organisation has live access. Add its connections with org:connect.' : 'No such organisation.');
+    } else if (command === 'org:member') {
+      const role = (c ?? 'owner') as OrganisationRole;
+      if (!a || !b || !['owner', 'admin', 'editor', 'viewer'].includes(role)) fail('Usage: org:member <organisation id> <email> [owner|admin|editor|viewer]');
+      const [account] = await db.select().from(organisationAccounts).where(eq(organisationAccounts.email, b.trim().toLowerCase())).limit(1);
+      if (!account) fail(`No organisation account for ${b}. The person makes one in the developer console first.`);
+      await db.insert(organisationMembers).values({ organisationId: a, accountId: account.id, role, approves: role === 'owner' })
+        .onConflictDoUpdate({ target: [organisationMembers.organisationId, organisationMembers.accountId], set: { role } });
+      console.log(`${account.email} is ${role === 'owner' || role === 'admin' ? 'an' : 'a'} ${role} of organisation ${a}.`);
+    } else if (command === 'org:connect') {
+      const [, , name, baseUrl] = process.argv.slice(3);
+      if (!a || !b || !name || (!baseUrl && b !== 'eka')) fail('Usage: org:connect <organisation id> <fhir|bahmni|trakcare|eka> "<name>" [base url]  (credentials in ORG_CONNECTION_TOKEN, ORG_CONNECTION_USER and ORG_CONNECTION_PASSWORD, or for Eka ORG_CONNECTION_CLIENT_ID, ORG_CONNECTION_CLIENT_SECRET and ORG_CONNECTION_SHARING_KEY)');
+      const env = process.env;
+      const secret = b === 'eka'
+        ? (env.ORG_CONNECTION_CLIENT_ID && env.ORG_CONNECTION_CLIENT_SECRET
+          ? { clientId: env.ORG_CONNECTION_CLIENT_ID, clientSecret: env.ORG_CONNECTION_CLIENT_SECRET, ...(env.ORG_CONNECTION_SHARING_KEY ? { sharingKey: env.ORG_CONNECTION_SHARING_KEY } : {}) }
+          : fail('An Eka connection needs ORG_CONNECTION_CLIENT_ID and ORG_CONNECTION_CLIENT_SECRET (and the clinic\'s ORG_CONNECTION_SHARING_KEY).'))
+        : env.ORG_CONNECTION_TOKEN ? { token: env.ORG_CONNECTION_TOKEN }
+        : env.ORG_CONNECTION_USER ? { username: env.ORG_CONNECTION_USER, password: env.ORG_CONNECTION_PASSWORD ?? '' } : null;
+      const runtime = organisationRuntime({ db, keyrings: secrets.fileKeys });
+      const conn = await runtime.addConnection(a, { connectorId: b, name, settings: baseUrl ? { baseUrl } : {}, secret });
+      console.log(`Connection ${conn.name} (${conn.connector}): ${conn.id}${secret ? ', with sealed credentials' : ', without credentials'}.`);
     } else if (command === 'org:key') {
       if (!a || !b || !c) fail(`Usage: org:key <organisation id> "<key name>" <operation,operation|all>. Operations: ${ORGANISATION_OPERATIONS.join(', ')}.`);
       const ops = (c === 'all' ? ORGANISATION_OPERATIONS : c.split(',').map(x => x.trim())) as OperationId[];
@@ -120,7 +164,7 @@ if (command === 'accounts:export' || command === 'accounts:link') {
   await opened.close();
   process.exit(0);
 }
-if (command) fail(`Unknown command "${command}". Commands: files:rekey, org:create, org:key, org:revoke, accounts:export, accounts:link.`);
+if (command) fail(`Unknown command "${command}". Commands: files:rekey, org:create, org:key, org:revoke, org:requests, org:live, org:connect, org:member, accounts:export, accounts:link.`);
 
 async function sweep() {
   await purgeSpentTokens(registry.defaultCell.db);
@@ -130,6 +174,7 @@ async function sweep() {
     await purgeExpiredAgentSecrets(cell.db);
     await purgeOldNotifications(cell.db);
   }
+  await purgeExpiredConsoleSessions(registry.defaultCell.db);
 }
 await sweep();
 

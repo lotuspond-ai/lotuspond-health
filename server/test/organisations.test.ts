@@ -62,19 +62,21 @@ describe('organisation API', () => {
 
   test('operations: person-only and out-of-key calls are refused, planned ones answer 501, all are recorded', async () => {
     const org = await createOrganisation(database.db, 'Claims Desk', 'in');
-    const { key } = await createOrganisationKey(database.db, org.id, 'Claims', ['claims.status']);
+    const { key } = await createOrganisationKey(database.db, org.id, 'Claims', ['claims.status', 'preauth.submit']);
     const person = await call('/v1/operations/records.fetch', key, 'POST');
     assert.equal(person.status, 403);
     assert.equal((await person.json() as { error: { code: string } }).error.code, 'wrong_authority');
-    const outside = await call('/v1/operations/preauth.submit', key, 'POST');
+    const outside = await call('/v1/operations/documents.upload', key, 'POST');
     assert.equal(outside.status, 403);
     assert.equal((await outside.json() as { error: { code: string } }).error.code, 'not_in_key');
-    const planned = await call('/v1/operations/claims.status', key, 'POST');
+    const planned = await call('/v1/operations/preauth.submit', key, 'POST');
     assert.equal(planned.status, 501);
-    assert.equal((await planned.json() as { error: { code: string; operation: string } }).error.operation, 'claims.status');
+    assert.equal((await planned.json() as { error: { code: string; operation: string } }).error.operation, 'preauth.submit');
+    const noInput = await call('/v1/operations/claims.status', key, 'POST');
+    assert.equal(noInput.status, 400, 'a live operation checks its input');
     assert.equal((await call('/v1/operations/teleport', key, 'POST')).status, 404);
     const calls = await database.db.select().from(organisationCalls).where(eq(organisationCalls.organisationId, org.id));
-    assert.deepEqual(calls.map(c => `${c.operation}:${c.outcome}`).sort(), ['claims.status:not_offered', 'preauth.submit:refused', 'records.fetch:refused']);
+    assert.deepEqual(calls.map(c => `${c.operation}:${c.outcome}`).sort(), ['claims.status:refused', 'documents.upload:refused', 'preauth.submit:not_offered', 'records.fetch:refused']);
   });
 
   test('a key cannot be given a person-only operation', async () => {
