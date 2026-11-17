@@ -1,7 +1,7 @@
 // Signed-in account, its profiles, and which profile is open.
 import { create } from 'zustand';
 import type { Account, ConsentKind, FamilyConfirmation, Profile, ProfileInput, RegisterInput, ServiceInfo, SessionInfo } from '../types';
-import { backend } from '../api';
+import { backend, inApp } from '../api';
 import { HttpBackend } from '../api/http';
 import { useHealth } from '../lib/store';
 import { enterApp, leaveApp, oauthReturn } from '../site/links';
@@ -135,8 +135,11 @@ export const useSession = create<SessionState>((set, get) => {
     signOut: async () => {
       let next: string | undefined;
       try { next = (await backend.logout())?.accountsSignOut; } finally { reset(); }
-      // Signed in with LotusPond Accounts: sign out there too, then come back to the sign-in page.
-      if (next?.startsWith('/api/auth/accounts/')) location.assign(next);
+      // Signed in with LotusPond Accounts: sign out there too. The website goes there and comes back to the sign-in
+      // page; the apps open it in the system browser, where their Accounts sign-in is (src/native/accounts.ts).
+      if (!next) return;
+      if (inApp) void import('../native/accounts').then(m => m.openAccountsSignOut(next));
+      else location.assign(next);
     },
 
     sessionEnded: () => reset('You were signed out. Sign in again to continue.'),

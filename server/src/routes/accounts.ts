@@ -7,6 +7,7 @@
 //   POST /api/auth/accounts/complete                    finish sign-up: country, age and Health's own consents
 //   POST /api/auth/accounts/app-exchange                the apps: trade the one-time code for a session token
 //   GET  /api/auth/accounts/sign-out                    after Health's own sign-out: sign out of Accounts too
+//   GET  /api/auth/accounts/signed-out                  the apps: back from Accounts' sign-out, on to the app
 //   POST /api/auth/accounts/backchannel-logout          Accounts says a person signed out there (Back-Channel Logout)
 //
 // The iOS and Android apps sign in through the system browser (RFC 8252): they open /start?client=app with a PKCE
@@ -92,10 +93,24 @@ const cookieKeyOf = (deps: Pick<Deps, 'secrets'>) => createHmac('sha256', deps.s
 
 /** Health's sign-out of a session that came from Accounts: allow one trip to Accounts' sign-out in the next 2 minutes. */
 export function issueSignOutTicket(c: Ctx, deps: Pick<Deps, 'secrets' | 'config'>): string {
-  const body = Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + SIGN_OUT_TTL_S })).toString('base64url');
-  const sealed = `${body}.${createHmac('sha256', cookieKeyOf(deps)).update(body).digest('base64url')}`;
+  const sealed = sealTicket(deps, { exp: Math.floor(Date.now() / 1000) + SIGN_OUT_TTL_S });
   setCookie(c, SIGN_OUT_COOKIE, sealed, { httpOnly: true, sameSite: 'Lax', secure: deps.config.cookieSecure, path: COOKIE_PATH, maxAge: SIGN_OUT_TTL_S });
   return ACCOUNTS_SIGN_OUT_PATH;
+}
+
+/**
+ * The apps' sign-out of a session from Accounts: the Accounts sign-in lives in the system browser, which cannot see
+ * the app's requests, so the ticket goes in the address the app opens there. It lasts 2 minutes; someone who got
+ * hold of it could at most sign the browser that opens it out of Accounts.
+ */
+export function appSignOutUrl(c: Ctx, deps: Pick<Deps, 'secrets' | 'config'>): string {
+  const ticket = sealTicket(deps, { exp: Math.floor(Date.now() / 1000) + SIGN_OUT_TTL_S, app: true });
+  return `${publicOrigin(c, deps.config)}${ACCOUNTS_SIGN_OUT_PATH}?${new URLSearchParams({ ticket })}`;
+}
+
+function sealTicket(deps: Pick<Deps, 'secrets'>, value: { exp: number; app?: true }): string {
+  const body = Buffer.from(JSON.stringify(value)).toString('base64url');
+  return `${body}.${createHmac('sha256', cookieKeyOf(deps)).update(body).digest('base64url')}`;
 }
 
 export function accountsRoutes(deps: Deps, runtime: AccountsRuntime) {
@@ -177,7 +192,7 @@ export function accountsRoutes(deps: Deps, runtime: AccountsRuntime) {
 <meta http-equiv="refresh" content="0;url=${href}"><title>Back to LotusPond Health</title>
 <style>body{font:17px/1.5 system-ui,sans-serif;max-width:26rem;margin:4rem auto;padding:0 1rem;color:#12302e;background:#f3f6f5;text-align:center}
 a{display:inline-block;margin-top:1rem;padding:.8rem 1.4rem;border-radius:.6rem;background:#b8506d;color:#fff;text-decoration:none}</style></head>
-<body><p>${params.error ? 'Sign-in did not finish.' : 'Signed in to your LotusPond account.'}</p><a href="${href}">Open LotusPond Health</a></body></html>`);
+<body><p>${params.error ? 'Sign-in did not finish.' : params.signed_out ? 'Signed out of your LotusPond account.' : 'Signed in to your LotusPond account.'}</p><a href="${href}">Open LotusPond Health</a></body></html>`);
   }
 
   /** What a checked Accounts identity means here: an account to sign in to (linking it if need be), someone new, or a refusal. */
@@ -328,15 +343,24 @@ a{display:inline-block;margin-top:1rem;padding:.8rem 1.4rem;border-radius:.6rem;
 
   /** After Health's own sign-out (with its ticket): sign out of Accounts too, then back to the sign-in page. */
   app.get('/sign-out', async c => {
-    const ticket = open<{ exp: number }>(getCookie(c, SIGN_OUT_COOKIE));
-    drop(c, SIGN_OUT_COOKIE);
-    if (!ticket) return back(c, '/login');
-    const url = await client.endSessionUrl(`${publicOrigin(c, config)}/login`).catch(e => {
+    // The website's ticket is a cookie; an app's is in the address it opened in the system browser.
+    const fromApp = c.req.query('ticket');
+    const ticket = fromApp ? open<{ exp: number; app?: true }>(fromApp) : open<{ exp: number; app?: true }>(getCookie(c, SIGN_OUT_COOKIE));
+    if (!fromApp) drop(c, SIGN_OUT_COOKIE);
+    const forApp = !!ticket?.app;
+    if (!ticket || (fromApp && !forApp)) return back(c, '/login');
+    // The apps come back to Health's page, which hands on to the app: Accounts registers only https addresses.
+    const after = forApp ? `${publicOrigin(c, config)}${COOKIE_PATH}/signed-out` : `${publicOrigin(c, config)}/login`;
+    const url = await client.endSessionUrl(after).catch(e => {
       console.warn(`[accounts] sign-out at Accounts unavailable: ${(e as Error).message}`);
       return null;
     });
-    return url ? c.redirect(url, 302) : back(c, '/login');
+    if (url) return c.redirect(url, 302);
+    return forApp ? toApp(c, { signed_out: '1' }) : back(c, '/login');
   });
+
+  /** The apps: back from Accounts' sign-out in the system browser; hand on to the app, which closes the browser. */
+  app.get('/signed-out', c => toApp(c, { signed_out: '1' }));
 
   /** The apps: trade the one-time code from the system browser, with the PKCE verifier only the app holds. */
   app.post('/app-exchange', async c => {

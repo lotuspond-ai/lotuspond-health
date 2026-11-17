@@ -21,6 +21,11 @@ export async function startAccountsSignIn(intent: 'signup' | 'login'): Promise<v
   await Browser.open({ url: await backend.accountsAppStartUrl(intent, pkce.challenge), presentationStyle: 'popover' });
 }
 
+/** Sign out of LotusPond Accounts in the system browser, after Health's own sign-out (src/state/session.ts). */
+export async function openAccountsSignOut(url: string): Promise<void> {
+  await Browser.open({ url, presentationStyle: 'popover' }).catch(() => { /* no browser: Health's session has ended anyway */ });
+}
+
 /** A link opened the app: if it is the sign-in coming back, finish it. True when it was one. */
 export function handleAccountsReturn(url: string): boolean {
   const back = readAppReturn(url);
@@ -30,6 +35,10 @@ export function handleAccountsReturn(url: string): boolean {
   try { kept ??= sessionStorage.getItem(VERIFIER_KEY); sessionStorage.removeItem(VERIFIER_KEY); } catch { /* storage unavailable */ }
   verifier = null;
   const session = useSession.getState();
+  if ('signedOut' in back) {
+    session.showNotice('You are signed out of LotusPond Health and your LotusPond account.');
+    return true;
+  }
   if ('error' in back) {
     session.showNotice((ACCOUNTS_ERRORS as Record<string, string>)[back.error] ?? ACCOUNTS_ERRORS.sign_in_failed);
     return true;

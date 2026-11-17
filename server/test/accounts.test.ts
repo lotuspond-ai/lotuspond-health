@@ -269,7 +269,24 @@ describe('LotusPond Accounts sign-in from the apps', () => {
     assert.equal(info.account.email, address);
     assert.equal(info.account.hasPassword, false);
     assert.equal(((await (await appCall('GET', '/api/auth/me', undefined, info.token)).json()) as SessionInfo).account.email, address);
-    assert.equal((await appCall('POST', '/api/auth/logout', undefined, info.token)).status, 204, 'the app gets no website sign-out page');
+    // Signing out in the app: Health's session ends, and the app gets an address to open in the system browser.
+    const out = await appCall('POST', '/api/auth/logout', undefined, info.token);
+    assert.equal(out.status, 200);
+    assert.ok(out.headers.getSetCookie().every(c => /Max-Age=0/.test(c)), 'no cookie is set for the app (clearing one is harmless)');
+    const { accountsSignOut } = await out.json() as { accountsSignOut: string };
+    assert.match(accountsSignOut, /^http:\/\/health\.test\/api\/auth\/accounts\/sign-out\?ticket=/);
+    assert.equal(await (await appCall('GET', '/api/auth/me', undefined, info.token)).json(), null);
+    // The system browser (no cookies from the app): on to Accounts, back to Health's page, on to the app.
+    const sys = browser();
+    const toAccounts = await sys.go('GET', accountsSignOut);
+    const end = new URL(toAccounts.headers.get('location')!, 'http://health.test');
+    assert.equal(end.pathname, '/api/dev-accounts/logout');
+    assert.equal(end.searchParams.get('post_logout_redirect_uri'), 'http://health.test/api/auth/accounts/signed-out');
+    const page = await (await sys.go('GET', '/api/auth/accounts/signed-out')).text();
+    assert.match(page, /url=ai\.lotuspond\.health:\/accounts\?signed_out=1"/);
+    assert.match(page, /Signed out of your LotusPond account/);
+    // A ticket made up, or a website ticket put in the address, goes nowhere.
+    assert.equal(new URL((await browser().go('GET', '/api/auth/accounts/sign-out?ticket=abc.def')).headers.get('location')!).pathname, '/login');
     // The website's cookie-held sign-up cannot be finished with an app token, nor the other way round.
     assert.equal((await browser().json('POST', '/api/auth/accounts/complete', { ...finish(), pendingToken: started.pendingToken })).status, 409);
   });

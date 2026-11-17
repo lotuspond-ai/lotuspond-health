@@ -84,6 +84,11 @@ describe('app links', () => {
     assert.ok(odd.includes('href="ai.lotuspond.health:/accounts?error=expired"') && !odd.includes('<script>'));
   });
 
+  test('opened in the browser, a sign-out return goes on to the app too', async () => {
+    const page = await (await linked.request('/accounts-return?signed_out=1')).text();
+    assert.ok(page.includes('href="ai.lotuspond.health:/accounts?signed_out=1"'));
+  });
+
   test('a fingerprint that is not SHA-256 is refused at start-up', () => {
     assert.throws(() => loadConfig({ NODE_ENV: 'test', ANDROID_APP_SHA256: 'AB:CD' }), /ANDROID_APP_SHA256/);
     assert.throws(() => loadConfig({ NODE_ENV: 'test', APP_LINKS_ORIGIN: 'http://open.example.com' }), /https/);

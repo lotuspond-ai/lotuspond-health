@@ -56,6 +56,10 @@ To try it: `ACCOUNTS_ISSUER=fake npm run dev`, open `/signup` and choose **Conti
   - The trip to Accounts needs a 2-minute ticket that only Health's own sign-out sets, so a link from another site cannot sign anyone out of Accounts.
   - No ID token is kept, so Accounts may ask the person to confirm.
   - Password sessions sign out of Health only.
+  - **In the apps**, the Accounts sign-in lives in the system browser, so after Health's own sign-out the app opens `/api/auth/accounts/sign-out?ticket=…` there.
+    - The 2-minute ticket goes in the address because that browser has no cookie from the app. Someone who got it could at most sign the browser that opens it out of Accounts.
+    - Accounts returns to Health's `/api/auth/accounts/signed-out`, which hands on to the app with `signed_out=1`. That uses the app link or the private-use scheme, like a sign-in. The app then closes the browser and says it is signed out of both.
+    - So the apps need no post-logout address of their own at Accounts, only Health's https page.
 - **Back-channel logout** (OpenID Connect Back-Channel Logout 1.0, migration 0017). When someone signs out at Accounts, or Accounts closes their account, Accounts posts a logout token to `POST /api/auth/accounts/backchannel-logout`.
   - **Checks:** the token is checked like an ID token (signature, issuer, audience). It must also be at most 5 minutes old, carry the back-channel logout event and a `jti`, and carry no nonce. A token is acted on once.
   - **What ends:** sessions record the Accounts session (`sessions.accounts_sid`) from the ID token's `sid`. A token naming a `sid` ends the Health sessions from that Accounts session. A token naming only the account (`sub`) ends every session from Accounts for it, on the website and in the apps.
@@ -101,7 +105,6 @@ Health reads `sub`, `email` and `email_verified`, plus two LotusPond claims whos
 - **One-time codes across several server instances.** A traded code is remembered in memory, so with several instances it could be traded twice within its 2 minutes, and still only by the app holding the PKCE verifier.
 - **The `directory` moving into Accounts.** Health still keeps its email directory; the `region` claim is checked against it.
 - **The agents' consent page** (`/oauth/authorize`) still uses Health's session, not the Accounts session.
-- **Sign-out at Accounts from the apps.** An app's sign-out ends Health's session only; the Accounts sign-in in the system browser stays.
 - **Removing passwords** for linked accounts, after the reviewed migration.
 
 ## Before launch

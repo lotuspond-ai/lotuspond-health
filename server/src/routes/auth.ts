@@ -21,7 +21,7 @@ import { clientIp, readJson, requireAuth, type AppEnv, type Ctx, type Deps } fro
 import { ChangePasswordBody, ConsentPatchBody, DeleteAccountBody, LoginBody, PreferencesBody, RegisterBody } from '../schemas.ts';
 import { toAccount, toProfile } from '../serialize.ts';
 import { relationshipOrder } from './profiles.ts';
-import { issueSignOutTicket } from './accounts.ts';
+import { appSignOutUrl, issueSignOutTicket } from './accounts.ts';
 
 const MINUTE = 60_000;
 const EMAIL_TAKEN = 'An account with this email already exists. Sign in instead.';
@@ -155,7 +155,10 @@ export function authRoutes(deps: Deps) {
     }
     clearSessionCookie(c, config.cookieSecure);
     // Signed in with LotusPond Accounts on the website: the page goes on to sign out there too (routes/accounts.ts).
-    if (session?.viaAccounts && config.accounts && !wantsTokenSession(c)) return c.json({ accountsSignOut: issueSignOutTicket(c, deps) });
+    // The apps open it in the system browser, where their Accounts sign-in is.
+    if (session?.viaAccounts && config.accounts) {
+      return c.json({ accountsSignOut: wantsTokenSession(c) ? appSignOutUrl(c, deps) : issueSignOutTicket(c, deps) });
+    }
     return c.body(null, 204);
   });
 

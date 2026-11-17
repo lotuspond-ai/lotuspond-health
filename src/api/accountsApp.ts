@@ -20,7 +20,7 @@ export function appStartUrl(apiOrigin: string, intent: 'signup' | 'login', chall
 }
 
 /** `apiOrigin`: the regional host to trade the code at, when the account is held by another region's host. */
-export type AppReturn = { code: string; apiOrigin?: string } | { error: AccountsErrorCode | string };
+export type AppReturn = { code: string; apiOrigin?: string } | { error: AccountsErrorCode | string } | { signedOut: true };
 
 /** The code or error in a link that opened the app (the private-use scheme or an https app link), or null when the
  *  link is not a sign-in return. */
@@ -34,6 +34,8 @@ export function readAppReturn(url: string): AppReturn | null {
     if (parsed.protocol !== 'https:' || parsed.pathname !== APP_LINK_PATH) return null;
     q = parsed.searchParams;
   }
+  // Back from signing out of Accounts in the system browser.
+  if (q.get('signed_out') === '1') return { signedOut: true };
   const code = q.get('code');
   const apiOrigin = q.get('api_origin');
   if (code) return apiOrigin ? { code, apiOrigin } : { code };

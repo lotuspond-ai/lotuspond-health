@@ -178,9 +178,14 @@ export class HttpBackend implements Backend {
     return { account: r.account, profiles: r.profiles };
   }
   async logout() {
+    const origin = this.app?.origin;
     try {
       const r = await this.request<{ accountsSignOut?: string } | undefined>('POST', '/auth/logout');
-      return r?.accountsSignOut && !this.app ? { accountsSignOut: r.accountsSignOut } : undefined;
+      const next = r?.accountsSignOut;
+      if (!next) return undefined;
+      // The website follows a path on its own site; the apps open an address on their own API host in the system browser.
+      if (!this.app) return next.startsWith('/api/auth/accounts/') ? { accountsSignOut: next } : undefined;
+      return next.startsWith(`${origin}/api/auth/accounts/`) ? { accountsSignOut: next } : undefined;
     } finally { if (this.app) await this.app.clear(); }
   }
   changePassword(currentPassword: string, newPassword: string) { return this.request<void>('POST', '/auth/password', { currentPassword, newPassword }); }

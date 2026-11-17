@@ -44,6 +44,7 @@ export function appLinkRoutes(config: Config) {
     if (q.code && /^[A-Za-z0-9_-]{20,4000}$/.test(q.code)) params.set('code', q.code);
     else if (q.error && /^[a-z_]{1,40}$/.test(q.error)) params.set('error', q.error);
     else params.set('error', 'expired');
+    if (q.signed_out === '1') { params.delete('error'); params.set('signed_out', '1'); }
     // The regional host that holds the account, only when it is one this deployment lists (REGION_API_ORIGINS).
     if (params.has('code') && q.api_origin && Object.values(config.regionApiOrigins).includes(q.api_origin)) params.set('api_origin', q.api_origin);
     const href = `${APP_ACCOUNTS_REDIRECT}?${params}`.replace(/&/g, '&amp;');

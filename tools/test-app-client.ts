@@ -273,6 +273,18 @@ describe('app client: sign-in with LotusPond Accounts', () => {
     assert.equal((await backend.me())?.account.id, info.account.id);
     assert.equal(await backend.accountsPending(), null);
 
+    // Signing out: the app gets an address on its own API host to open in the system browser, and forgets its token.
+    const out = await backend.logout();
+    assert.ok(out && out.accountsSignOut?.startsWith(`${API}/api/auth/accounts/sign-out?ticket=`), JSON.stringify(out));
+    assert.equal(store.value, null);
+    assert.deepEqual(readAppReturn('ai.lotuspond.health:/accounts?signed_out=1'), { signedOut: true });
+    assert.deepEqual(readAppReturn('https://open.health.lotuspond.ai/accounts-return?signed_out=1'), { signedOut: true });
+    // Sign back in for the next part.
+    const pkceB = await createPkce();
+    const backB = readAppReturn(await systemBrowser(await backend.accountsAppStartUrl('login', pkceB.challenge), { email: info.account.email }));
+    assert.ok(backB && 'code' in backB);
+    await backend.accountsAppExchange(backB.code, pkceB.verifier);
+
     // Next time: straight to a session.
     const again = client();
     const pkce2 = await createPkce();
@@ -295,7 +307,16 @@ describe('app client: sign-in with LotusPond Accounts', () => {
     assert.equal(session.origin, API, 'the app stays on its host');
   });
 
-  it('a refusal comes back as an error code the app shows', async () => {
+  it('a sign-out address on another host is not opened', async () => {
+    const { backend } = client();
+    await backend.register(registration(email()));
+    intercept = (url) => url === `${API}/api/auth/logout`
+      ? Response.json({ accountsSignOut: 'https://evil.example/api/auth/accounts/sign-out?ticket=x' }, { headers: { 'access-control-allow-origin': ORIGIN } })
+      : null;
+    assert.equal(await backend.logout(), undefined);
+  });
+
+    it('a refusal comes back as an error code the app shows', async () => {
     const { backend } = client();
     const pkce = await createPkce();
     const link = await systemBrowser(await backend.accountsAppStartUrl('login', pkce.challenge), { email: email(), enterprise: true });
