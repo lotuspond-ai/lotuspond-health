@@ -41,6 +41,10 @@ export interface Backend {
   accountsPending?(): Promise<{ email: string; region: string | null } | null>;
   /** Finish sign-up after LotusPond Accounts: Health's own questions, without an email or password. */
   completeAccountsSignUp?(input: Omit<RegisterInput, 'email' | 'password'>): Promise<SessionInfo>;
+  /** The apps: where the system browser starts a sign-in with LotusPond Accounts (src/api/accountsApp.ts). */
+  accountsAppStartUrl?(intent: 'signup' | 'login', challenge: string): Promise<string>;
+  /** The apps: trade the one-time code from the system browser for a session, or for a sign-up to finish. */
+  accountsAppExchange?(code: string, verifier: string): Promise<{ session: SessionInfo } | { pending: { email: string; region: string | null } }>;
   login(input: { email: string; password: string }): Promise<SessionInfo>;
   logout(): Promise<void>;
   changePassword(currentPassword: string, newPassword: string): Promise<void>;

@@ -13,5 +13,11 @@ export const ACCOUNTS_ERRORS = {
 
 export type AccountsErrorCode = keyof typeof ACCOUNTS_ERRORS;
 
+/**
+ * Where the system browser hands a sign-in back to the iOS and Android apps (RFC 8252, a private-use URI scheme
+ * named after the app id). Registered in android/app/src/main/AndroidManifest.xml and ios/App/App/Info.plist.
+ */
+export const APP_ACCOUNTS_REDIRECT = 'ai.lotuspond.health:/accounts';
+
 /** Where the website starts a sign-in through LotusPond Accounts. */
 export const accountsStartPath = (intent: 'signup' | 'login') => `/api/auth/accounts/start?intent=${intent}`;

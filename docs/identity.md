@@ -1,6 +1,6 @@
 # One LotusPond account
 
-Status: **accepted on 2026-11-16. Health's side is built for the website, off unless `ACCOUNTS_ISSUER` is set** ([Built so far](#built-so-far)). LotusPond Accounts itself is not built yet. The decision is recorded in the LotusPond Works repository:
+Status: **accepted on 2026-11-16. Health's side is built for the website and the apps, off unless `ACCOUNTS_ISSUER` is set** ([Built so far](#built-so-far)). LotusPond Accounts itself is not built yet. The decision is recorded in the LotusPond Works repository:
 - [ADR-0018, one LotusPond account for Health and Works](https://github.com/lotuspond-ai/lotuspond/blob/main/docs/architecture/0018-one-lotuspond-account.md);
 - [ADR-0019, databases, tenancy and placement](https://github.com/lotuspond-ai/lotuspond/blob/main/docs/architecture/0019-database-tenancy-and-placement.md).
 
@@ -37,7 +37,7 @@ The links work once [lotuspond-ai/lotuspond#49](https://github.com/lotuspond-ai/
 
 ## Built so far
 
-Health's side works for the website, against a stand-in for Accounts. It changes nothing until `ACCOUNTS_ISSUER` is set; password sign-up and sign-in work as before alongside it.
+Health's side works for the website and the apps, against a stand-in for Accounts. It changes nothing until `ACCOUNTS_ISSUER` is set; password sign-up and sign-in work as before alongside it.
 
 | Setting | Meaning |
 | --- | --- |
@@ -52,6 +52,12 @@ To try it: `ACCOUNTS_ISSUER=fake npm run dev`, open `/signup` and choose **Conti
 - **Existing Health accounts** with the same email are linked on their first Accounts sign-in, only when Accounts says the email is verified. They keep their password until the reviewed migration removes it.
 - **Refused:** accounts from a company's single sign-on; a region this server does not serve; a country whose region differs from the one Accounts holds the account in; a Health account already linked to another Accounts subject.
 - **Accounts without a Health password** cannot use the password form (it says to use Accounts) or change a password here. They can delete their account within 10 minutes of signing in with Accounts, instead of typing a password.
+- **The apps** sign in through the system browser (RFC 8252): Custom Tabs on Android and SFSafariViewController on iOS (`@capacitor/browser`), never the app's own web view.
+  1. The app makes its own PKCE pair (`src/api/accountsApp.ts`) and opens `/api/auth/accounts/start?client=app&code_challenge=…` on its API host.
+  2. The browser signs in with Accounts. Health's callback then shows a short page that sends the browser back to the app, at `ai.lotuspond.health:/accounts?code=…` (or `?error=…`). This is a private-use URI scheme named after the app id, registered in `AndroidManifest.xml` and `Info.plist`. The page also has a button, in case the browser asks before opening the app.
+  3. The code is encrypted, lasts 2 minutes, works once, and is bound to the app's PKCE challenge, so another app that catches the link cannot use it. The app trades it with its verifier at `POST /api/auth/accounts/app-exchange` for a token session, the same kind a password sign-in gives it (`src/native/accounts.ts`).
+  4. Someone new answers Health's questions in the app. The exchange gives the app an encrypted sign-up token, valid for 30 minutes, which it sends with `POST /api/auth/accounts/complete`.
+  - Tested in `server/test/accounts.test.ts`, and from the app client through a stand-in web view and system browser in `tools/test-app-client.ts`. **Not yet run on a phone** (docs/mobile.md, "Not done yet").
 
 ### Claims
 
@@ -62,7 +68,9 @@ Health reads `sub`, `email` and `email_verified`, plus two LotusPond claims whos
 
 ### Not built yet
 
-- **The apps.** Sign-in through the system browser (RFC 8252) with a custom-scheme or app-link redirect. Until then the apps keep the password form, and `/api/auth/accounts/complete` refuses app clients.
+- **App links.** Universal links (iOS) and verified app links (Android) on `health.lotuspond.ai`, instead of the private-use scheme. They need the `apple-app-site-association` and `assetlinks.json` files with the release signing details.
+- **Regional hosts in the apps.** The app starts the sign-in on its current API host. An account held by another regional host is refused with `wrong_region`, instead of being followed there as a password sign-in is.
+- **One-time codes across several server instances.** A traded code is remembered in memory, so with several instances it could be traded twice within its 2 minutes, and still only by the app holding the PKCE verifier.
 - **The `directory` moving into Accounts.** Health still keeps its email directory; the `region` claim is checked against it.
 - **The agents' consent page** (`/oauth/authorize`) still uses Health's session, not the Accounts session.
 - **Sign-out at Accounts** (RP-initiated logout). Signing out of Health ends only Health's session.

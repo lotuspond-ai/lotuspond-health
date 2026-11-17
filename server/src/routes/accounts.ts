@@ -5,10 +5,15 @@
 //   GET  /api/auth/accounts/callback                    back from Accounts: sign in, link, or start sign-up
 //   GET  /api/auth/accounts/pending                     the Accounts identity waiting to finish sign-up
 //   POST /api/auth/accounts/complete                    finish sign-up: country, age and Health's own consents
+//   POST /api/auth/accounts/app-exchange                the apps: trade the one-time code for a session token
+//
+// The iOS and Android apps sign in through the system browser (RFC 8252): they open /start?client=app with a PKCE
+// challenge of their own; the callback sends the browser back to the app (APP_ACCOUNTS_REDIRECT) with a one-time
+// code, encrypted and bound to that challenge, which the app trades with its verifier for a token session.
 //
 // Accounts proves who the person is. Health still asks its own questions (country, age, the health-data consent), so
 // a first sign-in ends on Health's sign-up page with the email filled in and no password.
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { Hono } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { eq } from 'drizzle-orm';
@@ -23,9 +28,9 @@ import { claim, locate, release } from '../compliance/directory.ts';
 import { conflict, HttpError, notFound } from '../lib/errors.ts';
 import { readJson, type AppEnv, type Ctx, type Deps } from '../http.ts';
 import { publicOrigin } from '../agents/oauth.ts';
-import { AccountsCompleteBody } from '../schemas.ts';
+import { AccountsAppExchangeBody, AccountsCompleteBody } from '../schemas.ts';
 import { insertAccount, isUniqueViolation, sessionInfo } from './auth.ts';
-import { ACCOUNTS_ERRORS } from '../../../shared/identity.ts';
+import { ACCOUNTS_ERRORS, APP_ACCOUNTS_REDIRECT, type AccountsErrorCode } from '../../../shared/identity.ts';
 
 const FLOW_COOKIE = 'lp_accounts_flow';
 const PENDING_COOKIE = 'lp_accounts_pending';
@@ -33,8 +38,26 @@ const COOKIE_PATH = '/api/auth/accounts';
 const FLOW_TTL_S = 10 * 60;
 const PENDING_TTL_S = 30 * 60;
 
-interface Flow { state: string; nonce: string; verifier: string; signUp: boolean; exp: number }
+interface Flow {
+  state: string; nonce: string; verifier: string; signUp: boolean; exp: number;
+  /** The app's PKCE challenge, when an app started this sign-in in the system browser. */
+  app?: string;
+}
 type Pending = AccountsIdentity & { exp: number };
+/** The one-time code handed to an app: a session for an account, or an identity waiting to finish sign-up. */
+type AppCode =
+  | { k: 'session'; uid: string; region: DataRegion; ch: string; jti: string; exp: number }
+  | { k: 'pending'; id: AccountsIdentity; ch: string; jti: string; exp: number };
+/** An app holds its sign-up in progress as this token (it has no cookies across sites). */
+type AppPending = Pending & { k: 'app-pending' };
+
+const APP_CODE_TTL_S = 2 * 60;
+const CHALLENGE = /^[A-Za-z0-9_-]{43}$/;
+
+type Outcome =
+  | { kind: 'account'; cell: Cell; user: UserRow }
+  | { kind: 'new'; id: AccountsIdentity }
+  | { kind: 'error'; code: AccountsErrorCode };
 
 
 export interface AccountsRuntime { client: AccountsClient; fake?: FakeAccounts }
@@ -72,6 +95,35 @@ export function accountsRoutes(deps: Deps, runtime: AccountsRuntime) {
       return v.exp * 1000 > Date.now() ? v : null;
     } catch { return null; }
   };
+  // App codes and app sign-up tokens travel through the system browser and the OS, so they are encrypted too.
+  const boxKey = createHmac('sha256', deps.secrets.directoryKey).update('lotuspond:accounts-app-codes:v1').digest();
+  const box = (value: object) => {
+    const iv = randomBytes(12);
+    const cipher = createCipheriv('aes-256-gcm', boxKey, iv);
+    const data = Buffer.concat([cipher.update(JSON.stringify(value), 'utf8'), cipher.final()]);
+    return Buffer.concat([iv, cipher.getAuthTag(), data]).toString('base64url');
+  };
+  const unbox = <T extends { exp: number }>(sealed: string): T | null => {
+    try {
+      const raw = Buffer.from(sealed, 'base64url');
+      const decipher = createDecipheriv('aes-256-gcm', boxKey, raw.subarray(0, 12));
+      decipher.setAuthTag(raw.subarray(12, 28));
+      const v = JSON.parse(Buffer.concat([decipher.update(raw.subarray(28)), decipher.final()]).toString('utf8')) as T;
+      return v.exp * 1000 > Date.now() ? v : null;
+    } catch { return null; }
+  };
+  /** Codes already traded, until they expire. One server instance only; with several, a code could be replayed
+   *  within its two minutes, still only by the app holding the PKCE verifier. */
+  const usedCodes = new Map<string, number>();
+  const spend = (jti: string, exp: number) => {
+    const now = Date.now();
+    for (const [k, until] of usedCodes) if (until < now) usedCodes.delete(k);
+    if (usedCodes.has(jti)) return false;
+    usedCodes.set(jti, exp * 1000);
+    return true;
+  };
+  const inSeconds = (s: number) => Math.floor(Date.now() / 1000) + s;
+
   const put = (c: Ctx, name: string, value: object, ttl: number) =>
     setCookie(c, name, seal(value), { httpOnly: true, sameSite: 'Lax', secure: config.cookieSecure, path: COOKIE_PATH, maxAge: ttl });
   const drop = (c: Ctx, name: string) => deleteCookie(c, name, { path: COOKIE_PATH, secure: config.cookieSecure });
@@ -80,10 +132,50 @@ export function accountsRoutes(deps: Deps, runtime: AccountsRuntime) {
   const back = (c: Ctx, path: string) => c.redirect(`${publicOrigin(c, config)}${path}`, 302);
   const fail = (c: Ctx, code: keyof typeof ACCOUNTS_ERRORS, signUp = false) => back(c, `/${signUp ? 'signup' : 'login'}?accounts_error=${code}`);
 
-  async function signIn(c: Ctx, cell: Cell, user: UserRow) {
+  /** Start Health's own session: a cookie for the website, a token in the answer for the apps. */
+  async function signIn(c: Ctx, cell: Cell, user: UserRow, forApp = false) {
     const { token, expiresAt } = await createSession(cell.db, user.region, user.id, config.sessionTtlMs, c.req.header('user-agent'));
-    writeSessionCookie(c, token, expiresAt, config.cookieSecure);
+    if (!forApp) writeSessionCookie(c, token, expiresAt, config.cookieSecure);
     await recordEvent(cell.db, eventContext(c, deps), user.id, 'sign_in');
+    return { token, expiresAt: expiresAt.toISOString() };
+  }
+
+  /** Back to the app that started the sign-in. A page rather than a bare redirect, with a button in case the
+   *  browser asks before leaving for the app. */
+  function toApp(c: Ctx, params: Record<string, string>) {
+    const url = `${APP_ACCOUNTS_REDIRECT}?${new URLSearchParams(params)}`;
+    const href = url.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+    c.header('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'");
+    c.header('Referrer-Policy', 'no-referrer');
+    return c.html(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="refresh" content="0;url=${href}"><title>Back to LotusPond Health</title>
+<style>body{font:17px/1.5 system-ui,sans-serif;max-width:26rem;margin:4rem auto;padding:0 1rem;color:#12302e;background:#f3f6f5;text-align:center}
+a{display:inline-block;margin-top:1rem;padding:.8rem 1.4rem;border-radius:.6rem;background:#b8506d;color:#fff;text-decoration:none}</style></head>
+<body><p>${params.error ? 'Sign-in did not finish.' : 'Signed in to your LotusPond account.'}</p><a href="${href}">Open LotusPond Health</a></body></html>`);
+  }
+
+  /** What a checked Accounts identity means here: an account to sign in to (linking it if need be), someone new, or a refusal. */
+  async function resolve(c: Ctx, id: AccountsIdentity): Promise<Outcome> {
+    // An employer can suspend, reset or audit an account made through its single sign-on: never for health records.
+    if (id.enterpriseConnection) return { kind: 'error', code: 'enterprise_account' };
+    if (id.region && !cells.forRegion(id.region)) return { kind: 'error', code: 'wrong_region' };
+    const linked = await bySubject(id);
+    if (linked) return { kind: 'account', ...linked };
+    // A Health account with this email from before Accounts: linked when Accounts has verified the address
+    // (settled by the owner, 2026-11-17).
+    const found = await locate(deps, id.email);
+    if (found) {
+      if (!found.cell) return { kind: 'error', code: 'wrong_region' };
+      if (found.user.accountsSubject) return { kind: 'error', code: 'already_linked' };
+      if (!id.emailVerified) return { kind: 'error', code: 'email_unverified' };
+      if (id.region && id.region !== found.region) return { kind: 'error', code: 'wrong_region' };
+      const [user] = await found.cell.db.update(users).set({ accountsSubject: id.subject, updatedAt: new Date() })
+        .where(eq(users.id, found.user.id)).returning();
+      await recordEvent(found.cell.db, eventContext(c, deps), user.id, 'accounts_linked');
+      return { kind: 'account', cell: found.cell, user };
+    }
+    if (!id.emailVerified) return { kind: 'error', code: 'email_unverified' };
+    return { kind: 'new', id };
   }
 
   /** The Health account already linked to this Accounts subject: the region's cell first, then every cell here. */
@@ -98,7 +190,13 @@ export function accountsRoutes(deps: Deps, runtime: AccountsRuntime) {
 
   app.get('/start', async c => {
     const signUp = c.req.query('intent') === 'signup';
-    const flow: Flow = { state: randomToken(), nonce: randomToken(), verifier: randomToken(), signUp, exp: Math.floor(Date.now() / 1000) + FLOW_TTL_S };
+    const forApp = c.req.query('client') === 'app';
+    const appChallenge = c.req.query('code_challenge') ?? '';
+    if (forApp && !CHALLENGE.test(appChallenge)) return c.text('The app sent no valid code_challenge (PKCE, S256).', 400);
+    const flow: Flow = {
+      state: randomToken(), nonce: randomToken(), verifier: randomToken(), signUp, exp: inSeconds(FLOW_TTL_S),
+      ...(forApp ? { app: appChallenge } : {}),
+    };
     put(c, FLOW_COOKIE, flow, FLOW_TTL_S);
     return c.redirect(await client.authorizeUrl({ redirectUri: redirectUri(c), state: flow.state, nonce: flow.nonce, verifier: flow.verifier, signUp }), 302);
   });
@@ -119,34 +217,44 @@ export function accountsRoutes(deps: Deps, runtime: AccountsRuntime) {
       console.warn(`[accounts] sign-in refused: ${e.code}: ${e.message}`);
       return fail(c, 'sign_in_failed', flow.signUp);
     }
-    // An employer can suspend, reset or audit an account made through its single sign-on: never for health records.
-    if (id.enterpriseConnection) return fail(c, 'enterprise_account', flow.signUp);
-    if (id.region && !cells.forRegion(id.region)) return fail(c, 'wrong_region', flow.signUp);
+    const outcome = await resolve(c, id);
 
-    const linked = await bySubject(id);
-    if (linked) {
-      await signIn(c, linked.cell, linked.user);
+    if (flow.app) {
+      const ch = flow.app;
+      if (outcome.kind === 'error') return toApp(c, { error: outcome.code });
+      const code: AppCode = outcome.kind === 'account'
+        ? { k: 'session', uid: outcome.user.id, region: outcome.user.region, ch, jti: randomToken(), exp: inSeconds(APP_CODE_TTL_S) }
+        : { k: 'pending', id: outcome.id, ch, jti: randomToken(), exp: inSeconds(APP_CODE_TTL_S) };
+      return toApp(c, { code: box(code) });
+    }
+    if (outcome.kind === 'error') return fail(c, outcome.code, flow.signUp);
+    if (outcome.kind === 'account') {
+      await signIn(c, outcome.cell, outcome.user);
       return back(c, '/app');
     }
-
-    // A Health account with this email from before Accounts: link it when Accounts has verified the address.
-    const found = await locate(deps, id.email);
-    if (found) {
-      if (!found.cell) return fail(c, 'wrong_region', flow.signUp);
-      if (found.user.accountsSubject) return fail(c, 'already_linked', flow.signUp);
-      if (!id.emailVerified) return fail(c, 'email_unverified', flow.signUp);
-      if (id.region && id.region !== found.region) return fail(c, 'wrong_region', flow.signUp);
-      const [user] = await found.cell.db.update(users).set({ accountsSubject: id.subject, updatedAt: new Date() })
-        .where(eq(users.id, found.user.id)).returning();
-      await recordEvent(found.cell.db, eventContext(c, deps), user.id, 'accounts_linked');
-      await signIn(c, found.cell, user);
-      return back(c, '/app');
-    }
-
     // Someone new to Health: finish sign-up on Health's page.
-    if (!id.emailVerified) return fail(c, 'email_unverified', true);
-    put(c, PENDING_COOKIE, { ...id, exp: Math.floor(Date.now() / 1000) + PENDING_TTL_S } satisfies Pending, PENDING_TTL_S);
+    put(c, PENDING_COOKIE, { ...outcome.id, exp: inSeconds(PENDING_TTL_S) } satisfies Pending, PENDING_TTL_S);
     return back(c, '/signup?accounts=continue');
+  });
+
+  /** The apps: trade the one-time code from the system browser, with the PKCE verifier only the app holds. */
+  app.post('/app-exchange', async c => {
+    const body = await readJson(c, AccountsAppExchangeBody);
+    const code = unbox<AppCode>(body.code);
+    const expired = () => new HttpError(400, 'accounts_expired', ACCOUNTS_ERRORS.expired);
+    if (!code) throw expired();
+    const challenge = createHash('sha256').update(body.verifier).digest('base64url');
+    if (challenge.length !== code.ch.length || !timingSafeEqual(Buffer.from(challenge), Buffer.from(code.ch))) throw expired();
+    if (!spend(code.jti, code.exp)) throw expired();
+    if (code.k === 'pending') {
+      const pending: AppPending = { ...code.id, k: 'app-pending', exp: inSeconds(PENDING_TTL_S) };
+      return c.json({ pending: { email: code.id.email, region: code.id.region }, pendingToken: box(pending) });
+    }
+    const cell = cells.forRegion(code.region);
+    const [user] = cell ? await cell.db.select().from(users).where(eq(users.id, code.uid)).limit(1) : [];
+    if (!cell || !user) throw expired();
+    const session = await signIn(c, cell, user, true);
+    return c.json({ ...(await sessionInfo(cell.db, user)), ...session });
   });
 
   app.get('/pending', c => {
@@ -156,11 +264,12 @@ export function accountsRoutes(deps: Deps, runtime: AccountsRuntime) {
   });
 
   app.post('/complete', async c => {
-    // Browsers only for now: the apps will sign in through the system browser (RFC 8252) in a later change.
-    if (wantsTokenSession(c)) throw new HttpError(400, 'not_supported', 'The apps cannot sign up with LotusPond Accounts yet.');
-    const pending = open<Pending>(getCookie(c, PENDING_COOKIE));
-    if (!pending) throw new HttpError(409, 'accounts_expired', ACCOUNTS_ERRORS.expired);
+    // The website keeps the identity in a cookie; the apps send the token /app-exchange gave them.
+    const forApp = wantsTokenSession(c);
     const body = await readJson(c, AccountsCompleteBody);
+    const fromApp = forApp && body.pendingToken ? unbox<AppPending>(body.pendingToken) : null;
+    const pending: Pending | null = forApp ? (fromApp?.k === 'app-pending' ? fromApp : null) : open<Pending>(getCookie(c, PENDING_COOKIE));
+    if (!pending) throw new HttpError(409, 'accounts_expired', ACCOUNTS_ERRORS.expired);
     const problem = signUpProblem(body, cells.servedRegions, config.openCountries);
     if (problem) {
       const refused = problem.code === 'country_unavailable' || problem.code === 'region_not_served';
@@ -183,9 +292,10 @@ export function accountsRoutes(deps: Deps, runtime: AccountsRuntime) {
       if (isUniqueViolation(e)) throw conflict(taken, 'email_taken');
       throw e;
     }
-    drop(c, PENDING_COOKIE);
+    if (!forApp) drop(c, PENDING_COOKIE);
     await recordEvent(cell.db, eventContext(c, deps), user.id, 'account_created');
     const { token, expiresAt } = await createSession(cell.db, user.region, user.id, config.sessionTtlMs, c.req.header('user-agent'));
+    if (forApp) return c.json({ ...(await sessionInfo(cell.db, user)), token, expiresAt: expiresAt.toISOString() }, 201);
     writeSessionCookie(c, token, expiresAt, config.cookieSecure);
     return c.json(await sessionInfo(cell.db, user), 201);
   });

@@ -1,7 +1,8 @@
 // Finishing sign-up after LotusPond Accounts (docs/identity.md). Accounts holds the email and password; Health still
 // asks its own questions: your name, the country you live in, your age and the health-data consent.
 import { useEffect, useState, type FormEvent } from 'react';
-import { backend, errorMessage } from '../api';
+import { backend, errorMessage, inApp } from '../api';
+import { startAccountsSignIn } from '../native/accounts';
 import { useSession } from '../state/session';
 import type { SignUpProblem } from '../../shared/regions';
 import { accountsStartPath } from '../../shared/identity';
@@ -50,7 +51,9 @@ export function AccountsSignUp() {
       <>
         <h2>Start again</h2>
         <p className="muted">{error ?? 'That sign-up took too long, or was started in another browser.'}</p>
-        <a className="btn btn--primary btn--block" href={accountsStartPath('signup')}>Continue with LotusPond Account</a>
+        {inApp
+          ? <button type="button" className="btn btn--primary btn--block" onClick={() => { startAccountsSignIn('signup').catch(e => setError(errorMessage(e))); }}>Continue with LotusPond Account</button>
+          : <a className="btn btn--primary btn--block" href={accountsStartPath('signup')}>Continue with LotusPond Account</a>}
       </>
     );
   }

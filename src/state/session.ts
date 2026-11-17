@@ -28,6 +28,12 @@ interface SessionState {
   signUp: (input: RegisterInput) => Promise<void>;
   /** Finish sign-up after LotusPond Accounts (see Backend.completeAccountsSignUp). */
   completeAccountsSignUp: (input: Omit<RegisterInput, 'email' | 'password'>) => Promise<void>;
+  /** The apps: a sign-up with LotusPond Accounts waiting for Health's own questions (the sign-in screen shows them). */
+  accountsPending: boolean;
+  /** The apps: trade the one-time code the system browser handed back (src/native/accounts.ts). */
+  accountsAppExchange: (code: string, verifier: string) => Promise<void>;
+  /** Show a message on the sign-in screen. */
+  showNotice: (notice: string) => void;
   signOut: () => Promise<void>;
   sessionEnded: () => void;
   switchProfile: (id: string) => void;
@@ -72,7 +78,7 @@ export const useSession = create<SessionState>((set, get) => {
   }
 
   function reset(notice: string | null = null) {
-    set({ status: 'signed-out', account: null, profiles: [], activeId: null, onboarding: false, notice, consentsOutdated: [] });
+    set({ status: 'signed-out', account: null, profiles: [], activeId: null, onboarding: false, notice, consentsOutdated: [], accountsPending: false });
     void useHealth.getState().openProfile(null);
     useUI.getState().setView('home');
     leaveApp();
@@ -112,7 +118,19 @@ export const useSession = create<SessionState>((set, get) => {
     completeAccountsSignUp: async input => {
       if (!backend.completeAccountsSignUp) throw new Error('Sign-in with LotusPond Accounts needs the LotusPond server.');
       start(await backend.completeAccountsSignUp(input), true);
+      set({ accountsPending: false });
     },
+
+    accountsPending: false,
+
+    accountsAppExchange: async (code, verifier) => {
+      if (!backend.accountsAppExchange) throw new Error('Sign-in with LotusPond Accounts needs the LotusPond server.');
+      const r = await backend.accountsAppExchange(code, verifier);
+      if ('session' in r) start(r.session);
+      else set({ accountsPending: true, notice: null });
+    },
+
+    showNotice: notice => set({ notice }),
 
     signOut: async () => {
       try { await backend.logout(); } finally { reset(); }

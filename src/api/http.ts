@@ -14,6 +14,7 @@ import type {
 import type { FacilityQuery, FacilitySearchResult, GeoCandidate, GeoReverse, PublicConfig } from '../types';
 import { roundCoord } from '../../shared/facilities';
 import { countryPolicy } from '../../shared/regions';
+import { appStartUrl } from './accountsApp';
 import { ApiError, type Backend, type ScanPatch } from './backend';
 import type { AppSession, Region } from './appSession';
 import type { LabBookingInput, LabCatalog, LabOrderView, LabResultSaved, LabResultView, LabSlot } from '../../shared/lab-bundle';
@@ -93,7 +94,30 @@ export class HttpBackend implements Backend {
     this.apiOrigins = info.apiOrigins ?? {};
     return info;
   }
+  /** The apps' sign-up in progress after LotusPond Accounts: they have no cookie to hold it. */
+  private appAccountsPending: { email: string; region: string | null; token: string } | null = null;
+
+  async accountsAppStartUrl(intent: 'signup' | 'login', challenge: string) {
+    if (!this.app) throw new ApiError(400, 'not_supported', 'The website signs in with LotusPond Accounts through its own page.');
+    await this.app.ready;
+    return appStartUrl(this.app.origin, intent, challenge);
+  }
+  async accountsAppExchange(code: string, verifier: string) {
+    if (!this.app) throw new ApiError(400, 'not_supported', 'Only the apps trade a sign-in code.');
+    const r = await this.request<AppSignIn & { pending?: { email: string; region: string | null }; pendingToken?: string }>(
+      'POST', '/auth/accounts/app-exchange', { code, verifier });
+    if (r.pending && r.pendingToken) {
+      this.appAccountsPending = { ...r.pending, token: r.pendingToken };
+      return { pending: r.pending };
+    }
+    if (!r.token) throw new ApiError(502, 'no_token', 'The server did not start a session for the app. Try again, or update the app.');
+    this.appAccountsPending = null;
+    await this.app.keep(r.token, r.expiresAt);
+    return { session: { account: r.account, profiles: r.profiles, consentsOutdated: r.consentsOutdated } };
+  }
+
   async accountsPending() {
+    if (this.app) return this.appAccountsPending ? { email: this.appAccountsPending.email, region: this.appAccountsPending.region } : null;
     try {
       return await this.request<{ email: string; region: string | null }>('GET', '/auth/accounts/pending');
     } catch (e) {
@@ -101,8 +125,13 @@ export class HttpBackend implements Backend {
       throw e;
     }
   }
-  completeAccountsSignUp(input: Omit<RegisterInput, 'email' | 'password'>) {
-    return this.request<SessionInfo>('POST', '/auth/accounts/complete', input);
+  async completeAccountsSignUp(input: Omit<RegisterInput, 'email' | 'password'>) {
+    if (!this.app) return this.request<SessionInfo>('POST', '/auth/accounts/complete', input);
+    const pending = this.appAccountsPending;
+    if (!pending) throw new ApiError(409, 'accounts_expired', 'That sign-up took too long. Continue with LotusPond Account again.');
+    const info = await this.appSignIn('/auth/accounts/complete', { ...input, pendingToken: pending.token });
+    this.appAccountsPending = null;
+    return info;
   }
   register(input: RegisterInput) {
     if (!this.app) return this.request<SessionInfo>('POST', '/auth/register', input);

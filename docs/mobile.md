@@ -34,6 +34,7 @@ The apps load the shell from `capacitor://localhost` (iOS) or `https://localhost
 - **Sign-in and sign-up** send `X-LotusPond-Client: app`. The server answers with a token instead of a cookie, and the app saves it with `@aparajita/capacitor-secure-storage`.
 - **Every request** carries `Authorization: Bearer <token>`. If the server answers 401 (the session expired, or was signed out from another device), the app forgets the token and returns to the sign-in screen.
 - **Regions.** Sign-up goes to the server for the region of the chosen country (`apiOrigins` from `GET /api/auth/config`). Sign-in follows a `wrong_region` answer to the host that holds the account and stays with it.
+- **LotusPond Accounts** (when the server has `ACCOUNTS_ISSUER` set): **Continue with LotusPond Account** opens the system browser, and the sign-in comes back to the app on `ai.lotuspond.health:/accounts` ([identity.md](identity.md#built-so-far)).
 - **Code.** `src/api/appSession.ts` (token, origin, headers) and `src/api/http.ts` in app mode, which `src/api/index.ts` turns on when running natively. They are tested against the real API in `tools/test-app-client.ts` (`npm run test:app`), through a stand-in for the web view that preflights, enforces CORS and refuses cookies.
 
 By default the apps call the public site (`SITE_URL`, `https://health.lotuspond.ai`). Set `VITE_API_ORIGIN` at build time to use another server.
@@ -210,6 +211,7 @@ Turned on from **Account → App lock**, in the apps only. Turning it on or off 
   - the location prompt
   - Face ID, Touch ID and Android fingerprint prompts, the passcode fallback and the app switcher cover
   - the Apple Health and Health Connect permission sheets and imports ([health-import.md](health-import.md))
+  - sign-in with LotusPond Accounts: the system browser opening, the return to the app on `ai.lotuspond.health:/accounts` (from a 302 page, with its button as the fallback), and the browser closing ([identity.md](identity.md#built-so-far))
 - **Self-hosted map tiles.** With `MAP_PMTILES_URL` the apps fetch the `.pmtiles` file from the API host in byte ranges, across origins. The server's CORS answer allows `Range` and exposes `Content-Range` and `ETag` for this, but it hasn't been tried in the iOS and Android web views yet.
 - **Later features:**
   - "Open in LotusPond" from Files, Mail and other apps (document types and intent filters)

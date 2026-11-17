@@ -18,6 +18,7 @@ import { registration } from '../server/test/helpers.ts';
 import { HttpBackend } from '../src/api/http.ts';
 import { ApiError } from '../src/api/backend.ts';
 import { AppSession, serverOrigin, type StoredSession, type TokenStore } from '../src/api/appSession.ts';
+import { appStartUrl, createPkce, readAppReturn } from '../src/api/accountsApp.ts';
 import { singleCell } from '../server/src/cells.ts';
 import { ephemeralSecrets } from '../server/src/compliance/secrets.ts';
 import { memoryLogger } from '../server/src/lab/log.ts';
@@ -88,7 +89,8 @@ before(async () => {
   database = await openDatabase({ url: process.env.TEST_DATABASE_URL });
   await database.migrate(migrations);
   filesDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lotuspond-app-client-'));
-  const config = loadConfig({ NODE_ENV: 'test', TRUST_PROXY: 'true' });
+  // The stand-in LotusPond Accounts issuer, for sign-in through the system browser (docs/identity.md).
+  const config = loadConfig({ NODE_ENV: 'test', TRUST_PROXY: 'true', ACCOUNTS_ISSUER: 'fake' });
   app = createApp({ db: database.db, files: new DiskFileStore(filesDir), config });
   globalThis.fetch = webViewFetch as typeof fetch;
 });
@@ -211,6 +213,80 @@ describe('app client', () => {
     } finally {
       app.request = realRequest;
     }
+  });
+});
+
+/**
+ * The system browser: same-origin to the API host, with its own cookies. It opens the app's start URL, goes through
+ * the stand-in Accounts page, and returns the link Health hands back to the app.
+ */
+async function systemBrowser(startUrl: string, who: { email: string; enterprise?: boolean }): Promise<string> {
+  const jar = new Map<string, string>();
+  const go = async (url: string, init: RequestInit = {}) => {
+    const headers = new Headers(init.headers);
+    headers.set('sec-fetch-site', 'same-origin');
+    if (jar.size) headers.set('cookie', [...jar].map(([k, v]) => `${k}=${v}`).join('; '));
+    const res = await app.request(new URL(url, API).toString(), { ...init, headers });
+    for (const line of res.headers.getSetCookie()) {
+      const [pair] = line.split(';');
+      const [k, ...v] = pair.split('=');
+      if (v.join('=')) jar.set(k.trim(), v.join('=')); else jar.delete(k.trim());
+    }
+    return res;
+  };
+  const start = await go(startUrl);
+  assert.equal(start.status, 302);
+  const authorize = new URL(start.headers.get('location')!, API);
+  const form = new URLSearchParams();
+  for (const k of ['client_id', 'redirect_uri', 'state', 'nonce', 'code_challenge']) form.set(k, authorize.searchParams.get(k)!);
+  form.set('email', who.email);
+  form.set('email_verified', 'true');
+  form.set('region', 'in');
+  if (who.enterprise) form.set('enterprise', 'true');
+  const issued = await go(authorize.pathname, { method: 'POST', body: form.toString(), headers: { 'content-type': 'application/x-www-form-urlencoded' } });
+  const page = await (await go(issued.headers.get('location')!)).text();
+  return /content="0;url=([^"]+)"/.exec(page)![1].replace(/&amp;/g, '&');
+}
+
+describe('app client: sign-in with LotusPond Accounts', () => {
+  it('a new person: system browser, one-time code, Health\'s questions in the app, then a token session', async () => {
+    const { backend, store } = client();
+    const pkce = await createPkce();
+    assert.match(pkce.verifier, /^[A-Za-z0-9_-]{43}$/);
+    const start = await backend.accountsAppStartUrl('signup', pkce.challenge);
+    assert.equal(start, appStartUrl(API, 'signup', pkce.challenge));
+    const link = await systemBrowser(start, { email: email() });
+    const back = readAppReturn(link);
+    assert.ok(back && 'code' in back, link);
+    assert.equal(readAppReturn('https://example.com/?code=x'), null, 'other links are not sign-in returns');
+
+    const r = await backend.accountsAppExchange(back.code, pkce.verifier);
+    assert.ok('pending' in r);
+    assert.equal(store.value, null, 'no session until sign-up is finished');
+    assert.equal((await backend.accountsPending())?.email, r.pending.email);
+    const { email: _e, password: _p, ...answers } = registration('unused@example.com');
+    const info = await backend.completeAccountsSignUp(answers);
+    assert.equal(info.account.email, r.pending.email);
+    assert.ok(store.value?.token, 'the token is kept like a password sign-in\'s');
+    assert.equal((await backend.me())?.account.id, info.account.id);
+    assert.equal(await backend.accountsPending(), null);
+
+    // Next time: straight to a session.
+    const again = client();
+    const pkce2 = await createPkce();
+    const link2 = await systemBrowser(await again.backend.accountsAppStartUrl('login', pkce2.challenge), { email: info.account.email });
+    const back2 = readAppReturn(link2);
+    assert.ok(back2 && 'code' in back2);
+    const r2 = await again.backend.accountsAppExchange(back2.code, pkce2.verifier);
+    assert.ok('session' in r2 && r2.session.account.id === info.account.id);
+    assert.ok(again.store.value?.token);
+  });
+
+  it('a refusal comes back as an error code the app shows', async () => {
+    const { backend } = client();
+    const pkce = await createPkce();
+    const link = await systemBrowser(await backend.accountsAppStartUrl('login', pkce.challenge), { email: email(), enterprise: true });
+    assert.deepEqual(readAppReturn(link), { error: 'enterprise_account' });
   });
 });
 

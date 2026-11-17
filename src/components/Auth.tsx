@@ -9,6 +9,7 @@ import { Field } from './forms';
 import { checkSignUp, emptySignUp, signUpBlocked, toChoices, type SignUpDraft } from '../lib/signup';
 import { SignUpDetails } from './SignUpDetails';
 import { AccountsSignUp } from './AccountsSignUp';
+import { startAccountsSignIn } from '../native/accounts';
 import { ACCOUNTS_ERRORS, accountsStartPath } from '../../shared/identity';
 import { ServerPicker } from './ServerPicker';
 import { Icon, Logo } from './ui';
@@ -76,7 +77,7 @@ function PondPanel() {
 }
 
 export function AuthScreen({ initialMode = 'in' }: { initialMode?: AuthMode }) {
-  const { signIn, signUp, notice, service } = useSession();
+  const { signIn, signUp, notice, service, accountsPending } = useSession();
   const [mode, setMode] = useState<AuthMode>(initialMode);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -88,8 +89,9 @@ export function AuthScreen({ initialMode = 'in' }: { initialMode?: AuthMode }) {
   const [problem, setProblem] = useState<SignUpProblem | null>(null);
   const served = service?.servedRegions ?? ALL_REGIONS;
   const blocked = mode === 'up' && signUpBlocked(details, served);
-  // Sign-in through LotusPond Accounts: on the website, when the server has it switched on (docs/identity.md).
-  const accountsOn = !!service?.accounts && !isPreview && !inApp;
+  // Sign-in through LotusPond Accounts, when the server has it switched on (docs/identity.md): the website goes
+  // through its own page, the apps through the system browser (src/native/accounts.ts).
+  const accountsOn = !!service?.accounts && !isPreview;
   const [search] = useState(() => {
     const read = new URLSearchParams(window.location.search);
     // The error is shown once; it does not stay in the address.
@@ -100,7 +102,7 @@ export function AuthScreen({ initialMode = 'in' }: { initialMode?: AuthMode }) {
     }
     return read;
   });
-  const finishingAccounts = !isPreview && search.get('accounts') === 'continue';
+  const finishingAccounts = !isPreview && (inApp ? accountsPending : search.get('accounts') === 'continue');
   const accountsError = search.get('accounts_error');
   const accountsNotice = accountsError ? (ACCOUNTS_ERRORS as Record<string, string>)[accountsError] ?? ACCOUNTS_ERRORS.sign_in_failed : null;
 
@@ -170,7 +172,12 @@ export function AuthScreen({ initialMode = 'in' }: { initialMode?: AuthMode }) {
           {accountsOn && (
             <>
               <p className="auth__or"><span>or</span></p>
-              <a className="btn btn--block" href={accountsStartPath(mode === 'up' ? 'signup' : 'login')}>Continue with LotusPond Account</a>
+              {inApp ? (
+                <button type="button" className="btn btn--block" onClick={() => {
+                  setError(null);
+                  startAccountsSignIn(mode === 'up' ? 'signup' : 'login').catch(e => setError(errorMessage(e).replace(/^\w+: /, '')));
+                }}>Continue with LotusPond Account</button>
+              ) : <a className="btn btn--block" href={accountsStartPath(mode === 'up' ? 'signup' : 'login')}>Continue with LotusPond Account</a>}
             </>
           )}
           <p className="auth__switch">

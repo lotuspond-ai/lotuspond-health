@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { randomBytes } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import type { Hono } from 'hono';
 import { createApp } from '../src/app.ts';
@@ -59,7 +60,14 @@ interface Choices { email: string; verified?: boolean; region?: string; enterpri
 
 /** Start → the stand-in Accounts page → callback. Returns where Health sent the browser. */
 async function signInWithAccounts(b: ReturnType<typeof browser>, who: Choices, intent: 'signup' | 'login' = 'login') {
-  const start = await b.go('GET', `/api/auth/accounts/start?intent=${intent}`);
+  const callback = await throughAccounts(b, who, `intent=${intent}`, intent);
+  assert.equal(callback.status, 302);
+  return new URL(callback.headers.get('location')!, 'http://health.test');
+}
+
+/** The browser's way through the stand-in Accounts page; returns Health's answer to the callback. */
+async function throughAccounts(b: ReturnType<typeof browser>, who: Choices, query: string, intent: 'signup' | 'login' = 'login') {
+  const start = await b.go('GET', `/api/auth/accounts/start?${query}`);
   assert.equal(start.status, 302);
   const authorize = new URL(start.headers.get('location')!, 'http://health.test');
   assert.equal(authorize.pathname, '/api/dev-accounts/authorize');
@@ -73,10 +81,28 @@ async function signInWithAccounts(b: ReturnType<typeof browser>, who: Choices, i
   if (who.enterprise) form.set('enterprise', 'true');
   const issued = await b.go('POST', '/api/dev-accounts/authorize', form.toString(), 'application/x-www-form-urlencoded');
   assert.equal(issued.status, 302);
-  const callback = await b.go('GET', issued.headers.get('location')!);
-  assert.equal(callback.status, 302);
-  return new URL(callback.headers.get('location')!, 'http://health.test');
+  return b.go('GET', issued.headers.get('location')!);
 }
+
+/** The app's side: a PKCE pair, the system browser's sign-in, and the link it hands back to the app. */
+async function appThroughAccounts(who: Choices) {
+  const { pkceChallenge } = await import('../src/auth/oidc.ts');
+  const verifier = randomBytes(32).toString('base64url');
+  const res = await throughAccounts(browser(), who, `intent=login&client=app&code_challenge=${pkceChallenge(verifier)}`);
+  assert.equal(res.status, 200);
+  const html = await res.text();
+  const link = /content="0;url=([^"]+)"/.exec(html)?.[1]?.replace(/&amp;/g, '&');
+  assert.ok(link?.startsWith('ai.lotuspond.health:/accounts?'), html);
+  const params = new URL(link!).searchParams;
+  return { verifier, code: params.get('code'), error: params.get('error') };
+}
+
+/** A request as the app makes it: no cookies, the app header, a bearer token once it has one. */
+const appCall = (method: string, url: string, body?: unknown, token?: string) => app.request(new URL(url, 'http://health.test').toString(), {
+  method,
+  headers: { 'x-lotuspond-client': 'app', origin: 'capacitor://localhost', ...(token ? { authorization: `Bearer ${token}` } : {}), ...(body ? { 'content-type': 'application/json' } : {}) },
+  body: body ? JSON.stringify(body) : undefined,
+});
 
 const finish = (country = 'IN') => {
   const { email: _e, password: _p, ...rest } = registration('unused@example.com', country);
@@ -177,6 +203,51 @@ describe('LotusPond Accounts sign-in', () => {
     const del = await b.json('DELETE', '/api/auth/account', {});
     assert.equal(del.status, 204, await del.clone().text());
     assert.equal((await database.db.select().from(users).where(eq(users.email, address))).length, 0);
+  });
+});
+
+describe('LotusPond Accounts sign-in from the apps', () => {
+  test('an existing account: the one-time code and the app\'s verifier give a token session, once', async () => {
+    const address = email('app');
+    assert.equal((await browser().json('POST', '/api/auth/register', registration(address))).status, 201);
+    const { code, verifier } = await appThroughAccounts({ email: address });
+    assert.ok(code);
+
+    assert.equal((await appCall('POST', '/api/auth/accounts/app-exchange', { code, verifier: randomBytes(32).toString('base64url') })).status, 400, 'another verifier is refused');
+    const res = await appCall('POST', '/api/auth/accounts/app-exchange', { code, verifier });
+    assert.equal(res.status, 200, await res.clone().text());
+    assert.equal(res.headers.get('set-cookie'), null, 'no cookie for the app');
+    const signedIn = await res.json() as SessionInfo & { token: string; expiresAt: string };
+    assert.match(signedIn.token, /^in\./);
+    assert.equal(signedIn.account.email, address);
+    const me = await (await appCall('GET', '/api/auth/me', undefined, signedIn.token)).json() as SessionInfo;
+    assert.equal(me.account.email, address);
+    assert.equal((await appCall('POST', '/api/auth/accounts/app-exchange', { code, verifier })).status, 400, 'a code works once');
+  });
+
+  test('someone new finishes sign-up in the app with the token the exchange gave', async () => {
+    const address = email('app-new');
+    const { code, verifier } = await appThroughAccounts({ email: address });
+    const res = await appCall('POST', '/api/auth/accounts/app-exchange', { code, verifier });
+    const started = await res.json() as { pending: { email: string; region: string }; pendingToken: string };
+    assert.deepEqual(started.pending, { email: address, region: 'in' });
+    assert.equal((await appCall('POST', '/api/auth/accounts/complete', finish())).status, 409, 'not without the token');
+    const done = await appCall('POST', '/api/auth/accounts/complete', { ...finish(), pendingToken: started.pendingToken });
+    assert.equal(done.status, 201, await done.clone().text());
+    const info = await done.json() as SessionInfo & { token: string };
+    assert.equal(info.account.email, address);
+    assert.equal(info.account.hasPassword, false);
+    assert.equal(((await (await appCall('GET', '/api/auth/me', undefined, info.token)).json()) as SessionInfo).account.email, address);
+    // The website's cookie-held sign-up cannot be finished with an app token, nor the other way round.
+    assert.equal((await browser().json('POST', '/api/auth/accounts/complete', { ...finish(), pendingToken: started.pendingToken })).status, 409);
+  });
+
+  test('refusals go back to the app; a start without the app\'s PKCE challenge is refused', async () => {
+    const refused = await appThroughAccounts({ email: email('app-work'), enterprise: true });
+    assert.equal(refused.code, null);
+    assert.equal(refused.error, 'enterprise_account');
+    assert.equal((await browser().go('GET', '/api/auth/accounts/start?client=app')).status, 400);
+    assert.equal((await appCall('POST', '/api/auth/accounts/app-exchange', { code: 'made-up', verifier: randomBytes(32).toString('base64url') })).status, 400);
   });
 });
 

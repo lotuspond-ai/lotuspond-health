@@ -35,7 +35,16 @@ export const RegisterBody = z.object({
 });
 
 /** Finishing sign-up after LotusPond Accounts: the same questions without the email and password Accounts holds. */
-export const AccountsCompleteBody = RegisterBody.omit({ email: true, password: true });
+export const AccountsCompleteBody = RegisterBody.omit({ email: true, password: true }).extend({
+  /** The apps only: the token /api/auth/accounts/app-exchange gave for a sign-up in progress. */
+  pendingToken: z.string().max(4000).optional(),
+});
+
+/** The apps: the one-time code from the system browser, and the PKCE verifier the app kept. */
+export const AccountsAppExchangeBody = z.object({
+  code: z.string().min(1).max(4000),
+  verifier: z.string().regex(/^[A-Za-z0-9._~-]{43,128}$/, 'The PKCE verifier is malformed.'),
+});
 
 export const PreferencesBody = z.object({ unitSystem: z.enum(['conventional', 'si'], { error: 'Choose conventional or SI units.' }) });
 
