@@ -72,7 +72,9 @@ async function throughAccounts(b: ReturnType<typeof browser>, who: Choices, quer
   const authorize = new URL(start.headers.get('location')!, 'http://health.test');
   assert.equal(authorize.pathname, '/api/dev-accounts/authorize');
   assert.equal(authorize.searchParams.get('code_challenge_method'), 'S256');
-  assert.equal(authorize.searchParams.get('prompt'), intent === 'signup' ? 'create' : null);
+  // Sign-up is asked with screen_hint=signup: Accounts' Hydra refuses prompt=create.
+  assert.equal(authorize.searchParams.get('screen_hint'), intent === 'signup' ? 'signup' : null);
+  assert.equal(authorize.searchParams.get('prompt'), null);
   const form = new URLSearchParams();
   for (const k of ['client_id', 'redirect_uri', 'state', 'nonce', 'code_challenge']) form.set(k, authorize.searchParams.get(k)!);
   form.set('email', who.email);
@@ -193,6 +195,30 @@ describe('LotusPond Accounts sign-in', () => {
     assert.equal(expired.status, 409);
   });
 
+  test('a session kept from before ID tokens were stored signs out at Accounts without asking to come back', async () => {
+    const b = browser();
+    const address = email('old-session');
+    await signInWithAccounts(b, { email: address }, 'signup');
+    assert.equal((await b.json('POST', '/api/auth/accounts/complete', finish())).status, 201);
+    const [user] = await database.db.select({ id: users.id }).from(users).where(eq(users.email, address));
+    await database.db.update(sessions).set({ accountsIdToken: null }).where(eq(sessions.userId, user.id));
+    await b.go('POST', '/api/auth/logout');
+    const end = new URL((await b.go('GET', '/api/auth/accounts/sign-out')).headers.get('location')!, 'http://health.test');
+    assert.equal(end.searchParams.get('client_id'), 'lotuspond-health');
+    assert.equal(end.searchParams.get('post_logout_redirect_uri'), null, 'no return address without a hint: Accounts would refuse it');
+    assert.equal((await b.go('GET', `${end.pathname}${end.search}`)).status, 200);
+  });
+
+  test('the stand-in refuses what Accounts refuses: prompt=create, and a return after sign-out without a hint', async () => {
+    const q = new URLSearchParams({ client_id: 'lotuspond-health', response_type: 'code', redirect_uri: 'http://health.test/cb', state: 's'.repeat(12), nonce: 'n'.repeat(12), code_challenge: 'c'.repeat(43), code_challenge_method: 'S256', prompt: 'create' });
+    const create = await browser().go('GET', `/api/dev-accounts/authorize?${q}`);
+    assert.equal(create.status, 400);
+    assert.match(await create.text(), /unknown value (&#39;|')create(&#39;|') for prompt/);
+    const back = await browser().go('GET', `/api/dev-accounts/logout?${new URLSearchParams({ client_id: 'lotuspond-health', post_logout_redirect_uri: 'http://health.test/login' })}`);
+    assert.equal(back.status, 400);
+    assert.match(await back.text(), /id_token_hint is missing/);
+  });
+
   test('signing out of a session from Accounts goes on to sign out there, once, and only from Health\'s own sign-out', async () => {
     const b = browser();
     const address = email('signout');
@@ -207,7 +233,10 @@ describe('LotusPond Accounts sign-in', () => {
     assert.equal(toAccounts.status, 302);
     const end = new URL(toAccounts.headers.get('location')!, 'http://health.test');
     assert.equal(end.pathname, '/api/dev-accounts/logout');
-    assert.equal(end.searchParams.get('client_id'), 'lotuspond-health');
+    // The session's own ID token goes as the hint: without it, Accounts refuses to send the browser back.
+    const hint = end.searchParams.get('id_token_hint') ?? '';
+    assert.match(hint, /^[\w-]+\.[\w-]+\.[\w-]+$/);
+    assert.equal(JSON.parse(Buffer.from(hint.split('.')[1], 'base64url').toString()).email, address);
     assert.equal(end.searchParams.get('post_logout_redirect_uri'), 'http://health.test/login');
     assert.equal((await b.go('GET', `${end.pathname}${end.search}`)).status, 200, 'the stand-in shows its sign-out page');
     const again = await b.go('GET', '/api/auth/accounts/sign-out');
@@ -282,6 +311,9 @@ describe('LotusPond Accounts sign-in from the apps', () => {
     const end = new URL(toAccounts.headers.get('location')!, 'http://health.test');
     assert.equal(end.pathname, '/api/dev-accounts/logout');
     assert.equal(end.searchParams.get('post_logout_redirect_uri'), 'http://health.test/api/auth/accounts/signed-out');
+    assert.ok(end.searchParams.get('id_token_hint'), 'the app\'s sign-out carries the ID token as the hint too');
+    assert.doesNotMatch(accountsSignOut, /eyJ/, 'the ticket in the address is encrypted: no readable token in it');
+    assert.equal((await sys.go('GET', `${end.pathname}${end.search}`)).status, 200, 'the stand-in accepts it');
     const page = await (await sys.go('GET', '/api/auth/accounts/signed-out')).text();
     assert.match(page, /url=ai\.lotuspond\.health:\/accounts\?signed_out=1"/);
     assert.match(page, /Signed out of your LotusPond account/);

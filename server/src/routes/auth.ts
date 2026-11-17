@@ -167,7 +167,8 @@ export function authRoutes(deps: Deps) {
     // Signed in with LotusPond Accounts on the website: the page goes on to sign out there too (routes/accounts.ts).
     // The apps open it in the system browser, where their Accounts sign-in is.
     if (session?.viaAccounts && config.accounts) {
-      return c.json({ accountsSignOut: wantsTokenSession(c) ? appSignOutUrl(c, deps) : issueSignOutTicket(c, deps) });
+      const hint = session.accountsIdToken;
+      return c.json({ accountsSignOut: wantsTokenSession(c) ? appSignOutUrl(c, deps, hint) : issueSignOutTicket(c, deps, hint) });
     }
     return c.body(null, 204);
   });

@@ -61,7 +61,7 @@ interface Flow {
 type Pending = AccountsIdentity & { exp: number };
 /** The one-time code handed to an app: a session for an account, or an identity waiting to finish sign-up. */
 type AppCode =
-  | { k: 'session'; uid: string; region: DataRegion; sid?: string; ch: string; jti: string; exp: number }
+  | { k: 'session'; uid: string; region: DataRegion; sid?: string; idt?: string; ch: string; jti: string; exp: number }
   | { k: 'pending'; id: AccountsIdentity; ch: string; jti: string; exp: number }
   /** For another regional host (REGION_API_ORIGINS), which decides for itself. Hosts share DIRECTORY_SECRET, so it
    *  can open the code; the app goes there only if the host is one the server publishes (apiOrigins). */
@@ -96,9 +96,12 @@ export { FAKE_ACCOUNTS_PATH };
 
 const cookieKeyOf = (deps: Pick<Deps, 'secrets'>) => createHmac('sha256', deps.secrets.directoryKey).update('lotuspond:accounts-cookies:v1').digest();
 
-/** Health's sign-out of a session that came from Accounts: allow one trip to Accounts' sign-out in the next 2 minutes. */
-export function issueSignOutTicket(c: Ctx, deps: Pick<Deps, 'secrets' | 'config'>): string {
-  const sealed = sealTicket(deps, { exp: Math.floor(Date.now() / 1000) + SIGN_OUT_TTL_S });
+/**
+ * Health's sign-out of a session that came from Accounts: allow one trip to Accounts' sign-out in the next 2 minutes.
+ * The ticket carries the session's ID token, which Accounts needs to send the browser back (endSessionUrl).
+ */
+export function issueSignOutTicket(c: Ctx, deps: Pick<Deps, 'secrets' | 'config'>, idTokenHint: string | null): string {
+  const sealed = sealTicket(deps, { exp: Math.floor(Date.now() / 1000) + SIGN_OUT_TTL_S, ...(idTokenHint ? { hint: idTokenHint } : {}) });
   setCookie(c, SIGN_OUT_COOKIE, sealed, { httpOnly: true, sameSite: 'Lax', secure: deps.config.cookieSecure, path: COOKIE_PATH, maxAge: SIGN_OUT_TTL_S });
   return ACCOUNTS_SIGN_OUT_PATH;
 }
@@ -108,14 +111,35 @@ export function issueSignOutTicket(c: Ctx, deps: Pick<Deps, 'secrets' | 'config'
  * the app's requests, so the ticket goes in the address the app opens there. It lasts 2 minutes; someone who got
  * hold of it could at most sign the browser that opens it out of Accounts.
  */
-export function appSignOutUrl(c: Ctx, deps: Pick<Deps, 'secrets' | 'config'>): string {
-  const ticket = sealTicket(deps, { exp: Math.floor(Date.now() / 1000) + SIGN_OUT_TTL_S, app: true });
+export function appSignOutUrl(c: Ctx, deps: Pick<Deps, 'secrets' | 'config'>, idTokenHint: string | null): string {
+  const ticket = sealTicket(deps, { exp: Math.floor(Date.now() / 1000) + SIGN_OUT_TTL_S, app: true, ...(idTokenHint ? { hint: idTokenHint } : {}) });
   return `${publicOrigin(c, deps.config)}${ACCOUNTS_SIGN_OUT_PATH}?${new URLSearchParams({ ticket })}`;
 }
 
-function sealTicket(deps: Pick<Deps, 'secrets'>, value: { exp: number; app?: true }): string {
-  const body = Buffer.from(JSON.stringify(value)).toString('base64url');
-  return `${body}.${createHmac('sha256', cookieKeyOf(deps)).update(body).digest('base64url')}`;
+export interface SignOutTicket { exp: number; app?: true; hint?: string }
+
+/**
+ * Sign-out tickets are encrypted (AES-256-GCM), not only signed: they carry the session's ID token, which names the
+ * account's email, and the apps' ticket travels in an address opened in the system browser.
+ */
+const ticketKeyOf = (deps: Pick<Deps, 'secrets'>) => createHmac('sha256', deps.secrets.directoryKey).update('lotuspond:accounts-sign-out:v2').digest();
+
+function sealTicket(deps: Pick<Deps, 'secrets'>, value: SignOutTicket): string {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', ticketKeyOf(deps), iv);
+  const data = Buffer.concat([cipher.update(JSON.stringify(value), 'utf8'), cipher.final()]);
+  return Buffer.concat([iv, cipher.getAuthTag(), data]).toString('base64url');
+}
+
+function openTicket(deps: Pick<Deps, 'secrets'>, sealed: string | undefined): SignOutTicket | null {
+  if (!sealed) return null;
+  try {
+    const raw = Buffer.from(sealed, 'base64url');
+    const decipher = createDecipheriv('aes-256-gcm', ticketKeyOf(deps), raw.subarray(0, 12));
+    decipher.setAuthTag(raw.subarray(12, 28));
+    const v = JSON.parse(Buffer.concat([decipher.update(raw.subarray(28)), decipher.final()]).toString('utf8')) as SignOutTicket;
+    return v.exp * 1000 > Date.now() ? v : null;
+  } catch { return null; }
 }
 
 export function accountsRoutes(deps: Deps, runtime: AccountsRuntime) {
@@ -173,8 +197,8 @@ export function accountsRoutes(deps: Deps, runtime: AccountsRuntime) {
   const NEEDS_INTERACTION = new Set(['login_required', 'interaction_required', 'consent_required', 'account_selection_required']);
 
   /** Start Health's own session: a cookie for the website, a token in the answer for the apps. */
-  async function signIn(c: Ctx, cell: Cell, user: UserRow, forApp: boolean, sid: string | undefined) {
-    const { token, expiresAt } = await createSession(cell.db, user.region, user.id, config.sessionTtlMs, c.req.header('user-agent'), { sid });
+  async function signIn(c: Ctx, cell: Cell, user: UserRow, forApp: boolean, from: { sid?: string; idToken?: string }) {
+    const { token, expiresAt } = await createSession(cell.db, user.region, user.id, config.sessionTtlMs, c.req.header('user-agent'), from);
     if (!forApp) writeSessionCookie(c, token, expiresAt, config.cookieSecure);
     await recordEvent(cell.db, eventContext(c, deps), user.id, 'sign_in');
     return { token, expiresAt: expiresAt.toISOString() };
@@ -199,7 +223,7 @@ a{display:inline-block;margin-top:1rem;padding:.8rem 1.4rem;border-radius:.6rem;
   /** What a checked Accounts identity means here: an account to sign in to (linking it if need be), someone new, or a refusal. */
   async function resolve(c: Ctx, id: AccountsIdentity): Promise<Outcome> {
     // An employer can suspend, reset or audit an account made through its single sign-on: never for health records.
-    if (id.enterpriseConnection) return { kind: 'error', code: 'enterprise_account' };
+    if (id.org) return { kind: 'error', code: 'enterprise_account' };
     const elsewhere = (region: DataRegion): Outcome => {
       const origin = config.regionApiOrigins[region];
       return origin ? { kind: 'elsewhere', origin } : { kind: 'error', code: 'wrong_region' };
@@ -281,7 +305,7 @@ a{display:inline-block;margin-top:1rem;padding:.8rem 1.4rem;border-radius:.6rem;
         return toApp(c, { code: box(code), api_origin: outcome.origin });
       }
       const code: AppCode = outcome.kind === 'account'
-        ? { k: 'session', uid: outcome.user.id, region: outcome.user.region, ...(id.sessionId ? { sid: id.sessionId } : {}), ch, jti: randomToken(), exp: inSeconds(APP_CODE_TTL_S) }
+        ? { k: 'session', uid: outcome.user.id, region: outcome.user.region, ...(id.sessionId ? { sid: id.sessionId } : {}), ...(id.idToken ? { idt: id.idToken } : {}), ch, jti: randomToken(), exp: inSeconds(APP_CODE_TTL_S) }
         : { k: 'pending', id: outcome.id, ch, jti: randomToken(), exp: inSeconds(APP_CODE_TTL_S) };
       return toApp(c, { code: box(code) });
     }
@@ -295,7 +319,7 @@ a{display:inline-block;margin-top:1rem;padding:.8rem 1.4rem;border-radius:.6rem;
     }
     if (outcome.kind === 'error') return fail(c, outcome.code, flow.signUp, flow.next);
     if (outcome.kind === 'account') {
-      await signIn(c, outcome.cell, outcome.user, false, id.sessionId);
+      await signIn(c, outcome.cell, outcome.user, false, { sid: id.sessionId, idToken: id.idToken });
       return back(c, flow.next ?? '/app');
     }
     // Someone new to Health: finish sign-up on Health's page (then on to the agent's consent page, if one is waiting).
@@ -350,13 +374,13 @@ a{display:inline-block;margin-top:1rem;padding:.8rem 1.4rem;border-radius:.6rem;
   app.get('/sign-out', async c => {
     // The website's ticket is a cookie; an app's is in the address it opened in the system browser.
     const fromApp = c.req.query('ticket');
-    const ticket = fromApp ? open<{ exp: number; app?: true }>(fromApp) : open<{ exp: number; app?: true }>(getCookie(c, SIGN_OUT_COOKIE));
+    const ticket = openTicket(deps, fromApp ?? getCookie(c, SIGN_OUT_COOKIE));
     if (!fromApp) drop(c, SIGN_OUT_COOKIE);
     const forApp = !!ticket?.app;
     if (!ticket || (fromApp && !forApp)) return back(c, '/login');
     // The apps come back to Health's page, which hands on to the app: Accounts registers only https addresses.
     const after = forApp ? `${publicOrigin(c, config)}${COOKIE_PATH}/signed-out` : `${publicOrigin(c, config)}/login`;
-    const url = await client.endSessionUrl(after).catch(e => {
+    const url = await client.endSessionUrl(after, ticket.hint).catch(e => {
       console.warn(`[accounts] sign-out at Accounts unavailable: ${(e as Error).message}`);
       return null;
     });
@@ -379,8 +403,8 @@ a{display:inline-block;margin-top:1rem;padding:.8rem 1.4rem;border-radius:.6rem;
       const pending: AppPending = { ...id, k: 'app-pending', exp: inSeconds(PENDING_TTL_S) };
       return c.json({ pending: { email: id.email, region: id.region }, pendingToken: box(pending) });
     };
-    const startSession = async (cell: Cell, user: UserRow, sid: string | undefined) => {
-      const session = await signIn(c, cell, user, true, sid);
+    const startSession = async (cell: Cell, user: UserRow, from: { sid?: string; idToken?: string }) => {
+      const session = await signIn(c, cell, user, true, from);
       return c.json({ ...(await sessionInfo(cell.db, user)), ...session });
     };
     // The code is marked used only by a host that can use it, so a host that cannot does not burn it for the right
@@ -396,13 +420,13 @@ a{display:inline-block;margin-top:1rem;padding:.8rem 1.4rem;border-radius:.6rem;
         throw new HttpError(409, reason, ACCOUNTS_ERRORS[reason]);
       }
       await use();
-      return outcome.kind === 'account' ? startSession(outcome.cell, outcome.user, code.id.sessionId) : startSignUp(outcome.id);
+      return outcome.kind === 'account' ? startSession(outcome.cell, outcome.user, { sid: code.id.sessionId, idToken: code.id.idToken }) : startSignUp(outcome.id);
     }
     const cell = cells.forRegion(code.region);
     const [user] = cell ? await cell.db.select().from(users).where(eq(users.id, code.uid)).limit(1) : [];
     if (!cell || !user) throw expired();
     await use();
-    return startSession(cell, user, code.sid);
+    return startSession(cell, user, { sid: code.sid, idToken: code.idt });
   });
 
   app.get('/pending', c => {
@@ -445,7 +469,7 @@ a{display:inline-block;margin-top:1rem;padding:.8rem 1.4rem;border-radius:.6rem;
     }
     if (!forApp) drop(c, PENDING_COOKIE);
     await recordEvent(cell.db, eventContext(c, deps), user.id, 'account_created');
-    const { token, expiresAt } = await createSession(cell.db, user.region, user.id, config.sessionTtlMs, c.req.header('user-agent'), { sid: pending.sessionId });
+    const { token, expiresAt } = await createSession(cell.db, user.region, user.id, config.sessionTtlMs, c.req.header('user-agent'), { sid: pending.sessionId, idToken: pending.idToken });
     if (forApp) return c.json({ ...(await sessionInfo(cell.db, user)), token, expiresAt: expiresAt.toISOString() }, 201);
     writeSessionCookie(c, token, expiresAt, config.cookieSecure);
     return c.json(await sessionInfo(cell.db, user), 201);

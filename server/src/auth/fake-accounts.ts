@@ -2,7 +2,7 @@
 // issuer inside this server, so Health's side of "one LotusPond account" (docs/identity.md) can be built and tried
 // before Accounts exists. Its page asks for an email and lets you choose the claims Accounts would send. It keeps
 // nothing on disk: codes live in memory for a minute and the signing key is new each time the server starts.
-import { createHash, generateKeyPairSync, randomBytes, sign, type KeyObject } from 'node:crypto';
+import { createHash, generateKeyPairSync, randomBytes, sign, verify, type KeyObject } from 'node:crypto';
 import { Hono, type Context } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { DATA_REGIONS } from '../config.ts';
@@ -36,6 +36,16 @@ export const fakeSubject = (email: string) => `dev|${createHash('sha256').update
 
 export function fakeAccounts(clientId: string): FakeAccounts {
   const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  /** The client an ID token from this issuer was given to, checking the signature but not the expiry, or null. */
+  const hintClient = (token: string): string | null => {
+    const [h, p, s] = token.split('.');
+    if (!h || !p || !s) return null;
+    if (!verify('sha256', Buffer.from(`${h}.${p}`), { key: publicKey, dsaEncoding: 'ieee-p1363' }, Buffer.from(s, 'base64url'))) return null;
+    try {
+      const claims = JSON.parse(Buffer.from(p, 'base64url').toString('utf8')) as { iss?: string; aud?: string };
+      return claims.iss === FAKE_ACCOUNTS_ISSUER && typeof claims.aud === 'string' ? claims.aud : null;
+    } catch { return null; }
+  };
   const kid = randomBytes(6).toString('hex');
   const codes = new Map<string, PendingCode>();
   const app = new Hono();
@@ -57,7 +67,9 @@ export function fakeAccounts(clientId: string): FakeAccounts {
       : q.response_type !== 'code' ? 'Only response_type=code is supported.'
       : q.code_challenge_method !== 'S256' || !q.code_challenge ? 'PKCE (S256) is required.'
       : !q.redirect_uri || !/^https?:\/\//.test(q.redirect_uri) ? 'redirect_uri is missing.'
-      : !q.state || !q.nonce ? 'state and nonce are required.' : null;
+      : !q.state || !q.nonce ? 'state and nonce are required.'
+      // As LotusPond Accounts' Hydra does: prompt=create is not a value it knows. Sign-up is asked with screen_hint=signup.
+      : q.prompt && q.prompt !== 'none' && q.prompt !== 'login' ? `Used unknown value '${q.prompt}' for prompt parameter.` : null;
     if (problem) return c.html(page(`<p class="err">${esc(problem)}</p>`), 400);
     // prompt=none: answer at once from the remembered sign-in, or say there is none (login_required).
     if (q.prompt === 'none') {
@@ -72,7 +84,7 @@ export function fakeAccounts(clientId: string): FakeAccounts {
       .map(k => `<input type="hidden" name="${k}" value="${esc(q[k] ?? '')}">`).join('');
     const regions = DATA_REGIONS.map(r => `<option value="${r}"${r === 'in' ? ' selected' : ''}>${r}</option>`).join('');
     return c.html(page(`
-      <h1>${q.prompt === 'create' ? 'Create' : 'Sign in to'} your LotusPond account</h1>
+      <h1>${q.screen_hint === 'signup' ? 'Create' : 'Sign in to'} your LotusPond account</h1>
       <p class="note">Stand-in for LotusPond Accounts, for development only. No password is asked; choose what Accounts would say about this account.</p>
       <form method="post" action="${FAKE_ACCOUNTS_PATH}/authorize">${hidden}
         <label>Email <input name="email" type="email" required autofocus></label>
@@ -84,10 +96,16 @@ export function fakeAccounts(clientId: string): FakeAccounts {
   });
 
   // Signing out. The stand-in keeps no sign-in of its own, so there is nothing to end: it shows that it was asked,
-  // then goes back to Health.
+  // then goes back to Health. Like LotusPond Accounts' Hydra, it goes back only with the ID token as id_token_hint,
+  // refuses post_logout_redirect_uri or state without one, and accepts an expired one.
   app.get('/logout', c => {
     const q = c.req.query();
-    if (q.client_id !== clientId) return c.html(page('<p class="err">Unknown client_id.</p>'), 400);
+    const hinted = q.id_token_hint ? hintClient(q.id_token_hint) : null;
+    if (q.id_token_hint && hinted !== clientId) return c.html(page('<p class="err">The id_token_hint is not an ID token this issuer gave this client.</p>'), 400);
+    if (!q.id_token_hint && (q.post_logout_redirect_uri || q.state)) {
+      return c.html(page('<p class="err">Logout failed because post_logout_redirect_uri or state is set but id_token_hint is missing.</p>'), 400);
+    }
+    if (!hinted && q.client_id !== clientId) return c.html(page('<p class="err">Unknown client_id.</p>'), 400);
     const back = q.post_logout_redirect_uri && /^https?:\/\//.test(q.post_logout_redirect_uri) ? q.post_logout_redirect_uri : null;
     deleteCookie(c, SIGNED_IN_COOKIE, { path: FAKE_ACCOUNTS_PATH });
     return c.html(page(`<h1>Signed out of your LotusPond account</h1>
@@ -125,7 +143,7 @@ export function fakeAccounts(clientId: string): FakeAccounts {
       email,
       email_verified: f.email_verified === 'true',
       ...(f.region ? { region: f.region } : {}),
-      ...(f.enterprise === 'true' ? { enterprise_connection: 'dev-company-sso' } : {}),
+      ...(f.enterprise === 'true' ? { org: 'dev-company' } : {}),
     };
     // Remember the sign-in in this browser, as Accounts would: a later prompt=none answers from it.
     setCookie(c, SIGNED_IN_COOKIE, Buffer.from(JSON.stringify(claims)).toString('base64url'), { httpOnly: true, sameSite: 'Lax', path: FAKE_ACCOUNTS_PATH });

@@ -40,6 +40,11 @@ export const sessions = pgTable('sessions', {
   viaAccounts: boolean('via_accounts').notNull().default(false),
   /** The Accounts session (`sid`) it came from, when Accounts sent one: a back-channel logout can name it. */
   accountsSid: text('accounts_sid'),
+  /**
+   * The Accounts ID token this session started from. Signing out of Accounts with a return to Health sends it as
+   * `id_token_hint` (routes/accounts.ts). It holds the account's subject and email, as the users row does.
+   */
+  accountsIdToken: text('accounts_id_token'),
 }, t => [index('sessions_user_idx').on(t.userId), index('sessions_accounts_sid_idx').on(t.accountsSid)]);
 
 export const profiles = pgTable('profiles', {
