@@ -143,7 +143,7 @@ Health's side is built; running it is a decision, and the privacy texts need rev
 
 ### Database
 
-All of this PR's schema changes are in one migration, `0017_accounts_sign_in`:
+All of this PR's schema changes are in one migration, `0018_accounts_sign_in`:
 - `users.password_hash` nullable;
 - `users.accounts_subject`, unique;
 - `sessions.via_accounts` and `sessions.accounts_sid`;

@@ -13,6 +13,7 @@
 //   POST   /api/console/organisations/:id/keys            { name, operations } → the key, shown once   editor and up
 //   DELETE /api/console/organisations/:id/keys/:keyId     revoke                                         editor and up
 //   POST   /api/console/organisations/:id/approvals/:aid  { decision: approve | reject }                 members who approve
+//   GET    /api/console/organisations/:id/tasks/:tid      an agent task and its full action log             any member
 //   POST   /api/console/organisations/:id/live-request    { systems, hospital, note }                    owner or admin
 // Membership is checked on every call: an organisation is reachable only by its members, and only within their role.
 import { and, asc, count, desc, eq, isNull } from 'drizzle-orm';
@@ -179,7 +180,7 @@ export function consoleRoutes(deps: Deps, runtime: OrganisationRuntime) {
 
   app.get('/organisations/:id', async c => {
     const { org, member } = await membership(c, c.req.param('id'));
-    const [members, keys, connections, approvals, calls] = await Promise.all([
+    const [members, keys, connections, approvals, calls, tasks] = await Promise.all([
       db.select({ m: organisationMembers, email: organisationAccounts.email, name: organisationAccounts.name }).from(organisationMembers)
         .innerJoin(organisationAccounts, eq(organisationAccounts.id, organisationMembers.accountId))
         .where(eq(organisationMembers.organisationId, org.id)).orderBy(asc(organisationMembers.createdAt)),
@@ -187,6 +188,7 @@ export function consoleRoutes(deps: Deps, runtime: OrganisationRuntime) {
       runtime.listConnections(org.id),
       runtime.listApprovals(org.id, 50),
       db.select().from(organisationCalls).where(eq(organisationCalls.organisationId, org.id)).orderBy(desc(organisationCalls.at)).limit(50),
+      runtime.listTasks(org.id, 50),
     ]);
     return c.json({
       organisation: {
@@ -197,6 +199,8 @@ export function consoleRoutes(deps: Deps, runtime: OrganisationRuntime) {
       keys: keys.map(k => ({ id: k.id, name: k.name, prefix: k.prefix, operations: k.operations, createdAt: k.createdAt.toISOString(), lastUsedAt: k.lastUsedAt?.toISOString() ?? null, revokedAt: k.revokedAt?.toISOString() ?? null })),
       connections,
       approvals,
+      tasks,
+      agent: runtime.agentModel ? { model: runtime.agentModel } : null,
       calls: calls.map(x => ({ id: x.id, operation: x.operation, outcome: x.outcome, keyId: x.keyId, connectionId: x.connectionId, at: x.at.toISOString() })),
     });
   });
@@ -289,6 +293,14 @@ export function consoleRoutes(deps: Deps, runtime: OrganisationRuntime) {
     if (!UUID.test(aid)) throw new HttpError(404, 'not_found', 'No such approval.');
     const body = await readJson(c, z.object({ decision: z.enum(['approve', 'reject']) }));
     return c.json(await runtime.decide(org.id, aid, body.decision, `${c.var.account.email} (${member.role})`));
+  });
+
+  app.get('/organisations/:id/tasks/:tid', async c => {
+    const { org } = await membership(c, c.req.param('id'));
+    const tid = c.req.param('tid');
+    const task = UUID.test(tid) ? await runtime.getTask(org.id, tid) : null;
+    if (!task) throw new HttpError(404, 'not_found', 'No such task.');
+    return c.json({ task, actions: await runtime.taskActions(org.id, tid) ?? [] });
   });
 
   app.post('/organisations/:id/live-request', async c => {

@@ -126,6 +126,15 @@ const Env = z.object({
   BROWSERBASE_API_KEY: z.string().trim().min(8).optional(),
   BROWSERBASE_PROJECT_ID: z.string().trim().min(4).optional(),
   BROWSERBASE_API_URL: z.string().url().default('https://api.browserbase.com'),
+  /**
+   * The organisation API's computer-use agent (tasks.run, connectors/agent/): on when OPENAI_API_KEY is set, unless
+   * off. Its browsers run where RECORD_BROWSER says, each task in a browser of its own.
+   */
+  ORG_AGENT: z.enum(['on', 'off']).optional(),
+  ORG_AGENT_MODEL: z.string().trim().min(3).default('gpt-6.1-terra'),
+  ORG_AGENT_CONCURRENCY: z.coerce.number().int().min(1).max(20).default(2),
+  OPENAI_API_KEY: z.string().trim().min(8).optional(),
+  OPENAI_API_URL: z.string().url().default('https://api.openai.com/v1'),
   /** Runs at the same time on this server; more wait their turn. */
   RECORD_CONCURRENCY: z.coerce.number().int().min(1).max(50).default(2),
   /** The pretend lab portal at /demo-portal, to try the agent (development and tests only; on by default there). */
@@ -236,11 +245,22 @@ export interface OrangeConfig {
   webhookIps: string[];
 }
 
+export type BrowserConfig =
+  | { kind: 'local'; executablePath?: string }
+  | { kind: 'cdp'; url: string }
+  | { kind: 'browserbase'; apiKey: string; projectId: string; apiUrl: string };
+
+/** The organisation API's computer-use agent (tasks.run). */
+export interface OrgAgentConfig {
+  model: string;
+  apiKey: string;
+  apiUrl: string;
+  concurrency: number;
+  browser: BrowserConfig;
+}
+
 export interface RecordAgentConfig {
-  browser:
-    | { kind: 'local'; executablePath?: string }
-    | { kind: 'cdp'; url: string }
-    | { kind: 'browserbase'; apiKey: string; projectId: string; apiUrl: string };
+  browser: BrowserConfig;
   concurrency: number;
   demoPortal: boolean;
   /**
@@ -304,6 +324,8 @@ export interface Config {
   assistant: { enabled: boolean; model: string };
   /** The record agent (records/), when switched on. */
   records: RecordAgentConfig | undefined;
+  /** The organisation API's computer-use agent, when switched on. */
+  orgAgent: OrgAgentConfig | undefined;
   /** The assistant on WhatsApp, when the Cloud API is set up (and the assistant is on). */
   whatsapp: { phoneNumberId: string; number: string; accessToken: string; appSecret: string; verifyToken: string; graphUrl: string } | undefined;
   map: MapConfig;
@@ -393,6 +415,19 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   }
   if (labPartners.includes('fake') && e.NODE_ENV === 'production') {
     throw new Error('Invalid configuration: LAB_PARTNERS=fake is the simulated lab, for development and tests only.');
+  }
+  const browserConfig = (): BrowserConfig => {
+    const b = e.RECORD_BROWSER;
+    if (b === 'cdp' && !e.RECORD_BROWSER_CDP_URL) throw new Error('Invalid configuration: RECORD_BROWSER=cdp needs RECORD_BROWSER_CDP_URL (the wss:// address of the browser service).');
+    if (b === 'browserbase' && !(e.BROWSERBASE_API_KEY && e.BROWSERBASE_PROJECT_ID)) throw new Error('Invalid configuration: RECORD_BROWSER=browserbase needs BROWSERBASE_API_KEY and BROWSERBASE_PROJECT_ID.');
+    return b === 'cdp' ? { kind: 'cdp', url: e.RECORD_BROWSER_CDP_URL! }
+      : b === 'browserbase' ? { kind: 'browserbase', apiKey: e.BROWSERBASE_API_KEY!, projectId: e.BROWSERBASE_PROJECT_ID!, apiUrl: e.BROWSERBASE_API_URL.replace(/\/$/, '') }
+        : { kind: 'local', ...(e.RECORD_BROWSER_EXECUTABLE ? { executablePath: e.RECORD_BROWSER_EXECUTABLE } : {}) };
+  };
+  let orgAgent: OrgAgentConfig | undefined;
+  if (e.ORG_AGENT === 'on' && !e.OPENAI_API_KEY) throw new Error('Invalid configuration: ORG_AGENT=on needs OPENAI_API_KEY (the computer-use model runs on OpenAI).');
+  if (e.OPENAI_API_KEY && e.ORG_AGENT !== 'off') {
+    orgAgent = { model: e.ORG_AGENT_MODEL, apiKey: e.OPENAI_API_KEY, apiUrl: e.OPENAI_API_URL.replace(/\/$/, ''), concurrency: e.ORG_AGENT_CONCURRENCY, browser: browserConfig() };
   }
   let records: RecordAgentConfig | undefined;
   if ((e.RECORD_AGENT ?? (e.NODE_ENV === 'production' ? 'off' : 'on')) === 'on') {
@@ -526,6 +561,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     aiExtraction: { enabled: e.AI_EXTRACTION === 'on' && !!(env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN), model: e.AI_EXTRACTION_MODEL },
     assistant: { enabled: e.ASSISTANT === 'on' && !!(env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN), model: e.ASSISTANT_MODEL },
     records,
+    orgAgent,
     whatsapp: e.WHATSAPP_PHONE_NUMBER_ID && e.WHATSAPP_NUMBER && e.WHATSAPP_ACCESS_TOKEN && e.WHATSAPP_APP_SECRET && e.WHATSAPP_VERIFY_TOKEN
       ? { phoneNumberId: e.WHATSAPP_PHONE_NUMBER_ID, number: e.WHATSAPP_NUMBER, accessToken: e.WHATSAPP_ACCESS_TOKEN, appSecret: e.WHATSAPP_APP_SECRET, verifyToken: e.WHATSAPP_VERIFY_TOKEN, graphUrl: e.WHATSAPP_GRAPH_URL.replace(/\/$/, '') }
       : undefined,

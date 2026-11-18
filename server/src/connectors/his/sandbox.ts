@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import type { HisAdapter, HisContext } from './types.ts';
 import { HisError } from './types.ts';
 import type { OperationInput, RunnableOperation } from './operations.ts';
+import { SANDBOX_EMR_PATH } from '../agent/sandbox-emr-path.ts';
 
 const SYSTEM = 'https://health.lotuspond.ai/sandbox';
 const MRN = `${SYSTEM}/mrn`;
@@ -22,6 +23,9 @@ const PATIENTS: SandboxPatient[] = [
   { id: 'sbx-p-1005', mrn: 'MRN1005', abha: '91-0000-0000-1005', given: 'Fatima', family: 'Sheikh', gender: 'female', birthDate: '1959-11-17', phone: '+919000001005' },
   { id: 'sbx-p-1006', mrn: 'MRN1006', abha: '91-0000-0000-1006', given: 'Arjun', family: 'Reddy', gender: 'male', birthDate: '2012-03-08', phone: '+919000001006' },
 ];
+
+/** The synthetic patients, for the sandbox EMR web app the agent practises on (connectors/agent/sandbox-emr.ts). */
+export const SANDBOX_PATIENTS: readonly Readonly<SandboxPatient>[] = PATIENTS;
 
 const ENCOUNTERS: SandboxEncounter[] = [
   { id: 'sbx-e-2001', patient: 'sbx-p-1001', kind: 'AMB', start: '2026-09-02T10:15:00+05:30', end: '2026-09-02T10:40:00+05:30', reason: 'Diabetes review', department: 'Endocrinology',
@@ -130,8 +134,17 @@ function claim(input: OperationInput<'claims.status'>) {
 
 export const sandboxAdapter: HisAdapter = {
   connectorId: 'sandbox',
-  operations: ['patients.search', 'encounters.list', 'documents.upload', 'claims.status'],
+  operations: ['patients.search', 'encounters.list', 'documents.upload', 'claims.status', 'tasks.run'],
   requiredSettings: [],
+  agentTarget({ connectionId, selfUrl }) {
+    return {
+      name: 'LotusPond sandbox EMR (synthetic patients)',
+      startUrl: `${selfUrl}${SANDBOX_EMR_PATH}/c/${connectionId}/`,
+      allowHosts: [new URL(selfUrl).hostname],
+      needsSignIn: false,
+      notes: 'A small practice EMR with made-up patients: search for a patient, open them, and book or cancel appointments on their page.',
+    };
+  },
   async run<O extends RunnableOperation>(op: O, input: OperationInput<O>, ctx: HisContext) {
     switch (op) {
       case 'patients.search': return search(input as OperationInput<'patients.search'>);
