@@ -75,8 +75,7 @@ export function leaveApp(): void {
 
 /**
  * Where to go after signing in when an agent sent the person here to approve a connection (/login?next=/oauth/authorize?…).
- * Only that same-origin path is followed, so the parameter cannot send anyone elsewhere. (The developer console has its
- * own accounts and sign-in since #46, so it no longer sends anyone here.)
+ * Only that same-origin path is followed, so the parameter cannot send anyone elsewhere.
  */
 export function oauthReturn(): string | null {
   if (shellOnly || typeof location === 'undefined') return null;

@@ -6,7 +6,7 @@ import type { Facility, FacilityKind, FacilitySearchResult } from '../types';
 import { ApiError, errorMessage, isPreview } from '../api';
 import { FACILITY_KINDS, RADIUS_OPTIONS_KM } from '../../shared/facilities';
 import { firstName, useActiveProfile, useSession } from '../state/session';
-import { labBookingAvailable, useLab } from '../state/lab';
+import { labBookingAvailable, labRegionServed, useLab } from '../state/lab';
 import '../styles/agents.css';
 import { FacilityCard } from '../components/labs/FacilityCard';
 import { HomeTests } from '../components/labs/HomeTests';
@@ -24,9 +24,12 @@ const SOURCE_LABEL: Record<SearchPoint['source'], string> = { device: 'Your loca
 
 export default function Labs() {
   useSession(s => s.account?.region); // re-render when the account (and so its region) changes
-  const available = labBookingAvailable();
+  const config = usePublicConfig();
+  const available = labBookingAvailable(config);
   const tab = useLab(s => s.tab), setTab = useLab(s => s.setTab);
   const ready = useLab(s => s.results.filter(r => r.status === 'pending').length);
+  // Whether this server books labs comes with its settings: wait for them rather than show one half, then the other.
+  if (labRegionServed() && !config) return <main className="page labs" aria-busy="true" />;
   const mode = available ? tab : 'near';
   return (
     <main className="page labs">
