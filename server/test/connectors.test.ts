@@ -61,7 +61,8 @@ describe('GET /v1/connectors', () => {
     assert.equal(body.version, 1);
     assert.deepEqual(body.operations.map(o => o.id).sort(), Object.keys(OPERATIONS).sort());
     assert.equal(body.operations.find(o => o.id === 'records.fetch')!.stage, 'live');
-    assert.ok(body.operations.filter(o => o.authority.includes('organisation')).every(o => o.stage === 'planned'), 'organisation operations are announced as planned, not offered');
+    assert.deepEqual(body.operations.filter(o => o.authority.includes('organisation') && o.stage === 'live').map(o => o.id).sort(), ['claims.status', 'documents.upload', 'encounters.list', 'patients.search'], 'organisation operations with an adapter are live');
+    assert.equal(body.operations.find(o => o.id === 'preauth.submit')!.stage, 'planned');
     const apollo = body.connectors.find(c => c.id === 'apollo')!;
     assert.equal(apollo.available, true);
     assert.deepEqual(Object.keys(apollo).sort(), ['authority', 'available', 'category', 'id', 'name', 'operations', 'reach', 'regions', 'signIn'].sort(), 'no implementation, hosts or start pages');

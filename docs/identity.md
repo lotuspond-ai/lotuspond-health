@@ -29,6 +29,14 @@ This page says what the decision changes for Health.
 - **Employer-managed accounts are refused.** An account created through a company's single sign-on (an enterprise connection in Works) cannot open Health. The person is asked to use a personal account, so an employer can never suspend, reset or audit the account that holds their health records.
 - **Works never sees Health data,** nor whether a person uses Health.
 
+## The developer console's organisation accounts
+
+The organisation API's console already has accounts of its own, built like LotusPond Works' (a person's account, with organisations as workspaces and a role in each), and kept apart from personal Health accounts ([connectors.md](connectors.md#the-organisation-api)). When Accounts ships:
+
+- they sign in through Accounts too, and are stored by `(issuer, subject)`;
+- a managed account from a Works enterprise connection may open the console, because it holds no one's health records; it still cannot open personal Health;
+- organisations and memberships stay in Health, as Works keeps its own.
+
 ## Existing accounts
 
 - Health's Argon2id hashes and regions are imported into Accounts unchanged.
@@ -62,7 +70,7 @@ To try it: `ACCOUNTS_ISSUER=fake npm run dev`, open `/signup` and choose **Conti
     - The 2-minute ticket goes in the address because that browser has no cookie from the app. Someone who got it could at most sign the browser that opens it out of Accounts.
     - Accounts returns to Health's `/api/auth/accounts/signed-out`, which hands on to the app with `signed_out=1`. That uses the app link or the private-use scheme, like a sign-in. The app then closes the browser and says it is signed out of both.
     - So the apps need no post-logout address of their own at Accounts, only Health's https page.
-- **Back-channel logout** (OpenID Connect Back-Channel Logout 1.0, migration 0017). When someone signs out at Accounts, or Accounts closes their account, Accounts posts a logout token to `POST /api/auth/accounts/backchannel-logout`.
+- **Back-channel logout** (OpenID Connect Back-Channel Logout 1.0). When someone signs out at Accounts, or Accounts closes their account, Accounts posts a logout token to `POST /api/auth/accounts/backchannel-logout`.
   - **Checks:** the token is checked like an ID token (signature, issuer, audience). It must also be at most 5 minutes old, carry the back-channel logout event and a `jti`, and carry no nonce. A token is acted on once.
   - **What ends:** sessions record the Accounts session (`sessions.accounts_sid`) from the ID token's `sid`. A token naming a `sid` ends the Health sessions from that Accounts session. A token naming only the account (`sub`) ends every session from Accounts for it, on the website and in the apps.
   - **What stays:** password sessions are separate sign-ins and stay.
@@ -89,7 +97,7 @@ To try it: `ACCOUNTS_ISSUER=fake npm run dev`, open `/signup` and choose **Conti
 
 ### One-time tokens
 
-App sign-in codes and back-channel logout tokens each work once, across every instance and regional host. Using one is recorded in `spent_tokens` (migration 0018) in the default database they share: a SHA-256 of the token's kind and id, and when it expires.
+App sign-in codes and back-channel logout tokens each work once, across every instance and regional host. Using one is recorded in `spent_tokens` in the default database they share: a SHA-256 of the token's kind and id, and when it expires.
 - **One insert:** the record is a single insert that does nothing if the row exists, so two instances racing on one token cannot both win.
 - **Only where it can be used:** an app code is marked used only by a host that can use it, so a wrong host does not burn it for the right one.
 - **Clean-up:** the server's sweep removes records once the token could no longer be accepted anyway.
@@ -136,6 +144,14 @@ Health's side is built; running it is a decision, and the privacy texts need rev
    - **Deleting an account:** asks for a recent Accounts sign-in instead of a password.
    - **The email directory is no longer read or written.** An account is found by its Accounts subject. The host comes from the `region` claim. One never linked is found by email in the host's own cells, and a new one is created without a directory entry.
 5. **Later**, after a reviewed migration: drop the `directory` table and `users.password_hash`. The WhatsApp directory, keyed by phone number, stays.
+
+### Database
+
+All of this PR's schema changes are in one migration, `0017_accounts_sign_in`:
+- `users.password_hash` nullable;
+- `users.accounts_subject`, unique;
+- `sessions.via_accounts` and `sessions.accounts_sid`;
+- the `spent_tokens` table.
 
 ### Not built yet
 

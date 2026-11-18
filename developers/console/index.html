@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <!-- @include page-head -->
+    <link rel="stylesheet" href="/src/site/console.css" />
+    <title>Developer console · LotusPond Health</title>
+    <meta name="description" content="Sign in with an organisation account, manage members and roles, create API keys, approve uploads and see every call to LotusPond Health's organisation API." />
+    <meta name="robots" content="noindex" />
+    <link rel="canonical" href="%SITE_URL%/developers/console/" />
+    <script type="module" src="/src/console/main.ts"></script>
+  </head>
+  <body class="home console">
+    <!-- An app shell, not a page of the site: a top bar with the organisation, a sidebar of sections, and one section
+         at a time in the main area (chosen by the address's #hash). Styles in src/site/console.css, on home.css's
+         tokens. Everything inside #console is built by src/console/main.ts with DOM calls, never HTML strings. -->
+    <a class="home-skip" href="#main">Skip to content</a>
+    <div class="cx" id="console" aria-live="polite">
+      <header class="cx-top">
+        <a class="cx-brand" href="/developers/" aria-label="LotusPond Health developers">LotusPond <b>Health</b><span>Console</span></a>
+      </header>
+      <main class="cx-main" id="main"><p class="cx-muted">Loading…</p></main>
+      <noscript><p class="cx-muted">The console needs JavaScript.</p></noscript>
+    </div>
+  </body>
+</html>

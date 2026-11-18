@@ -50,19 +50,19 @@ export const OPERATIONS: Record<OperationId, OperationSpec> = {
   },
   'patients.search': {
     id: 'patients.search', summary: 'Find a patient in a hospital information system by identifiers the organisation already holds',
-    authority: ['organisation'], writes: false, approval: 'none', fhir: ['Patient'], stage: 'planned',
+    authority: ['organisation'], writes: false, approval: 'none', fhir: ['Patient'], stage: 'live',
   },
   'encounters.list': {
     id: 'encounters.list', summary: "List a patient's visits and admissions, with their documents",
-    authority: ['organisation'], writes: false, approval: 'none', fhir: ['Encounter', 'DocumentReference'], stage: 'planned',
+    authority: ['organisation'], writes: false, approval: 'none', fhir: ['Encounter', 'DocumentReference'], stage: 'live',
   },
   'documents.upload': {
     id: 'documents.upload', summary: 'Attach a document (a note, a discharge summary, a report) to a patient or encounter; drafts by AI need a clinician',
-    authority: ['organisation'], writes: true, approval: 'clinician', fhir: ['DocumentReference'], stage: 'planned',
+    authority: ['organisation'], writes: true, approval: 'clinician', fhir: ['DocumentReference'], stage: 'live',
   },
   'claims.status': {
-    id: 'claims.status', summary: 'Read the status of a cashless or reimbursement claim with an insurer or TPA',
-    authority: ['organisation'], writes: false, approval: 'none', fhir: ['ClaimResponse'], stage: 'planned',
+    id: 'claims.status', summary: 'Read the status of a cashless or reimbursement claim with an insurer or TPA (the sandbox today; NHCX and TPA portals later)',
+    authority: ['organisation'], writes: false, approval: 'none', fhir: ['ClaimResponse'], stage: 'live',
   },
   'preauth.submit': {
     id: 'preauth.submit', summary: 'Submit a pre-authorisation request, with its documents, to an insurer or TPA',

@@ -1,0 +1,94 @@
+/* Every public page but the landing page (the legal pages, the 404 page, the developer guide and the console), drawn
+   in the LotusPond design system on top of home.css: its tokens, type, buttons, sheets, header and footer. This file
+   adds only what the landing page has no use for: a reading sheet with a contents list, tables (including the region
+   tables tools/site/regions.ts renders), callouts, cards, code samples and status pills. Every
+   colour is one of home.css's tokens, so tools/test-site-design.ts holds these pages to the system too.
+   Code uses the system's monospace stack; no extra font is loaded. No inline styles (SITE_CSP). */
+
+.doc-hero { padding: clamp(28px, 5vw, 64px) 0 clamp(48px, 6vw, 80px); }
+.doc-hero .home-lede { margin-top: 26px; color: var(--on-field-muted); }
+.doc-meta { display: flex; flex-wrap: wrap; gap: 6px 24px; margin-top: 22px; color: var(--on-field-muted); font-size: 15px; }
+.doc-meta b { color: var(--on-field); }
+
+/* A reading sheet: contents on the left, the text on the right. */
+.doc { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: clamp(32px, 5vw, 72px); align-items: start; }
+.toc { position: sticky; top: calc(var(--header) + 24px); font-size: 15px; }
+.toc ol { display: grid; gap: 2px; margin: 14px 0 0; padding: 0; list-style: none; border-top: 1.5px solid var(--pine-900); }
+.toc a { display: block; padding: 9px 0; border-bottom: 1px solid var(--line); color: var(--ink-muted); text-decoration: none; }
+.toc a:hover { color: var(--pine-900); }
+.prose { max-width: 76ch; }
+.prose > section + section { margin-top: clamp(48px, 6vw, 72px); }
+.prose h2 { scroll-margin-top: calc(var(--header) + 16px); }
+.prose p, .prose ol, .prose ul, .prose dl, .prose .table-wrap, .prose .dev-code { margin-top: 16px; }
+.prose p, .prose li, .prose dd { color: var(--ink-muted); }
+.prose b, .prose strong { color: var(--pine-900); }
+.prose ol, .prose ul { padding-left: 1.3em; }
+.prose li + li { margin-top: 8px; }
+.prose a:not(.home-btn) { color: var(--pine-900); font-weight: 600; text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 4px; }
+.prose h2 .num { margin-right: 0.35em; color: var(--sage-700); }
+.prose h3 { margin-top: 32px; font: 600 clamp(19px, 1.6vw, 22px)/1.25 var(--font-display); letter-spacing: -0.01em; scroll-margin-top: calc(var(--header) + 16px); }
+.prose h3 + p { margin-top: 10px; }
+.prose dl { display: grid; grid-template-columns: minmax(0, 220px) minmax(0, 1fr); gap: 12px 24px; padding-top: 16px; border-top: 1px solid var(--line); }
+.prose dt { font-weight: 700; }
+.prose dd { margin: 0; }
+@media (max-width: 900px) {
+  .doc { grid-template-columns: minmax(0, 1fr); }
+  .toc { position: static; }
+  .toc ol { grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 20px; }
+}
+@media (max-width: 560px) {
+  .prose dl { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .prose dd { margin-bottom: 10px; }
+}
+
+/* Callouts, cards and placeholders (the legal pages) */
+.callout { margin-top: 20px; padding: 22px 24px; border-radius: var(--r-md); background: var(--surface-tint); box-shadow: inset 4px 0 0 var(--pine-900); }
+.callout h2, .callout h3 { margin-top: 0; font: 700 17px/1.3 var(--font-sans); letter-spacing: 0; }
+.callout p, .callout ul { margin-top: 10px; }
+.callout--medical { box-shadow: inset 4px 0 0 var(--sage-700); }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; padding: 0 !important; list-style: none; }
+.cards li { margin: 0 !important; padding: 20px; border-radius: var(--r-md); background: var(--surface-tint); }
+.cards b { display: block; font: 600 20px/1.2 var(--font-display); letter-spacing: -0.01em; }
+.cards span { display: block; margin-top: 6px; color: var(--ink-muted); font-size: 15px; }
+.ph { padding: 1px 6px; border-radius: 6px; background: var(--sage-200); color: var(--pine-900); font-weight: 700; font-size: 0.94em; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+.muted { color: var(--ink-muted); }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+/* Code */
+.home code { font: 500 0.88em/1.4 ui-monospace, 'SF Mono', Menlo, Consolas, monospace; overflow-wrap: anywhere; }
+.prose :not(pre) > code { padding: 1px 6px; border-radius: 6px; background: var(--surface-tint); color: var(--pine-900); }
+.dev-code { overflow-x: auto; padding: 18px 20px; border-radius: var(--r-md); background: var(--deep); color: var(--on-deep); font: 500 13.5px/1.6 ui-monospace, 'SF Mono', Menlo, Consolas, monospace; }
+.dev-code code { font: inherit; white-space: pre; overflow-wrap: normal; }
+
+/* Tables: a hairline list on the sheet, stacked on a phone. */
+.table-wrap { overflow-x: auto; border-top: 1.5px solid var(--pine-900); }
+.table { width: 100%; border-collapse: collapse; font-size: 15.5px; line-height: 1.5; }
+.table th, .table td { padding: 14px 16px 14px 0; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+.table thead th { color: var(--ink-muted); font: 700 13px/1.3 var(--font-sans); }
+.table tbody th { color: var(--pine-900); font-weight: 700; }
+.table td { color: var(--ink-muted); }
+.table ul { margin: 6px 0 0; padding-left: 1.1em; }
+.table li + li { margin-top: 2px; }
+.table p + p, .table p + ul { margin-top: 8px; }
+.table .laws { columns: 2 220px; column-gap: 24px; }
+.table .laws li { break-inside: avoid; }
+.table .laws b { display: block; color: var(--pine-900); }
+@media (max-width: 760px) {
+  .table thead { display: none; }
+  .table tr { display: grid; gap: 4px; padding: 14px 0; border-bottom: 1px solid var(--line); }
+  .table th, .table td { padding: 0; border: 0; }
+}
+
+/* Status pills: sage tints and pine only; tomato stays for the one mark per view. */
+.dev-status { display: inline-flex; align-items: center; min-height: 28px; padding: 0 12px; border-radius: 999px; font: 700 13px/1 var(--font-sans); white-space: nowrap; }
+.dev-status-available, .dev-status-done, .dev-status-live { background: var(--pine-900); color: var(--off-white); }
+.dev-status-on_request, .dev-status-pending, .dev-status-sandbox { background: var(--sage-200); color: var(--pine-900); }
+.dev-status-in_build { background: var(--surface-tint); color: var(--pine-900); box-shadow: inset 0 0 0 1.5px var(--sage-300); }
+.dev-status-planned, .dev-status-rejected, .dev-status-refused, .dev-status-not_offered, .dev-status-failed, .dev-status-off { background: transparent; color: var(--ink-muted); box-shadow: inset 0 0 0 1.5px var(--line-strong); }
+
+/* The console has its own app shell: src/site/console.css. */
+
+/* The 404 page: a headline on the field, the way back, and the closing illustration. */
+.lost { padding: clamp(56px, 10vw, 140px) 0 clamp(40px, 5vw, 64px); }
+.lost .home-lede { margin-top: 26px; color: var(--on-field-muted); }
+.lost .home-pano { max-width: none; margin-top: clamp(48px, 6vw, 80px); }

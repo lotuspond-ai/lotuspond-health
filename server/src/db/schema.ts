@@ -558,8 +558,103 @@ export const organisations = pgTable('organisations', {
   name: text('name').notNull(),
   /** Where its data is held and its systems are reached from. */
   region: text('region').$type<DataRegion>().notNull(),
+  /**
+   * sandbox  self-serve: its keys reach only LotusPond's synthetic sandbox hospital
+   * live     LotusPond has checked its written authority, so connections to real systems may be added for it
+   */
+  access: text('access').$type<'sandbox' | 'live'>().notNull().default('sandbox'),
+  /** When someone in the organisation asked for live access, and what they said they need. */
+  liveRequestedAt: timestamp('live_requested_at', { withTimezone: true }),
+  liveRequest: jsonb('live_request').$type<{ systems: string; hospital: string; note: string; by: string }>(),
   createdAt: createdAt(),
 });
+
+/**
+ * Organisation accounts: the people who use the developer console, on behalf of an organisation. They are kept in the
+ * default database and are separate from personal LotusPond Health accounts (which live in a person's cell and hold
+ * their own records), as in LotusPond Works: an account belongs to a person, and organisations are workspaces it is a
+ * member of. An employer therefore never controls the account that holds someone's own health records (company
+ * ADR-0001, decision 8). When LotusPond Accounts ships, these become Accounts sign-ins with the same memberships.
+ */
+export const organisationAccounts = pgTable('organisation_accounts', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  /** Stored lower-cased and trimmed. */
+  email: text('email').notNull(),
+  name: text('name').notNull(),
+  passwordHash: text('password_hash').notNull(),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, t => [uniqueIndex('organisation_accounts_email_key').on(t.email)]);
+
+/** Console sessions: only the SHA-256 of the cookie token is kept, as for personal sessions. */
+export const organisationSessions = pgTable('organisation_sessions', {
+  id: text('id').primaryKey(),
+  accountId: uuid('account_id').notNull().references(() => organisationAccounts.id, { onDelete: 'cascade' }),
+  createdAt: createdAt(),
+  lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  userAgent: text('user_agent'),
+}, t => [index('organisation_sessions_account_idx').on(t.accountId)]);
+
+export type OrganisationRole = 'owner' | 'admin' | 'editor' | 'viewer';
+
+/**
+ * Who is in an organisation, and with which role (the roles of LotusPond Works):
+ *   owner   everything, including other owners and the organisation's live access
+ *   admin   members (except owners), keys and live access
+ *   editor  API keys
+ *   viewer  reads the console
+ * `approves` is separate from the role: it marks a clinician on the organisation's side, who may approve or reject
+ * writes that wait for one.
+ */
+export const organisationMembers = pgTable('organisation_members', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  organisationId: uuid('organisation_id').notNull().references(() => organisations.id, { onDelete: 'cascade' }),
+  accountId: uuid('account_id').notNull().references(() => organisationAccounts.id, { onDelete: 'cascade' }),
+  role: text('role').$type<OrganisationRole>().notNull(),
+  approves: boolean('approves').notNull().default(false),
+  createdAt: createdAt(),
+}, t => [uniqueIndex('organisation_members_account_key').on(t.organisationId, t.accountId), index('organisation_members_account_idx').on(t.accountId)]);
+
+/**
+ * An organisation's link to one system (a connector): LotusPond's sandbox hospital, or a real HIS that LotusPond set
+ * up after checking the organisation's written authority. Credentials are sealed with the default cell's file keys.
+ */
+export const organisationConnections = pgTable('organisation_connections', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  organisationId: uuid('organisation_id').notNull().references(() => organisations.id, { onDelete: 'cascade' }),
+  connectorId: text('connector_id').notNull(),
+  name: text('name').notNull(),
+  /** Non-secret settings: the system's base address, the hospital or facility it serves. */
+  settings: jsonb('settings').$type<Record<string, string>>().notNull().default({}),
+  /** Sealed credentials (a token, or a user name and password), or null for none. */
+  secretCt: text('secret_ct'),
+  status: text('status').$type<'active' | 'disabled'>().notNull().default('active'),
+  lastOkAt: timestamp('last_ok_at', { withTimezone: true }),
+  lastError: text('last_error'),
+  createdAt: createdAt(),
+}, t => [index('organisation_connections_org_idx').on(t.organisationId)]);
+
+/**
+ * A write that waits for a person on the organisation's side (a clinician) before it is sent: the input is sealed until
+ * then, and the outcome is kept so the caller can read it (GET /v1/approvals/:id).
+ */
+export const organisationApprovals = pgTable('organisation_approvals', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  organisationId: uuid('organisation_id').notNull().references(() => organisations.id, { onDelete: 'cascade' }),
+  connectionId: uuid('connection_id').notNull().references(() => organisationConnections.id, { onDelete: 'cascade' }),
+  keyId: uuid('key_id').references(() => organisationKeys.id, { onDelete: 'set null' }),
+  operation: text('operation').notNull(),
+  /** A short, non-clinical line for the console list (operation, patient reference, title). */
+  summary: text('summary').notNull(),
+  inputCt: text('input_ct').notNull(),
+  status: text('status').$type<'pending' | 'rejected' | 'done' | 'failed'>().notNull().default('pending'),
+  result: jsonb('result').$type<unknown>(),
+  error: text('error'),
+  decidedBy: text('decided_by'),
+  decidedAt: timestamp('decided_at', { withTimezone: true }),
+  createdAt: createdAt(),
+}, t => [index('organisation_approvals_org_idx').on(t.organisationId, t.status)]);
 
 /** An organisation's API key: only its SHA-256 is kept; the key is shown once when made. */
 export const organisationKeys = pgTable('organisation_keys', {
@@ -582,7 +677,9 @@ export const organisationCalls = pgTable('organisation_calls', {
   organisationId: uuid('organisation_id').notNull().references(() => organisations.id, { onDelete: 'cascade' }),
   keyId: uuid('key_id').references(() => organisationKeys.id, { onDelete: 'set null' }),
   operation: text('operation').notNull(),
-  /** done, refused (scope or authority), not_offered (planned operation), failed. */
-  outcome: text('outcome').$type<'done' | 'refused' | 'not_offered' | 'failed'>().notNull(),
+  /** done, pending (waiting for approval), refused (scope or authority), not_offered (planned operation), failed. */
+  outcome: text('outcome').$type<'done' | 'pending' | 'refused' | 'not_offered' | 'failed'>().notNull(),
+  /** The connection the call used, when it named one. */
+  connectionId: uuid('connection_id'),
   at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
 }, t => [index('organisation_calls_org_idx').on(t.organisationId, t.at)]);
