@@ -95,8 +95,8 @@ function Shell({ hidden }: { hidden: boolean }) {
           {NAV.map(n => <button key={n.id} aria-current={view === n.id || n.also?.includes(view) ? 'page' : undefined} onClick={() => setView(n.id)}>{n.label}{badge(n.id)}</button>)}
         </nav>
         <div className="topbar__end">
-          {isPreview && <span className="privacy" title="This preview has no server. Your account and records are saved in this browser only.">{Icon.lock} Preview · saved in this browser</span>}
-          <button className="btn btn--primary topbar__upload" onClick={() => setUploadOpen(true)}>{Icon.upload} Upload</button>
+          {isPreview && <span className="privacy" title="This preview has no server. Your account and records are saved in this browser only.">{Icon.lock}<span>Preview · saved in this browser</span></span>}
+          <button className="btn btn--primary topbar__upload" title="Upload" onClick={() => setUploadOpen(true)}>{Icon.upload}<span>Upload</span></button>
           <AskButton />
           <NotificationBell />
           <ProfileMenu />

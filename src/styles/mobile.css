@@ -62,6 +62,25 @@ body { -webkit-tap-highlight-color: transparent; -webkit-text-size-adjust: 100%;
 .drop__actions { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
 .viewer input[type='range'] { accent-color: var(--lotus); }
 
+/* ---------- tablet top bar: from the phone breakpoint up to where the full bar fits (about 1160px) ----------
+   The end controls drop to their icons and the gaps tighten; below 960px the wordmark goes too, leaving the logo.
+   Labels are hidden only visually, so the buttons and the home link keep their accessible names; Upload, Ask and
+   the preview note carry a title for pointer users. */
+@media (min-width: 761px) and (max-width: 1180px) {
+  .topbar { gap: 16px; padding-left: 20px; padding-right: 20px; }
+  .nav { gap: 2px; }
+  .nav button { padding: 8px 10px; }
+  .topbar__end { gap: 8px; }
+  .topbar__upload, .assistant__ask { padding: 9px 11px; }
+  .topbar__upload > span, .assistant__ask > span, .privacy > span, .pmenu__name {
+    position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+  }
+  .pmenu__trigger { padding-right: 8px; }
+}
+@media (min-width: 761px) and (max-width: 960px) {
+  .brand b { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+}
+
 /* ---------- phone layout (keep the width in step with COMPACT in src/lib/useMedia.ts) ---------- */
 @media (max-width: 760px) {
   .records-switch { display: flex; justify-self: stretch; margin: 10px 16px 0; }
