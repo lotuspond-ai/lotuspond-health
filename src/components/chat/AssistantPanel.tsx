@@ -274,7 +274,7 @@ export function AskButton() {
   const signedIn = useSession(s => s.status === 'signed-in');
   if (!signedIn || isPreview) return null;
   return (
-    <button className="btn assistant__ask" onClick={() => setOpen(true)} aria-label="Ask LotusPond">
+    <button className="btn assistant__ask" onClick={() => setOpen(true)} aria-label="Ask LotusPond" title="Ask LotusPond">
       {sparkIcon}<span>Ask</span>
     </button>
   );
