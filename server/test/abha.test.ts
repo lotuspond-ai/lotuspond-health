@@ -14,7 +14,6 @@ import { Hono } from 'hono';
 import { serve, type ServerType } from '@hono/node-server';
 import { eq } from 'drizzle-orm';
 import { RECORD_AGENT_NOTICE_VERSION, type RecordConnectionView, type RecordRunView, type SourcesInfo } from '../../shared/sources.ts';
-import type { SessionInfo } from '../../shared/types.ts';
 import { createApp } from '../src/app.ts';
 import { singleCell } from '../src/cells.ts';
 import { loadConfig } from '../src/config.ts';
@@ -155,7 +154,7 @@ after(async () => {
 });
 
 function setup() {
-  const config = loadConfig({ NODE_ENV: 'test', TRUST_PROXY: 'true', EKA_CLIENT_ID: 'EC_TEST', EKA_CLIENT_SECRET: 'secret-for-tests', EKA_API_URL: ekaUrl, EKA_HIU_CLINIC_ID: 'clinic-1', EKA_HIU_DOCTOR_OID: 'doc-1', EKA_WEBHOOK_SIGNING_KEY: SIGNING_KEY });
+  const config = loadConfig({ NODE_ENV: 'test', TRUST_PROXY: 'true', ACCOUNTS_ISSUER: 'fake', EKA_CLIENT_ID: 'EC_TEST', EKA_CLIENT_SECRET: 'secret-for-tests', EKA_API_URL: ekaUrl, EKA_HIU_CLINIC_ID: 'clinic-1', EKA_HIU_DOCTOR_OID: 'doc-1', EKA_WEBHOOK_SIGNING_KEY: SIGNING_KEY });
   const files = new DiskFileStore(filesDir);
   const cells = singleCell(database.db, files);
   const secrets = ephemeralSecrets();
@@ -234,7 +233,7 @@ describe('ABHA through Eka Care', { timeout: 120_000 }, () => {
 
   test('connect: sign in, renew the session, approve the consent with the PIN, save the FHIR records once', async () => {
     const c = makeClient(app);
-    const info = await c.json<SessionInfo>('POST', '/api/auth/register', registration(`abha-${Date.now()}@example.com`), 201);
+    const info = await c.signUp(registration(`abha-${Date.now()}@example.com`));
     const sources = await c.json<SourcesInfo>('GET', '/api/records');
     assert.equal(sources.sources.find(s => s.id === 'abha')!.availability, 'abdm');
     assert.equal(sources.sources.find(s => s.id === 'abha')!.needsUrl, false);

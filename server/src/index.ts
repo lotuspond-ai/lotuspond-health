@@ -32,7 +32,7 @@ import { gmailFetcher, outlookFetcher } from './records/api/mail.ts';
 import { digilockerFetcher } from './records/api/digilocker.ts';
 import { createOrganisation, createOrganisationKey, ORGANISATION_OPERATIONS, revokeOrganisationKey } from './connectors/organisations.ts';
 import type { OperationId } from './connectors/types.ts';
-import { exportAccounts, linkAccounts, readJsonLines, readiness, formatReadiness } from './auth/accounts-migration.ts';
+import { exportAccounts, linkAccounts, readJsonLines, readiness, formatReadiness, cleanupCheck, formatCleanupCheck } from './auth/accounts-migration.ts';
 import { organisationRuntime } from './connectors/runtime.ts';
 import { organisationAccounts, organisationConnections, organisationMembers, organisations, type OrganisationRole } from './db/schema.ts';
 import { HIS_ADAPTERS } from './connectors/his/index.ts';
@@ -168,6 +168,7 @@ if (['org:create', 'org:key', 'org:revoke', 'org:requests', 'org:live', 'org:con
 //                            emails and password hashes: readable by its owner only; delete it once imported)
 //   accounts:link <file>     Accounts' answer, { "health_user_id", "sub" } per line: link each account
 //   accounts:readiness [days] before turning passwords off: who is active and how they sign in (counts only)
+//   accounts:cleanup-check   before dropping passwords and the directory (M9): exits 1 unless this host is ready
 if (command === 'accounts:readiness') {
   const days = process.argv[3] ? Number(process.argv[3]) : 14;
   if (!Number.isInteger(days) || days < 1 || days > 90) fail('Usage: accounts:readiness [days, 1 to 90]');
@@ -176,6 +177,15 @@ if (command === 'accounts:readiness') {
   } catch (e) { await opened.close(); fail(e); }
   await opened.close();
   process.exit(0);
+}
+if (command === 'accounts:cleanup-check') {
+  let r;
+  try {
+    r = await cleanupCheck(allCells, { accountsOn: !!config.accounts, passwordSignIn: config.passwordSignIn, sessionTtlMs: config.sessionTtlMs });
+    console.log(formatCleanupCheck(r));
+  } catch (e) { await opened.close(); fail(e); }
+  await opened.close();
+  process.exit(r.ready ? 0 : 1);
 }
 if (command === 'accounts:export' || command === 'accounts:link') {
   const file = process.argv[3];
@@ -197,7 +207,7 @@ if (command === 'accounts:export' || command === 'accounts:link') {
   await opened.close();
   process.exit(0);
 }
-if (command) fail(`Unknown command "${command}". Commands: files:rekey, org:create, org:key, org:revoke, org:requests, org:live, org:connect, org:member, org:web-signin, accounts:export, accounts:link.`);
+if (command) fail(`Unknown command "${command}". Commands: files:rekey, org:create, org:key, org:revoke, org:requests, org:live, org:connect, org:member, org:web-signin, accounts:export, accounts:link, accounts:readiness, accounts:cleanup-check.`);
 
 async function sweep() {
   await purgeSpentTokens(registry.defaultCell.db);

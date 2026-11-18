@@ -149,7 +149,15 @@ Health's side is built; running it is a decision, and the privacy texts need rev
    - **Sign-in page:** shows only Continue with LotusPond Account.
    - **Deleting an account:** asks for a recent Accounts sign-in instead of a password.
    - **The email directory is no longer read or written.** An account is found by its Accounts subject. The host comes from the `region` claim. One never linked is found by email in the host's own cells, and a new one is created without a directory entry.
-6. **Later**, after a reviewed migration: drop the `directory` table and `users.password_hash`. The WhatsApp directory, keyed by phone number, stays.
+6. **Later** (build plan M9), after a reviewed migration: drop the `directory` table and `users.password_hash`. The WhatsApp directory, keyed by phone number, stays. This removes the way back to Health passwords, so first run `accounts:cleanup-check` on each regional host (production: `node dist/index.js accounts:cleanup-check`). It prints counts only, and exits 0 only when:
+   - this host has `ACCOUNTS_ISSUER` set and `PASSWORD_SIGN_IN=off`;
+   - nobody has signed in with a Health password within one session lifetime (`SESSION_DAYS`).
+
+   It also reports, without blocking:
+   - **Password sessions still in use.** Sessions slide, so one in regular use never ends. They keep working after M9, which never reads a signed-in person's password hash.
+   - **Accounts with a password and no Accounts link,** which were not in the import. After M9 they sign up at Accounts with the same email, and Health joins them by verified email.
+
+   The database cannot show that 30 days have passed since passwords went off, or that a backup was taken just before. Check both yourself.
 
 ### Database
 

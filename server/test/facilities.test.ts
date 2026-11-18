@@ -10,7 +10,7 @@ import { eq } from 'drizzle-orm';
 import type { Hono } from 'hono';
 import { createApp } from '../src/app.ts';
 import { completeDeps } from '../src/cells.ts';
-import { registration } from './helpers.ts';
+import { makeClient, registration } from './helpers.ts';
 import { loadConfig } from '../src/config.ts';
 import { openDatabase, type Database } from '../src/db/client.ts';
 import { facilityCache, profiles } from '../src/db/schema.ts';
@@ -66,7 +66,7 @@ let app: Hono<AppEnv>;
 let deps: FacilityDeps;
 
 function makeApp(env: Record<string, string> = {}, providers?: FacilityProviders) {
-  const config = loadConfig({ NODE_ENV: 'test', TRUST_PROXY: 'true', ...env });
+  const config = loadConfig({ NODE_ENV: 'test', ACCOUNTS_ISSUER: 'fake', TRUST_PROXY: 'true', ...env });
   const d: FacilityDeps = { ...completeDeps({ db: database.db, files: new DiskFileStore(filesDir), config }), facilityProviders: providers ?? { places, geocoder } };
   return { app: createApp(d), deps: d };
 }
@@ -99,35 +99,13 @@ beforeEach(async () => {
   geocoder.fail = false;
 });
 
-let clients = 0;
 const run = Date.now().toString(36);
-function client(target: () => Hono<AppEnv> = () => app) {
-  const ip = `10.9.${++clients % 250}.1`;
-  let cookie = '';
-  async function call(method: string, url: string, body?: unknown) {
-    const h: Record<string, string> = { 'sec-fetch-site': 'same-origin', 'x-forwarded-for': ip };
-    if (cookie) h.cookie = cookie;
-    if (body !== undefined) h['content-type'] = 'application/json';
-    const res = await target().request(url, { method, headers: h, body: body === undefined ? undefined : JSON.stringify(body) });
-    const set = res.headers.get('set-cookie');
-    if (set) cookie = set.split(';')[0];
-    return res;
-  }
-  return {
-    call,
-    async json<T>(method: string, url: string, body?: unknown, expect = 200): Promise<T> {
-      const res = await call(method, url, body);
-      const text = await res.text();
-      assert.equal(res.status, expect, `${method} ${url} → ${res.status} ${text}`);
-      return (text ? JSON.parse(text) : null) as T;
-    },
-  };
-}
+const client = (target: () => Hono<AppEnv> = () => app) => makeClient(target());
 
 let counter = 0;
 async function signedIn(target?: () => Hono<AppEnv>) {
   const c = client(target);
-  const info = await c.json<SessionInfo>('POST', '/api/auth/register', registration(`labs${++counter}.${run}@example.com`, 'IN', { password: 'lily pads everywhere', displayName: 'Asha' }), 201);
+  const info = await c.signUp(registration(`labs${++counter}.${run}@example.com`, 'IN', { displayName: 'Asha' }));
   return { c, self: info.profiles[0] };
 }
 

@@ -45,7 +45,7 @@ before(async () => {
   database = await openDatabase({ url: process.env.TEST_DATABASE_URL });
   await database.migrate(fileURLToPath(new URL('../drizzle', import.meta.url)));
   filesDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lotuspond-org-api-'));
-  deps = completeDeps({ db: database.db, files: new DiskFileStore(filesDir), config: loadConfig({ NODE_ENV: 'test', RECORD_AGENT: 'off' }) });
+  deps = completeDeps({ db: database.db, files: new DiskFileStore(filesDir), config: loadConfig({ NODE_ENV: 'test', ACCOUNTS_ISSUER: 'fake', RECORD_AGENT: 'off' }) });
   app = createApp(deps, { orgFetch: fakeFetch });
 });
 after(async () => { await database.close(); fs.rmSync(filesDir, { recursive: true, force: true }); });
@@ -239,7 +239,7 @@ describe('organisation API: sandbox, console, MCP', () => {
 describe('organisation accounts in the developer console', () => {
   test('organisation accounts are separate from personal Health accounts, both ways', async () => {
     const personal = makeClient(app);
-    await personal.json('POST', '/api/auth/register', registration('both@example.com'), 201);
+    await personal.signUp(registration('both@example.com'));
     assert.equal((await personal.call('GET', '/api/console')).status, 401, 'a personal Health session does not open the console');
 
     const org = makeClient(app);

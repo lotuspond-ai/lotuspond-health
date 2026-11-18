@@ -6,7 +6,7 @@
 //                   imported.
 //   linkAccounts    Accounts' answer, which Accounts subject (`sub`) each Health account became: linked in one go, so
 //                   no one depends on Health's email directory to be found at their first sign-in.
-import { eq, gte } from 'drizzle-orm';
+import { and, eq, gte, gt, isNotNull, isNull } from 'drizzle-orm';
 import { sessions, users } from '../db/schema.ts';
 import type { Cell } from '../cells.ts';
 import { recordEvent } from '../compliance/audit.ts';
@@ -146,4 +146,65 @@ export function formatReadiness(r: Readiness): string {
     `All accounts: moved ${r.moved}; linked by the import but not moved ${r.linkedNotMoved}; not linked ${r.notLinked}.`,
     'Health does not record app versions: an older app cannot sign in once passwords are off, whatever these counts.',
   ].join('\n');
+}
+
+/**
+ * The gate for dropping Health's passwords and email directory (build plan M9), on one host: it reads this host's
+ * settings and database and prints counts only. M9 removes the way back to Health passwords, so it waits until no one
+ * has signed in with a Health password for one whole session lifetime. Sessions slide (each use extends them), so a
+ * password session still in use is not a blocker: it keeps working after M9, which never reads the password hash
+ * of a signed-in person, and its person signs in with Accounts once it ends.
+ */
+export interface CleanupCheck {
+  /** ACCOUNTS_ISSUER is set and PASSWORD_SIGN_IN is off on this host. */
+  passwordsOff: boolean;
+  /** One session lifetime, in days (SESSION_DAYS). */
+  days: number;
+  /** Password sign-ins (sessions not made through Accounts) started within it. Must be 0. */
+  recentPasswordSignIns: number;
+  /** Password sessions still alive, however old, and how many of their people never signed in with Accounts. */
+  livePasswordSessions: number;
+  livePasswordPeopleNotMoved: number;
+  /** Accounts with a password and no Accounts link: not in the import. After M9 they sign up at Accounts with the same email. */
+  passwordNotLinked: number;
+  ready: boolean;
+}
+
+export async function cleanupCheck(
+  cells: Cell[], settings: { accountsOn: boolean; passwordSignIn: boolean; sessionTtlMs: number }, now = new Date(),
+): Promise<CleanupCheck> {
+  const days = Math.round(settings.sessionTtlMs / 86_400_000);
+  const since = new Date(now.getTime() - settings.sessionTtlMs);
+  const r: CleanupCheck = {
+    passwordsOff: settings.accountsOn && !settings.passwordSignIn, days,
+    recentPasswordSignIns: 0, livePasswordSessions: 0, livePasswordPeopleNotMoved: 0, passwordNotLinked: 0, ready: false,
+  };
+  for (const cell of cells) {
+    const password = eq(sessions.viaAccounts, false);
+    const recent = await cell.db.select({ id: sessions.id }).from(sessions).where(and(password, gte(sessions.createdAt, since)));
+    r.recentPasswordSignIns += recent.length;
+    const live = await cell.db.select({ userId: sessions.userId, movedAt: users.accountsSignedInAt }).from(sessions)
+      .innerJoin(users, eq(users.id, sessions.userId)).where(and(password, gt(sessions.expiresAt, now)));
+    r.livePasswordSessions += live.length;
+    r.livePasswordPeopleNotMoved += new Set(live.filter(s => !s.movedAt).map(s => s.userId)).size;
+    const unlinked = await cell.db.select({ id: users.id }).from(users).where(and(isNotNull(users.passwordHash), isNull(users.accountsSubject)));
+    r.passwordNotLinked += unlinked.length;
+  }
+  r.ready = r.passwordsOff && r.recentPasswordSignIns === 0;
+  return r;
+}
+
+export function formatCleanupCheck(r: CleanupCheck): string {
+  const lines = [
+    r.passwordsOff
+      ? 'Passwords are off on this host (ACCOUNTS_ISSUER set, PASSWORD_SIGN_IN=off).'
+      : 'NOT READY: passwords are still on here. Turn them off (PASSWORD_SIGN_IN=off, with ACCOUNTS_ISSUER) and wait one session lifetime.',
+    `Password sign-ins in the last ${r.days} days (one session lifetime): ${r.recentPasswordSignIns}.${r.recentPasswordSignIns ? ' NOT READY: wait until there are none.' : ''}`,
+    `Password sessions still in use: ${r.livePasswordSessions}, of ${r.livePasswordPeopleNotMoved} people who never signed in with Accounts. They keep working after M9; each person signs in with Accounts once theirs ends.`,
+    `Accounts with a Health password and no Accounts link: ${r.passwordNotLinked}. After M9 they sign up at Accounts with the same email, and Health joins them by verified email.`,
+    r.ready
+      ? 'Ready for M9 on this host, as far as its database can tell. Also needed: 30 days since M8 on every host, and a backup taken just before.'
+      : 'Not ready for M9 on this host.',
+  ];
+  return lines.join('\n');
 }

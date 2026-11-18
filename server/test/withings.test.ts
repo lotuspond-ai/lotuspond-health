@@ -14,7 +14,6 @@ import { Hono } from 'hono';
 import { serve, type ServerType } from '@hono/node-server';
 import { eq } from 'drizzle-orm';
 import { RECORD_AGENT_NOTICE_VERSION, type RecordConnectionView, type RecordRunView, type SourcesInfo } from '../../shared/sources.ts';
-import type { SessionInfo } from '../../shared/types.ts';
 import { createApp } from '../src/app.ts';
 import { singleCell } from '../src/cells.ts';
 import { loadConfig } from '../src/config.ts';
@@ -118,7 +117,7 @@ after(async () => {
 let diskFull = false;
 
 function setup() {
-  const config = loadConfig({ NODE_ENV: 'test', TRUST_PROXY: 'true', PUBLIC_URL: 'https://health.example', WITHINGS_CLIENT_ID: 'withings-client', WITHINGS_CLIENT_SECRET: 'withings-secret' });
+  const config = loadConfig({ NODE_ENV: 'test', ACCOUNTS_ISSUER: 'fake', TRUST_PROXY: 'true', PUBLIC_URL: 'https://health.example', WITHINGS_CLIENT_ID: 'withings-client', WITHINGS_CLIENT_SECRET: 'withings-secret' });
   assert.equal(config.records!.withings!.redirectUri, 'https://health.example/records/oauth/withings/callback');
   const disk = new DiskFileStore(filesDir);
   const files = Object.assign(Object.create(disk) as DiskFileStore, {
@@ -157,7 +156,7 @@ describe('Withings', { timeout: 60_000 }, () => {
 
   test('connect on Withings’ page, come back, check: a FHIR file of daily values; again: only new days', async () => {
     const c = makeClient(app);
-    const info = await c.json<SessionInfo>('POST', '/api/auth/register', registration(`withings-${Date.now()}@example.com`), 201);
+    const info = await c.signUp(registration(`withings-${Date.now()}@example.com`));
     const sources = await c.json<SourcesInfo>('GET', '/api/records');
     assert.equal(sources.sources.find(s => s.id === 'withings')!.availability, 'api');
 

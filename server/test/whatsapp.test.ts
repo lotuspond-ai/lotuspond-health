@@ -13,7 +13,6 @@ import type { Hono } from 'hono';
 import { ASSISTANT_NOTICE_VERSION, type AssistantInfo } from '../../shared/assistant.ts';
 import type { NotificationList } from '../../shared/notifications.ts';
 import { WHATSAPP_NOTICE_VERSION, type WhatsAppInfo, type WhatsAppLinkStart } from '../../shared/whatsapp.ts';
-import type { SessionInfo } from '../../shared/types.ts';
 import { createApp } from '../src/app.ts';
 import { loadConfig } from '../src/config.ts';
 import { openDatabase, type Database } from '../src/db/client.ts';
@@ -48,7 +47,7 @@ before(async () => {
   await database.migrate(migrations);
   filesDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lotuspond-whatsapp-'));
   const config = loadConfig({
-    NODE_ENV: 'test', TRUST_PROXY: 'true', PUBLIC_URL: 'https://health.example',
+    NODE_ENV: 'test', ACCOUNTS_ISSUER: 'fake', TRUST_PROXY: 'true', PUBLIC_URL: 'https://health.example',
     WHATSAPP_PHONE_NUMBER_ID: '1234567890', WHATSAPP_NUMBER: '+91 98765 43210', WHATSAPP_ACCESS_TOKEN: 'EAAtest-access-token-0123456789',
     WHATSAPP_APP_SECRET: APP_SECRET, WHATSAPP_VERIFY_TOKEN: VERIFY,
   });
@@ -73,7 +72,7 @@ let k = 0;
 let msg = 0;
 async function account(agree = true) {
   const c = makeClient(app);
-  const info = await c.json<SessionInfo>('POST', '/api/auth/register', registration(`wa-${Date.now()}-${++k}@example.com`), 201);
+  const info = await c.signUp(registration(`wa-${Date.now()}-${++k}@example.com`));
   const self = info.profiles[0];
   await c.json('POST', `/api/profiles/${self.id}/measurements`, { measurements: [measurement({ date: '2026-03-14', value: 138, valueText: '138' })] }, 201);
   if (agree) await c.json('POST', '/api/assistant/consent', { noticeVersion: ASSISTANT_NOTICE_VERSION, categories: ['results', 'files'] });

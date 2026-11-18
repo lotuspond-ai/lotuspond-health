@@ -16,7 +16,8 @@
     "files:rekey": "tsx src/index.ts files:rekey",
     "accounts:export": "tsx src/index.ts accounts:export",
     "accounts:link": "tsx src/index.ts accounts:link",
-    "accounts:readiness": "tsx src/index.ts accounts:readiness"
+    "accounts:readiness": "tsx src/index.ts accounts:readiness",
+    "accounts:cleanup-check": "tsx src/index.ts accounts:cleanup-check"
   },
   "devDependencies": {
     "@types/pg": "^8.23.1",

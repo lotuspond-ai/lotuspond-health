@@ -9,7 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Hono } from 'hono';
 import type { AgentConnection, AgentConnectionsInfo, CreatedAgentToken } from '../../shared/agents.ts';
-import type { ActivityEvent, Profile, SessionInfo } from '../../shared/types.ts';
+import type { ActivityEvent, Profile } from '../../shared/types.ts';
 import { describeWrite, type NotificationList } from '../../shared/notifications.ts';
 import { createApp } from '../src/app.ts';
 import { loadConfig } from '../src/config.ts';
@@ -31,7 +31,7 @@ before(async () => {
   database = await openDatabase({ url: process.env.TEST_DATABASE_URL });
   await database.migrate(migrations);
   filesDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lotuspond-agents-'));
-  const config = loadConfig({ NODE_ENV: 'test', TRUST_PROXY: 'true', PUBLIC_URL: ORIGIN });
+  const config = loadConfig({ NODE_ENV: 'test', ACCOUNTS_ISSUER: 'fake', TRUST_PROXY: 'true', PUBLIC_URL: ORIGIN });
   app = createApp({ db: database.db, files: new DiskFileStore(filesDir), config }, {
     oauth: {
       fetchClientMetadata: async url => {
@@ -49,7 +49,7 @@ after(async () => {
 let n = 0;
 async function account() {
   const c = makeClient(app);
-  const info = await c.json<SessionInfo>('POST', '/api/auth/register', registration(`agents-${Date.now()}-${++n}@example.com`), 201);
+  const info = await c.signUp(registration(`agents-${Date.now()}-${++n}@example.com`));
   const self = info.profiles[0];
   await c.json('PATCH', `/api/profiles/${self.id}`, { conditions: ['Type 2 diabetes'], dateOfBirth: '1990-05-01', heightCm: 170, weightKg: 72 });
   await c.json('POST', `/api/profiles/${self.id}/measurements`, { measurements: [
@@ -175,8 +175,11 @@ describe('consent and tokens', () => {
     const res = await app.request(url);
     assert.equal(res.status, 302);
     const loc = res.headers.get('location')!;
-    assert.ok(loc.startsWith('/login?next='));
-    assert.equal(decodeURIComponent(loc.slice('/login?next='.length)).split('?')[0], '/oauth/authorize');
+    // With LotusPond Accounts on, a quiet check there first; Health's sign-in page only if no one is signed in.
+    const start = new URL(loc, ORIGIN);
+    assert.equal(start.pathname, '/api/auth/accounts/start');
+    assert.equal(start.searchParams.get('prompt'), 'none');
+    assert.equal(start.searchParams.get('next')!.split('?')[0], '/oauth/authorize');
   });
 
   test('an unknown client or a redirect it did not register gets an error page, not a redirect', async () => {

@@ -13,7 +13,6 @@ import type { AddressInfo } from 'node:net';
 import { Hono } from 'hono';
 import { serve, type ServerType } from '@hono/node-server';
 import { RECORD_AGENT_NOTICE_VERSION, type RecordConnectionView, type RecordRunView, type SourcesInfo } from '../../shared/sources.ts';
-import type { SessionInfo } from '../../shared/types.ts';
 import { createApp } from '../src/app.ts';
 import { singleCell } from '../src/cells.ts';
 import { loadConfig } from '../src/config.ts';
@@ -110,7 +109,7 @@ after(async () => {
 });
 
 function setup(maxReports?: number) {
-  const config = loadConfig({ NODE_ENV: 'test', TRUST_PROXY: 'true', PUBLIC_URL: 'https://health.example', DIGILOCKER_CLIENT_ID: 'DLCLIENT', DIGILOCKER_CLIENT_SECRET: SECRET, DIGILOCKER_API_URL: apiUrl });
+  const config = loadConfig({ NODE_ENV: 'test', ACCOUNTS_ISSUER: 'fake', TRUST_PROXY: 'true', PUBLIC_URL: 'https://health.example', DIGILOCKER_CLIENT_ID: 'DLCLIENT', DIGILOCKER_CLIENT_SECRET: SECRET, DIGILOCKER_API_URL: apiUrl });
   const r = config.records!;
   assert.equal(r.digilocker!.redirectUri, 'https://health.example/records/oauth/digilocker/callback');
   const files = new DiskFileStore(filesDir);
@@ -154,7 +153,7 @@ describe('DigiLocker', { timeout: 60_000 }, () => {
 
   test('connect: PKCE sign-in, health documents saved, no schedule, and each check starts on DigiLocker’s page', async () => {
     const c = makeClient(app);
-    const info = await c.json<SessionInfo>('POST', '/api/auth/register', registration(`dl-${Date.now()}@example.com`), 201);
+    const info = await c.signUp(registration(`dl-${Date.now()}@example.com`));
     const src = (await c.json<SourcesInfo>('GET', '/api/records')).sources.find(s => s.id === 'digilocker')!;
     assert.equal(src.availability, 'api', 'the API takes over from the browser');
     assert.equal(src.oneTime, true);
@@ -214,7 +213,7 @@ describe('DigiLocker', { timeout: 60_000 }, () => {
   test('more health documents than one check saves: the rest come in on the next approval, none downloaded twice', async () => {
     const small = setup(2);
     const c = makeClient(small.app);
-    const info = await c.json<SessionInfo>('POST', '/api/auth/register', registration(`dl-small-${Date.now()}@example.com`), 201);
+    const info = await c.signUp(registration(`dl-small-${Date.now()}@example.com`));
     const approve = async (code: string) => {
       const r = await c.json<{ authorizeUrl?: string }>('POST', '/api/records/connections', { sourceId: 'digilocker', profileId: info.profiles[0].id, refreshDays: null, noticeVersion: RECORD_AGENT_NOTICE_VERSION }, 201);
       const auth = new URL(r.authorizeUrl!);
