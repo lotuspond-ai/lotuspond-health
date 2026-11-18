@@ -181,3 +181,26 @@
   .cx-main { padding: 20px 16px 48px; }
   .cx-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+/* Phones: a table's rows stack into cards, each cell under its column's name, so nothing is cut off or scrolls. */
+@media (max-width: 640px) {
+  .cx-table-wrap { overflow: visible; margin: 0; }
+  .cx-table, .cx-table tbody { display: block; }
+  .cx-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .cx-table tr { display: grid; gap: 6px; padding: 12px 0; border-top: 1px solid var(--line); }
+  .cx-table tbody tr:first-child { border-top: 0; padding-top: 0; }
+  .cx-table tbody tr:hover { background: none; }
+  .cx-table th, .cx-table td, .cx-table th:first-child, .cx-table td:first-child {
+    display: grid; grid-template-columns: 96px minmax(0, 1fr); align-items: center; gap: 10px; padding: 0; border: 0; text-align: left; overflow-wrap: anywhere;
+  }
+  /* Pills, code and buttons keep their own width instead of stretching across the value column. */
+  .cx-table th > *, .cx-table td > * { justify-self: start; max-width: 100%; }
+  .cx-table [data-label]::before { content: attr(data-label); color: var(--ink-muted); font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+  /* The first cell names the row: full width, no label. A cell with no column name (actions) sits under the rest. */
+  .cx-table tr > :first-child { grid-template-columns: minmax(0, 1fr); font-weight: 700; }
+  .cx-table tr > :first-child::before { display: none; }
+  .cx-table td:not([data-label]) { grid-template-columns: minmax(0, 1fr); }
+  .cx-cell-end, .cx-cell-end .cx-actions { justify-content: flex-start; text-align: left; }
+  .cx-table code { white-space: normal; overflow-wrap: anywhere; }
+  .cx-mono { white-space: normal; }
+}
