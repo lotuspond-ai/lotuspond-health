@@ -1,5 +1,5 @@
 // Data residency, sign-up rules, consents, preferences and the audit log, on a deployment with three cells:
-//   default database: the directory, plus the "global" cell
+//   default database: the "global" cell, and shared non-personal data (Health keeps no email directory since M9)
 //   India cell: its own database and file store
 //   EU cell:    its own database and file store
 // The United States is deliberately not served. Each database is in-memory PGlite unless TEST_DATABASE_URL
@@ -16,13 +16,12 @@ import type { Hono } from 'hono';
 import { createApp } from '../src/app.ts';
 import { loadConfig } from '../src/config.ts';
 import { openDatabase, type Database, type Db } from '../src/db/client.ts';
-import { auditEvents, consents, directory, documents, measurements, profiles, sessions, users } from '../src/db/schema.ts';
+import { auditEvents, consents, documents, measurements, profiles, sessions, users } from '../src/db/schema.ts';
 import { CellRegistry, fileStore, type Cell } from '../src/cells.ts';
 import { ephemeralSecrets } from '../src/compliance/secrets.ts';
-import { emailHash } from '../src/compliance/directory.ts';
 import type { AppEnv } from '../src/http.ts';
 import { CONSENT_VERSION } from '../../shared/regions.ts';
-import type { ActivityEvent, ConsentRecord, ServiceInfo, SessionInfo } from '../../shared/types.ts';
+import type { ActivityEvent, ConsentRecord, RegisterInput, ServiceInfo, SessionInfo } from '../../shared/types.ts';
 import { makeClient, measurement, registration, upload, type TestClient } from './helpers.ts';
 
 const migrations = fileURLToPath(new URL('../drizzle', import.meta.url));
@@ -53,7 +52,7 @@ before(async () => {
   euCell = { id: 'eu', db: await open(process.env.TEST_CELL_EU_DATABASE_URL), files: fileStore(filesRoot.eu, key()) };
   const cells = new CellRegistry(globalCell, [['in', inCell], ['eu', euCell], ['global', globalCell]]);
   const config = loadConfig({
-    NODE_ENV: 'test', TRUST_PROXY: 'true', SERVED_REGIONS: 'in,eu,global', OPEN_COUNTRIES: 'all', // every region's cell rules, as if all were open
+    NODE_ENV: 'test', TRUST_PROXY: 'true', ACCOUNTS_ISSUER: 'fake', SERVED_REGIONS: 'in,eu,global', OPEN_COUNTRIES: 'all', // every region's cell rules, as if all were open
     GRIEVANCE_CONTACT: 'Grievance Officer, grievance@lotuspond.example', DPO_CONTACT: 'dpo@lotuspond.example',
   });
   app = createApp({ db: main, files: globalCell.files, config, cells, secrets });
@@ -68,11 +67,22 @@ let n = 0;
 const email = (tag: string) => `${tag}.${++n}.${run}@example.com`;
 const client = (opts?: Parameters<typeof makeClient>[1]) => makeClient(app, opts);
 
-async function signUp(country: string, c: TestClient = client(), over = {}) {
-  const address = email(country.toLowerCase());
-  const info = await c.json<SessionInfo>('POST', '/api/auth/register', registration(address, country, over), 201);
-  return { c, email: address, info, user: info.account, self: info.profiles[0] };
+/** Sign up through the stand-in LotusPond Accounts, which holds the person in their country's region. */
+async function signUp(country: string, c: TestClient = client(), over: Partial<RegisterInput> = {}) {
+  const body = registration(email(country.toLowerCase()), country, over);
+  const info = await c.signUp(body);
+  return { c, email: body.email, info, user: info.account, self: info.profiles[0] };
 }
+
+/** Health's answer when its own sign-up questions refuse the answers. */
+async function refused(body: Partial<RegisterInput>, region = 'eu') {
+  const res = await client().signUpCall({ ...registration(email('refused')), ...body } as RegisterInput, { region });
+  const data = await res.json().catch(() => null) as { error?: { code: string; message: string } } | null;
+  return { status: res.status, code: data?.error?.code, message: data?.error?.message ?? '' };
+}
+
+/** The session token in a client's cookies. */
+const sessionToken = (c: TestClient) => /(?:^|; )lp_session=([^;]+)/.exec(c.cookie)?.[1] ?? '';
 
 async function usersWithEmail(db: Db, address: string) {
   return db.select().from(users).where(eq(users.email, address));
@@ -87,7 +97,7 @@ describe('data residency cells', () => {
     const { c, email: address, user, self } = await signUp('IN');
     assert.equal(user.country, 'IN');
     assert.equal(user.region, 'in');
-    assert.match(c.cookie, /^lp_session=in\./, 'the session token names its cell');
+    assert.match(sessionToken(c), /^in\./, 'the session token names its cell');
     await c.json('POST', `/api/profiles/${self.id}/measurements`, { measurements: [measurement({ rawName: `LDL ${run}` })] }, 201);
     const doc = await upload(c, self.id, 'labs.pdf', new TextEncoder().encode('%PDF-1.4 india'));
 
@@ -101,12 +111,6 @@ describe('data residency cells', () => {
       assert.equal((await other.db.select().from(measurements).where(eq(measurements.profileId, self.id))).length, 0);
     }
     assert.ok(!dirHas(filesRoot.eu, self.id) && !dirHas(filesRoot.default, self.id), 'no file outside the India cell');
-
-    const [entry] = await main.select().from(directory).where(eq(directory.userId, user.id));
-    assert.equal(entry.region, 'in');
-    assert.equal(entry.emailHash, emailHash(secrets.directoryKey, address));
-    assert.match(entry.emailHash, /^[0-9a-f]{64}$/, 'the directory keeps a keyed hash, not the email');
-    assert.equal((await inCell.db.select().from(directory).where(eq(directory.userId, user.id))).length, 0, 'cells keep no directory');
   });
 
   it('never puts an EU account’s data in the India database', async () => {
@@ -138,50 +142,40 @@ describe('data residency cells', () => {
     assert.equal((await usersWithEmail(inCell.db, au.email)).length, 0);
   });
 
-  it('signs in through the directory and routes later requests by the token', async () => {
+  it('signs in with Accounts in the region it names, and routes later requests by the token', async () => {
     const india = await signUp('IN');
     const europe = await signUp('DE');
     for (const p of [india, europe]) {
       const c = client();
-      const info = await c.json<SessionInfo>('POST', '/api/auth/login', { email: p.email.toUpperCase(), password: 'correct horse battery' });
+      assert.equal((await c.signIn(p.email, { region: p.user.region })).pathname, '/app');
+      const info = await c.json<SessionInfo>('GET', '/api/auth/me');
       assert.equal(info.account.id, p.user.id);
-      assert.ok(c.cookie.startsWith(`lp_session=${p.user.region}.`));
+      assert.ok(sessionToken(c).startsWith(`${p.user.region}.`));
       const records = await c.json<{ measurements: unknown[] }>('GET', `/api/profiles/${p.self.id}/records`);
       assert.deepEqual(records.measurements, []);
     }
     // A token is only valid in its own cell: the same secret with another region, or none, finds nothing.
-    const token = india.c.cookie.replace(/^lp_session=in\./, '');
+    const token = sessionToken(india.c).replace(/^in\./, '');
     for (const forged of [`eu.${token}`, `global.${token}`, token, `xx.${token}`]) {
       const res = await app.request('/api/auth/me', { headers: { cookie: `lp_session=${forged}` } });
       assert.equal(await res.json(), null, forged.slice(0, 8));
     }
   });
 
-  it('finds accounts the directory does not know yet, and adds them', async () => {
+  it('keeps one LotusPond account to one Health account, in the cell that holds it', async () => {
     const p = await signUp('IN');
-    await main.delete(directory).where(eq(directory.userId, p.user.id));
-    await client().json('POST', '/api/auth/login', { email: p.email, password: 'correct horse battery' });
-    const [entry] = await main.select().from(directory).where(eq(directory.userId, p.user.id));
-    assert.equal(entry?.region, 'in');
-    const again = await client().error('POST', '/api/auth/register', registration(p.email, 'IN'));
-    assert.equal(again.code, 'email_taken');
-  });
-
-  it('keeps one email to one account across cells', async () => {
-    const p = await signUp('IN');
-    const res = await client().error('POST', '/api/auth/register', registration(p.email, 'FR'));
-    assert.equal(res.status, 409);
-    assert.equal((await usersWithEmail(euCell.db, p.email)).length, 0);
+    // Accounts keeps one account per email, and Health finds it by its subject in whichever cell holds it.
+    const c = client();
+    assert.equal((await c.signIn(p.email, { region: 'eu' })).pathname, '/app');
+    assert.equal((await c.json<SessionInfo>('GET', '/api/auth/me')).account.id, p.user.id);
+    assert.equal((await usersWithEmail(euCell.db, p.email)).length, 0, 'nothing is made in Europe');
   });
 
   it('refuses sign-up for a region this server does not serve', async () => {
     const address = email('us');
-    const res = await client().error('POST', '/api/auth/register', registration(address, 'US'));
-    assert.equal(res.status, 403);
-    assert.equal(res.code, 'region_not_served');
-    assert.match(res.message, /servers in the United States/);
+    const to = await client().signIn(address, { region: 'us' });
+    assert.equal(to.searchParams.get('accounts_error'), 'wrong_region');
     for (const cell of [inCell, euCell, globalCell]) assert.equal((await usersWithEmail(cell.db, address)).length, 0);
-    assert.equal((await main.select().from(directory).where(eq(directory.emailHash, emailHash(secrets.directoryKey, address)))).length, 0);
   });
 
   it('describes the service', async () => {
@@ -208,17 +202,17 @@ describe('data residency cells', () => {
 describe('sign-up rules', () => {
   it('refuses countries where LotusPond is not available', async () => {
     for (const country of ['AE', 'SA', 'CN', 'RU']) {
-      const res = await client().error('POST', '/api/auth/register', registration(email('x'), country));
+      const res = await refused({ country }, 'global');
       assert.equal(res.status, 403, country);
       assert.equal(res.code, 'country_unavailable');
     }
-    const uae = await client().error('POST', '/api/auth/register', registration(email('x'), 'AE'));
+    const uae = await refused({ country: 'AE' }, 'global');
     assert.match(uae.message, /stored inside the UAE/);
   });
 
   it('refuses people under the minimum age and points to family profiles', async () => {
     const address = email('young');
-    const res = await client().error('POST', '/api/auth/register', registration(address, 'IN', { ageConfirmed: false }));
+    const res = await refused({ email: address, country: 'IN', ageConfirmed: false }, 'in');
     assert.equal(res.status, 400);
     assert.equal(res.code, 'under_age');
     assert.match(res.message, /18 or older/);
@@ -228,7 +222,7 @@ describe('sign-up rules', () => {
 
   it('requires a country, the required consents, and cross-border consent where records go abroad', async () => {
     const base = registration(email('c'), 'GB');
-    const cases: [object, string][] = [
+    const cases: [Partial<RegisterInput>, string][] = [
       [{ ...base, country: '' }, 'country_required'],
       [{ ...base, country: 'ZZ' }, 'country_required'],
       [{ ...base, consents: { ...base.consents, termsAndPrivacy: false } }, 'consent_required'],
@@ -236,12 +230,14 @@ describe('sign-up rules', () => {
       [{ ...base, consents: { ...base.consents, crossBorder: false } }, 'consent_required'],
     ];
     for (const [body, code] of cases) {
-      const res = await client().error('POST', '/api/auth/register', body);
+      const res = await refused(body);
       assert.equal(res.status, 400, JSON.stringify(body));
       assert.equal(res.code, code);
     }
-    const { country: _c, ...noCountry } = base;
-    assert.equal((await client().error('POST', '/api/auth/register', noCountry)).status, 400);
+    const { country: _c, email: _e, password: _p, ...noCountry } = base;
+    const c = client();
+    await c.signIn(email('nocountry'), { region: 'eu' });
+    assert.equal((await c.error('POST', '/api/auth/accounts/complete', noCountry)).status, 400);
     // India stores records in India, so no cross-border consent is needed or recorded.
     const india = await signUp('IN', client(), { consents: { termsAndPrivacy: true, healthData: true, crossBorder: false, marketing: false } });
     const list = await india.c.json<ConsentRecord[]>('GET', '/api/auth/consents');
@@ -309,17 +305,15 @@ describe('audit log', () => {
     await c.json('DELETE', `/api/profiles/${kid.id}`, undefined, 204);
     await c.json('PATCH', '/api/auth/preferences', { unitSystem: 'si' });
     await c.json('PATCH', '/api/auth/consents', { kind: 'marketing', granted: true });
-    await c.json('POST', '/api/auth/password', { currentPassword: 'correct horse battery', newPassword: 'another long password' }, 204);
     await c.json('DELETE', '/api/auth/sessions', undefined, 204);
     const other = client({ userAgent: ua });
-    assert.equal((await other.call('POST', '/api/auth/login', { email: p.email, password: 'wrong password!!' })).status, 401);
-    await other.json('POST', '/api/auth/login', { email: p.email, password: 'another long password' });
-    await other.json('POST', '/api/auth/logout', undefined, 204);
+    assert.equal((await other.signIn(p.email)).pathname, '/app');
+    await other.json('POST', '/api/auth/logout');
 
     const activity = await c.json<ActivityEvent[]>('GET', '/api/auth/activity');
     const kinds = activity.map(e => e.kind);
     for (const k of ['account_created', 'export', 'records_deleted', 'profile_deleted', 'preferences_changed', 'consent_changed',
-      'password_changed', 'sessions_revoked', 'sign_in_failed', 'sign_in', 'sign_out'] as const) {
+      'sessions_revoked', 'sign_in', 'sign_out'] as const) {
       assert.ok(kinds.includes(k), `${k} recorded`);
     }
     assert.equal(activity[0].kind, 'sign_out', 'newest first');
@@ -337,19 +331,18 @@ describe('audit log', () => {
     assert.equal(rows.filter(r => r.ipHash === created.ipHash).length >= 2, true, 'same address, same hash');
   });
 
-  it('deleting the account removes it from its cell and the directory, keeping only a deletion record', async () => {
+  it('deleting the account removes it from its cell, keeping only a deletion record', async () => {
     const p = await signUp('FR');
     const doc = await upload(p.c, p.self.id, 'x.pdf', new TextEncoder().encode('%PDF'));
     assert.ok(fs.existsSync(path.join(filesRoot.eu, p.self.id, doc.id)));
-    await p.c.json('DELETE', '/api/auth/account', { password: 'correct horse battery' }, 204);
+    await p.c.json('DELETE', '/api/auth/account', {}, 204);
     assert.equal((await usersWithEmail(euCell.db, p.email)).length, 0);
     assert.equal((await euCell.db.select().from(consents).where(eq(consents.userId, p.user.id))).length, 0);
-    assert.equal((await main.select().from(directory).where(eq(directory.userId, p.user.id))).length, 0);
     assert.ok(!dirHas(filesRoot.eu, p.self.id));
     const left = await euCell.db.select().from(auditEvents).where(eq(auditEvents.userId, p.user.id));
     assert.deepEqual(left.map(r => [r.kind, r.ipHash, r.userAgent]), [['account_deleted', null, null]]);
-    assert.equal((await client().error('POST', '/api/auth/login', { email: p.email, password: 'correct horse battery' })).status, 401);
+    assert.equal((await client().signIn(p.email, { region: 'eu' })).pathname, '/signup', 'Health holds no account for that email now');
     // The email is free again.
-    await signUp('FR', client(), { email: p.email } as object);
+    await signUp('FR', client(), { email: p.email });
   });
 });

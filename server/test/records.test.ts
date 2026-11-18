@@ -313,7 +313,7 @@ describe('record agent', { timeout: 180_000 }, () => {
   });
 
   test('in production, typed portal addresses need a browser off this server', async () => {
-    const prod = (env: Record<string, string>) => loadConfig({ NODE_ENV: 'production', TRUST_PROXY: 'true', RECORD_AGENT: 'on', ...env }).records!;
+    const prod = (env: Record<string, string>) => loadConfig({ NODE_ENV: 'production', TRUST_PROXY: 'true', RECORD_AGENT: 'on', ACCOUNTS_ISSUER: 'https://accounts.lotuspond.ai', ACCOUNTS_CLIENT_ID: 'lotuspond-health', ...env }).records!;
     assert.equal(prod({}).typedPortals, false, 'a local browser could be pointed at our own network');
     assert.equal(prod({ RECORD_BROWSER: 'cdp', RECORD_BROWSER_CDP_URL: 'wss://connect.example.com/?apiKey=k' }).typedPortals, true);
     const base = loadConfig({ NODE_ENV: 'test', TRUST_PROXY: 'true' }).records!;

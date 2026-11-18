@@ -105,9 +105,11 @@ describe('encrypted file store', () => {
 describe('configuration and secrets', () => {
   const quiet = () => {};
   const key = () => randomBytes(32).toString('base64');
+  /** Every production server signs in through LotusPond Accounts (M9). */
+  const accounts = { ACCOUNTS_ISSUER: 'https://accounts.lotuspond.ai', ACCOUNTS_CLIENT_ID: 'lotuspond-health' };
 
   it('refuses to start in production without the directory secret and a file key', () => {
-    const prod = { NODE_ENV: 'production', DATA_DIR: path.join(tmp, 'prod') };
+    const prod = { NODE_ENV: 'production', DATA_DIR: path.join(tmp, 'prod'), ...accounts };
     assert.throws(() => resolveSecrets(loadConfig(prod), { warn: quiet }), /DIRECTORY_SECRET is required in production/);
     const withDir = { ...prod, DIRECTORY_SECRET: key() };
     assert.throws(() => resolveSecrets(loadConfig(withDir), { warn: quiet }), /FILE_ENCRYPTION_KEY is required in production/);
@@ -128,14 +130,14 @@ describe('configuration and secrets', () => {
     assert.deepEqual(second.directoryKey, first.directoryKey, 'same secret on the next start');
     assert.deepEqual(second.fileKeys?.default?.current, first.fileKeys?.default?.current);
     assert.notDeepEqual(first.directoryKey, first.auditKey, 'separate keys for the directory and the audit log');
-    const local = resolveSecrets(loadConfig({ NODE_ENV: 'production', LOCAL_SECRETS: 'true', DATA_DIR: dataDir }), { warn: quiet });
+    const local = resolveSecrets(loadConfig({ NODE_ENV: 'production', LOCAL_SECRETS: 'true', HOST: '127.0.0.1', DATA_DIR: dataDir }), { warn: quiet });
     assert.deepEqual(local.directoryKey, first.directoryKey, 'npm run local reuses them');
   });
 
   it('gives a cell with its own storage its own key, still reading the shared one', () => {
     const shared = key(), india = key();
     const s = resolveSecrets(loadConfig({
-      NODE_ENV: 'production', DIRECTORY_SECRET: key(), FILE_ENCRYPTION_KEY: shared,
+      NODE_ENV: 'production', ...accounts, DIRECTORY_SECRET: key(), FILE_ENCRYPTION_KEY: shared,
       SERVED_REGIONS: 'in,global', CELL_IN_DATABASE_URL: 'postgres://u:p@db-in:5432/lp', CELL_IN_FILE_ENCRYPTION_KEY: india,
     }), { warn: quiet });
     assert.equal(s.fileKeys?.in?.current.toString('base64'), india);

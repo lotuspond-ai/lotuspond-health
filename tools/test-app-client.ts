@@ -30,7 +30,6 @@ import { parseJsonText } from '../src/lib/parse/json.ts';
 
 const ORIGIN = 'capacitor://localhost';
 const API = 'https://health.lotuspond.test';
-const OTHER = 'https://in.health.lotuspond.test';
 const migrations = fileURLToPath(new URL('../server/drizzle', import.meta.url));
 let database: Database;
 let app: Hono<AppEnv>;
@@ -104,6 +103,27 @@ beforeEach(() => { sent = []; intercept = null; });
 
 const email = () => `client${++n}.${run}@example.com`;
 
+/** Sign up in the app the only way there is (M9): the system browser at the stand-in Accounts, then Health's questions. */
+async function signUpInApp(c: ReturnType<typeof client>, address = email()) {
+  const pkce = await createPkce();
+  const back = readAppReturn(await systemBrowser(await c.backend.accountsAppStartUrl('signup', pkce.challenge), { email: address }));
+  assert.ok(back && 'code' in back);
+  const r = await c.backend.accountsAppExchange(back.code, pkce.verifier);
+  assert.ok('pending' in r, 'someone new');
+  const { email: _e, password: _p, ...answers } = registration('unused@example.com');
+  return c.backend.completeAccountsSignUp(answers);
+}
+
+/** Sign in again in the app: the system browser, the one-time code, a token session. */
+async function signInInApp(c: ReturnType<typeof client>, address: string) {
+  const pkce = await createPkce();
+  const back = readAppReturn(await systemBrowser(await c.backend.accountsAppStartUrl('login', pkce.challenge), { email: address }));
+  assert.ok(back && 'code' in back);
+  const r = await c.backend.accountsAppExchange(back.code, pkce.verifier);
+  assert.ok('session' in r);
+  return r.session;
+}
+
 describe('app client', () => {
   it('starts signed out without calling the server', async () => {
     const { backend } = client();
@@ -112,9 +132,10 @@ describe('app client', () => {
   });
 
   it('signs up with a token, keeps it, and uses it for every request', async () => {
-    const { backend, store } = client();
+    const c = client();
+    const { backend, store } = c;
     await backend.service();
-    const info = await backend.register(registration(email()));
+    const info = await signUpInApp(c);
     assert.ok(info.account.id && info.profiles.length >= 1);
     assert.ok(!('token' in info), 'the token is not handed to the interface');
     assert.ok(store.value?.token && store.value.origin === API);
@@ -125,8 +146,9 @@ describe('app client', () => {
   });
 
   it('uploads, fetches the original and the export with the token; offers no plain links', async () => {
-    const { backend } = client();
-    const info = await backend.register(registration(email()));
+    const c = client();
+    const { backend } = c;
+    const info = await signUpInApp(c);
     const pid = info.profiles[0].id;
     const bytes = new TextEncoder().encode('Hemoglobin,13.5,g/dL\n');
     const doc = await backend.uploadDocument(pid, new Blob([bytes], { type: 'text/csv' }), 'report.csv', 'report');
@@ -141,7 +163,7 @@ describe('app client', () => {
   it('stays signed in across a restart and signs out cleanly', async () => {
     const first = client();
     const address = email();
-    await first.backend.register(registration(address));
+    await signUpInApp(first, address);
     const again = client(first.store); // a new launch reading the same Keychain entry
     assert.ok((await again.backend.me())?.account);
     await again.backend.logout();
@@ -149,7 +171,7 @@ describe('app client', () => {
     sent = [];
     assert.equal(await again.backend.me(), null);
     assert.equal(sent.length, 0, 'no request once the token is gone');
-    const info = await again.backend.login({ email: address, password: registration(address).password });
+    const info = await signInInApp(again, address);
     assert.ok(info.account && first.store.value?.token);
   });
 
@@ -162,8 +184,9 @@ describe('app client', () => {
   });
 
   it('a session ended elsewhere signs the app out', async () => {
-    const { backend, store } = client();
-    const info = await backend.register(registration(email()));
+    const c = client();
+    const { backend, store } = c;
+    const info = await signUpInApp(c);
     const elsewhere = client(memoryStore({ ...store.value! }));
     await elsewhere.backend.logout(); // revokes the same token
     let ended = 0;
@@ -188,31 +211,6 @@ describe('app client', () => {
     }
     const raster = (await client().backend.publicConfig()).map;
     assert.ok(raster?.type === 'raster' && raster.tiles.every(t => t.startsWith('https://') && t.includes('{z}')), 'absolute tile templates are left alone');
-  });
-
-  it('follows wrong_region to the host that holds the account, and keeps using it', async () => {
-    const { backend, store } = client();
-    const address = email();
-    await backend.register(registration(address));
-    await backend.logout();
-    // The default host does not hold the account: it answers with the host that does. Requests to OTHER reach
-    // the same server here (its records are what that host would hold).
-    intercept = url => url.startsWith(`${API}/api/auth/login`)
-      ? Response.json({ error: { code: 'wrong_region', message: 'Sign in through LotusPond Health for India.', region: 'in', apiOrigin: OTHER } },
-        { status: 403, headers: { 'access-control-allow-origin': ORIGIN } })
-      : null;
-    const realRequest = app.request.bind(app);
-    const seen: string[] = [];
-    app.request = ((u: string, i?: RequestInit) => { seen.push(String(u)); return realRequest(String(u).replace(OTHER, API), i); }) as typeof app.request;
-    try {
-      const info = await backend.login({ email: address, password: registration(address).password });
-      assert.ok(info.account);
-      assert.equal(store.value?.origin, OTHER);
-      await backend.me();
-      assert.ok(seen.some(u => u.startsWith(`${OTHER}/api/auth/me`)), 'later requests go to the account\'s host');
-    } finally {
-      app.request = realRequest;
-    }
   });
 });
 
@@ -308,8 +306,9 @@ describe('app client: sign-in with LotusPond Accounts', () => {
   });
 
   it('a sign-out address on another host is not opened', async () => {
-    const { backend } = client();
-    await backend.register(registration(email()));
+    const c = client();
+    const { backend } = c;
+    await signUpInApp(c);
     intercept = (url) => url === `${API}/api/auth/logout`
       ? Response.json({ accountsSignOut: 'https://evil.example/api/auth/accounts/sign-out?ticket=x' }, { headers: { 'access-control-allow-origin': ORIGIN } })
       : null;
@@ -354,7 +353,7 @@ describe('app client: lab booking', () => {
   let labs: ReturnType<typeof createLabs>;
   before(() => {
     plain = app;
-    const config = loadConfig({ NODE_ENV: 'test', TRUST_PROXY: 'true' });
+    const config = loadConfig({ NODE_ENV: 'test', TRUST_PROXY: 'true', ACCOUNTS_ISSUER: 'fake' });
     const files = new DiskFileStore(filesDir);
     const cells = singleCell(database.db, files, config.servedRegions);
     const secrets = ephemeralSecrets();
@@ -366,8 +365,9 @@ describe('app client: lab booking', () => {
   after(() => { app = plain; });
 
   it('books across sites with an idempotency key, follows the order and saves the results into the profile', async () => {
-    const { backend } = client();
-    const info = await backend.register(registration(email()));
+    const c = client();
+    const { backend } = c;
+    const info = await signUpInApp(c);
     const pid = info.profiles[0].id;
     const catalog = await backend.labCatalog('560034');
     assert.ok(catalog.items.some(i => i.code === 'FL_ESSENTIAL'));

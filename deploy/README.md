@@ -42,6 +42,7 @@ Then edit `deploy/.env`:
 
 - `ACME_EMAIL`: where Let's Encrypt sends certificate notices.
 - `SERVED_REGIONS`: from the table above.
+- `ACCOUNTS_ISSUER` and `ACCOUNTS_CLIENT_ID`: LotusPond Accounts, the only way to sign in ([identity.md](../docs/identity.md#built-so-far)). The server does not start without them.
 - `GRIEVANCE_CONTACT`: required for India by the DPDP Act. Also set `DPO_CONTACT`.
 - `GEO_CONTACT_EMAIL`: OpenStreetMap's place search asks apps for a contact address.
 

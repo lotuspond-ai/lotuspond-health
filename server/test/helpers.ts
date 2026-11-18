@@ -41,20 +41,25 @@ export function makeClient(app: Hono<AppEnv>, opts: { ip?: string; userAgent?: s
     assert.equal(res.status, expect, `${method} ${url} → ${res.status} ${text}`);
     return (text ? JSON.parse(text) : null) as T;
   };
-  /** Through the stand-in Accounts to Health's own sign-up questions; answers as POST /api/auth/accounts/complete does. */
-  async function signUpCall(body: RegisterInput, who: { region?: string; verified?: boolean } = {}) {
-    const start = await call('GET', '/api/auth/accounts/start?intent=signup');
+  /** Start, the stand-in Accounts page, and Health's callback: where Health sends the browser next. */
+  async function throughAccounts(email: string, intent: 'signup' | 'login', who: { region?: string; verified?: boolean } = {}) {
+    const start = await call('GET', `/api/auth/accounts/start?intent=${intent}`);
     assert.equal(start.status, 302, 'Accounts sign-in is on (ACCOUNTS_ISSUER=fake)');
     const authorize = new URL(start.headers.get('location')!, 'http://localhost');
     const form = new URLSearchParams();
     for (const k of ['client_id', 'redirect_uri', 'state', 'nonce', 'code_challenge']) form.set(k, authorize.searchParams.get(k)!);
-    form.set('email', body.email);
+    form.set('email', email);
     if (who.verified !== false) form.set('email_verified', 'true');
-    form.set('region', who.region ?? regionOf(body.country));
+    form.set('region', who.region ?? 'in');
     const issued = await call('POST', authorize.pathname, form);
     assert.equal(issued.status, 302, await issued.clone().text());
     const back = await call('GET', issued.headers.get('location')!);
     assert.equal(back.status, 302, await back.clone().text());
+    return new URL(back.headers.get('location')!, 'http://localhost');
+  }
+  /** Through the stand-in Accounts to Health's own sign-up questions; answers as POST /api/auth/accounts/complete does. */
+  async function signUpCall(body: RegisterInput, who: { region?: string; verified?: boolean } = {}) {
+    await throughAccounts(body.email, 'signup', { ...who, region: who.region ?? regionOf(body.country) });
     const { email: _email, password: _password, ...answers } = body;
     return call('POST', '/api/auth/accounts/complete', answers);
   }
@@ -74,6 +79,8 @@ export function makeClient(app: Hono<AppEnv>, opts: { ip?: string; userAgent?: s
       return { status: res.status, code: data?.error?.code, message: data?.error?.message ?? '' };
     },
     signUpCall,
+    /** Sign in with Accounts: where Health sends the browser (/app for an account it holds, /signup for someone new). */
+    signIn: (email: string, who: { region?: string } = {}) => throughAccounts(email, 'login', who),
     /** Sign up through Accounts and expect it to work: the new session's SessionInfo. */
     signUp: async <T = SessionInfo>(body: RegisterInput, who: { region?: string } = {}): Promise<T> => {
       const res = await signUpCall(body, who);

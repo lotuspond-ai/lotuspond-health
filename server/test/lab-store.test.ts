@@ -18,7 +18,7 @@ const ids = { user: randomUUID(), profile: randomUUID(), otherProfile: randomUUI
 before(async () => {
   database = await openDatabase({ url: process.env.TEST_DATABASE_URL });
   await database.migrate(migrations);
-  await database.db.insert(users).values({ id: ids.user, email: `lab-store-${ids.user}@example.com`, passwordHash: 'x' });
+  await database.db.insert(users).values({ id: ids.user, email: `lab-store-${ids.user}@example.com` });
   await database.db.insert(profiles).values([
     { id: ids.profile, userId: ids.user, displayName: 'Asha' },
     { id: ids.otherProfile, userId: ids.user, displayName: 'Ravi', relationship: 'partner' },

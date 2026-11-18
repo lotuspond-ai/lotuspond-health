@@ -1,5 +1,8 @@
 # Production-style stack: PostgreSQL plus the LotusPond app on http://localhost:8787.
-#   POSTGRES_PASSWORD=choose-one DIRECTORY_SECRET=$(openssl rand -base64 32) FILE_ENCRYPTION_KEY=$(openssl rand -base64 32) docker compose up --build
+#   POSTGRES_PASSWORD=choose-one DIRECTORY_SECRET=$(openssl rand -base64 32) FILE_ENCRYPTION_KEY=$(openssl rand -base64 32) \
+#   ACCOUNTS_ISSUER=https://accounts.example ACCOUNTS_CLIENT_ID=lotuspond-health docker compose up --build
+# People sign in with LotusPond Accounts, the only way in (docs/identity.md): ACCOUNTS_ISSUER names it. To try
+# Health on this computer without one, use `npm run local`, which signs in with the stand-in.
 # Keep the two secrets (for example in a .env file next to this one): the same values are needed on every start.
 # Put it behind HTTPS (a reverse proxy) for real use and set COOKIE_SECURE=true and TRUST_PROXY=true.
 services:
@@ -27,6 +30,9 @@ services:
       FILE_ENCRYPTION_KEY: ${FILE_ENCRYPTION_KEY:?Set FILE_ENCRYPTION_KEY (openssl rand -base64 32)}
       GRIEVANCE_CONTACT: ${GRIEVANCE_CONTACT:-}
       DPO_CONTACT: ${DPO_CONTACT:-}
+      ACCOUNTS_ISSUER: ${ACCOUNTS_ISSUER:?Set ACCOUNTS_ISSUER (the LotusPond Accounts issuer URL)}
+      ACCOUNTS_CLIENT_ID: ${ACCOUNTS_CLIENT_ID:-lotuspond-health}
+      ACCOUNTS_CLIENT_SECRET: ${ACCOUNTS_CLIENT_SECRET:-}
     ports:
       - "8787:8787"
     volumes:

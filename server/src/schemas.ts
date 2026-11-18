@@ -19,10 +19,11 @@ export const NewPassword = z.string()
   .min(LIMITS.passwordMin, `Use at least ${LIMITS.passwordMin} characters.`)
   .max(LIMITS.passwordMax, `Use at most ${LIMITS.passwordMax} characters.`);
 
-/** Sign-up. Country, age and consent rules are checked by signUpProblem() in shared/regions.ts. */
-export const RegisterBody = z.object({
-  email: Email,
-  password: NewPassword,
+/**
+ * Finishing sign-up after LotusPond Accounts: Health's own questions. Accounts holds the email and the password.
+ * Country, age and consent rules are checked by signUpProblem() in shared/regions.ts.
+ */
+export const AccountsCompleteBody = z.object({
   displayName: z.string().trim().min(1, 'Enter your name.').max(80),
   country: z.string({ error: 'Choose the country you live in.' }).trim().toUpperCase().max(2, 'Choose the country you live in.'),
   ageConfirmed: z.boolean({ error: 'Confirm your age.' }),
@@ -32,10 +33,6 @@ export const RegisterBody = z.object({
     crossBorder: z.boolean().default(false),
     marketing: z.boolean().default(false),
   }, { error: 'Answer the consent questions.' }),
-});
-
-/** Finishing sign-up after LotusPond Accounts: the same questions without the email and password Accounts holds. */
-export const AccountsCompleteBody = RegisterBody.omit({ email: true, password: true }).extend({
   /** The apps only: the token /api/auth/accounts/app-exchange gave for a sign-up in progress. */
   pendingToken: z.string().max(4000).optional(),
 });
@@ -53,18 +50,6 @@ export const ConsentPatchBody = z.object({
   granted: z.boolean(),
 });
 
-export const LoginBody = z.object({
-  email: z.string().trim().toLowerCase().max(254),
-  password: z.string().max(LIMITS.passwordMax),
-});
-
-export const ChangePasswordBody = z.object({
-  currentPassword: z.string().max(LIMITS.passwordMax),
-  newPassword: NewPassword,
-});
-
-/** The password, or nothing for an account that signs in only through LotusPond Accounts (it needs a recent sign-in instead). */
-export const DeleteAccountBody = z.object({ password: z.string().max(LIMITS.passwordMax).default('') });
 
 /* ---------------- profiles ---------------- */
 

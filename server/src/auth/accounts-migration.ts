@@ -1,48 +1,19 @@
 // Moving account identity into LotusPond Accounts (docs/identity.md, "Moving the directory into Accounts").
 //
-//   exportAccounts  Health's accounts for Accounts to import: id, email, the Argon2id hash as it is (Accounts keeps
-//                   them unchanged), region and country. Personal data and password hashes: the file is written
-//                   only by the accounts:export command, readable by its owner only, and is to be deleted once
-//                   imported.
-//   linkAccounts    Accounts' answer, which Accounts subject (`sub`) each Health account became: linked in one go, so
-//                   no one depends on Health's email directory to be found at their first sign-in.
-import { and, eq, gte, gt, isNotNull, isNull } from 'drizzle-orm';
+//   linkAccounts  Accounts' answer to its import, which Accounts subject (`sub`) each Health account became: linked
+//                 in one go, so no one had to be found by email at their first sign-in.
+//   readiness     who is active and how they signed in: Health password sessions from before M9, or Accounts.
+//
+// The export for Accounts' import, and the M9 gate (accounts:cleanup-check), read Health's password hashes. They
+// went with them in M9.
+import { eq, gte } from 'drizzle-orm';
 import { sessions, users } from '../db/schema.ts';
 import type { Cell } from '../cells.ts';
 import { recordEvent } from '../compliance/audit.ts';
 import { isUniqueViolation } from '../routes/auth.ts';
 
-/** One line of the export (JSON Lines). Field names in snake_case, as a file for another service. */
-export interface ExportedAccount {
-  health_user_id: string;
-  email: string;
-  /** PHC string ($argon2id$v=19$m=19456,t=2,p=1$…), or null for an account that already signs in only with Accounts. */
-  password_hash: string | null;
-  region: string;
-  country: string | null;
-  created_at: string;
-  /** Already linked to this Accounts subject (it signed in with Accounts before the import). */
-  accounts_subject: string | null;
-}
-
 /** One line of Accounts' answer. */
 export interface AccountLink { health_user_id: string; sub: string }
-
-export async function exportAccounts(cells: Cell[], write: (line: string) => void): Promise<number> {
-  let n = 0;
-  for (const cell of cells) {
-    const rows = await cell.db.select().from(users);
-    for (const u of rows) {
-      const line: ExportedAccount = {
-        health_user_id: u.id, email: u.email, password_hash: u.passwordHash, region: u.region, country: u.country,
-        created_at: u.createdAt.toISOString(), accounts_subject: u.accountsSubject,
-      };
-      write(JSON.stringify(line));
-      n++;
-    }
-  }
-  return n;
-}
 
 export interface LinkReport {
   linked: number;
@@ -148,63 +119,3 @@ export function formatReadiness(r: Readiness): string {
   ].join('\n');
 }
 
-/**
- * The gate for dropping Health's passwords and email directory (build plan M9), on one host: it reads this host's
- * settings and database and prints counts only. M9 removes the way back to Health passwords, so it waits until no one
- * has signed in with a Health password for one whole session lifetime. Sessions slide (each use extends them), so a
- * password session still in use is not a blocker: it keeps working after M9, which never reads the password hash
- * of a signed-in person, and its person signs in with Accounts once it ends.
- */
-export interface CleanupCheck {
-  /** ACCOUNTS_ISSUER is set and PASSWORD_SIGN_IN is off on this host. */
-  passwordsOff: boolean;
-  /** One session lifetime, in days (SESSION_DAYS). */
-  days: number;
-  /** Password sign-ins (sessions not made through Accounts) started within it. Must be 0. */
-  recentPasswordSignIns: number;
-  /** Password sessions still alive, however old, and how many of their people never signed in with Accounts. */
-  livePasswordSessions: number;
-  livePasswordPeopleNotMoved: number;
-  /** Accounts with a password and no Accounts link: not in the import. After M9 they sign up at Accounts with the same email. */
-  passwordNotLinked: number;
-  ready: boolean;
-}
-
-export async function cleanupCheck(
-  cells: Cell[], settings: { accountsOn: boolean; passwordSignIn: boolean; sessionTtlMs: number }, now = new Date(),
-): Promise<CleanupCheck> {
-  const days = Math.round(settings.sessionTtlMs / 86_400_000);
-  const since = new Date(now.getTime() - settings.sessionTtlMs);
-  const r: CleanupCheck = {
-    passwordsOff: settings.accountsOn && !settings.passwordSignIn, days,
-    recentPasswordSignIns: 0, livePasswordSessions: 0, livePasswordPeopleNotMoved: 0, passwordNotLinked: 0, ready: false,
-  };
-  for (const cell of cells) {
-    const password = eq(sessions.viaAccounts, false);
-    const recent = await cell.db.select({ id: sessions.id }).from(sessions).where(and(password, gte(sessions.createdAt, since)));
-    r.recentPasswordSignIns += recent.length;
-    const live = await cell.db.select({ userId: sessions.userId, movedAt: users.accountsSignedInAt }).from(sessions)
-      .innerJoin(users, eq(users.id, sessions.userId)).where(and(password, gt(sessions.expiresAt, now)));
-    r.livePasswordSessions += live.length;
-    r.livePasswordPeopleNotMoved += new Set(live.filter(s => !s.movedAt).map(s => s.userId)).size;
-    const unlinked = await cell.db.select({ id: users.id }).from(users).where(and(isNotNull(users.passwordHash), isNull(users.accountsSubject)));
-    r.passwordNotLinked += unlinked.length;
-  }
-  r.ready = r.passwordsOff && r.recentPasswordSignIns === 0;
-  return r;
-}
-
-export function formatCleanupCheck(r: CleanupCheck): string {
-  const lines = [
-    r.passwordsOff
-      ? 'Passwords are off on this host (ACCOUNTS_ISSUER set, PASSWORD_SIGN_IN=off).'
-      : 'NOT READY: passwords are still on here. Turn them off (PASSWORD_SIGN_IN=off, with ACCOUNTS_ISSUER) and wait one session lifetime.',
-    `Password sign-ins in the last ${r.days} days (one session lifetime): ${r.recentPasswordSignIns}.${r.recentPasswordSignIns ? ' NOT READY: wait until there are none.' : ''}`,
-    `Password sessions still in use: ${r.livePasswordSessions}, of ${r.livePasswordPeopleNotMoved} people who never signed in with Accounts. They keep working after M9; each person signs in with Accounts once theirs ends.`,
-    `Accounts with a Health password and no Accounts link: ${r.passwordNotLinked}. After M9 they sign up at Accounts with the same email, and Health joins them by verified email.`,
-    r.ready
-      ? 'Ready for M9 on this host, as far as its database can tell. Also needed: 30 days since M8 on every host, and a backup taken just before.'
-      : 'Not ready for M9 on this host.',
-  ];
-  return lines.join('\n');
-}

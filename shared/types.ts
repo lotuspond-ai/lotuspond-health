@@ -104,8 +104,6 @@ export interface Account {
   region?: 'in' | 'eu' | 'us' | 'global';
   /** How lab values are shown. */
   unitSystem?: 'conventional' | 'si';
-  /** False for an account that signs in only through LotusPond Accounts, which has no LotusPond Health password. */
-  hasPassword?: boolean;
 }
 
 /** Who a profile belongs to, relative to the account holder. */
@@ -273,10 +271,8 @@ export interface ServiceInfo {
   /** API origin for each region, when regions are served by separate regional hosts (REGION_API_ORIGINS). */
   apiOrigins: Partial<Record<'in' | 'eu' | 'us' | 'global', string>>;
   consentVersion: string;
-  /** Sign-in through LotusPond Accounts is on (docs/identity.md). */
+  /** Sign-in through LotusPond Accounts is on: the only way in on a server since M9 (docs/identity.md). */
   accounts?: boolean;
-  /** Health's own email-and-password sign-up and sign-in. False once LotusPond Accounts is the only way in. */
-  passwordSignIn?: boolean;
   contacts: {
     /** Grievance officer (India, DPDP Act). */
     grievance: string | null;

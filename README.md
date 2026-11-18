@@ -69,7 +69,7 @@ Then open **http://localhost:8787**: the public website, with **Create free acco
 
 Delete the data folder to start over with no accounts.
 
-Sign-in through LotusPond Accounts, the one account shared with LotusPond Works, is built on Health's side and off by default. `ACCOUNTS_ISSUER=fake npm run dev` adds **Continue with LotusPond Account** to the sign-in page, backed by a stand-in for Accounts ([docs/identity.md](docs/identity.md#built-so-far)).
+People sign in with LotusPond Accounts, the one account shared with LotusPond Works. Health keeps no passwords. `npm run dev` and `npm run local` use a stand-in for Accounts inside the server, whose page asks only for an email. A production server sets `ACCOUNTS_ISSUER` ([docs/identity.md](docs/identity.md#built-so-far)).
 
 **Things to try**
 
@@ -180,13 +180,13 @@ All routes are under `/api` and use JSON unless noted.
 
 | Method and path | What it does |
 | --- | --- |
-| `POST /auth/register`, `POST /auth/login`, `POST /auth/logout` | Create an account (with its own profile), sign in, sign out |
+| `GET /auth/accounts/start`, `GET /auth/accounts/callback`, `POST /auth/accounts/complete`, `POST /auth/logout` | Sign in or up with LotusPond Accounts, finish sign-up with Health's own questions (creating the own profile), sign out ([docs/identity.md](docs/identity.md#built-so-far)) |
 | `GET /auth/me` | The signed-in account (with country, storage region and unit system) and its profiles, or `null` |
 | `GET /auth/config` | Regions this server holds records for, the consent version and published contacts (no sign-in needed) |
 | `PATCH /auth/preferences` | Change the unit system: `{ "unitSystem": "si" }` or `"conventional"` |
 | `GET`, `PATCH /auth/consents` | Every consent decision, newest first; grant or withdraw the optional ones (`{ kind, granted }`) |
 | `GET /auth/activity` | Recent account events |
-| `POST /auth/password`, `DELETE /auth/sessions`, `DELETE /auth/account` | Change password, sign out other devices, delete the account |
+| `DELETE /auth/sessions`, `DELETE /auth/account` | Sign out other devices; delete the account (within 10 minutes of signing in with Accounts) |
 | `GET`, `POST /profiles` | List or add profiles |
 | `GET`, `PATCH`, `DELETE /profiles/:id` | Read, update or remove a profile |
 | `GET`, `DELETE /profiles/:id/records` | Everything stored for a profile, or delete it all |
@@ -231,8 +231,8 @@ How the apps sign in and which server they call:
 
 The apps load the same build in a native shell, from `capacitor://localhost` (iOS) and `https://localhost` (Android). Every API call is therefore cross-site, and cookies are not sent, so the apps use **token sessions**:
 
-1. **Sign in or sign up** with the header `X-LotusPond-Client: app` on `POST /api/auth/login` or `/api/auth/register`. The response is the usual session (account and profiles) plus `token` and `expiresAt`, and no cookie is set. The token is stored and expires like a browser session; the database holds only its SHA-256. Keep it in the platform's secure storage (Keychain or Keystore).
-2. **Authenticate every request** with `Authorization: Bearer <token>`. This works wherever the session cookie works: profile and record routes, file downloads, exports, `GET /api/auth/me`, `POST /api/auth/logout` (revokes that token), `POST /api/auth/password` and `DELETE /api/auth/sessions` (both keep only the current session).
+1. **Sign in or sign up** with LotusPond Accounts in the system browser, then `POST /api/auth/accounts/app-exchange` with the one-time code and the PKCE verifier ([docs/identity.md](docs/identity.md#built-so-far)). The response is the usual session (account and profiles) plus `token` and `expiresAt`, and no cookie is set. The token is stored and expires like a browser session; the database holds only its SHA-256. Keep it in the platform's secure storage (Keychain or Keystore).
+2. **Authenticate every request** with `Authorization: Bearer <token>`. This works wherever the session cookie works: profile and record routes, file downloads, exports, `GET /api/auth/me`, `POST /api/auth/logout` (revokes that token) and `DELETE /api/auth/sessions` (keeps only the current session).
 3. **Cross-site check and CORS.**
    - Requests with no session cookie and either a bearer token or `X-LotusPond-Client: app` pass the cross-site check; cookie requests are checked exactly as before.
    - CORS is answered only for `APP_CLIENT_ORIGINS` (default `capacitor://localhost,https://localhost`). It allows the `Authorization`, `Content-Type`, `X-LotusPond-Client` and `Range` (map tiles) headers, exposes `Content-Disposition` so downloads keep their names and `Content-Range` and `ETag` for tile range reads, and never sends `Access-Control-Allow-Credentials`.

@@ -27,7 +27,7 @@ import { AccountsClient, LOGOUT_TOKEN_MAX_AGE_S, OidcError, randomToken, type Ac
 import { fakeAccounts, FAKE_ACCOUNTS_PATH, type FakeAccounts } from '../auth/fake-accounts.ts';
 import { createSession, wantsTokenSession, writeSessionCookie } from '../auth/sessions.ts';
 import { eventContext, recordEvent } from '../compliance/audit.ts';
-import { claim, findInCells, locate, release } from '../compliance/directory.ts';
+import { findInCells } from '../compliance/directory.ts';
 import { conflict, HttpError, notFound } from '../lib/errors.ts';
 import { readJson, type AppEnv, type Ctx, type Deps } from '../http.ts';
 import { publicOrigin } from '../agents/oauth.ts';
@@ -237,10 +237,9 @@ a{display:inline-block;margin-top:1rem;padding:.8rem 1.4rem;border-radius:.6rem;
     if (linked) return { kind: 'account', ...linked };
     // A Health account with this email from before Accounts: linked when Accounts has verified the address
     // (settled by the owner, 2026-11-17).
-    // With password sign-in off, Health keeps no email directory: Accounts' region claim has already chosen the host.
-    const found = config.passwordSignIn ? await locate(deps, id.email) : await findInCells(deps, id.email);
+    // Health keeps no email directory (M9): Accounts' region claim has already chosen the host.
+    const found = await findInCells(deps, id.email);
     if (found) {
-      if (!found.cell) return elsewhere(found.region);
       if (found.user.accountsSubject) return { kind: 'error', code: 'already_linked' };
       if (!id.emailVerified) return { kind: 'error', code: 'email_unverified' };
       if (id.region && id.region !== found.region) return { kind: 'error', code: 'wrong_region' };
@@ -409,7 +408,7 @@ a{display:inline-block;margin-top:1rem;padding:.8rem 1.4rem;border-radius:.6rem;
     };
     const startSession = async (cell: Cell, user: UserRow, from: { sid?: string; idToken?: string }) => {
       const session = await signIn(c, cell, user, true, from);
-      return c.json({ ...(await sessionInfo(cell.db, user, true)), ...session });
+      return c.json({ ...(await sessionInfo(cell.db, user)), ...session });
     };
     // The code is marked used only by a host that can use it, so a host that cannot does not burn it for the right
     // one; and always before a session or a sign-up starts, so it works once across every instance and host.
@@ -457,27 +456,23 @@ a{display:inline-block;margin-top:1rem;padding:.8rem 1.4rem;border-radius:.6rem;
     }
     const cell = cells.forRegion(policy.region)!;
     const taken = 'A LotusPond Health account already uses this email. Sign in with LotusPond Accounts to link it.';
-    // The directory keeps one email to one account across cells while Health has its own sign-up. Without it,
-    // Accounts does: one LotusPond account per email, and its subject is unique here (users_accounts_subject_key).
-    const useDirectory = config.passwordSignIn;
-    if (await (useDirectory ? locate(deps, pending.email) : findInCells(deps, pending.email))) throw conflict(taken, 'email_taken');
+    // Accounts keeps one LotusPond account per email, and its subject is unique here (users_accounts_subject_key).
+    if (await findInCells(deps, pending.email)) throw conflict(taken, 'email_taken');
     const userId = crypto.randomUUID();
-    if (useDirectory && !(await claim(deps, pending.email, policy.region, userId))) throw conflict(taken, 'email_taken');
     let user: UserRow;
     try {
       // Made by signing in with Accounts: it has moved from the start (accounts:readiness counts it so).
-      user = await insertAccount(cell, { id: userId, email: pending.email, passwordHash: null, accountsSubject: pending.subject, accountsSignedInAt: new Date() }, policy, body.displayName, body.consents.marketing);
+      user = await insertAccount(cell, { id: userId, email: pending.email, accountsSubject: pending.subject, accountsSignedInAt: new Date() }, policy, body.displayName, body.consents.marketing);
     } catch (e) {
-      await release(deps, userId).catch(() => {});
       if (isUniqueViolation(e)) throw conflict(taken, 'email_taken');
       throw e;
     }
     if (!forApp) drop(c, PENDING_COOKIE);
     await recordEvent(cell.db, eventContext(c, deps), user.id, 'account_created');
     const { token, expiresAt } = await createSession(cell.db, user.region, user.id, config.sessionTtlMs, c.req.header('user-agent'), { sid: pending.sessionId, idToken: pending.idToken });
-    if (forApp) return c.json({ ...(await sessionInfo(cell.db, user, true)), token, expiresAt: expiresAt.toISOString() }, 201);
+    if (forApp) return c.json({ ...(await sessionInfo(cell.db, user)), token, expiresAt: expiresAt.toISOString() }, 201);
     writeSessionCookie(c, token, expiresAt, config.cookieSecure);
-    return c.json(await sessionInfo(cell.db, user, true), 201);
+    return c.json(await sessionInfo(cell.db, user), 201);
   });
 
   return app;
