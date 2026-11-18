@@ -9,7 +9,7 @@ import { mapSettings } from '../facilities/map.ts';
 export function configRoutes(deps: Deps) {
   const app = new Hono<AppEnv>();
   app.get('/', c => {
-    const body: PublicConfig = { map: mapSettings(deps.config), nearbySearch: deps.config.facilities.search, aiExtraction: !!deps.extractor };
+    const body: PublicConfig = { map: mapSettings(deps.config), nearbySearch: deps.config.facilities.search, aiExtraction: !!deps.extractor, labBooking: !!deps.labs };
     c.header('Cache-Control', 'public, max-age=300');
     return c.json(body);
   });

@@ -392,6 +392,8 @@ export interface PublicConfig {
   nearbySearch: boolean;
   /** The optional Claude read of photographed and scanned reports is set up on this server (docs/report-reading.md). */
   aiExtraction?: boolean;
+  /** Lab booking (Find a lab → Home collection) is set up on this server: a lab partner in LAB_PARTNERS. */
+  labBooking?: boolean;
 }
 
 /** What the Claude read returns: the rows as printed, for the app's parser to match. */
