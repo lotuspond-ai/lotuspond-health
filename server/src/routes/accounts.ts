@@ -405,7 +405,7 @@ a{display:inline-block;margin-top:1rem;padding:.8rem 1.4rem;border-radius:.6rem;
     };
     const startSession = async (cell: Cell, user: UserRow, from: { sid?: string; idToken?: string }) => {
       const session = await signIn(c, cell, user, true, from);
-      return c.json({ ...(await sessionInfo(cell.db, user)), ...session });
+      return c.json({ ...(await sessionInfo(cell.db, user, true)), ...session });
     };
     // The code is marked used only by a host that can use it, so a host that cannot does not burn it for the right
     // one; and always before a session or a sign-up starts, so it works once across every instance and host.
@@ -470,9 +470,9 @@ a{display:inline-block;margin-top:1rem;padding:.8rem 1.4rem;border-radius:.6rem;
     if (!forApp) drop(c, PENDING_COOKIE);
     await recordEvent(cell.db, eventContext(c, deps), user.id, 'account_created');
     const { token, expiresAt } = await createSession(cell.db, user.region, user.id, config.sessionTtlMs, c.req.header('user-agent'), { sid: pending.sessionId, idToken: pending.idToken });
-    if (forApp) return c.json({ ...(await sessionInfo(cell.db, user)), token, expiresAt: expiresAt.toISOString() }, 201);
+    if (forApp) return c.json({ ...(await sessionInfo(cell.db, user, true)), token, expiresAt: expiresAt.toISOString() }, 201);
     writeSessionCookie(c, token, expiresAt, config.cookieSecure);
-    return c.json(await sessionInfo(cell.db, user), 201);
+    return c.json(await sessionInfo(cell.db, user, true), 201);
   });
 
   return app;

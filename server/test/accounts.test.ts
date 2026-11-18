@@ -144,7 +144,7 @@ describe('LotusPond Accounts sign-in', () => {
     assert.equal(((await (await again.go('GET', '/api/auth/me')).json()) as SessionInfo).account.email, address);
   });
 
-  test('an existing password account is linked when Accounts has verified the email, and keeps its password', async () => {
+  test('an existing password account is linked when Accounts has verified the email, and keeps its hash for a rollback', async () => {
     const address = email('existing');
     const reg = await browser().json('POST', '/api/auth/register', registration(address));
     assert.equal(reg.status, 201, await reg.clone().text());
@@ -160,8 +160,27 @@ describe('LotusPond Accounts sign-in', () => {
     assert.match(row.accountsSubject ?? '', /^dev\|/);
     const events = await database.db.select().from(auditEvents).where(eq(auditEvents.userId, row.id));
     assert.ok(events.some(e => e.kind === 'accounts_linked'));
+    assert.ok(row.passwordHash, 'the hash is kept, so a rollback brings the password back');
+
+    // While Accounts sign-in is on, the old Health password opens nothing (settled by the owner, 2026-11-18): it may
+    // have been changed or leaked since the person moved.
     const pw = await browser().json('POST', '/api/auth/login', { email: address, password: 'correct horse battery' });
-    assert.equal(pw.status, 200, 'the old password still works while both ways are open');
+    assert.equal(pw.status, 409);
+    assert.equal(((await pw.json()) as { error: { code: string } }).error.code, 'use_accounts');
+    const wrong = await browser().json('POST', '/api/auth/login', { email: address, password: 'not the password at all' });
+    assert.equal(wrong.status, 409, 'the same answer whatever the password, so it reveals nothing');
+    const me = (await (await b.go('GET', '/api/auth/me')).json()) as SessionInfo;
+    assert.equal(me.account.hasPassword, false, 'the Account page offers no Health password');
+    const change = await b.json('POST', '/api/auth/password', { currentPassword: 'correct horse battery', newPassword: 'another long password' });
+    assert.equal(change.status, 409);
+
+    // Rolled back (ACCOUNTS_ISSUER unset), on the same database: the old password works again.
+    const rolledBack = createApp({ db: database.db, files: new DiskFileStore(filesDir), config: loadConfig({ NODE_ENV: 'test', RECORD_AGENT: 'off' }) });
+    const back = await rolledBack.request('http://health.test/api/auth/login', {
+      method: 'POST', headers: { 'content-type': 'application/json', 'sec-fetch-site': 'same-origin', host: 'health.test' },
+      body: JSON.stringify({ email: address, password: 'correct horse battery' }),
+    });
+    assert.equal(back.status, 200, 'after a rollback, the kept hash signs in again');
   });
 
   test('an account made through a company single sign-on is refused', async () => {
