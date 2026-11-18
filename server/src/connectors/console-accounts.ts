@@ -40,6 +40,15 @@ async function displayName(session: ActiveSession): Promise<string> {
   return (self?.name?.trim() || session.user.email).slice(0, 120);
 }
 
+/**
+ * A Health account is being deleted: free its console account, so its organisations are not lost with it. A later
+ * Health account with the same email gets it back as an earlier console account: at once when it signs in through
+ * LotusPond Accounts (a verified email), or with that account's old console password if it had one.
+ */
+export async function unbindConsoleAccount(db: Db, user: UserRow): Promise<void> {
+  await db.update(organisationAccounts).set({ healthUserId: null, healthRegion: null, updatedAt: new Date() }).where(byHealthUser(user));
+}
+
 export async function linkConsoleAccount(db: Db, account: OrganisationAccountRow, user: UserRow): Promise<OrganisationAccountRow> {
   const [row] = await db.update(organisationAccounts).set({ healthUserId: user.id, healthRegion: user.region, updatedAt: new Date() })
     .where(and(eq(organisationAccounts.id, account.id), isNull(organisationAccounts.healthUserId))).returning();
@@ -73,6 +82,9 @@ export async function consoleAccountFor(db: Db, session: ActiveSession): Promise
   const earlier = await unlinkedByEmail(db, user.email);
   if (earlier) {
     if (user.accountsSubject) return linkConsoleAccount(db, earlier, user);
+    if (!earlier.passwordHash) {
+      throw new HttpError(409, LINK_REQUIRED, 'A developer console account with this email belonged to a LotusPond Health account that was deleted. Sign in with your LotusPond Account, which confirms the email is yours, to get its organisations back.');
+    }
     throw new HttpError(409, LINK_REQUIRED, 'You made a developer console account with this email before the console used your LotusPond Health sign-in. Enter its console password once to bring its organisations here.');
   }
   try {

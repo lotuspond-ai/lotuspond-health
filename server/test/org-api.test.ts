@@ -288,6 +288,17 @@ describe('organisation accounts in the developer console', () => {
     assert.equal((await two.error('POST', '/api/console/link', { password: 'old console pass' })).code, 'wrong_password', 'nothing left to join');
   });
 
+  test('deleting the Health account frees its console account, and signing up again with the email gets it back', async () => {
+    const { person, org } = await consoleUser(app, 'leaver@example.com', { name: 'Kept Clinic', region: 'in' });
+    await person.json('DELETE', '/api/auth/account', {}, 204);
+    const [left] = await database.db.select().from(organisationAccounts).where(eq(organisationAccounts.email, 'leaver@example.com'));
+    assert.equal(left.healthUserId, null, 'no longer bound to the deleted Health account');
+    const back = makeClient(app);
+    await back.signUp(registration('leaver@example.com'));
+    const seen = await back.json<{ organisations: { id: string }[] }>('GET', '/api/console');
+    assert.deepEqual(seen.organisations.map(o => o.id), [org!.id], 'the organisations come back with a verified email');
+  });
+
   test('organisations need a name and a served region', async () => {
     const c = await consoleAccount('t1@example.com');
     assert.equal((await c.call('POST', '/api/console/organisations', { name: 'X', region: 'in' })).status, 400);

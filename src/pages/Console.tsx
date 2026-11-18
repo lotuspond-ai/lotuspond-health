@@ -127,6 +127,8 @@ export default function Console() {
   const [section, setSection] = useState<Section | 'new'>('overview');
   const [task, setTask] = useState<string | null>(null);
   const [problem, setProblem] = useState<{ code: string; message: string } | null>(null);
+  /** The chosen organisation could not load: nothing of another organisation is shown or acted on meanwhile. */
+  const [pageError, setPageError] = useState<string | null>(null);
   // The organisation shown, for load() to keep: a ref, so load() stays the same function across renders.
   const currentRef = useRef<string | null>(null);
   useEffect(() => { currentRef.current = current; }, [current]);
@@ -145,8 +147,18 @@ export default function Console() {
     const id = want && o.organisations.some(x => x.id === want) ? want : o.organisations[0]?.id ?? null;
     setCurrent(id);
     currentRef.current = id;
-    if (!id) { setPage(null); return; }
-    try { setPage(await backend.console<OrgPage>('GET', `/organisations/${id}`)); } catch (e) { toast.error(errorMessage(e)); }
+    // Another organisation's page never stays up under this one's name, so nothing is done in the wrong one.
+    setPage(p => (p && p.organisation.id === id ? p : null));
+    setPageError(null);
+    if (!id) return;
+    try {
+      const loaded = await backend.console<OrgPage>('GET', `/organisations/${id}`);
+      if (currentRef.current === id) setPage(loaded);
+    } catch (e) {
+      if (currentRef.current !== id) return;
+      setPage(null);
+      setPageError(errorMessage(e));
+    }
   }, []);
   useEffect(() => { if (!isPreview) void load(); }, [load]);
 
@@ -188,6 +200,7 @@ export default function Console() {
       </nav>
       <div className="stack">
         {section === 'new' ? <CreateOrg regions={overview.regions} onMade={id => { setSection('overview'); void load(id); }} />
+          : pageError ? <section className="panel"><p className="form-error" role="alert">{pageError}</p><div className="panel__actions"><Act className="btn" onClick={() => load()}>Try again</Act></div></section>
           : !page ? <p className="note">Loading…</p>
           : section === 'overview' ? <OverviewSection p={page} ov={overview} go={go} />
           : section === 'keys' ? <KeysSection p={page} ov={overview} reload={load} />
