@@ -26,13 +26,30 @@ function useStatus(): Status {
   return s;
 }
 
-function Card({ title, icon, children, action }: { title: string; icon: ReactNode; children: ReactNode; action?: { label: string; view: View } }) {
+/** One row of the setup summary: what it is, where it stands in words, and the way to it. */
+function Row({ title, icon, status, children, action }: { title: string; icon: ReactNode; status: { label: string; ok: boolean } | null; children: ReactNode; action?: { label: string; view: View } }) {
   const setView = useUI(s => s.setView);
   return (
-    <section className="panel home-card">
-      <h2 className="home-card__title">{icon}<span>{title}</span></h2>
-      <div className="home-card__body">{children}</div>
-      {action && <button className="btn" onClick={() => setView(action.view)}>{action.label}</button>}
+    <li className="home-row">
+      <span className="home-row__icon" aria-hidden="true">{icon}</span>
+      <div className="home-row__text">
+        <h3>{title}{status && <span className={`home-status${status.ok ? ' is-ok' : ''}`}>{status.label}</span>}</h3>
+        {children}
+      </div>
+      {action && <button className="btn btn--small" onClick={() => setView(action.view)}>{action.label}</button>}
+    </li>
+  );
+}
+
+/** The one dark chapter of Home: the same sign-in opens the developer console for healthcare organisations. */
+function ForOrganisations() {
+  const setView = useUI(s => s.setView);
+  return (
+    <section className="home-deep" aria-labelledby="home-deep-h">
+      <p className="home-deep__tag">For healthcare organisations</p>
+      <h2 id="home-deep-h">One API and MCP server for hospital systems.</h2>
+      <p>Make an organisation, create API keys for the sandbox hospital, and approve writes before they reach a hospital system. It opens with this sign-in.</p>
+      <button className="btn btn--on-deep" onClick={() => setView('console')}>Open the developer console</button>
     </section>
   );
 }
@@ -55,29 +72,43 @@ export default function Home() {
   const isNew = !series.length && connections !== null && !connections.length && (!agentServer || agents !== null) && !agents?.length;
   const name = profiles.length > 1 && profile ? `${firstName(profile)}’s records` : 'Your records';
 
+  const steps: { title: string; text: string; done: boolean; actions: ReactNode }[] = [
+    {
+      title: 'Bring in your records', done: series.length > 0 || mine.length > 0,
+      text: 'Connect a lab, hospital, ABHA or a device, and LotusPond fetches your reports. Or upload a PDF or a photo of one.',
+      actions: <><button className="btn btn--primary" onClick={() => setView('sources')}>Connect a source</button><button className="btn" onClick={() => setUploadOpen(true)}>{Icon.upload} Upload</button></>,
+    },
+    {
+      title: 'Use them with your AI', done: sees.length > 0,
+      text: 'Add LotusPond to Claude, ChatGPT or another agent. You choose whose records it sees.',
+      actions: <button className="btn" onClick={() => setView('agents')}>Connect an agent</button>,
+    },
+    {
+      title: 'Book a test at home', done: false,
+      text: 'A lab collects the sample at home, and the results come back into your records for you to check.',
+      actions: <button className="btn" onClick={() => setView('labs')}>Find a lab</button>,
+    },
+  ];
+  const hello = profile ? `Welcome, ${firstName(profile)}` : 'Welcome';
+
   return (
     <main className="page home">
       {isNew ? (
-        <>
-          <div className="page__head"><div><h1>Welcome to LotusPond Health</h1><p>Your family’s health records in one place, ready for any AI agent you choose.</p></div></div>
-          <ol className="home-steps">
-            <li className="panel">
-              <b>1. Bring in your records</b>
-              <p>Connect a lab, hospital, ABHA or a device, and LotusPond fetches your reports. Or upload a PDF or a photo of one.</p>
-              <div className="tools"><button className="btn btn--primary" onClick={() => setView('sources')}>Connect a source</button><button className="btn" onClick={() => setUploadOpen(true)}>{Icon.upload} Upload</button></div>
-            </li>
-            <li className="panel">
-              <b>2. Use them with your AI</b>
-              <p>Add LotusPond to Claude, ChatGPT or another agent. You choose whose records it sees.</p>
-              <div className="tools"><button className="btn" onClick={() => setView('agents')}>Connect an agent</button></div>
-            </li>
-            <li className="panel">
-              <b>3. Book a test at home</b>
-              <p>A lab collects the sample at home, and the results come back into your records for you to check.</p>
-              <div className="tools"><button className="btn" onClick={() => setView('labs')}>Find a lab</button></div>
-            </li>
-          </ol>
-        </>
+        <div className="home-grid">
+          <div>
+            <div className="page__head"><div><h1>{hello}</h1><p>Your family’s health records in one place, ready for any AI agent you choose. Three steps set it up.</p></div></div>
+            <ol className="steps" aria-label="Set up LotusPond Health">
+              {steps.map(st => (
+                <li key={st.title}>
+                  <h3>{st.title} <span className={`home-status${st.done ? ' is-ok' : ''}`}>{st.done ? 'Done' : 'To do'}</span></h3>
+                  <p>{st.text}</p>
+                  {!st.done && <div className="tools">{st.actions}</div>}
+                </li>
+              ))}
+            </ol>
+          </div>
+          <div className="home-side"><ForOrganisations /></div>
+        </div>
       ) : (
         <div className="home-grid">
           <section className="panel home-brief" aria-label={name}>
@@ -90,22 +121,30 @@ export default function Home() {
             )}
           </section>
           <div className="home-side">
-            <Card title="Sources" icon={Icon.file} action={{ label: mine.length ? 'Open Sources' : 'Connect a source', view: 'sources' }}>
-              {connections === null ? <p className="note">Loading…</p>
-                : mine.length ? <p><b>{mine.length}</b> connected{lastCheck ? `, last checked ${formatDate(lastCheck)}` : ''}.</p>
-                : <p className="note">Nothing connected for this profile yet. Connect a lab, hospital, ABHA or a device to bring reports in.</p>}
-              {needSignIn > 0 && <p className="home-card__warn">{needSignIn} need{needSignIn === 1 ? 's' : ''} you to sign in again.</p>}
-            </Card>
-            <Card title="Agents" icon={Icon.agent} action={agentServer ? { label: sees.length ? 'Open Agents' : 'Connect an agent', view: 'agents' } : undefined}>
-              {!agentServer ? <p className="note">Agents connect to the LotusPond server; this preview has none.</p>
-                : agents === null ? <p className="note">Loading…</p>
-                : sees.length ? <p><b>{sees.length}</b> agent{sees.length === 1 ? '' : 's'} can see these records: {sees.slice(0, 3).map(a => a.name).join(', ')}{sees.length > 3 ? '…' : ''}.</p>
-                : <p className="note">No agent can see these records. Add LotusPond to Claude, ChatGPT or another agent.</p>}
-            </Card>
-            <Card title="Labs" icon={Icon.pin} action={{ label: labResults ? 'Check results' : 'Find a lab', view: 'labs' }}>
-              {labResults ? <p><b>{labResults}</b> lab result{labResults === 1 ? '' : 's'} waiting for you to check.</p>
-                : <p className="note">Book a sample collection at home, or find a lab, imaging centre or hospital near you.</p>}
-            </Card>
+            <section aria-labelledby="home-setup-h">
+              <h2 id="home-setup-h" className="home-side__title">{name}</h2>
+              <ul className="home-rows">
+                <Row title="Sources" icon={Icon.file} action={{ label: mine.length ? 'Open' : 'Connect', view: 'sources' }}
+                  status={connections === null ? null : needSignIn > 0 ? { label: 'Sign in again', ok: false } : mine.length ? { label: 'Connected', ok: true } : { label: 'None yet', ok: false }}>
+                  {connections === null ? <p className="note">Loading…</p>
+                    : mine.length ? <p>{mine.length} connected{lastCheck ? `, last checked ${formatDate(lastCheck)}` : ''}.{needSignIn > 0 ? ` ${needSignIn} need${needSignIn === 1 ? 's' : ''} you to sign in again.` : ''}</p>
+                    : <p className="note">Connect a lab, hospital, ABHA or a device to bring reports in.</p>}
+                </Row>
+                <Row title="Agents" icon={Icon.agent} action={agentServer ? { label: sees.length ? 'Open' : 'Connect', view: 'agents' } : undefined}
+                  status={!agentServer || agents === null ? null : sees.length ? { label: `${sees.length} can see`, ok: true } : { label: 'None yet', ok: false }}>
+                  {!agentServer ? <p className="note">Agents connect to the LotusPond server; this preview has none.</p>
+                    : agents === null ? <p className="note">Loading…</p>
+                    : sees.length ? <p>{sees.slice(0, 3).map(a => a.name).join(', ')}{sees.length > 3 ? '…' : ''}.</p>
+                    : <p className="note">No agent can see these records. Add LotusPond to Claude, ChatGPT or another agent.</p>}
+                </Row>
+                <Row title="Labs" icon={Icon.pin} action={{ label: labResults ? 'Check' : 'Find a lab', view: 'labs' }}
+                  status={labResults ? { label: `${labResults} to check`, ok: false } : null}>
+                  {labResults ? <p>{labResults} lab result{labResults === 1 ? '' : 's'} waiting for you to check.</p>
+                    : <p className="note">Book a sample collection at home, or find a lab, imaging centre or hospital near you.</p>}
+                </Row>
+              </ul>
+            </section>
+            <ForOrganisations />
           </div>
         </div>
       )}

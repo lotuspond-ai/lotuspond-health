@@ -443,13 +443,13 @@ function ApprovalsSection({ p, reload, go }: { p: OrgPage; reload: () => Promise
         : 'Uploads and agent tasks wait here until a clinician in your organisation approves them. Members marked as approvers, under Members, decide.'}</p>
       <Table cols={['Write', 'Operation', 'Asked', '']} empty="Nothing is waiting.">
         {pending.map(a => (
-          <tr key={a.id}>
+          <tr key={a.id} className="is-waiting">
             <Cell label="Write"><b>{a.summary}</b></Cell>
             <Cell label="Operation"><code>{a.operation}</code></Cell>
             <Cell label="Asked">{ago(a.createdAt)}</Cell>
             <Cell label="" className="console__end">{o.approves ? (
               <span className="agents__row-actions">
-                <ConfirmButton className="btn btn--small btn--primary" busyText="Sending…"
+                <ConfirmButton className="btn btn--small btn--decide" busyText="Sending…"
                   confirmText={a.operation === 'tasks.run' ? 'Approve? The agent starts in the hospital system now.' : 'Approve? It is sent to the hospital system now.'}
                   onConfirm={async () => { try { await decide(a, 'approve'); } catch (e) { toast.error(errorMessage(e)); } }}>{a.operation === 'tasks.run' ? 'Approve and start' : 'Approve and send'}</ConfirmButton>
                 <Act className="btn btn--small btn--danger-text" onClick={() => decide(a, 'reject')}>Reject</Act>

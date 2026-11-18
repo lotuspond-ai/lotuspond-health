@@ -98,3 +98,31 @@ test('tomato never sits on the sage field, and holds 3:1 where the page marks wi
     ['accent button on a sheet', 'accent', 'surface'],
   ]);
 });
+
+// The signed-in app (src/index.css) keeps its own variable names; each one is held to the design system role it draws.
+const appCss = readFileSync(new URL('src/index.css', root), 'utf8');
+const appRoot = appCss.slice(appCss.indexOf(':root {'), appCss.indexOf('}', appCss.indexOf(':root {')));
+const app = Object.fromEntries([...appRoot.matchAll(/--([\w-]+):\s*([^;]+);/g)].map(([, name, value]) => [name, value.trim().toLowerCase()]));
+const APP_ROLES: Record<string, string> = {
+  mist: 'surface-tint', 'mist-2': 'sage-200', paper: 'surface-raised', well: 'surface', ink: 'ink', reed: 'ink-muted', line: 'line',
+  'line-strong': 'line-strong', pond: 'deep', 'pond-2': 'pine-800', 'on-deep': 'on-deep', 'on-deep-muted': 'on-deep-muted', lily: 'brand-text',
+  'lily-soft': 'positive-tint', positive: 'positive', 'lotus-deep': 'sage-700', accent: 'accent', 'accent-hover': 'accent-hover',
+  'accent-tint': 'accent-tint', 'accent-mark': 'accent-mark',
+};
+
+test('the app\'s colours are the design system\'s roles', () => {
+  for (const [name, role] of Object.entries(APP_ROLES)) assert.equal(app[name], token(role), `--${name} in src/index.css should be ${role}`);
+});
+
+test('the app reads in the brand faces, never the faces it replaced', () => {
+  assert.match(app.serif, /^'platypi variable'/, 'display face');
+  assert.match(app.sans, /^'atkinson hyperlegible next variable'/, 'sans face');
+  for (const old of ['Newsreader', 'Hanken Grotesk']) assert.ok(!appCss.includes(old), `${old} is gone from src/index.css`);
+  const shell = readFileSync(new URL('app.html', root), 'utf8');
+  assert.ok(!shell.includes('fonts.css'), 'app.html no longer loads the old fonts');
+});
+
+test('in the app, the main action is the brand button and tomato is kept for decisions', () => {
+  assert.match(appCss, /\.btn--primary \{ background: var\(--lily\);/, 'main action is sage-700');
+  assert.match(appCss, /\.btn--decide \{ background: var\(--accent\);/, 'tomato fills only the decide button');
+});

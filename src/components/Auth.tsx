@@ -65,12 +65,18 @@ function PondPanel() {
         </ul>
       </div>
       <svg className="auth__pads" viewBox="0 0 600 220" preserveAspectRatio="xMidYMax slice" aria-hidden>
-        <ellipse cx="120" cy="190" rx="150" ry="34" fill="#12353a" />
-        <ellipse cx="430" cy="205" rx="190" ry="40" fill="#0f2f33" />
-        <path d="M95 168c18-6 52-6 78 4-22 12-58 14-78-4z" fill="#2f7d63" opacity=".55" />
-        <path d="M380 190c26-10 70-8 98 4-30 14-72 12-98-4z" fill="#2f7d63" opacity=".45" />
-        <path d="M150 150c6-22 16-34 26-40 8 10 12 24 10 40-12 6-24 6-36 0z" fill="#e2869e" />
-        <path d="M128 156c10-12 24-16 36-14-2 12-10 20-24 22zM198 156c-10-12-24-16-36-14 2 12 10 20 24 22z" fill="#f2b3c4" />
+        {/* One thread: tangled where the records are scattered, one clean line after, ending in the bloom on an off-white disc. */}
+        <path d="M-10 168c40-6 62-40 92-34s16 44-12 46-34-34-4-58 70-4 70 22-30 40-50 26 6-56 44-50c40 6 58 40 110 40s96-30 150-30c32 0 52 10 66 18" fill="none" stroke="#18211b" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+        <rect x="36" y="146" width="40" height="30" rx="4" transform="rotate(-8 56 161)" fill="#f7f5ef" />
+        <rect x="112" y="112" width="34" height="26" rx="4" transform="rotate(6 129 125)" fill="#d5dfca" />
+        <circle cx="300" cy="152" r="5" fill="#f7f5ef" />
+        <circle cx="490" cy="148" r="40" fill="#f7f5ef" />
+        <ellipse cx="490" cy="136" rx="7" ry="13" transform="rotate(0 490 148)" fill="#e8412c" />
+        <ellipse cx="490" cy="136" rx="7" ry="13" transform="rotate(72 490 148)" fill="#e8412c" />
+        <ellipse cx="490" cy="136" rx="7" ry="13" transform="rotate(144 490 148)" fill="#e8412c" />
+        <ellipse cx="490" cy="136" rx="7" ry="13" transform="rotate(216 490 148)" fill="#e8412c" />
+        <ellipse cx="490" cy="136" rx="7" ry="13" transform="rotate(288 490 148)" fill="#e8412c" />
+        <circle cx="490" cy="148" r="5" fill="#18211b" />
       </svg>
     </section>
   );

@@ -37,10 +37,10 @@ export const Icon = {
 export function Logo() {
   return (
     <svg viewBox="0 0 64 64" aria-hidden>
-      <circle cx="32" cy="32" r="30" fill="#0c2528" />
-      <path d="M32 14c5 6 7 12 7 18s-3 12-7 16c-4-4-7-10-7-16s2-12 7-18z" fill="#e2869e" />
-      <path d="M14 30c7 0 12 3 15 8 2 3 3 7 3 10-6 0-12-2-15-7-2-3-3-7-3-11zM50 30c-7 0-12 3-15 8-2 3-3 7-3 10 6 0 12-2 15-7 2-3 3-7 3-11z" fill="#f2b3c4" />
-      <path d="M12 50c6 2 13 3 20 3s14-1 20-3" stroke="#5fbf95" strokeWidth="3" fill="none" strokeLinecap="round" />
+      {/* The bloom: five tomato petals on an off-white disc (design system, Illustration). */}
+      <circle cx="32" cy="32" r="30" fill="#f7f5ef" />
+      <ellipse cx="32" cy="22" rx="6" ry="11" transform="rotate(0 32 32)" fill="#e8412c" /><ellipse cx="32" cy="22" rx="6" ry="11" transform="rotate(72 32 32)" fill="#e8412c" /><ellipse cx="32" cy="22" rx="6" ry="11" transform="rotate(144 32 32)" fill="#e8412c" /><ellipse cx="32" cy="22" rx="6" ry="11" transform="rotate(216 32 32)" fill="#e8412c" /><ellipse cx="32" cy="22" rx="6" ry="11" transform="rotate(288 32 32)" fill="#e8412c" />
+      <circle cx="32" cy="32" r="4" fill="#18211b" />
     </svg>
   );
 }

@@ -9,7 +9,7 @@
   --st-high-soft: var(--pollen-soft);
   --st-low-soft: var(--dusk-soft);
   --st-unknown-soft: var(--mist-2);
-  --st-normal-ink: #1f5a46;
+  --st-normal-ink: #2f5d3a;
   --st-high-ink: #7a5608;
   --st-low-ink: #33449a;
   --st-unknown-ink: var(--ink-2);
@@ -40,7 +40,7 @@
 .ichip--sm { font-size: 12px; padding: 3px 9px; gap: 5px; }
 .ichip--sm svg { width: 13px; height: 13px; }
 .ichip--strong { background: var(--ink); border-color: var(--ink); color: var(--paper); }
-.ichip--strong svg { color: #b9d6d2; }
+.ichip--strong svg { color: #aeb8a6; }
 .page-stats { margin: -4px 0 18px; }
 
 .flags { display: inline-flex; align-items: center; gap: 4px; }
@@ -91,8 +91,8 @@
 .tchart__tip { position: absolute; margin-left: 12px; z-index: 2; background: var(--ink); color: var(--paper); border-radius: 10px; padding: 7px 10px; display: grid; gap: 3px; justify-items: start; font-size: 12px; pointer-events: none; box-shadow: var(--shadow-float); white-space: nowrap; }
 .tchart__tip--left { margin-left: -12px; transform: translateX(-100%); }
 .tchart__tip b { font-size: 15px; font-weight: 600; }
-.tchart__tip b small { color: #b9d6d2; font-weight: 500; font-size: 12px; }
-.tchart__tip > span:not(.schip) { color: #cfe3df; }
+.tchart__tip b small { color: #aeb8a6; font-weight: 500; font-size: 12px; }
+.tchart__tip > span:not(.schip) { color: #d5dfca; }
 
 /* ---------- sparkline ---------- */
 .spark { display: block; flex: none; overflow: visible; }
@@ -196,7 +196,7 @@
 .wl-art__val { fill: var(--line); }
 .wl-art__link { fill: none; stroke: var(--lotus); stroke-width: 2; stroke-linecap: round; }
 .wl-art__pond { fill: var(--pond); }
-.wl-art__body { fill: none; stroke: #9cc0bc; stroke-width: 2; stroke-linejoin: round; }
+.wl-art__body { fill: none; stroke: #aeb8a6; stroke-width: 2; stroke-linejoin: round; }
 .wl-art__pin { stroke: var(--pond); stroke-width: 2; }
 .welcome .wl-steps { list-style: none; padding: 0; margin: 16px 0 20px; display: grid; gap: 8px; color: var(--ink); }
 .welcome .wl-steps li { display: grid; grid-template-columns: 42px minmax(0, 1fr); gap: 12px; align-items: center; margin: 0; background: var(--paper); border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; }
@@ -242,7 +242,7 @@
 .fchip:hover { border-color: var(--reed); }
 .fchip svg { color: var(--reed); margin-left: -2px; }
 .fchip[aria-pressed='true'] { background: var(--ink); color: var(--paper); border-color: var(--ink); }
-.fchip[aria-pressed='true'] svg { color: #b9d6d2; }
+.fchip[aria-pressed='true'] svg { color: #aeb8a6; }
 .fchip__n { min-width: 24px; padding: 2px 7px; border-radius: 999px; background: var(--mist-2); color: var(--ink-2); font-size: 12px; font-weight: 600; text-align: center; }
 .fchip[aria-pressed='true'] .fchip__n { background: #ffffff26; color: var(--paper); }
 .fchip:focus-visible { border-radius: 999px; }
@@ -297,7 +297,7 @@
 .fcard__preview { position: relative; height: 118px; border-radius: 17px 17px 0 0; overflow: hidden; background: var(--mist-2); display: grid; place-items: center; }
 .fcard__preview--scan { background: var(--pond); }
 .fcard__preview img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.fcard__preview .mod-badge { position: absolute; left: 8px; bottom: 8px; font-size: 11px; font-weight: 600; background: #0c2528cc; color: #e6f3f1; padding: 3px 7px 3px 6px; border-radius: 6px; }
+.fcard__preview .mod-badge { position: absolute; left: 8px; bottom: 8px; font-size: 11px; font-weight: 600; background: #18211bcc; color: #f1f0e8; padding: 3px 7px 3px 6px; border-radius: 6px; }
 .fcard__doc { display: grid; justify-items: center; gap: 6px; color: var(--ink-2); }
 .fcard__doc svg { width: 40px; height: 40px; }
 .fcard__doc em { font: normal 700 11px/1 var(--sans); letter-spacing: 0.06em; background: var(--ink); color: var(--paper); padding: 4px 8px; border-radius: 6px; }
@@ -341,15 +341,32 @@
 
 /* ---------- Records switch and Home ---------- */
 .records-switch { justify-self: start; margin: 14px 24px 0; }
-.home-grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(260px, 1fr); gap: 18px; align-items: start; }
+/* Home (src/pages/Home.tsx): the work on the left seven columns, the setup summary and the one dark chapter on the right. */
+.home-grid { display: grid; grid-template-columns: minmax(0, 7fr) minmax(280px, 5fr); gap: 24px 32px; align-items: start; padding-top: 8px; }
 .home-brief { padding: 22px; }
-.home-side { display: grid; gap: 14px; }
-.home-card { display: grid; gap: 10px; }
-.home-card__title { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 17px; }
-.home-card__title svg { width: 18px; height: 18px; color: var(--lotus); }
-.home-card__body p { margin: 0; }
-.home-card__warn { color: var(--lotus); font-weight: 600; margin-top: 6px !important; }
-.home-card > .btn { justify-self: start; }
-.home-steps { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
-.home-steps li { display: grid; gap: 8px; align-content: start; }
-.home-steps p { margin: 0; }
+.home-side { display: grid; gap: 20px; align-content: start; padding-top: 18px; }
+.home-side__title { font-size: 16px; padding-bottom: 8px; border-bottom: 1.5px solid var(--ink); }
+.home-rows { list-style: none; margin: 0; padding: 0; }
+.home-row { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 4px 12px; align-items: start; padding: 14px 0; border-bottom: 1px solid var(--line); }
+.home-row__icon svg { width: 18px; height: 18px; margin-top: 2px; color: var(--lily); }
+.home-row h3 { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 15px; margin-bottom: 2px; }
+.home-row p { margin: 0; }
+.home-row .btn { align-self: center; }
+/* Every status carries a word: a light tint when it is healthy, a solid fill when it waits for someone. */
+.home-status { display: inline-flex; align-items: center; font-size: 12.5px; font-weight: 700; border-radius: 999px; padding: 1px 9px; background: var(--well); color: var(--ink-2); border: 1px solid var(--line); }
+.home-status.is-ok { background: var(--lily-soft); border-color: var(--lily-soft); color: var(--positive); }
+/* Steps (design system): numbered because the order is real; an ink rule above the first, a line between. */
+.steps { list-style: none; margin: 8px 0 0; padding: 0; counter-reset: step; }
+.steps > li { counter-increment: step; display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 6px 12px; padding: 22px 0; border-top: 1px solid var(--line); }
+.steps > li:first-child { border-top: 1.5px solid var(--ink); }
+.steps > li::before { content: counter(step); grid-row: span 3; font: 600 26px/1.18 var(--serif); color: var(--lily); }
+.steps h3 { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 18px; }
+.steps p { margin: 0; color: var(--ink-2); max-width: 34em; }
+.steps .tools { margin-top: 6px; }
+/* Pine: the page's one dark chapter. Its button is off-white with pine text; no tomato. */
+.home-deep { background: var(--pond); color: var(--on-deep); border-radius: 16px; padding: 24px; display: grid; gap: 10px; justify-items: start; }
+.home-deep__tag { color: var(--on-deep-muted); font-size: 13px; font-weight: 700; margin: 0; }
+.home-deep h2 { font: 600 24px/1.15 var(--serif); letter-spacing: -0.01em; color: var(--on-deep); }
+.home-deep p { color: var(--on-deep-muted); margin: 0; }
+.btn--on-deep { background: var(--well); border-color: var(--well); color: var(--ink); margin-top: 4px; }
+.btn--on-deep:hover { background: #ffffff; }

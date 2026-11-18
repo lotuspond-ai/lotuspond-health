@@ -15,7 +15,7 @@ import { isPartner, KIND } from './meta';
 setWorkerUrl(workerUrl);
 let pmtilesReady = false;
 
-const BACKGROUND = '#e6eeeb';
+const BACKGROUND = '#eaf0e3';
 const reducedMotion = () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 function styleFor(settings: MapSettings | null): StyleSpecification | string {
@@ -121,8 +121,8 @@ export default function FacilityMap({ settings, center, radiusKm, facilities, se
     // Markers do not need the style; the radius ring does. Neither waits for tiles, which may never arrive.
     m.once('style.load', () => {
       m.addSource('radius', { type: 'geojson', data: circle(center.lat, center.lon, radiusKm) });
-      m.addLayer({ id: 'radius-fill', type: 'fill', source: 'radius', paint: { 'fill-color': '#2f7d63', 'fill-opacity': 0.05 } });
-      m.addLayer({ id: 'radius-line', type: 'line', source: 'radius', paint: { 'line-color': '#2f7d63', 'line-opacity': 0.45, 'line-width': 1.5, 'line-dasharray': [2, 2] } });
+      m.addLayer({ id: 'radius-fill', type: 'fill', source: 'radius', paint: { 'fill-color': '#55694a', 'fill-opacity': 0.05 } });
+      m.addLayer({ id: 'radius-line', type: 'line', source: 'radius', paint: { 'line-color': '#55694a', 'line-opacity': 0.45, 'line-width': 1.5, 'line-dasharray': [2, 2] } });
       setStyled(true);
     });
     m.on('movestart', e => { if ((e as { originalEvent?: Event }).originalEvent) view.current.userMoved = true; });
