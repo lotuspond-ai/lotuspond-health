@@ -9,6 +9,7 @@ import { useUI } from '../state/ui';
 import { goBack } from '../state/navigation';
 import { isNative, platform } from './platform';
 import { appLock } from './lock';
+import { handleAccountsReturn } from './accounts';
 
 const quiet = (p: Promise<unknown>) => void p.catch(() => {});
 
@@ -26,6 +27,8 @@ export function initNative(): void {
   // (see sessionReady, used by App).
   quiet(App.addListener('pause', () => appLock?.onPause()));
   quiet(App.addListener('resume', () => appLock?.onResume()));
+  // Links that open the app: the sign-in with LotusPond Accounts coming back from the system browser.
+  quiet(App.addListener('appUrlOpen', ({ url }) => { handleAccountsReturn(url); }));
 
   // Status bar icons: dark over the light interface, light over the dark scan viewer and lock screen.
   const dark = () => !!useUI.getState().scanOpen || (appLock?.store.getState().status ?? 'open') !== 'open';

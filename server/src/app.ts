@@ -11,6 +11,8 @@ import { isAppRequest } from './auth/sessions.ts';
 import type { AppEnv } from './http.ts';
 import { completeDeps, type DepsInput } from './cells.ts';
 import { authRoutes } from './routes/auth.ts';
+import { accountsRoutes, accountsRuntime, FAKE_ACCOUNTS_PATH } from './routes/accounts.ts';
+import { appLinkRoutes } from './routes/app-links.ts';
 import { profileRoutes } from './routes/profiles.ts';
 import { facilityRoutes } from './routes/facilities.ts';
 import { geoRoutes } from './routes/geo.ts';
@@ -174,6 +176,17 @@ export function createApp(input: DepsInput, opts: AppOptions = {}): Hono<AppEnv>
   });
 
   app.get('/api/health', c => c.json({ ok: true }));
+  // Sign-in through LotusPond Accounts, when ACCOUNTS_ISSUER is set (docs/identity.md).
+  const accounts = accountsRuntime(deps);
+  if (accounts) app.route('/api/auth/accounts', accountsRoutes(deps, accounts));
+  if (accounts?.fake && config.env !== 'production') {
+    const fake = accounts.fake.app;
+    app.use(`${FAKE_ACCOUNTS_PATH}/*`, async (c, next) => {
+      await next();
+      c.header('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'");
+    });
+    app.route(FAKE_ACCOUNTS_PATH, fake);
+  }
   app.route('/api/auth', authRoutes(deps));
   if (deps.labs) {
     // Before /api/profiles, so lab-order requests are answered here (with the same session and profile checks).
@@ -246,6 +259,8 @@ export function createApp(input: DepsInput, opts: AppOptions = {}): Hono<AppEnv>
   app.route('/v1', organisationRoutes(deps.db, orgs));
   app.use('/oauth/*', bodyLimit({ maxSize: 64 * 1024, onError: c => c.json({ error: 'invalid_request', error_description: 'Request too large.' }, 413) }));
   app.route('/', oauthRoutes(deps, opts.oauth));
+  // Universal links and app links for the apps' sign-in return (docs/identity.md).
+  app.route('/', appLinkRoutes(config));
 
   // Lab partner webhooks: server to server, so outside /api (no browser checks, no CORS).
   if (deps.labs) app.route('/hooks', hookRoutes(deps, deps.labs));

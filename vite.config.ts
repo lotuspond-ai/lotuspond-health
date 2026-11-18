@@ -4,8 +4,10 @@ import { DEFAULT_SITE_URL } from './shared/site.ts'
 import { normalizeSiteUrl, site, siteInputs } from './tools/site/vite-plugin.ts'
 import { ocrAssets } from './tools/ocr-assets.ts'
 
-// In development the API runs on :8787 (npm run dev starts both); the dev server forwards /api to it.
-const api = { '/api': { target: `http://localhost:${process.env.API_PORT ?? 8787}`, changeOrigin: false } }
+// In development the API runs on :8787 (npm run dev starts both); the dev server forwards /api to it, and /oauth
+// (an agent's consent page, which sends people to /login and back), so agent connections can be tried on one origin.
+const apiTarget = { target: `http://localhost:${process.env.API_PORT ?? 8787}`, changeOrigin: false }
+const api = { '/api': apiTarget, '/oauth': apiTarget }
 
 // Two builds:
 // - default: the public site (/, /privacy/, /terms/, /trust/, 404) plus the app shell (app.html, served at /app,

@@ -53,6 +53,29 @@ const Env = z.object({
   LAB_PARTNERS: z.string().optional(),
   LAB_FAKE_STEP_MS: z.coerce.number().int().min(100).max(3_600_000).default(10_000),
   /**
+   * Sign-in through LotusPond Accounts (docs/identity.md): its OpenID Connect issuer URL, or 'fake' for the stand-in
+   * issuer inside this server (development and tests only). Unset keeps Health's own email-and-password sign-in only.
+   */
+  ACCOUNTS_ISSUER: z.string().optional(),
+  ACCOUNTS_CLIENT_ID: z.string().optional(),
+  /** Unset for a public client (PKCE only). */
+  ACCOUNTS_CLIENT_SECRET: z.string().optional(),
+  /**
+   * Health's own email-and-password sign-up and sign-in, and its email directory. 'off' once every account is in
+   * LotusPond Accounts (docs/identity.md, "Moving the directory into Accounts"); needs ACCOUNTS_ISSUER.
+   */
+  PASSWORD_SIGN_IN: z.enum(['on', 'off']).default('on'),
+  /**
+   * Universal links (iOS) and verified app links (Android) for returning a sign-in to the apps: the https origin of
+   * the host the apps claim (shared/identity.ts, APP_LINKS_HOST), which this server must also answer for. Unset: the
+   * apps' private-use scheme only.
+   */
+  APP_LINKS_ORIGIN: z.string().url().optional(),
+  /** Apple Developer team id, for apple-app-site-association (10 characters, e.g. A1B2C3D4E5). */
+  APPLE_TEAM_ID: z.string().regex(/^[A-Z0-9]{10}$/, 'APPLE_TEAM_ID is the 10-character Apple Developer team id.').optional(),
+  /** SHA-256 fingerprints of the Android app's signing certificates, comma-separated (AA:BB:…), for assetlinks.json. */
+  ANDROID_APP_SHA256: z.string().optional(),
+  /**
    * The optional Claude read of photographed and scanned reports (docs/report-reading.md): on when Anthropic
    * credentials are set (ANTHROPIC_API_KEY, read by the SDK), unless AI_EXTRACTION=off.
    */
@@ -189,6 +212,13 @@ const Env = z.object({
   ...Object.assign({}, ...DATA_REGIONS.map(cellEnv)) as Record<string, z.ZodOptional<z.ZodString>>,
 });
 
+export interface AccountsConfig {
+  /** The issuer URL, or 'fake' for the stand-in issuer (auth/fake-accounts.ts). */
+  issuer: string;
+  clientId: string;
+  clientSecret?: string;
+}
+
 export interface FacilityConfig {
   search: boolean;
   provider: 'http' | 'fixture';
@@ -283,6 +313,12 @@ export interface Config {
   facilities: FacilityConfig;
   /** Lab partners switched on (docs/lab-booking-backend.md). */
   labs: { partners: string[]; fakeStepMs: number; orange?: OrangeConfig };
+  /** Sign-in through LotusPond Accounts, when ACCOUNTS_ISSUER is set. */
+  accounts?: AccountsConfig;
+  /** Health's own password sign-up and sign-in, and the email directory they use. False: LotusPond Accounts only. */
+  passwordSignIn: boolean;
+  /** Universal links and app links for the apps (routes/app-links.ts). */
+  appLinks: { origin?: string; appleTeamId?: string; androidSha256: string[] };
   /** The Claude read is on (credentials present and not switched off), and its model. */
   aiExtraction: { enabled: boolean; model: string };
   assistant: { enabled: boolean; model: string };
@@ -438,6 +474,26 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     const digilocker = oauthClient('DIGILOCKER', e.DIGILOCKER_CLIENT_ID, e.DIGILOCKER_CLIENT_SECRET, 'digilocker');
     if (digilocker) records.digilocker = { ...digilocker, apiUrl: e.DIGILOCKER_API_URL.replace(/\/$/, '') };
   }
+  const androidSha256 = list(e.ANDROID_APP_SHA256).map(s => s.toUpperCase());
+  const badPrint = androidSha256.find(s => !/^([0-9A-F]{2}:){31}[0-9A-F]{2}$/.test(s));
+  if (badPrint) throw new Error(`Invalid configuration: ANDROID_APP_SHA256: ${badPrint} is not a SHA-256 fingerprint (32 bytes as AA:BB:…).`);
+  if (e.APP_LINKS_ORIGIN && !e.APP_LINKS_ORIGIN.startsWith('https://')) throw new Error('Invalid configuration: APP_LINKS_ORIGIN must use https.');
+  let accounts: AccountsConfig | undefined;
+  if (e.ACCOUNTS_ISSUER) {
+    if (e.ACCOUNTS_ISSUER === 'fake') {
+      if (e.NODE_ENV === 'production') throw new Error('Invalid configuration: ACCOUNTS_ISSUER=fake is the stand-in sign-in service, for development and tests only.');
+      accounts = { issuer: 'fake', clientId: e.ACCOUNTS_CLIENT_ID ?? 'lotuspond-health' };
+    } else {
+      let url: URL;
+      try { url = new URL(e.ACCOUNTS_ISSUER); } catch { throw new Error('Invalid configuration: ACCOUNTS_ISSUER must be a URL, or fake.'); }
+      if (url.protocol !== 'https:' && !(e.NODE_ENV !== 'production' && url.hostname === 'localhost')) {
+        throw new Error('Invalid configuration: ACCOUNTS_ISSUER must use https.');
+      }
+      if (!e.ACCOUNTS_CLIENT_ID) throw new Error('Invalid configuration: ACCOUNTS_ISSUER needs ACCOUNTS_CLIENT_ID.');
+      accounts = { issuer: e.ACCOUNTS_ISSUER.replace(/\/$/, ''), clientId: e.ACCOUNTS_CLIENT_ID, ...(e.ACCOUNTS_CLIENT_SECRET ? { clientSecret: e.ACCOUNTS_CLIENT_SECRET } : {}) };
+    }
+  }
+  if (e.PASSWORD_SIGN_IN === 'off' && !accounts) throw new Error('Invalid configuration: PASSWORD_SIGN_IN=off needs ACCOUNTS_ISSUER: without passwords, LotusPond Accounts is the only way to sign in.');
   const cellVar = (r: DataRegion, name: string) => (e as unknown as Record<string, string | undefined>)[`CELL_${r.toUpperCase()}_${name}`];
   const servedRegions = parseRegions(e.SERVED_REGIONS);
 
@@ -495,6 +551,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       timeoutMs: e.GEO_TIMEOUT_MS,
     },
     labs: { partners: labPartners, fakeStepMs: e.LAB_FAKE_STEP_MS, ...(orange ? { orange } : {}) },
+    ...(accounts ? { accounts } : {}),
+    passwordSignIn: e.PASSWORD_SIGN_IN === 'on',
+    appLinks: {
+      ...(e.APP_LINKS_ORIGIN ? { origin: new URL(e.APP_LINKS_ORIGIN).origin } : {}),
+      ...(e.APPLE_TEAM_ID ? { appleTeamId: e.APPLE_TEAM_ID } : {}),
+      androidSha256,
+    },
     aiExtraction: { enabled: e.AI_EXTRACTION === 'on' && !!(env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN), model: e.AI_EXTRACTION_MODEL },
     assistant: { enabled: e.ASSISTANT === 'on' && !!(env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN), model: e.ASSISTANT_MODEL },
     records,

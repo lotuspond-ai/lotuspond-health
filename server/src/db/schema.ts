@@ -13,7 +13,10 @@ export const users = pgTable('users', {
   id: uuid('id').primaryKey().defaultRandom(),
   /** Stored lower-cased and trimmed. */
   email: text('email').notNull(),
-  passwordHash: text('password_hash').notNull(),
+  /** Argon2id hash. Null for an account that signs in only through LotusPond Accounts (docs/identity.md). */
+  passwordHash: text('password_hash'),
+  /** The account's subject (`sub`) at LotusPond Accounts, once it has signed in there. */
+  accountsSubject: text('accounts_subject'),
   /** ISO 3166-1 alpha-2 country of residence from sign-up. Null for accounts created before it was asked. */
   country: text('country'),
   /** Data-residency cell that holds this account (shared/regions.ts). */
@@ -23,7 +26,7 @@ export const users = pgTable('users', {
   ageConfirmedAt: timestamp('age_confirmed_at', { withTimezone: true }),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
-}, t => [uniqueIndex('users_email_key').on(t.email)]);
+}, t => [uniqueIndex('users_email_key').on(t.email), uniqueIndex('users_accounts_subject_key').on(t.accountsSubject)]);
 
 export const sessions = pgTable('sessions', {
   /** SHA-256 of the cookie token, so a database leak does not expose live sessions. */
@@ -33,7 +36,11 @@ export const sessions = pgTable('sessions', {
   lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
   expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
   userAgent: text('user_agent'),
-}, t => [index('sessions_user_idx').on(t.userId)]);
+  /** Started by a sign-in with LotusPond Accounts: signing out also signs out there (routes/accounts.ts). */
+  viaAccounts: boolean('via_accounts').notNull().default(false),
+  /** The Accounts session (`sid`) it came from, when Accounts sent one: a back-channel logout can name it. */
+  accountsSid: text('accounts_sid'),
+}, t => [index('sessions_user_idx').on(t.userId), index('sessions_accounts_sid_idx').on(t.accountsSid)]);
 
 export const profiles = pgTable('profiles', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -173,6 +180,16 @@ export const auditEvents = pgTable('audit_events', {
   userAgent: text('user_agent'),
   createdAt: createdAt(),
 }, t => [index('audit_events_user_idx').on(t.userId, t.createdAt)]);
+
+/**
+ * One-time tokens already used, so each works once across every instance and regional host: app sign-in codes and
+ * back-channel logout tokens from LotusPond Accounts (routes/accounts.ts). Keyed by a SHA-256 of the kind and the
+ * token's id; kept until the token could no longer be accepted anyway. Default database only; no personal data.
+ */
+export const spentTokens = pgTable('spent_tokens', {
+  id: text('id').primaryKey(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+}, t => [index('spent_tokens_expires_idx').on(t.expiresAt)]);
 
 /**
  * Which cell holds each account, keyed by an HMAC of the email (DIRECTORY_SECRET) so no address is stored in plain

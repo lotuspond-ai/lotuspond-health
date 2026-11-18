@@ -16,9 +16,11 @@ import '../styles/compliance.css';
 const focusDeletePassword = () => document.querySelector<HTMLInputElement>('#delete-account input[type=password]')?.focus();
 
 export default function AccountPage() {
-  const { account, profiles } = useSession();
+  const { account, profiles, service } = useSession();
   const { consents, activity, reload, failed } = useAccountRecords();
   if (!account) return null;
+  // No Health password to use: an account that signs in only with LotusPond Accounts, or password sign-in is off.
+  const noPassword = account.hasPassword === false || service?.passwordSignIn === false;
   return (
     <main className="page page--narrow">
       <div className="page__head">
@@ -39,9 +41,9 @@ export default function AccountPage() {
         <ConsentsPanel consents={consents} failed={failed} onChange={reload} profiles={profiles} />
         <ActivityPanel activity={activity} failed={failed} profiles={profiles} />
         {!isPreview && <ContactsPanel />}
-        <PasswordPanel onChange={reload} />
+        {noPassword ? <AccountsPasswordPanel /> : <PasswordPanel onChange={reload} />}
         {!isPreview && <DevicesPanel onChange={reload} />}
-        <DeletePanel />
+        <DeletePanel hasPassword={!noPassword} />
       </div>
     </main>
   );
@@ -295,6 +297,8 @@ const ACTIVITY_LABEL: Record<AuditKind, string> = {
   report_read_by_ai: 'Report read with Claude',
   assistant_chat: 'Started a chat with the assistant',
   whatsapp_linked: 'Linked a WhatsApp number',
+  accounts_linked: 'Linked to your LotusPond account',
+  accounts_signed_out: 'Signed out from LotusPond Accounts',
   whatsapp_unlinked: 'Unlinked WhatsApp',
   whatsapp_report: 'Sent a report on WhatsApp',
   records_source_connected: 'Connected a record source',
@@ -440,7 +444,17 @@ function DevicesPanel({ onChange }: { onChange: () => void }) {
   );
 }
 
-function DeletePanel() {
+/** An account that signs in through LotusPond Accounts has no LotusPond Health password to change. */
+function AccountsPasswordPanel() {
+  return (
+    <section className="panel">
+      <h2>Password</h2>
+      <p className="note">You sign in with your LotusPond account, so your password is kept and changed at LotusPond Accounts, not here.</p>
+    </section>
+  );
+}
+
+function DeletePanel({ hasPassword }: { hasPassword: boolean }) {
   const deleteAccount = useSession(s => s.deleteAccount);
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -448,11 +462,18 @@ function DeletePanel() {
     <section className="panel panel--danger" id="delete-account">
       <h2>Delete account</h2>
       <p className="note" style={{ marginBottom: 12 }}>Permanently deletes your account, every profile on it, and all results, scans and files. It also withdraws every consent. This cannot be undone.</p>
-      <div className="form-grid">
-        <Field label="Enter your password to confirm" error={error}>{id => <input id={id} type="password" autoComplete="current-password" value={password} onChange={e => { setPassword(e.target.value); setError(null); }} />}</Field>
-      </div>
+      {hasPassword ? (
+        <div className="form-grid">
+          <Field label="Enter your password to confirm" error={error}>{id => <input id={id} type="password" autoComplete="current-password" value={password} onChange={e => { setPassword(e.target.value); setError(null); }} />}</Field>
+        </div>
+      ) : (
+        <>
+          <p className="note">To confirm it is you, deleting needs a sign-in with LotusPond Accounts in the last 10 minutes. If it has been longer, sign out and sign in again first.</p>
+          {error && <p className="form-error" role="alert">{error}</p>}
+        </>
+      )}
       <div className="panel__actions">
-        {password ? (
+        {password || !hasPassword ? (
           <ConfirmButton confirmText="Delete the account and everything in it?" busyText="Deleting…"
             onConfirm={async () => { try { await deleteAccount(password); } catch (e) { setError(errorMessage(e)); } }}>
             Delete account

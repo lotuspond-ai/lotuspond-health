@@ -11,6 +11,7 @@ import { resolveSecrets } from './compliance/secrets.ts';
 import { purgeOldEvents } from './compliance/audit.ts';
 import { EncryptedFileStore } from './lib/files-encrypted.ts';
 import { purgeExpiredSessions } from './auth/sessions.ts';
+import { purgeSpentTokens } from './auth/spent-tokens.ts';
 import { purgeExpiredConsoleSessions } from './connectors/console-accounts.ts';
 import { purgeExpiredAgentSecrets } from './agents/grants.ts';
 import { purgeOldNotifications } from './notifications.ts';
@@ -31,6 +32,7 @@ import { gmailFetcher, outlookFetcher } from './records/api/mail.ts';
 import { digilockerFetcher } from './records/api/digilocker.ts';
 import { createOrganisation, createOrganisationKey, ORGANISATION_OPERATIONS, revokeOrganisationKey } from './connectors/organisations.ts';
 import type { OperationId } from './connectors/types.ts';
+import { exportAccounts, linkAccounts, readJsonLines } from './auth/accounts-migration.ts';
 import { organisationRuntime } from './connectors/runtime.ts';
 import { organisationAccounts, organisationConnections, organisationMembers, organisations, type OrganisationRole } from './db/schema.ts';
 import { HIS_ADAPTERS } from './connectors/his/index.ts';
@@ -161,9 +163,34 @@ if (['org:create', 'org:key', 'org:revoke', 'org:requests', 'org:live', 'org:con
   await opened.close();
   process.exit(0);
 }
-if (command) fail(`Unknown command "${command}". Commands: files:rekey, org:create, org:key, org:revoke, org:requests, org:live, org:connect, org:member, org:web-signin.`);
+// Moving account identity into LotusPond Accounts (docs/identity.md, "Moving the directory into Accounts"):
+//   accounts:export <file>   every account in this server's cells, for Accounts to import (JSON Lines; holds
+//                            emails and password hashes: readable by its owner only; delete it once imported)
+//   accounts:link <file>     Accounts' answer, { "health_user_id", "sub" } per line: link each account
+if (command === 'accounts:export' || command === 'accounts:link') {
+  const file = process.argv[3];
+  if (!file) fail(`Usage: ${command} <file>`);
+  try {
+    if (command === 'accounts:export') {
+      if (fs.existsSync(file)) fail(`${file} already exists; choose a new file name.`);
+      const fd = fs.openSync(file, 'wx', 0o600);
+      const n = await exportAccounts(allCells, line => fs.writeSync(fd, `${line}\n`));
+      fs.closeSync(fd);
+      console.log(`[accounts] ${n} accounts written to ${file} (owner-readable only). It holds emails and password hashes: hand it to LotusPond Accounts over a secure channel and delete it once imported.`);
+    } else {
+      const r = await linkAccounts(allCells, readJsonLines(fs.readFileSync(file, 'utf8')));
+      console.log(`[accounts] linked ${r.linked}, already linked ${r.unchanged}, conflicts ${r.conflicts.length}, not on this server ${r.missing.length}, unreadable lines ${r.invalid}.`);
+      for (const c of r.conflicts) console.log(`[accounts]   conflict: ${c.health_user_id}: ${c.reason}`);
+      if (r.missing.length) console.log(`[accounts]   not on this server (another regional host, or deleted): ${r.missing.join(', ')}`);
+    }
+  } catch (e) { await opened.close(); fail(e); }
+  await opened.close();
+  process.exit(0);
+}
+if (command) fail(`Unknown command "${command}". Commands: files:rekey, org:create, org:key, org:revoke, org:requests, org:live, org:connect, org:member, org:web-signin, accounts:export, accounts:link.`);
 
 async function sweep() {
+  await purgeSpentTokens(registry.defaultCell.db);
   for (const cell of allCells) {
     await purgeExpiredSessions(cell.db);
     await purgeOldEvents(cell.db, config.auditRetentionMs);
@@ -247,6 +274,7 @@ const server = serve({ fetch: app.fetch, port: config.port, hostname: config.hos
   else if (config.whatsapp) console.warn('[api] WhatsApp is set up but the assistant is off, so WhatsApp is off too.');
   if (extractor) console.log(`[api] reading reports with Claude: on (${config.aiExtraction.model}), only for uploads the person sends`);
   if (records) console.log(`[api] record agent: on, browsers on ${records.browserLabel}${config.records!.navigator ? `, navigator ${config.records!.navigator.model}` : ', recipes only'}${portal ? '; demo portal at /demo-portal' : ''}`);
+  if (config.accounts) console.log(`[api] LotusPond Accounts sign-in: ${config.accounts.issuer === 'fake' ? 'the stand-in issuer at /api/dev-accounts (development only)' : config.accounts.issuer}`);
   if (labs) console.log(`[api] lab booking: ${[...labs.partners.keys()].join(', ')}${labs.partners.has('fake') ? ` (the simulated lab; orders move a step every ${config.labs.fakeStepMs / 1000} s)` : ''}`);
 });
 

@@ -20,6 +20,21 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- Sign-in with LotusPond Accounts returns here from the system browser (shared/identity.ts, APP_ACCOUNTS_REDIRECT). -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="ai.lotuspond.health" />
+            </intent-filter>
+            <!-- The same return as a verified app link (shared/identity.ts, APP_LINKS_HOST and APP_LINK_PATH). Android
+                 checks https://open.health.lotuspond.ai/.well-known/assetlinks.json when the app is installed. -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="open.health.lotuspond.ai" android:path="/accounts-return" />
+            </intent-filter>
         </activity>
 
         <provider

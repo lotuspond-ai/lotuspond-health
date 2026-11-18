@@ -2,6 +2,7 @@
 // The server-less preview (VITE_BACKEND=browser) has no website and its host only passes a #hash into the page,
 // so there sign-in or sign-up is chosen with #login or #signup, and website links open the live site in a new tab.
 // The iOS and Android apps work the same way: they hold only the app shell, and website links open in the browser.
+import { agentConsentNext } from '../../shared/identity';
 import { inApp, isPreview } from '../api';
 
 /** No website around the app: the preview and the iOS / Android apps. */
@@ -78,6 +79,5 @@ export function leaveApp(): void {
  */
 export function oauthReturn(): string | null {
   if (shellOnly || typeof location === 'undefined') return null;
-  const next = new URLSearchParams(location.search).get('next');
-  return next && /^\/oauth\/authorize\?[^\\]*$/.test(next) && !next.includes('//') ? next : null;
+  return agentConsentNext(new URLSearchParams(location.search).get('next'));
 }

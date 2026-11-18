@@ -5,7 +5,7 @@ import { Hono } from 'hono';
 import { asc, eq } from 'drizzle-orm';
 import { CONSENT_VERSION, countryPolicy, REGIONS, signUpProblem } from '../../../shared/regions.ts';
 import type { ServiceInfo, SessionInfo } from '../../../shared/types.ts';
-import { profiles, users, type UserRow } from '../db/schema.ts';
+import { profiles, sessions, users, type UserRow } from '../db/schema.ts';
 import type { Db } from '../db/client.ts';
 import type { Cell } from '../cells.ts';
 import { hashPassword, verifyAgainstDummy, verifyPassword } from '../auth/password.ts';
@@ -21,9 +21,13 @@ import { clientIp, readJson, requireAuth, type AppEnv, type Ctx, type Deps } fro
 import { ChangePasswordBody, ConsentPatchBody, DeleteAccountBody, LoginBody, PreferencesBody, RegisterBody } from '../schemas.ts';
 import { toAccount, toProfile } from '../serialize.ts';
 import { relationshipOrder } from './profiles.ts';
+import { appSignOutUrl, issueSignOutTicket } from './accounts.ts';
 
 const MINUTE = 60_000;
 const EMAIL_TAKEN = 'An account with this email already exists. Sign in instead.';
+const USES_ACCOUNTS = 'This account signs in with LotusPond Accounts, not a LotusPond Health password.';
+/** An account without a Health password proves it is the holder by a sign-in this recent before deleting itself. */
+export const RECENT_SIGN_IN_MS = 10 * MINUTE;
 
 export async function sessionInfo(db: Db, user: UserRow): Promise<SessionInfo> {
   const [rows, consents] = await Promise.all([
@@ -33,7 +37,32 @@ export async function sessionInfo(db: Db, user: UserRow): Promise<SessionInfo> {
   return { account: toAccount(user), profiles: rows.sort(relationshipOrder).map(toProfile), consentsOutdated: outdatedConsents(consents) };
 }
 
-const isUniqueViolation = (e: unknown) => !!e && typeof e === 'object' && 'code' in e && (e as { code: string }).code === '23505';
+/** A new account in its cell: the user, their own profile, and the consents given at sign-up. */
+export async function insertAccount(
+  cell: Cell, who: { id: string; email: string; passwordHash: string | null; accountsSubject?: string },
+  policy: ReturnType<typeof countryPolicy>, displayName: string, marketing: boolean,
+): Promise<UserRow> {
+  return cell.db.transaction(async tx => {
+    const [u] = await tx.insert(users).values({
+      ...who, country: policy.code, region: policy.region, unitSystem: policy.units, ageConfirmedAt: new Date(),
+    }).returning();
+    await tx.insert(profiles).values({ userId: u.id, relationship: 'self', displayName });
+    await recordConsents(tx as unknown as Db, u.id, policy.code, [
+      { kind: 'terms', granted: true },
+      { kind: 'privacy', granted: true },
+      { kind: 'health_data', granted: true },
+      ...(policy.crossBorder ? [{ kind: 'cross_border' as const, granted: true }] : []),
+      { kind: 'marketing', granted: marketing },
+    ]);
+    return u;
+  });
+}
+
+/** A unique index refused the row (PostgreSQL 23505). Drizzle wraps the driver's error, so its cause is checked too. */
+export const isUniqueViolation = (e: unknown): boolean => {
+  const err = e as { code?: unknown; cause?: unknown } | null;
+  return !!err && typeof err === 'object' && (err.code === '23505' || (!!err.cause && isUniqueViolation(err.cause)));
+};
 
 export function authRoutes(deps: Deps) {
   const { config, cells } = deps;
@@ -59,11 +88,17 @@ export function authRoutes(deps: Deps) {
   app.get('/config', c => c.json<ServiceInfo>({
     servedRegions: cells.servedRegions,
     consentVersion: CONSENT_VERSION,
+    accounts: !!config.accounts,
+    passwordSignIn: config.passwordSignIn,
     contacts: { grievance: config.grievanceContact ?? null, dpo: config.dpoContact ?? null },
     apiOrigins: config.regionApiOrigins,
   }));
 
+  /** With PASSWORD_SIGN_IN=off, LotusPond Accounts is the only way in (docs/identity.md). */
+  const accountsOnly = () => new HttpError(409, 'use_accounts', 'LotusPond Health now uses your LotusPond account. Continue with LotusPond Account.');
+
   app.post('/register', async c => {
+    if (!config.passwordSignIn) throw accountsOnly();
     const wait = registerByIp.hit(clientIp(c, config.trustProxy));
     if (wait) throw tooMany(`Too many new accounts from this network. Try again in ${Math.ceil(wait / 60)} minutes.`);
     const body = await readJson(c, RegisterBody);
@@ -82,20 +117,7 @@ export function authRoutes(deps: Deps) {
     if (!(await claim(deps, body.email, policy.region, userId))) throw conflict(EMAIL_TAKEN, 'email_taken');
     let user: UserRow;
     try {
-      user = await cell.db.transaction(async tx => {
-        const [u] = await tx.insert(users).values({
-          id: userId, email: body.email, passwordHash, country: policy.code, region: policy.region, unitSystem: policy.units, ageConfirmedAt: new Date(),
-        }).returning();
-        await tx.insert(profiles).values({ userId: u.id, relationship: 'self', displayName: body.displayName });
-        await recordConsents(tx as unknown as Db, u.id, policy.code, [
-          { kind: 'terms', granted: true },
-          { kind: 'privacy', granted: true },
-          { kind: 'health_data', granted: true },
-          ...(policy.crossBorder ? [{ kind: 'cross_border' as const, granted: true }] : []),
-          { kind: 'marketing', granted: body.consents.marketing },
-        ]);
-        return u;
-      });
+      user = await insertAccount(cell, { id: userId, email: body.email, passwordHash }, policy, body.displayName, body.consents.marketing);
     } catch (e) {
       await release(deps, userId).catch(() => {});
       // An account from before the directory, or two sign-ups racing in one cell: the unique index rejects it.
@@ -108,6 +130,7 @@ export function authRoutes(deps: Deps) {
   });
 
   app.post('/login', async c => {
+    if (!config.passwordSignIn) throw accountsOnly();
     const body = await readJson(c, LoginBody);
     const ipWait = loginByIp.hit(clientIp(c, config.trustProxy));
     const emailWait = loginByEmail.hit(body.email);
@@ -118,7 +141,11 @@ export function authRoutes(deps: Deps) {
       throw new HttpError(403, 'wrong_region', `This account's records are kept on ${REGIONS[found.region].storage}, and this server does not hold them. Sign in through LotusPond Health for that region.`,
         { region: found.region, apiOrigin: config.regionApiOrigins[found.region] ?? null });
     }
-    const ok = found ? await verifyPassword(found.user.passwordHash, body.password) : await verifyAgainstDummy(body.password);
+    if (found && !found.user.passwordHash) {
+      await verifyAgainstDummy(body.password);
+      throw new HttpError(409, 'use_accounts', USES_ACCOUNTS);
+    }
+    const ok = found ? await verifyPassword(found.user.passwordHash!, body.password) : await verifyAgainstDummy(body.password);
     if (!found || !ok) {
       if (found) await recordEvent(found.cell.db, eventContext(c, deps), found.user.id, 'sign_in_failed');
       throw new HttpError(401, 'invalid_credentials', 'Email or password is incorrect.');
@@ -137,6 +164,11 @@ export function authRoutes(deps: Deps) {
       await recordEvent(session.cell.db, eventContext(c, deps), session.user.id, 'sign_out');
     }
     clearSessionCookie(c, config.cookieSecure);
+    // Signed in with LotusPond Accounts on the website: the page goes on to sign out there too (routes/accounts.ts).
+    // The apps open it in the system browser, where their Accounts sign-in is.
+    if (session?.viaAccounts && config.accounts) {
+      return c.json({ accountsSignOut: wantsTokenSession(c) ? appSignOutUrl(c, deps) : issueSignOutTicket(c, deps) });
+    }
     return c.body(null, 204);
   });
 
@@ -154,6 +186,7 @@ export function authRoutes(deps: Deps) {
   app.post('/password', auth, async c => {
     const { db } = c.var.cell;
     const body = await readJson(c, ChangePasswordBody);
+    if (!c.var.user.passwordHash || !config.passwordSignIn) throw new HttpError(409, 'use_accounts', `${USES_ACCOUNTS} Change your password there.`);
     if (!(await verifyPassword(c.var.user.passwordHash, body.currentPassword))) {
       throw new HttpError(400, 'wrong_password', 'Your current password is incorrect.');
     }
@@ -174,8 +207,13 @@ export function authRoutes(deps: Deps) {
     const { db, files } = c.var.cell;
     const user = c.var.user;
     const body = await readJson(c, DeleteAccountBody);
-    if (!(await verifyPassword(user.passwordHash, body.password))) {
-      throw new HttpError(400, 'wrong_password', 'Your password is incorrect.');
+    if (user.passwordHash && config.passwordSignIn) {
+      if (!(await verifyPassword(user.passwordHash, body.password))) throw new HttpError(400, 'wrong_password', 'Your password is incorrect.');
+    } else {
+      const [session] = await db.select({ createdAt: sessions.createdAt }).from(sessions).where(eq(sessions.id, c.var.sessionId)).limit(1);
+      if (!session || Date.now() - session.createdAt.getTime() > RECENT_SIGN_IN_MS) {
+        throw new HttpError(409, 'recent_sign_in_required', 'To delete your account, sign out and sign in with LotusPond Accounts again, then delete it within 10 minutes.');
+      }
     }
     const owned = await db.select({ id: profiles.id }).from(profiles).where(eq(profiles.userId, user.id));
     await db.delete(users).where(eq(users.id, user.id)); // cascades to sessions, profiles, records and consents

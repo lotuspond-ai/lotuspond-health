@@ -1,7 +1,7 @@
 // Signed-in account, its profiles, and which profile is open.
 import { create } from 'zustand';
 import type { Account, ConsentKind, FamilyConfirmation, Profile, ProfileInput, RegisterInput, ServiceInfo, SessionInfo } from '../types';
-import { backend } from '../api';
+import { backend, inApp } from '../api';
 import { HttpBackend } from '../api/http';
 import { useHealth } from '../lib/store';
 import { enterApp, leaveApp, oauthReturn } from '../site/links';
@@ -26,6 +26,14 @@ interface SessionState {
   init: () => Promise<void>;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (input: RegisterInput) => Promise<void>;
+  /** Finish sign-up after LotusPond Accounts (see Backend.completeAccountsSignUp). */
+  completeAccountsSignUp: (input: Omit<RegisterInput, 'email' | 'password'>) => Promise<void>;
+  /** The apps: a sign-up with LotusPond Accounts waiting for Health's own questions (the sign-in screen shows them). */
+  accountsPending: boolean;
+  /** The apps: trade the one-time code the system browser handed back (src/native/accounts.ts). */
+  accountsAppExchange: (code: string, verifier: string, apiOrigin?: string) => Promise<void>;
+  /** Show a message on the sign-in screen. */
+  showNotice: (notice: string) => void;
   signOut: () => Promise<void>;
   sessionEnded: () => void;
   switchProfile: (id: string) => void;
@@ -70,7 +78,7 @@ export const useSession = create<SessionState>((set, get) => {
   }
 
   function reset(notice: string | null = null) {
-    set({ status: 'signed-out', account: null, profiles: [], activeId: null, onboarding: false, notice, consentsOutdated: [] });
+    set({ status: 'signed-out', account: null, profiles: [], activeId: null, onboarding: false, notice, consentsOutdated: [], accountsPending: false });
     void useHealth.getState().openProfile(null);
     useUI.getState().setView('home');
     leaveApp();
@@ -107,8 +115,31 @@ export const useSession = create<SessionState>((set, get) => {
 
     signUp: async input => start(await backend.register(input), true),
 
+    completeAccountsSignUp: async input => {
+      if (!backend.completeAccountsSignUp) throw new Error('Sign-in with LotusPond Accounts needs the LotusPond server.');
+      start(await backend.completeAccountsSignUp(input), true);
+      set({ accountsPending: false });
+    },
+
+    accountsPending: false,
+
+    accountsAppExchange: async (code, verifier, apiOrigin) => {
+      if (!backend.accountsAppExchange) throw new Error('Sign-in with LotusPond Accounts needs the LotusPond server.');
+      const r = await backend.accountsAppExchange(code, verifier, apiOrigin);
+      if ('session' in r) start(r.session);
+      else set({ accountsPending: true, notice: null });
+    },
+
+    showNotice: notice => set({ notice }),
+
     signOut: async () => {
-      try { await backend.logout(); } finally { reset(); }
+      let next: string | undefined;
+      try { next = (await backend.logout())?.accountsSignOut; } finally { reset(); }
+      // Signed in with LotusPond Accounts: sign out there too. The website goes there and comes back to the sign-in
+      // page; the apps open it in the system browser, where their Accounts sign-in is (src/native/accounts.ts).
+      if (!next) return;
+      if (inApp) void import('../native/accounts').then(m => m.openAccountsSignOut(next));
+      else location.assign(next);
     },
 
     sessionEnded: () => reset('You were signed out. Sign in again to continue.'),

@@ -4,6 +4,7 @@ import type { DocumentRow, MeasurementRow, ProfileRow, ScanRow, UserRow } from '
 
 export const toAccount = (u: UserRow): Account => ({
   id: u.id, email: u.email, createdAt: u.createdAt.toISOString(), country: u.country, region: u.region, unitSystem: u.unitSystem,
+  hasPassword: !!u.passwordHash,
 });
 
 export const toProfile = (p: ProfileRow): Profile => ({
