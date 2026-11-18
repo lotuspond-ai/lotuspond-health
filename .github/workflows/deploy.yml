@@ -1,6 +1,7 @@
-# Checks every push to main and development, then deploys it:
+# Checks every pull request and every push to main and development, then deploys the pushes:
 #   main        → the "production" GitHub environment (https://health.lotuspond.ai)
 #   development → the "staging" GitHub environment (its own server; skipped until configured)
+# Pull requests run the checks only: the deploy job never runs for them.
 # Deploying = SSH to the server, whose key may only run deploy/remote-deploy.sh with the commit to deploy.
 # Setup (secrets, server key, environments): deploy/ci-cd.md.
 name: Deploy
@@ -8,6 +9,7 @@ name: Deploy
 on:
   push:
     branches: [main, development]
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -35,7 +37,7 @@ jobs:
   deploy:
     name: Deploy to ${{ github.ref_name == 'main' && 'production' || 'staging' }}
     needs: checks
-    if: github.ref_name == 'main' || github.ref_name == 'development'
+    if: github.event_name != 'pull_request' && (github.ref_name == 'main' || github.ref_name == 'development')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment:
