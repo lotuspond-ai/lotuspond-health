@@ -138,12 +138,18 @@ Health's side is built; running it is a decision, and the privacy texts need rev
    - conflicts (linked to another subject, or a subject already used);
    - ids another host holds;
    - unreadable lines.
-4. **`PASSWORD_SIGN_IN=off`** (needs `ACCOUNTS_ISSUER`). LotusPond Accounts becomes the only way in:
+4. **Before turning passwords off,** run `accounts:readiness [days]` (production: `node dist/index.js accounts:readiness 14`). It reads only Health's own database and prints counts only:
+   - active accounts, and how they signed in (Health password or Accounts);
+   - how many active people have never signed in with Accounts;
+   - all accounts: moved, linked by the import but not moved, not linked.
+
+   Health does not record app versions, so it cannot say how many installs still run an app without the Accounts sign-in.
+5. **`PASSWORD_SIGN_IN=off`** (needs `ACCOUNTS_ISSUER`). LotusPond Accounts becomes the only way in:
    - **Password routes:** `/register`, `/login` and the password change answer `use_accounts`.
    - **Sign-in page:** shows only Continue with LotusPond Account.
    - **Deleting an account:** asks for a recent Accounts sign-in instead of a password.
    - **The email directory is no longer read or written.** An account is found by its Accounts subject. The host comes from the `region` claim. One never linked is found by email in the host's own cells, and a new one is created without a directory entry.
-5. **Later**, after a reviewed migration: drop the `directory` table and `users.password_hash`. The WhatsApp directory, keyed by phone number, stays.
+6. **Later**, after a reviewed migration: drop the `directory` table and `users.password_hash`. The WhatsApp directory, keyed by phone number, stays.
 
 ### Database
 

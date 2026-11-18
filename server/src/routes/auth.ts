@@ -39,7 +39,7 @@ export async function sessionInfo(db: Db, user: UserRow, accountsOn = false): Pr
 
 /** A new account in its cell: the user, their own profile, and the consents given at sign-up. */
 export async function insertAccount(
-  cell: Cell, who: { id: string; email: string; passwordHash: string | null; accountsSubject?: string },
+  cell: Cell, who: { id: string; email: string; passwordHash: string | null; accountsSubject?: string; accountsSignedInAt?: Date },
   policy: ReturnType<typeof countryPolicy>, displayName: string, marketing: boolean,
 ): Promise<UserRow> {
   return cell.db.transaction(async tx => {

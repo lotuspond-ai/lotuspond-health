@@ -6,8 +6,8 @@
 //                   imported.
 //   linkAccounts    Accounts' answer, which Accounts subject (`sub`) each Health account became: linked in one go, so
 //                   no one depends on Health's email directory to be found at their first sign-in.
-import { eq } from 'drizzle-orm';
-import { users } from '../db/schema.ts';
+import { eq, gte } from 'drizzle-orm';
+import { sessions, users } from '../db/schema.ts';
 import type { Cell } from '../cells.ts';
 import { recordEvent } from '../compliance/audit.ts';
 import { isUniqueViolation } from '../routes/auth.ts';
@@ -93,4 +93,57 @@ export function* readJsonLines(text: string): Generator<unknown> {
     if (!line.trim()) continue;
     try { yield JSON.parse(line); } catch { yield undefined; }
   }
+}
+
+/**
+ * Readiness to turn Health passwords off (PASSWORD_SIGN_IN=off, build plan M8): who is active, how they sign in, and
+ * who would have to sign in with LotusPond Accounts for the first time. Counts only, read from Health's own database.
+ * Health does not record app versions, so this measures sign-in methods, not app installs.
+ */
+export interface Readiness {
+  days: number;
+  /** Accounts with a session seen in the period. */
+  active: number;
+  /** Of those, seen with a password session, and with an Accounts session (a person can be both). */
+  activeWithPassword: number;
+  activeWithAccounts: number;
+  /** Active, and never signed in with Accounts: they would have to, at their next sign-in, once passwords are off. */
+  activeNotMoved: number;
+  /** All accounts: linked by the import but never signed in with Accounts; not linked at all; moved. */
+  linkedNotMoved: number;
+  notLinked: number;
+  moved: number;
+}
+
+export async function readiness(cells: Cell[], days: number, now = new Date()): Promise<Readiness> {
+  const since = new Date(now.getTime() - days * 86_400_000);
+  const r: Readiness = { days, active: 0, activeWithPassword: 0, activeWithAccounts: 0, activeNotMoved: 0, linkedNotMoved: 0, notLinked: 0, moved: 0 };
+  for (const cell of cells) {
+    const recent = await cell.db.select({ userId: sessions.userId, viaAccounts: sessions.viaAccounts }).from(sessions).where(gte(sessions.lastSeenAt, since));
+    const people = await cell.db.select({ id: users.id, subject: users.accountsSubject, movedAt: users.accountsSignedInAt }).from(users);
+    const byId = new Map(people.map(p => [p.id, p]));
+    const active = new Set(recent.map(s => s.userId));
+    r.active += active.size;
+    r.activeWithPassword += new Set(recent.filter(s => !s.viaAccounts).map(s => s.userId)).size;
+    r.activeWithAccounts += new Set(recent.filter(s => s.viaAccounts).map(s => s.userId)).size;
+    r.activeNotMoved += [...active].filter(id => byId.get(id) && !byId.get(id)!.movedAt).length;
+    for (const p of people) {
+      if (p.movedAt) r.moved++;
+      else if (p.subject) r.linkedNotMoved++;
+      else r.notLinked++;
+    }
+  }
+  return r;
+}
+
+export function formatReadiness(r: Readiness): string {
+  const pct = (n: number) => (r.active ? `${Math.round((n / r.active) * 100)}%` : '-');
+  return [
+    `Last ${r.days} days: ${r.active} active accounts.`,
+    `  signed in with a Health password: ${r.activeWithPassword} (${pct(r.activeWithPassword)})`,
+    `  signed in with LotusPond Accounts: ${r.activeWithAccounts} (${pct(r.activeWithAccounts)})`,
+    `  never signed in with Accounts yet: ${r.activeNotMoved} (${pct(r.activeNotMoved)}). With passwords off, they sign in with Accounts at their next sign-in.`,
+    `All accounts: moved ${r.moved}; linked by the import but not moved ${r.linkedNotMoved}; not linked ${r.notLinked}.`,
+    'Health does not record app versions: an older app cannot sign in once passwords are off, whatever these counts.',
+  ].join('\n');
 }

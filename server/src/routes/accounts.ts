@@ -465,7 +465,8 @@ a{display:inline-block;margin-top:1rem;padding:.8rem 1.4rem;border-radius:.6rem;
     if (useDirectory && !(await claim(deps, pending.email, policy.region, userId))) throw conflict(taken, 'email_taken');
     let user: UserRow;
     try {
-      user = await insertAccount(cell, { id: userId, email: pending.email, passwordHash: null, accountsSubject: pending.subject }, policy, body.displayName, body.consents.marketing);
+      // Made by signing in with Accounts: it has moved from the start (accounts:readiness counts it so).
+      user = await insertAccount(cell, { id: userId, email: pending.email, passwordHash: null, accountsSubject: pending.subject, accountsSignedInAt: new Date() }, policy, body.displayName, body.consents.marketing);
     } catch (e) {
       await release(deps, userId).catch(() => {});
       if (isUniqueViolation(e)) throw conflict(taken, 'email_taken');

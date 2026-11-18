@@ -123,6 +123,8 @@ describe('LotusPond Accounts sign-in', () => {
     assert.deepEqual(pending, { email: address, region: 'in' });
     const done = await b.json('POST', '/api/auth/accounts/complete', finish());
     assert.equal(done.status, 201, await done.clone().text());
+    const [made] = await database.db.select().from(users).where(eq(users.email, address));
+    assert.ok(made.accountsSignedInAt, 'made by signing in with Accounts: moved from the start');
     const info = await done.json() as SessionInfo;
     assert.equal(info.account.email, address);
     assert.equal(info.account.region, 'in');
