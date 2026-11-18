@@ -22,7 +22,7 @@ import { localBrowsers, type BrowserSession } from '../src/records/browsers.ts';
 import { openAiComputerModel } from '../src/connectors/agent/model.ts';
 import { SANDBOX_EMR_PATH, sandboxEmr } from '../src/connectors/agent/sandbox-emr.ts';
 import { organisationRuntime } from '../src/connectors/runtime.ts';
-import { makeClient } from './helpers.ts';
+import { consoleUser } from './helpers.ts';
 
 type Json = Record<string, unknown>;
 
@@ -85,7 +85,7 @@ before(async () => {
   host.route(SANDBOX_EMR_PATH, emr.app);
   emrServer = await new Promise<ServerType>(resolve => { const s = serve({ fetch: host.fetch, port: 0, hostname: '127.0.0.1' }, () => resolve(s)); });
   selfUrl = `http://127.0.0.1:${(emrServer.address() as { port: number }).port}`;
-  deps = completeDeps({ db: database.db, files: new DiskFileStore(filesDir), config: loadConfig({ NODE_ENV: 'test', RECORD_AGENT: 'off' }) });
+  deps = completeDeps({ db: database.db, files: new DiskFileStore(filesDir), config: loadConfig({ NODE_ENV: 'test', ACCOUNTS_ISSUER: 'fake', RECORD_AGENT: 'off' }) });
   const model = openAiComputerModel({ apiKey: 'sk-test', apiUrl: 'https://api.openai.test/v1', model: 'gpt-6.1-terra', fetch: modelFetch });
   app = createApp(deps, { orgAgent: { model, browsers, selfUrl, deadlineMs: 60_000 }, sandboxEmr: emr });
   measure = await browsers.open({ allowHosts: ['127.0.0.1'] });
@@ -102,9 +102,8 @@ const api = (url: string, key: string, body?: unknown) => app.request(url, {
 });
 
 async function setup(email: string, operations = ['patients.search', 'tasks.run']) {
-  const person = makeClient(app);
-  const { organisation: org } = await person.json<{ organisation: { id: string } }>('POST', '/api/console/auth/register',
-    { name: 'Clinic Dev', email, password: 'correct horse battery', terms: true, organisation: { name: 'Sunrise Clinic', region: 'in' } }, 201);
+  const { person, org: made } = await consoleUser(app, email, { name: 'Sunrise Clinic', region: 'in' });
+  const org = made!;
   const { key } = await person.json<{ key: string }>('POST', `/api/console/organisations/${org.id}/keys`, { name: 'Agent', operations }, 201);
   const { connections } = await (await api('/v1/connections', key)).json() as { connections: { id: string; connector: string; operations: string[] }[] };
   const sandbox = connections.find(c => c.connector === 'sandbox')!;
@@ -269,9 +268,8 @@ describe('agent tasks (tasks.run)', () => {
 
   test('with no agent on this server, tasks.run is refused before anything is held', async () => {
     const plain = createApp(deps, { orgAgent: null });
-    const person = makeClient(plain);
-    const { organisation: org } = await person.json<{ organisation: { id: string } }>('POST', '/api/console/auth/register',
-      { name: 'Clinic Dev', email: 'agent6@example.com', password: 'correct horse battery', terms: true, organisation: { name: 'No Agent', region: 'in' } }, 201);
+    const { person, org: made } = await consoleUser(plain, 'agent6@example.com', { name: 'No Agent', region: 'in' });
+    const org = made!;
     const { key } = await person.json<{ key: string }>('POST', `/api/console/organisations/${org.id}/keys`, { name: 'Agent', operations: ['tasks.run'] }, 201);
     const { connections } = await (await plain.request('/v1/connections', { headers: { authorization: `Bearer ${key}` } })).json() as { connections: { id: string }[] };
     const res = await plain.request('/v1/operations/tasks.run', { method: 'POST', headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' }, body: JSON.stringify({ connection: connections[0].id, instruction: 'Book Asha Raman tomorrow at 10:30.' }) });

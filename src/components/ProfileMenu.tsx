@@ -55,6 +55,7 @@ export function ProfileMenu() {
           <hr />
           <button role="menuitem" className="pmenu__row" onClick={() => go(() => setView('profile'))}>{Icon.user} Profile details</button>
           <button role="menuitem" className="pmenu__row" onClick={() => go(() => setView('account'))}>{Icon.key} Account and sign-in</button>
+          <button role="menuitem" className="pmenu__row" onClick={() => go(() => setView('console'))}>{Icon.agent} Developer console</button>
           <button role="menuitem" className="pmenu__row" onClick={() => go(() => void signOut())}>{Icon.out} Sign out</button>
           <p className="pmenu__foot">{account?.email}</p>
         </div>

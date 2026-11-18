@@ -23,7 +23,6 @@ export const SITE_PAGES: readonly SitePage[] = [
   { path: '/terms/', file: 'terms/index.html', sitemap: true },
   { path: '/trust/', file: 'trust/index.html', sitemap: true },
   { path: '/developers/', file: 'developers/index.html', sitemap: true },
-  { path: '/developers/console/', file: 'developers/console/index.html', sitemap: false },
 ];
 
 /** Shown with a 404 status for any other non-API path. */

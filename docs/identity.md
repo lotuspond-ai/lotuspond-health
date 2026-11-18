@@ -31,11 +31,12 @@ This page says what the decision changes for Health.
 
 ## The developer console's organisation accounts
 
-The organisation API's console already has accounts of its own, built like LotusPond Works' (a person's account, with organisations as workspaces and a role in each), and kept apart from personal Health accounts ([connectors.md](connectors.md#the-organisation-api)). When Accounts ships:
+Settled by the owner, 2026-11-18: **the developer console opens with the person's LotusPond Health sign-in**, as a page of the app, instead of with organisation accounts of its own. This replaces the earlier plan here (separate console accounts, signed in through Accounts by `(issuer, subject)`, open to managed enterprise accounts). It also sets aside, for the console, the separation in ADR-0001 decision 8 that kept an employer's organisation account apart from the account that holds someone's own records: the same Health account now holds both the person's records and their organisation memberships.
 
-- they sign in through Accounts too, and are stored by `(issuer, subject)`;
-- a managed account from a Works enterprise connection may open the console, because it holds no one's health records; it still cannot open personal Health;
-- organisations and memberships stay in Health, as Works keeps its own.
+- Each Health account has one organisation account, joined by `(health_region, health_user_id)` ([connectors.md](connectors.md#the-organisation-api)). Memberships, keys and calls stay in the default database; records stay in the cells. Membership in an organisation opens no one's records, and an organisation's owners and admins cannot see, suspend or reset the member's Health account.
+- Because Health refuses employer-managed accounts (above), a managed account from a Works enterprise connection cannot open the console either.
+- Organisations and memberships stay in Health, as Works keeps its own.
+- Company ADR-0001 in `lotuspond-ai/lotuspond` still records decision 8 as written; it should be amended to match.
 
 ## Existing accounts
 

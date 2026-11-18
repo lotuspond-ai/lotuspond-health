@@ -129,6 +129,12 @@ export interface Backend {
    */
   extractReport(profileId: string, file: Blob, fileName: string): Promise<AiExtraction>;
 
+  /**
+   * The developer console's API (/api/console, server/src/connectors/console-routes.ts): organisations, members, API
+   * keys and approvals for the organisation API. It opens with the same sign-in as the app. Needs the LotusPond server.
+   */
+  console<T>(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: string, body?: unknown): Promise<T>;
+
   /* Connected agents (shared/agents.ts): AI agents reading the records over MCP. Needs the LotusPond server. */
   agentConnections(): Promise<AgentConnectionsInfo>;
   createAgentToken(input: CreateAgentTokenInput): Promise<CreatedAgentToken>;

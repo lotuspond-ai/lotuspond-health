@@ -22,6 +22,7 @@ import { ChangePasswordBody, ConsentPatchBody, DeleteAccountBody, LoginBody, Pre
 import { passwordUsable, toAccount, toProfile } from '../serialize.ts';
 import { relationshipOrder } from './profiles.ts';
 import { appSignOutUrl, issueSignOutTicket } from './accounts.ts';
+import { unbindConsoleAccount } from '../connectors/console-accounts.ts';
 
 const MINUTE = 60_000;
 const EMAIL_TAKEN = 'An account with this email already exists. Sign in instead.';
@@ -221,6 +222,7 @@ export function authRoutes(deps: Deps) {
     }
     const owned = await db.select({ id: profiles.id }).from(profiles).where(eq(profiles.userId, user.id));
     await db.delete(users).where(eq(users.id, user.id)); // cascades to sessions, profiles, records and consents
+    await unbindConsoleAccount(deps.db, user); // its developer console account (default database) outlives it, unbound
     await release(deps, user.id);
     await Promise.all(owned.map(p => files.deletePrefix(p.id)));
     await eraseHistory(db, user.id);

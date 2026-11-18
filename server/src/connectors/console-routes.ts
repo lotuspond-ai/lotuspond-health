@@ -1,10 +1,9 @@
-// The developer console's API (/api/console). It uses organisation accounts (console-accounts.ts), the way LotusPond
-// Works does: a person signs up with an organisation account, makes an organisation (or is added to one), and works in
-// it with a role. Personal LotusPond Health accounts and sessions do not open the console.
-//   POST   /api/console/auth/register                     { name, email, password, organisation?: { name, region } }
-//   POST   /api/console/auth/login                        { email, password }
-//   POST   /api/console/auth/logout
+// The developer console's API (/api/console). It opens with the person's LotusPond Health sign-in: the app's session
+// cookie, or the apps' bearer token (settled by the owner, 2026-11-18). Each Health account has one organisation
+// account (console-accounts.ts), made on first use; the person makes organisations (or is added to them) and works in
+// each with a role, the way LotusPond Works does. Sign-in, sign-out and passwords are Health's (/api/auth).
 //   GET    /api/console                                   the account and its organisations
+//   POST   /api/console/link                              { password } joins an earlier console account with this email
 //   POST   /api/console/organisations                     { name, region } → a new organisation, with them as owner
 //   GET    /api/console/organisations/:id                 members, keys, connections, approvals, recent calls
 //   POST   /api/console/organisations/:id/members         { email, role, approves }   owner or admin
@@ -24,15 +23,13 @@ import { REGIONS, type DataRegion } from '../../../shared/regions.ts';
 import {
   organisationAccounts, organisationCalls, organisationKeys, organisationMembers, organisations, type OrganisationRole,
 } from '../db/schema.ts';
-import { hashPassword, verifyAgainstDummy, verifyPassword } from '../auth/password.ts';
+import { verifyAgainstDummy, verifyPassword } from '../auth/password.ts';
+import { findSession, readSessionToken } from '../auth/sessions.ts';
 import { clientIp, readJson, UUID, type Deps } from '../http.ts';
 import { HttpError, unauthorized } from '../lib/errors.ts';
 import { RateLimiter } from '../lib/rate-limit.ts';
-import { Email, NewPassword } from '../schemas.ts';
-import {
-  clearConsoleCookie, createConsoleSession, deleteConsoleSession, findConsoleSession, purgeExpiredConsoleSessions, readConsoleToken,
-  writeConsoleCookie, type OrganisationAccountRow,
-} from './console-accounts.ts';
+import { Email } from '../schemas.ts';
+import { consoleAccountFor, isUniqueViolation, linkConsoleAccount, unlinkedByEmail, type OrganisationAccountRow } from './console-accounts.ts';
 import { createOrganisation, createOrganisationKey, ORGANISATION_OPERATIONS, revokeOrganisationKey } from './organisations.ts';
 import type { OrganisationRuntime } from './runtime.ts';
 import { OPERATIONS, type OperationId } from './types.ts';
@@ -43,36 +40,24 @@ const MAX_ACTIVE_KEYS = 20;
 const MAX_MEMBERS = 50;
 const ROLES = ['owner', 'admin', 'editor', 'viewer'] as const satisfies readonly OrganisationRole[];
 const RANK: Record<OrganisationRole, number> = { viewer: 0, editor: 1, admin: 2, owner: 3 };
-const EMAIL_TAKEN = 'An organisation account with this email already exists. Sign in instead.';
 
-type ConsoleEnv = { Variables: { account: OrganisationAccountRow; sessionId: string } };
+type ConsoleEnv = { Variables: { account: OrganisationAccountRow } };
 type C = Context<ConsoleEnv>;
 type MemberRow = typeof organisationMembers.$inferSelect;
 type OrgRow = typeof organisations.$inferSelect;
 
-const Name = z.string().trim().min(1, 'Enter your name.').max(120);
 const OrgName = z.string().trim().min(2, 'Give the organisation a name.').max(120);
-/** A unique-index refusal, whether the driver's error comes bare or wrapped by Drizzle (as `cause`). */
-const isUniqueViolation = (e: unknown): boolean => !!e && typeof e === 'object'
-  && (('code' in e && (e as { code: unknown }).code === '23505') || ('cause' in e && isUniqueViolation((e as { cause: unknown }).cause)));
 const accountView = (a: OrganisationAccountRow) => ({ id: a.id, email: a.email, name: a.name });
 
 export function consoleRoutes(deps: Deps, runtime: OrganisationRuntime) {
   const { db, config, cells } = deps;
   const app = new Hono<ConsoleEnv>();
   const keysByAccount = new RateLimiter(30, 60 * MINUTE);
-  const loginByIp = new RateLimiter(20, 15 * MINUTE);
-  const loginByEmail = new RateLimiter(8, 15 * MINUTE);
-  const registerByIp = new RateLimiter(config.env === 'production' ? 10 : 500, 60 * MINUTE);
+  const linkByIp = new RateLimiter(20, 15 * MINUTE);
+  const linkByUser = new RateLimiter(8, 15 * MINUTE);
 
   const served = () => cells.servedRegions.filter(r => r !== 'global').length ? cells.servedRegions.filter(r => r !== 'global') : cells.servedRegions;
   const Region = z.string().refine((r): r is DataRegion => served().includes(r as DataRegion), 'Choose a region this service holds data in.');
-
-  async function startSession(c: Context, account: OrganisationAccountRow) {
-    await purgeExpiredConsoleSessions(db, account.id);
-    const { token, expiresAt } = await createConsoleSession(db, account.id, c.req.header('user-agent'));
-    writeConsoleCookie(c, token, expiresAt, config.cookieSecure);
-  }
 
   async function makeOrganisation(account: OrganisationAccountRow, name: string, region: DataRegion) {
     const [{ n }] = await db.select({ n: count() }).from(organisationMembers).where(eq(organisationMembers.accountId, account.id));
@@ -84,61 +69,35 @@ export function consoleRoutes(deps: Deps, runtime: OrganisationRuntime) {
     return { id: org.id, name: org.name, region: org.region, access: org.access, role: 'owner' as const, approves: true };
   }
 
-  /* ---------- signing up and in (no session needed) ---------- */
+  /* ---------- the Health session opens the console ---------- */
 
-  app.post('/auth/register', async c => {
-    const wait = registerByIp.hit(clientIp(c, config.trustProxy));
-    if (wait) throw new HttpError(429, 'rate_limited', `Too many new accounts from this network. Try again in ${Math.ceil(wait / 60)} minutes.`);
-    const body = await readJson(c, z.object({
-      name: Name, email: Email, password: NewPassword,
-      organisation: z.object({ name: OrgName, region: Region }).optional(),
-      terms: z.literal(true, 'Agree to the terms to make an account.'),
-    }));
-    let account: OrganisationAccountRow;
-    try {
-      [account] = await db.insert(organisationAccounts).values({ email: body.email, name: body.name, passwordHash: await hashPassword(body.password) }).returning();
-    } catch (e) {
-      if (isUniqueViolation(e)) throw new HttpError(409, 'email_taken', EMAIL_TAKEN);
-      throw e;
-    }
-    const organisation = body.organisation ? await makeOrganisation(account, body.organisation.name, body.organisation.region as DataRegion) : null;
-    await startSession(c, account);
-    return c.json({ account: accountView(account), organisation }, 201);
-  });
-
-  app.post('/auth/login', async c => {
-    const body = await readJson(c, z.object({ email: z.string().trim().toLowerCase().max(254), password: z.string().max(256) }));
-    const wait = Math.max(loginByIp.hit(clientIp(c, config.trustProxy)), loginByEmail.hit(body.email));
-    if (wait) throw new HttpError(429, 'rate_limited', `Too many sign-in attempts. Try again in ${Math.ceil(wait / 60)} minutes.`);
-    const [account] = await db.select().from(organisationAccounts).where(eq(organisationAccounts.email, body.email)).limit(1);
-    const ok = account ? await verifyPassword(account.passwordHash, body.password) : await verifyAgainstDummy(body.password);
-    if (!account || !ok) throw new HttpError(401, 'invalid_credentials', 'Email or password is incorrect.');
-    loginByEmail.reset(body.email);
-    await startSession(c, account);
-    return c.json({ account: accountView(account) });
-  });
-
-  app.post('/auth/logout', async c => {
-    const token = readConsoleToken(c);
-    const session = token ? await findConsoleSession(db, token) : null;
-    if (session) await deleteConsoleSession(db, session.id);
-    clearConsoleCookie(c, config.cookieSecure);
-    return c.body(null, 204);
-  });
-
-  /* ---------- everything else needs a console session ---------- */
+  /** The signed-in Health session, or 401: the console uses the app's sign-in, not one of its own. */
+  async function healthSession(c: Context) {
+    const presented = readSessionToken(c);
+    const session = presented ? await findSession(cells, presented.token, config.sessionTtlMs) : null;
+    if (!session) throw unauthorized();
+    return session;
+  }
 
   const requireAccount: MiddlewareHandler<ConsoleEnv> = async (c, next) => {
-    const token = readConsoleToken(c);
-    const session = token ? await findConsoleSession(db, token) : null;
-    if (!session) {
-      if (token) clearConsoleCookie(c, config.cookieSecure);
-      throw unauthorized();
-    }
-    c.set('account', session.account);
-    c.set('sessionId', session.id);
+    c.set('account', await consoleAccountFor(db, await healthSession(c)));
     await next();
   };
+
+  // An earlier console account with this email, from when the console had its own sign-up: its console password,
+  // once, joins it (and its organisations) to the signed-in Health account.
+  app.post('/link', async c => {
+    const session = await healthSession(c);
+    const body = await readJson(c, z.object({ password: z.string().max(256) }));
+    const wait = Math.max(linkByIp.hit(clientIp(c, config.trustProxy)), linkByUser.hit(session.user.id));
+    if (wait) throw new HttpError(429, 'rate_limited', `Too many attempts. Try again in ${Math.ceil(wait / 60)} minutes.`);
+    const earlier = await unlinkedByEmail(db, session.user.email);
+    const ok = earlier?.passwordHash ? await verifyPassword(earlier.passwordHash, body.password) : await verifyAgainstDummy(body.password);
+    if (!earlier || !ok) throw new HttpError(400, 'wrong_password', 'That is not the console password for this email.');
+    linkByUser.reset(session.user.id);
+    return c.json({ account: accountView(await linkConsoleAccount(db, earlier, session.user)) });
+  });
+
   app.use('/', requireAccount);
   app.use('/organisations', requireAccount);
   app.use('/organisations/*', requireAccount);
@@ -215,7 +174,7 @@ export function consoleRoutes(deps: Deps, runtime: OrganisationRuntime) {
     if (n >= MAX_MEMBERS) throw new HttpError(409, 'too_many', `An organisation can have up to ${MAX_MEMBERS} members.`);
     const [account] = await db.select().from(organisationAccounts).where(eq(organisationAccounts.email, body.email)).limit(1);
     if (!account) {
-      throw new HttpError(400, 'account_required', 'This person needs a LotusPond organisation account first. Ask them to make one in the developer console, then add them again.');
+      throw new HttpError(400, 'account_required', 'This person has not opened the developer console yet. Ask them to sign in to LotusPond Health and open Developer console once, then add them again.');
     }
     try {
       const [row] = await db.insert(organisationMembers).values({ organisationId: org.id, accountId: account.id, role: body.role, approves: body.approves }).returning();
