@@ -1,7 +1,7 @@
-# Deploys the newest commit on origin/main if it is not running yet. Started by lotuspond-auto-deploy.timer.
+# Deploys the newest commit on its branch (DEPLOY_BRANCH in deploy/.env: main, or development on staging) if it is not running yet. Started by lotuspond-auto-deploy.timer.
 # Installed by deploy/install-auto-deploy.sh; see deploy/ci-cd.md.
 [Unit]
-Description=LotusPond Health: deploy new commits on main
+Description=LotusPond Health: deploy new commits on the server's branch
 After=network-online.target docker.service
 Wants=network-online.target
 

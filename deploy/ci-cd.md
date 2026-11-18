@@ -27,7 +27,7 @@ sudo systemctl disable --now lotuspond-auto-deploy.timer
 
 ## Fallback: the server pulls `main`
 
-Use this only while GitHub Actions jobs can't run (for example, if the repository becomes private again on an organization without Actions minutes). [`auto-deploy.sh`](auto-deploy.sh) runs on the server every 5 minutes from a systemd timer ([`systemd/`](systemd/)). It fetches `origin/main` with the server's read-only deploy key. When `main` has a commit the server isn't running, it passes it to [`remote-deploy.sh`](remote-deploy.sh), which checks it out, rebuilds, restarts and waits for the health check. It needs no GitHub Actions minutes, no GitHub secrets and no inbound SSH key.
+Use this only while GitHub Actions jobs can't run (for example, if the repository becomes private again on an organization without Actions minutes). [`auto-deploy.sh`](auto-deploy.sh) runs on the server every 5 minutes from a systemd timer ([`systemd/`](systemd/)). It fetches its branch (`origin/main`, or `origin/development` where `deploy/.env` sets `DEPLOY_BRANCH=development`) with the server's read-only deploy key. When that branch has a commit the server isn't running, it passes it to [`remote-deploy.sh`](remote-deploy.sh), which checks it out, rebuilds, restarts and waits for the health check. It needs no GitHub Actions minutes, no GitHub secrets and no inbound SSH key.
 
 **Nothing checks a commit before it goes live on this route:** no lint, typecheck or tests run first. Merge to `main` only through reviewed pull requests, and run `npm run lint`, `npm run typecheck` and `npm test` before merging. It also failed silently once: from 12 to 17 November 2026 the timer deployed nothing, and the cause was never found. Check `journalctl -u lotuspond-auto-deploy` whenever you rely on it.
 
@@ -105,6 +105,14 @@ Staging needs its own server, because a deploy rebuilds the whole stack on its s
 1. Create a second instance the same way (for example `NAME=lotuspond-health-staging` with `aws-lightsail-create.sh`), with its own `deploy/.env` from `make-secrets.sh` and `DOMAIN=staging.health.lotuspond.ai`. Use test data only: never copy production records or secrets to staging.
 2. Point `staging.health.lotuspond.ai` at it.
 3. Create a `development` branch from `main`, and a `staging` environment on GitHub limited to `development`, with the same four settings for the staging server.
+
+**Staging with pull-based deploys** (the server's read-only deploy key, no GitHub secrets): add `DEPLOY_BRANCH=development` to the staging server's `deploy/.env`, so [`auto-deploy.sh`](auto-deploy.sh) follows `development` instead of `main`. Production leaves it unset (or `main`). Pull requests merge into `development` first and reach `main` only when they are ready for production (settled by the owner, 2026-11-18). On a staging server set up before this setting existed, deploy `development` once by hand so its checkout has the new script, then turn the timer on:
+
+```bash
+cd /opt/lotuspond-health && echo DEPLOY_BRANCH=development >> deploy/.env
+git fetch origin development && deploy/remote-deploy.sh "$(git rev-parse origin/development)"
+sudo deploy/install-auto-deploy.sh
+```
 
 ## Notes
 
