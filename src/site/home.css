@@ -328,6 +328,8 @@ html { scroll-padding-top: calc(var(--header, 72px) + 16px); }
 .home-systems-mark .home-systems-icon { max-height: 36px; }
 .home-systems b { color: var(--pine-900); font-size: 15px; font-weight: 700; line-height: 1.3; }
 .home-systems-status { color: var(--ink-muted); font-size: 13.5px; }
+.home-systems-label { margin: 20px 0 0; color: var(--ink-muted); font: 700 13px/1.3 var(--font-sans); }
+.home-systems-label + .home-systems { margin-top: 10px; }
 .home-systems-on { color: var(--pine-900); font-weight: 700; }
 .prose .home-systems { grid-template-columns: repeat(3, minmax(0, 1fr)); padding: 0; }
 .prose .home-systems li + li { margin-top: 0; }
