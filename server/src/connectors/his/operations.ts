@@ -37,6 +37,12 @@ export const OPERATION_INPUT = {
     connection,
     claim: ref('claim').describe('The claim or pre-authorisation number from the insurer or TPA.'),
   }),
+  'tasks.run': z.object({
+    connection,
+    instruction: z.string().trim().min(10).max(2000).describe('What the agent should do in the system\'s web app, in plain words, e.g. "Book Asha Raman (UHID UH1001) with Dr Rao on 21 Nov 2026 at 10:30". One task, with the patient identified.'),
+    patient: ref('patient').optional().describe('The patient id from patients.search, when the task is about one patient. Shown to the approver.'),
+    maxSteps: z.number().int().min(1).max(60).default(30).describe('Most model turns the agent may take before it stops.'),
+  }),
 } satisfies Partial<Record<OperationId, z.ZodType>>;
 
 export type RunnableOperation = keyof typeof OPERATION_INPUT;
