@@ -10,14 +10,20 @@
 //             GET /profiles/v1/patient/search?prefix=…                            by name (only some workspaces)
 //   Visits    GET /dr/v1/appointment?patient_id={oid}&page_no=0                    appointments, with prescription PDFs
 //
-// Settings: baseUrl (optional; https://api.eka.care, or https://api.dev.eka.care for Eka's sandbox).
-// Credentials: clientId, clientSecret and the clinic's sharingKey.
+//   Tasks     tasks.run: a computer-use agent in Eka's doctor web app (https://dr.eka.care), signed in with a session
+//             someone at the clinic saved once (org:web-signin); see connectors/agent/.
+//
+// Settings: baseUrl (optional; https://api.eka.care, or https://api.dev.eka.care for Eka's sandbox); emrUrl (optional;
+// the web app the agent opens, https://dr.eka.care/app/ by default); emrHosts (optional, comma-separated: hosts the
+// web app needs besides *.eka.care, such as a CDN, found by watching it load).
+// Credentials: clientId, clientSecret and the clinic's sharingKey; webSession for tasks.
 import { createHash } from 'node:crypto';
 import type { HisAdapter, HisContext } from './types.ts';
 import { HisError } from './types.ts';
 import type { OperationInput, RunnableOperation } from './operations.ts';
 
 export const EKA_DEFAULT_BASE = 'https://api.eka.care';
+export const EKA_DEFAULT_EMR = 'https://dr.eka.care/app/';
 const TIMEOUT_MS = 20_000;
 const SYSTEM = 'https://eka.care';
 const OID = `${SYSTEM}/oid`;
@@ -219,8 +225,21 @@ async function listEncounters(ctx: HisContext, input: OperationInput<'encounters
 
 export const ekaAdapter: HisAdapter = {
   connectorId: 'eka',
-  operations: ['patients.search', 'encounters.list'],
+  operations: ['patients.search', 'encounters.list', 'tasks.run'],
   requiredSettings: [],
+  agentTarget({ settings }) {
+    let start: URL;
+    try { start = new URL(settings.emrUrl || EKA_DEFAULT_EMR); } catch { throw new HisError(422, 'bad_connection', 'This Eka connection has no valid web app address. LotusPond needs to fix it.'); }
+    if (start.protocol !== 'https:') throw new HisError(422, 'bad_connection', 'The Eka web app must use https.');
+    const extra = (settings.emrHosts ?? '').split(',').map(h => h.trim().toLowerCase()).filter(h => /^[a-z0-9.-]+\.[a-z]{2,}(\/[\w./-]*)?$/.test(h));
+    return {
+      name: 'Eka Care EMR (the doctor web app)',
+      startUrl: start.href,
+      allowHosts: ['eka.care', start.hostname, ...extra],
+      needsSignIn: true,
+      notes: 'The clinic\'s Eka Care EMR, already signed in as a clinic user. Patients are found with the search at the top; appointments are in the queue and calendar.',
+    };
+  },
   async run<O extends RunnableOperation>(op: O, input: OperationInput<O>, ctx: HisContext) {
     switch (op) {
       case 'patients.search': return searchPatients(ctx, input as OperationInput<'patients.search'>);

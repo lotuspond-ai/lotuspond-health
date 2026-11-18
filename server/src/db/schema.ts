@@ -683,3 +683,62 @@ export const organisationCalls = pgTable('organisation_calls', {
   connectionId: uuid('connection_id'),
   at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
 }, t => [index('organisation_calls_org_idx').on(t.organisationId, t.at)]);
+
+/**
+ * A task a computer-use agent carries out in a connected system's own web app (tasks.run), after a clinician on the
+ * organisation's side approved it. The instruction is sealed; the agent runs in a browser of its own (connectors/agent).
+ */
+export const organisationTasks = pgTable('organisation_tasks', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  organisationId: uuid('organisation_id').notNull().references(() => organisations.id, { onDelete: 'cascade' }),
+  connectionId: uuid('connection_id').notNull().references(() => organisationConnections.id, { onDelete: 'cascade' }),
+  approvalId: uuid('approval_id').references(() => organisationApprovals.id, { onDelete: 'set null' }),
+  keyId: uuid('key_id').references(() => organisationKeys.id, { onDelete: 'set null' }),
+  /** Approver's line: no instruction text. */
+  summary: text('summary').notNull(),
+  instructionCt: text('instruction_ct').notNull(),
+  model: text('model').notNull(),
+  maxSteps: integer('max_steps').notNull(),
+  /**
+   * queued, running, succeeded (the agent says it did the task), failed, cannot (the agent stopped: the task could
+   * not be done as asked), needs_sign_in (the web app wants someone to sign in again), needs_review (the model raised
+   * a safety check, which a person must look at; it is never acknowledged automatically).
+   */
+  status: text('status').$type<'queued' | 'running' | 'succeeded' | 'failed' | 'cannot' | 'needs_sign_in' | 'needs_review'>().notNull().default('queued'),
+  /** The agent's account of what it did, sealed (it may name the patient). */
+  resultCt: text('result_ct'),
+  error: text('error'),
+  steps: integer('steps').notNull().default(0),
+  /** Where the browser ran: "LotusPond's servers", "Browserbase", … */
+  sandbox: text('sandbox'),
+  createdAt: createdAt(),
+  startedAt: timestamp('started_at', { withTimezone: true }),
+  finishedAt: timestamp('finished_at', { withTimezone: true }),
+}, t => [index('organisation_tasks_org_idx').on(t.organisationId, t.createdAt), index('organisation_tasks_status_idx').on(t.status)]);
+
+/**
+ * Every action of a task's agent, written before the action is carried out (so nothing happens unlogged) and
+ * updated with its outcome: each model turn, each click, keypress, scroll and typing, each page it reached, each
+ * request the browser blocked, each safety check, and how the task ended. Typed text and the model's words are
+ * sealed; screenshots are not kept, only their SHA-256, so a screenshot shown later can be matched to its step.
+ */
+export const organisationAgentActions = pgTable('organisation_agent_actions', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  taskId: uuid('task_id').notNull().references(() => organisationTasks.id, { onDelete: 'cascade' }),
+  organisationId: uuid('organisation_id').notNull().references(() => organisations.id, { onDelete: 'cascade' }),
+  /** Order within the task, from 1. */
+  seq: integer('seq').notNull(),
+  /** The model turn it belongs to, from 1 (0: before the first turn). */
+  step: integer('step').notNull(),
+  /** model, click, double_click, scroll, type, keypress, move, drag, wait, screenshot, navigate, blocked, safety_check, finish, error. */
+  kind: text('kind').notNull(),
+  /** Coordinates, keys, scroll amounts, the page address, the model's response id: never typed text. */
+  detail: jsonb('detail').$type<Record<string, unknown>>().notNull().default({}),
+  /** Typed text or the model's words, sealed. */
+  textCt: text('text_ct'),
+  /** started (logged, not yet carried out), done, failed, refused. */
+  outcome: text('outcome').$type<'started' | 'done' | 'failed' | 'refused'>().notNull().default('started'),
+  screenshotSha256: text('screenshot_sha256'),
+  url: text('url'),
+  at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
+}, t => [uniqueIndex('organisation_agent_actions_task_seq_key').on(t.taskId, t.seq), index('organisation_agent_actions_org_idx').on(t.organisationId, t.at)]);

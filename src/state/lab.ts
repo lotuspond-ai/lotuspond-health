@@ -4,6 +4,8 @@ import { create } from 'zustand';
 import { backend, errorMessage, isPreview } from '../api';
 import { LAB_BOOKING_REGIONS, type LabOrderView, type LabResultView } from '../../shared/lab-bundle';
 import { useSession } from './session';
+import { loadConfig, publicConfigNow } from '../components/labs/store';
+import type { PublicConfig } from '../types';
 import { toast } from './toast';
 import { useUI } from './ui';
 
@@ -53,9 +55,20 @@ export function readAgentProposal(): AgentProposal | null {
 }
 
 /** Whether the signed-in account can book home collection (a partner serves its region and there is a server). */
-export function labBookingAvailable(): boolean {
+export function labRegionServed(): boolean {
   const region = useSession.getState().account?.region;
   return !isPreview && !!region && LAB_BOOKING_REGIONS.includes(region);
+}
+
+/** Lab booking needs both: a partner lab serving the account's region, and a lab partner set up on this server
+ *  (LAB_PARTNERS, reported by /api/config). Without the second, the lab API is not there to ask. */
+export function labBookingAvailable(config: PublicConfig | null = publicConfigNow()): boolean {
+  return labRegionServed() && !!config?.labBooking;
+}
+
+/** As labBookingAvailable, after the server's settings have loaded. */
+async function bookingReady(): Promise<boolean> {
+  return labRegionServed() && labBookingAvailable(await loadConfig());
 }
 
 export const useLab = create<LabState>((set, get) => {
@@ -90,15 +103,15 @@ export const useLab = create<LabState>((set, get) => {
     load: async profileId => {
       if (profileId === get().profileId && get().status !== 'idle') return;
       set({ profileId, orders: [], results: [], status: 'idle', error: null, bookingOpen: false, reviewing: null });
-      if (profileId && labBookingAvailable()) await fetchFor(profileId, false);
+      if (profileId && await bookingReady()) await fetchFor(profileId, false);
     },
     refresh: async () => {
       const { profileId } = get();
-      if (profileId && labBookingAvailable()) await fetchFor(profileId, true);
+      if (profileId && await bookingReady()) await fetchFor(profileId, true);
     },
     retry: async () => {
       const { profileId } = get();
-      if (profileId && labBookingAvailable()) await fetchFor(profileId, false);
+      if (profileId && await bookingReady()) await fetchFor(profileId, false);
     },
     upsertOrder: o => set(s => ({ orders: [o, ...s.orders.filter(x => x.id !== o.id)].sort((a, b) => b.createdAt.localeCompare(a.createdAt)) })),
     setTab: tab => set({ tab }),

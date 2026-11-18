@@ -12,6 +12,9 @@ import { keyringSealer } from '../lab/sealer.ts';
 import { HIS_ADAPTERS, HisError, type HisSecret } from './his/index.ts';
 import { OPERATION_INPUT, isRunnable, type RunnableOperation } from './his/operations.ts';
 import { OPERATIONS, type OperationId } from './types.ts';
+import type { BrowserProvider } from '../records/browsers.ts';
+import type { ComputerModel } from './agent/model.ts';
+import { agentTasks, type ActionView, type TaskView } from './agent/tasks.ts';
 
 export type ConnectionRow = typeof organisationConnections.$inferSelect;
 export type ApprovalRow = typeof organisationApprovals.$inferSelect;
@@ -54,6 +57,8 @@ export interface OrganisationRuntimeOptions {
   keyrings: Partial<Record<string, FileKeyring>> | null;
   fetch?: typeof fetch;
   now?: () => Date;
+  /** The computer-use agent for tasks.run; without it, tasks.run is refused (503 agent_off). */
+  agent?: { model: ComputerModel; browsers: BrowserProvider; selfUrl: string; concurrency: number; deadlineMs?: number } | null;
 }
 
 const toView = (c: ConnectionRow): ConnectionView => ({
@@ -74,6 +79,10 @@ export function organisationRuntime(o: OrganisationRuntimeOptions) {
   const sealerFor = (region: string) => keyringSealer(o.keyrings?.[region] ?? o.keyrings?.default ?? null);
   const seal = (region: string, plain: string, context: string) => Buffer.from(sealerFor(region).seal(Buffer.from(plain, 'utf8'), `org:${context}`)).toString('base64');
   const open = (region: string, sealed: string, context: string) => Buffer.from(sealerFor(region).open(Buffer.from(sealed, 'base64'), `org:${context}`)).toString('utf8');
+  const tasks = o.agent ? agentTasks({
+    db, model: o.agent.model, browsers: o.agent.browsers, selfUrl: o.agent.selfUrl, concurrency: o.agent.concurrency, deadlineMs: o.agent.deadlineMs, now,
+    sealing: region => ({ seal: (plain, context) => seal(region, plain, context), open: (sealed, context) => open(region, sealed, context) }),
+  }) : null;
 
   async function org(id: string): Promise<OrgRow> {
     const [row] = await db.select().from(organisations).where(eq(organisations.id, id)).limit(1);
@@ -133,17 +142,23 @@ export function organisationRuntime(o: OrganisationRuntimeOptions) {
     return c;
   }
 
+  function secretOf(o2: OrgRow, c: ConnectionRow): HisSecret | null {
+    if (!c.secretCt) return null;
+    try { return JSON.parse(open(o2.region, c.secretCt, `connection:${c.id}`)) as HisSecret; } catch (e) {
+      console.error(`[org] cannot open the credentials of connection ${c.id}`, e);
+      throw new HttpError(502, 'connection_credentials', "LotusPond cannot read this connection's credentials. LotusPond needs to set them again.");
+    }
+  }
+
+  async function saveSecret(o2: OrgRow, connectionId: string, secret: HisSecret): Promise<void> {
+    await db.update(organisationConnections).set({ secretCt: seal(o2.region, JSON.stringify(secret), `connection:${connectionId}`) }).where(eq(organisationConnections.id, connectionId));
+  }
+
   /** Run the adapter for a connection and note the outcome on it. HisErrors become HttpErrors with the same status. */
   async function execute(o2: OrgRow, c: ConnectionRow, op: RunnableOperation, input: unknown): Promise<unknown> {
     const adapter = HIS_ADAPTERS.get(c.connectorId);
     if (!adapter || !adapter.operations.includes(op)) throw new HttpError(422, 'not_supported', `${integrationById(c.connectorId)?.name ?? c.connectorId} does not run ${op}.`);
-    let secret: HisSecret | null = null;
-    if (c.secretCt) {
-      try { secret = JSON.parse(open(o2.region, c.secretCt, `connection:${c.id}`)) as HisSecret; } catch (e) {
-        console.error(`[org] cannot open the credentials of connection ${c.id}`, e);
-        throw new HttpError(502, 'connection_credentials', "LotusPond cannot read this connection's credentials. LotusPond needs to set them again.");
-      }
-    }
+    const secret = secretOf(o2, c);
     try {
       const out = await adapter.run(op, input as never, { connectionId: c.id, settings: c.settings, secret, fetch: doFetch, now: now() });
       await db.update(organisationConnections).set({ lastOkAt: now(), lastError: null }).where(eq(organisationConnections.id, c.id));
@@ -191,6 +206,10 @@ export function organisationRuntime(o: OrganisationRuntimeOptions) {
     if (!adapter || !adapter.operations.includes(op)) {
       await record({ organisationId, keyId, operation: op, outcome: 'refused', connectionId: c.id });
       throw new HttpError(422, 'not_supported', `${integrationById(c.connectorId)?.name ?? c.connectorId} does not run ${op}.`, { operation: op });
+    }
+    if (op === 'tasks.run' && !tasks) {
+      await record({ organisationId, keyId, operation: op, outcome: 'refused', connectionId: c.id });
+      throw new HttpError(503, 'agent_off', 'The computer-use agent is not switched on on this server.', { operation: op });
     }
     if (spec.writes && spec.approval !== 'none') {
       const summary = summarise(op, input as Record<string, unknown>);
@@ -244,7 +263,18 @@ export function organisationRuntime(o: OrganisationRuntimeOptions) {
     try {
       const c = await connectionFor(o2, a.connectionId);
       const input = JSON.parse(open(o2.region, a.inputCt, `approval:${a.id}`)) as unknown;
-      result = await execute(o2, c, a.operation as RunnableOperation, input);
+      if (a.operation === 'tasks.run') {
+        // Approving an agent task starts it; the approval's result names the task to follow.
+        if (!tasks) throw new HttpError(503, 'agent_off', 'The computer-use agent is not switched on on this server.');
+        const t = OPERATION_INPUT['tasks.run'].parse(input);
+        const task = await tasks.start({
+          organisationId, region: o2.region, organisation: o2.name, connection: c, approvalId: a.id, keyId: a.keyId, summary: a.summary,
+          input: t, secret: secretOf(o2, c), saveSecret: s => saveSecret(o2, c.id, s),
+        });
+        result = { task: task.id, status: task.status };
+      } else {
+        result = await execute(o2, c, a.operation as RunnableOperation, input);
+      }
     } catch (e) {
       error = e instanceof HttpError ? e.message : 'The write could not be sent. Try again from the console.';
       if (!(e instanceof HttpError)) console.error('[org] approved write failed', e);
@@ -256,7 +286,34 @@ export function organisationRuntime(o: OrganisationRuntimeOptions) {
     return approvalView(done);
   }
 
-  return { ensureSandbox, listConnections, addConnection, setConnectionStatus, run, getApproval, listApprovals, decide };
+  async function getTask(organisationId: string, id: string): Promise<TaskView | null> {
+    if (!tasks) return null;
+    return tasks.get(organisationId, (await org(organisationId)).region, id);
+  }
+  async function listTasks(organisationId: string, limit = 50): Promise<TaskView[]> {
+    if (!tasks) return [];
+    return tasks.list(organisationId, (await org(organisationId)).region, limit);
+  }
+  async function taskActions(organisationId: string, id: string): Promise<ActionView[] | null> {
+    if (!tasks) return null;
+    return tasks.actions(organisationId, (await org(organisationId)).region, id);
+  }
+
+  /** Save the web app's sign-in for the agent on a connection (org:web-signin), keeping its other credentials. */
+  async function setWebSession(organisationId: string, connectionId: string, webSession: NonNullable<HisSecret['webSession']>): Promise<void> {
+    const o2 = await org(organisationId);
+    const [c] = await db.select().from(organisationConnections).where(and(eq(organisationConnections.id, connectionId), eq(organisationConnections.organisationId, organisationId))).limit(1);
+    if (!c) throw new HttpError(404, 'connection_not_found', 'This organisation has no such connection.');
+    await saveSecret(o2, c.id, { ...(secretOf(o2, c) ?? {}), webSession });
+  }
+
+  return {
+    ensureSandbox, listConnections, addConnection, setConnectionStatus, run, getApproval, listApprovals, decide,
+    getTask, listTasks, taskActions, setWebSession,
+    agentModel: tasks?.model ?? null,
+    recoverTasks: () => tasks?.recover() ?? Promise.resolve(0),
+    tasksIdle: (stop = false) => tasks?.idle(stop) ?? Promise.resolve(),
+  };
 }
 
 export type OrganisationRuntime = ReturnType<typeof organisationRuntime>;
@@ -265,6 +322,10 @@ export type OrganisationRuntime = ReturnType<typeof organisationRuntime>;
 function summarise(op: RunnableOperation, input: Record<string, unknown>): string {
   if (op === 'documents.upload') {
     return `Upload "${String(input.title).slice(0, 80)}" (${String(input.contentType)}) to patient ${String(input.patient)}${input.encounter ? `, encounter ${String(input.encounter)}` : ''}${input.author ? `, by ${String(input.author).slice(0, 60)}` : ''}`;
+  }
+  if (op === 'tasks.run') {
+    // The approver must read what the agent will do, so the instruction is shown in full (up to 600 characters).
+    return `Agent task${input.patient ? ` for patient ${String(input.patient)}` : ''}: "${String(input.instruction).slice(0, 600)}"`;
   }
   return `${op} for ${String(input.patient ?? input.claim ?? '')}`;
 }
