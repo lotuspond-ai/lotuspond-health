@@ -204,3 +204,15 @@
   .cx-table code { white-space: normal; overflow-wrap: anywhere; }
   .cx-mono { white-space: normal; }
 }
+
+/* Agent tasks (#tasks): status pills, the task's facts and its action log. */
+.cx-pill-running { background: var(--sage-300); color: var(--pine-900); }
+.cx-pill-attention { background: var(--off-white); color: var(--pine-900); box-shadow: inset 0 0 0 1px var(--pine-900); }
+.cx-facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 14px 20px; margin: 0; }
+.cx-facts dt { color: var(--ink-muted); font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+.cx-facts dd { margin: 4px 0 0; overflow-wrap: anywhere; }
+.cx-table tr.is-alert th, .cx-table tr.is-alert td { background: color-mix(in srgb, var(--tomato-700) 6%, transparent); }
+.cx-log-what { display: grid; gap: 2px; min-width: 220px; max-width: 520px; }
+.cx-log-text { display: block; white-space: pre-wrap; overflow-wrap: anywhere; }
+.cx-table small.cx-log-url, .cx-table .cx-log-what small { overflow-wrap: anywhere; }
+@media (max-width: 640px) { .cx-log-what { min-width: 0; } }
