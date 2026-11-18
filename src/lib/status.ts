@@ -275,12 +275,31 @@ export function unitComparable(def: BiomarkerDef, unit: string): boolean {
   return k === '' || k === unitKey(def.unit);
 }
 
+/**
+ * The range in the converted unit. Its text is rewritten too, keeping the printed style ("4000 - 11000" → "4 - 11",
+ * "<200" → "<11.1"), since the review and the results table show it beside the converted value.
+ */
 export function convertRange(range: RefRange | null, convert: (v: number) => number): RefRange | null {
   if (!range) return null;
   const r: RefRange = { ...range };
   if (r.low != null) r.low = convert(r.low);
   if (r.high != null) r.high = convert(r.high);
+  if (r.text && (r.low != null || r.high != null)) r.text = convertRangeText(r.text, r.low, r.high);
   return r;
+}
+
+const RANGE_NUMBER = /\d[\d,]*(?:\.\d+)?|\.\d+/g;
+
+function convertRangeText(text: string, low: number | undefined, high: number | undefined): string {
+  const show = (v: number) => String(Number(v.toPrecision(6)));
+  const shown = [low, high].filter((v): v is number => v != null).map(show);
+  // Swap the printed numbers in place when they are exactly the bounds; otherwise write the range afresh.
+  if ((text.match(RANGE_NUMBER) ?? []).length === shown.length) {
+    let i = 0;
+    return text.replace(RANGE_NUMBER, () => shown[i++]);
+  }
+  if (low != null && high != null) return `${show(low)} - ${show(high)}`;
+  return high != null ? `< ${show(high)}` : `> ${show(low!)}`;
 }
 
 /* ---------------- formatting ---------------- */
