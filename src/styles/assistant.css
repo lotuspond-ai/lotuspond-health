@@ -4,7 +4,7 @@
 .assistant__head h2 { font-size: 22px; margin: 0; }
 .assistant__head p { margin: 2px 0 0; color: var(--ink-2); font-size: 13px; }
 .assistant__tools { display: flex; gap: 4px; align-items: center; }
-.assistant__tools .is-on { color: var(--accent, #c2556e); }
+.assistant__tools .is-on { color: var(--accent, #55694a); }
 .assistant__pad { padding: 16px; overflow-y: auto; }
 .assistant__consent h3 { margin: 0 0 8px; font-size: 18px; }
 .assistant__consent p { font-size: 14px; }
@@ -31,7 +31,7 @@
 .assistant__composer { display: flex; gap: 8px; align-items: flex-end; padding: 10px 12px; border-top: 1px solid var(--line); }
 .assistant__composer textarea { flex: 1; resize: none; min-height: 40px; max-height: 140px; border: 1px solid var(--line); border-radius: 14px; padding: 9px 12px; font: inherit; font-size: 15px; background: var(--paper); color: var(--ink); field-sizing: content; }
 .assistant__mic { flex: none; width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--line); background: var(--paper); color: var(--ink); display: grid; place-items: center; cursor: pointer; }
-.assistant__mic.is-on { background: #c2556e; border-color: #c2556e; color: #fff; animation: issue-breathe 1.4s ease-in-out infinite; }
+.assistant__mic.is-on { background: #55694a; border-color: #55694a; color: #fff; animation: issue-breathe 1.4s ease-in-out infinite; }
 .assistant__foot { margin: 0; padding: 0 14px 10px; font-size: 11.5px; color: var(--ink-2); }
 .assistant__ask { display: inline-flex; gap: 6px; align-items: center; }
 .askbox { display: flex; gap: 8px; align-items: center; margin: 16px 0 4px; padding: 6px 6px 6px 14px; border: 1px solid var(--line); border-radius: 999px; background: var(--paper); box-shadow: 0 6px 24px -18px rgba(0,0,0,.5); }

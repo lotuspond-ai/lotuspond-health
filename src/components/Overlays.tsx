@@ -385,7 +385,7 @@ export function ScanViewer() {
     <div className="scrim" onClick={close}>
       <div className="viewer" role="dialog" aria-modal="true" aria-labelledby="sv-title" onClick={e => e.stopPropagation()}>
         <header><h2 id="sv-title">{scan.fileName}</h2><span className="muted">{[scan.modality, scan.bodyPart, formatDate(scan.date)].filter(Boolean).join(', ')}</span>
-          <button className="btn btn--quiet x" style={{ color: '#dcefec' }} onClick={close} aria-label="Close">{Icon.close}</button></header>
+          <button className="btn btn--quiet x" style={{ color: '#f1f0e8' }} onClick={close} aria-label="Close">{Icon.close}</button></header>
         <div className="viewer__img" onWheel={e => setZoom(z => Math.min(8, Math.max(1, z * Math.exp(-e.deltaY * 0.0015))))}
           onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}
           onDoubleClick={() => { if (lastPointer.current !== 'mouse') return; setZoom(zoom > 1.05 ? 1 : 2.5); if (zoom > 1.05) setPan({ x: 0, y: 0 }); }}>
@@ -398,7 +398,7 @@ export function ScanViewer() {
             <label>Brightness <input type="range" min={wl.center - 2 * wl.width} max={wl.center + 2 * wl.width} value={wl.center} onChange={e => setWl({ ...wl, center: +e.target.value })} /></label>
             <label>Contrast <input type="range" min={1} max={Math.max(4000, wl.width * 4)} value={wl.width} onChange={e => setWl({ ...wl, width: +e.target.value })} /></label>
           </>)}
-          <button className="btn btn--quiet" style={{ marginLeft: 'auto', color: '#f1b4c3' }} onClick={() => { removeScan(scan.id); close(); }}>Remove scan</button>
+          <button className="btn btn--quiet" style={{ marginLeft: 'auto', color: '#b9c7a9' }} onClick={() => { removeScan(scan.id); close(); }}>Remove scan</button>
         </footer>
       </div>
     </div>

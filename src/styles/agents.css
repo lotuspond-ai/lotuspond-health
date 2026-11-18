@@ -1,5 +1,4 @@
 /* Account, Connected agents (src/components/AgentConnections.tsx), and the consent prompts (family members, updated texts). */
-.btn--small { padding: 5px 10px; font-size: 13px; }
 .agents__url { display: grid; gap: 4px; margin: 4px 0 12px; }
 .agents__copy { display: flex; gap: 8px; align-items: center; min-width: 0; }
 .agents__copy code { flex: 1; min-width: 0; overflow-wrap: anywhere; background: var(--mist); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; font-size: 13px; }
@@ -45,7 +44,7 @@
 .notif { position: relative; }
 .notif__trigger { position: relative; display: grid; place-items: center; width: 38px; height: 38px; border: 1px solid var(--line); background: var(--paper); border-radius: 999px; color: var(--ink); }
 .notif__trigger svg { width: 19px; height: 19px; }
-.notif__count { position: absolute; top: -4px; right: -4px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: var(--accent, #c2556e); color: #fff; font-size: 11px; font-weight: 700; line-height: 18px; text-align: center; }
+.notif__count { position: absolute; top: -4px; right: -4px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: var(--accent, #55694a); color: #fff; font-size: 11px; font-weight: 700; line-height: 18px; text-align: center; }
 .notif__panel { position: absolute; right: 0; top: calc(100% + 8px); z-index: 30; width: min(360px, calc(100vw - 32px)); max-height: min(70vh, 560px); overflow: auto; background: var(--paper); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow-float); padding: 8px; }
 .notif__panel ul { list-style: none; margin: 0; padding: 0; }
 .notif__panel li { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; align-items: center; padding: 10px 8px; border-top: 1px solid var(--line); }

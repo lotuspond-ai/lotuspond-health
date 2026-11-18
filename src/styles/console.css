@@ -1,36 +1,37 @@
-/* The developer console inside the app (src/pages/Console.tsx), on the app's own tokens and panels (index.css). */
-.console .page__head h1 { font-size: 40px; }
+/* The developer console inside the app (src/pages/Console.tsx), a product screen in the LotusPond design system on the
+   app's tokens (index.css): brand green for action and the current section, statuses as Tags that always carry a word,
+   and tomato only on the approval a person has to decide, with its row tinted. */
 .console__org { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .console__org select, .console select, .console input:not([type='checkbox']) { font: inherit; }
 .console__org select { min-width: 200px; max-width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--r-ctl); background: var(--paper); }
 .console__nav { display: flex; gap: 4px; overflow-x: auto; padding: 0 0 14px; margin-bottom: 4px; border-bottom: 1px solid var(--line); scrollbar-width: thin; }
 .console__nav button { flex: none; background: none; border: 0; padding: 8px 14px; border-radius: 999px; color: var(--ink-2); font-weight: 500; }
 .console__nav button:hover { background: var(--mist-2); }
-.console__nav button[aria-current='page'] { background: var(--pond); color: #fff; }
-.console__nav button[aria-current='page'] .nav__badge { background: var(--lotus); color: var(--ink); }
-.console__nav .console__alert { background: var(--danger); }
+.console__nav button[aria-current='page'] { background: var(--mist); color: var(--lily); font-weight: 700; }
+.console__nav .console__alert { background: var(--accent); }
 .console :focus-visible { outline: 2px solid var(--lily); outline-offset: 2px; }
 
 .console__stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
-.console__stat { display: grid; gap: 2px; text-align: left; border: 1px solid var(--line); background: var(--mist); border-radius: 14px; padding: 14px; font: inherit; color: inherit; cursor: pointer; }
-.console__stat:hover { border-color: var(--reed); }
-.console__stat b { font: 500 30px/1.1 var(--serif); }
+.console__stat { display: grid; gap: 2px; text-align: left; border: 1px solid var(--line); background: var(--paper); border-radius: 16px; padding: 14px; font: inherit; color: inherit; cursor: pointer; }
+.console__stat:hover { border-color: var(--line-strong); background: var(--well); }
+.console__stat b { font: 600 28px/1.1 var(--sans); }
 .console__steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
 .console__steps li { display: flex; align-items: center; gap: 8px; }
-.console__steps li > span:first-child { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 999px; border: 1px solid var(--line); font-size: 12px; color: var(--lily); }
+.console__steps li > span:first-child { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 999px; border: 1.5px solid var(--line-strong); font-size: 12px; font-weight: 700; color: var(--positive); }
 .console__steps li.is-done > span:first-child { background: var(--lily-soft); border-color: var(--lily-soft); }
 .console__steps li.is-done .btn { color: var(--reed); text-decoration: line-through; }
 
 .console__table td, .console__table th { vertical-align: top; }
 .console__table tr.is-off td { color: var(--reed); }
 .console__table tr.is-alert td { background: var(--danger-soft); }
+.console__table tr.is-waiting td { background: var(--accent-tint); }
 .console__table .console__end { text-align: right; white-space: nowrap; }
 .console__table select { padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); }
 .console__sub { display: block; color: var(--ink-2); font-size: 12.5px; overflow-wrap: anywhere; }
 .console__url { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .console__text { display: block; white-space: pre-wrap; overflow-wrap: anywhere; }
 .console__tags { display: flex; flex-wrap: wrap; gap: 4px; }
-.console code { font-size: 12.5px; background: var(--mist); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; overflow-wrap: anywhere; }
+.console code { font-size: 12.5px; background: var(--well); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; overflow-wrap: anywhere; }
 .console pre code, .console .agents__copy code { border: 0; background: none; padding: 0; }
 .console__id { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .console__link { background: none; border: 0; padding: 0; font: inherit; font-weight: 600; color: var(--lily); text-align: left; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
@@ -46,15 +47,18 @@
 .console__code > div { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .console__roles { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
 
-.cpill { display: inline-flex; align-items: center; font-size: 12.5px; font-weight: 600; border-radius: 999px; padding: 2px 10px; white-space: nowrap; text-transform: capitalize; }
-.cpill--ok { background: var(--lily-soft); color: #1f5a46; }
-.cpill--wait { background: var(--pollen-soft); color: #6d4f0c; }
-.cpill--bad { background: var(--danger-soft); color: var(--danger); }
-.cpill--off { background: var(--mist-2); color: var(--ink-2); }
+.cpill { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 700; border-radius: 999px; padding: 2px 10px; white-space: nowrap; }
+.cpill::first-letter { text-transform: uppercase; }
+.cpill::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: none; }
+.cpill--ok { background: var(--lily-soft); color: var(--ink); }
+.cpill--ok::before { background: var(--positive); }
+.cpill--wait { color: var(--ink); box-shadow: inset 0 0 0 1.5px var(--line-strong); }
+.cpill--wait::before { background: transparent; box-shadow: inset 0 0 0 1.5px currentColor; }
+.cpill--bad { background: var(--danger); color: #fff; }
+.cpill--off { color: var(--reed); background: var(--well); }
 
 /* On a phone each table row becomes a card, each cell named by its column. */
 @media (max-width: 760px) {
-  .console .page__head h1 { font-size: 32px; }
   .console__org { width: 100%; }
   .console__org select { flex: 1; min-width: 0; }
   .console__table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
