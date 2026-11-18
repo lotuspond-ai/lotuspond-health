@@ -20,7 +20,7 @@ import { claudeExtractor } from './extraction/claude.ts';
 import { createLabs, fakePartner, orangePartner, type Labs } from './lab/runtime.ts';
 import type { PartnerConfig } from './lab/partners/types.ts';
 import { createRecordAgent } from './records/service.ts';
-import { browserProvider } from './records/browsers.ts';
+import { browserProvider, localBrowsers } from './records/browsers.ts';
 import { demoPortal } from './records/demo-portal.ts';
 import { createEka } from './records/abdm/eka.ts';
 import { abhaFetcher } from './records/abdm/abha.ts';
@@ -32,7 +32,8 @@ import { digilockerFetcher } from './records/api/digilocker.ts';
 import { createOrganisation, createOrganisationKey, ORGANISATION_OPERATIONS, revokeOrganisationKey } from './connectors/organisations.ts';
 import type { OperationId } from './connectors/types.ts';
 import { organisationRuntime } from './connectors/runtime.ts';
-import { organisationAccounts, organisationMembers, organisations, type OrganisationRole } from './db/schema.ts';
+import { organisationAccounts, organisationConnections, organisationMembers, organisations, type OrganisationRole } from './db/schema.ts';
+import { HIS_ADAPTERS } from './connectors/his/index.ts';
 import { eq } from 'drizzle-orm';
 
 // This file runs from server/src (tsx) or server/dist (bundle); both are one level below server/.
@@ -85,7 +86,12 @@ if (command === 'files:rekey') {
 //       the command line: ORG_CONNECTION_TOKEN (bearer), or ORG_CONNECTION_USER and ORG_CONNECTION_PASSWORD (HTTP
 //       Basic), or for Eka Care ORG_CONNECTION_CLIENT_ID, ORG_CONNECTION_CLIENT_SECRET and ORG_CONNECTION_SHARING_KEY.
 //       The base url is required for FHIR systems; Eka defaults to https://api.eka.care.
-if (['org:create', 'org:key', 'org:revoke', 'org:requests', 'org:live', 'org:connect', 'org:member'].includes(command ?? '')) {
+//   org:web-signin <organisation id> <connection id>
+//       for the computer-use agent (tasks.run): opens the connection's web app (Eka: https://dr.eka.care) in a browser
+//       window on this machine, where someone at the clinic signs in with their own account; pressing Enter here seals
+//       the browser's sign-in (cookies and local storage, never the password) into the connection. Run it on a machine
+//       with a screen, with DATABASE_URL and the file keys of the server.
+if (['org:create', 'org:key', 'org:revoke', 'org:requests', 'org:live', 'org:connect', 'org:member', 'org:web-signin'].includes(command ?? '')) {
   const [a, b, c] = process.argv.slice(3);
   const db = registry.defaultCell.db;
   try {
@@ -125,6 +131,23 @@ if (['org:create', 'org:key', 'org:revoke', 'org:requests', 'org:live', 'org:con
       const runtime = organisationRuntime({ db, keyrings: secrets.fileKeys });
       const conn = await runtime.addConnection(a, { connectorId: b, name, settings: baseUrl ? { baseUrl } : {}, secret });
       console.log(`Connection ${conn.name} (${conn.connector}): ${conn.id}${secret ? ', with sealed credentials' : ', without credentials'}.`);
+    } else if (command === 'org:web-signin') {
+      if (!a || !b) fail('Usage: org:web-signin <organisation id> <connection id>');
+      const runtime = organisationRuntime({ db, keyrings: secrets.fileKeys });
+      const conn = (await runtime.listConnections(a)).find(x => x.id === b) ?? fail('No such connection for that organisation.');
+      const [row] = await db.select().from(organisationConnections).where(eq(organisationConnections.id, conn.id)).limit(1);
+      const target = HIS_ADAPTERS.get(conn.connector)?.agentTarget?.({ connectionId: conn.id, settings: row.settings, selfUrl: `http://127.0.0.1:${config.port}` });
+      if (!target?.needsSignIn) fail(`${conn.connector} connections have no web app to sign in to.`);
+      const session = await localBrowsers({ headless: false, executablePath: config.records?.browser.kind === 'local' ? config.records.browser.executablePath : process.env.RECORD_BROWSER_EXECUTABLE })
+        .open({ allowHosts: [...target.allowHosts, ...(process.env.ORG_SIGNIN_EXTRA_HOSTS ?? '').split(',').map(h => h.trim()).filter(Boolean)], acceptDownloads: false });
+      const page = await session.context.newPage();
+      await page.goto(target.startUrl).catch(() => {});
+      console.log(`Sign in to ${target.name} in the browser window that opened, with the clinic user the agent should act as.\nOnly ${target.allowHosts.join(', ')} can load (add hosts a sign-in needs with ORG_SIGNIN_EXTRA_HOSTS). Press Enter here once signed in.`);
+      await new Promise<void>(resolve => process.stdin.once('data', () => resolve()));
+      const state = await session.close();
+      if (!state?.cookies.length) fail('The browser had no sign-in to save. Nothing was changed.');
+      await runtime.setWebSession(a, conn.id, state as never);
+      console.log(`Saved the sign-in for ${conn.name} (${state.cookies.length} cookies), sealed. Agent tasks on this connection now start signed in.`);
     } else if (command === 'org:key') {
       if (!a || !b || !c) fail(`Usage: org:key <organisation id> "<key name>" <operation,operation|all>. Operations: ${ORGANISATION_OPERATIONS.join(', ')}.`);
       const ops = (c === 'all' ? ORGANISATION_OPERATIONS : c.split(',').map(x => x.trim())) as OperationId[];
@@ -138,7 +161,7 @@ if (['org:create', 'org:key', 'org:revoke', 'org:requests', 'org:live', 'org:con
   await opened.close();
   process.exit(0);
 }
-if (command) fail(`Unknown command "${command}". Commands: files:rekey, org:create, org:key, org:revoke, org:requests, org:live, org:connect, org:member.`);
+if (command) fail(`Unknown command "${command}". Commands: files:rekey, org:create, org:key, org:revoke, org:requests, org:live, org:connect, org:member, org:web-signin.`);
 
 async function sweep() {
   for (const cell of allCells) {

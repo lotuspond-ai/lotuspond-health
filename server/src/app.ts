@@ -32,6 +32,9 @@ import { organisationRoutes } from './connectors/organisation-routes.ts';
 import { organisationMcpRoutes } from './connectors/mcp.ts';
 import { consoleRoutes } from './connectors/console-routes.ts';
 import { organisationRuntime } from './connectors/runtime.ts';
+import { openAiComputerModel, type ComputerModel } from './connectors/agent/model.ts';
+import { SANDBOX_EMR_PATH, sandboxEmr, type SandboxEmr } from './connectors/agent/sandbox-emr.ts';
+import { browserProvider, type BrowserProvider } from './records/browsers.ts';
 import { ekaWebhookRoutes } from './records/abdm/webhook.ts';
 import { DEMO_PORTAL_PATH, type DemoPortal } from './records/demo-portal.ts';
 
@@ -79,6 +82,13 @@ export interface AppOptions {
   demoPortal?: DemoPortal;
   /** How the organisation API reaches hospital systems (tests pass a fake FHIR server). */
   orgFetch?: typeof fetch;
+  /**
+   * The computer-use agent for tasks.run. By default it follows config.orgAgent (GPT-6.1 Terra through OpenAI, in
+   * browsers from RECORD_BROWSER); tests pass a scripted model, browsers, and the address this server listens on.
+   */
+  orgAgent?: { model: ComputerModel; browsers: BrowserProvider; selfUrl: string; deadlineMs?: number } | null;
+  /** The sandbox EMR web app at /sandbox-emr (tests pass their own to read its appointment book). */
+  sandboxEmr?: SandboxEmr;
 }
 
 export function createApp(input: DepsInput, opts: AppOptions = {}): Hono<AppEnv> {
@@ -91,7 +101,20 @@ export function createApp(input: DepsInput, opts: AppOptions = {}): Hono<AppEnv>
   if (wa) opts.whatsapp?.onService?.(wa);
   const app = new Hono<AppEnv>();
   // The organisation API's runtime: shared by /v1, /v1/mcp and the developer console (docs/connectors.md).
-  const orgs = organisationRuntime({ db: deps.db, keyrings: deps.secrets.fileKeys, fetch: opts.orgFetch });
+  const agentCfg = config.orgAgent;
+  const orgAgent = opts.orgAgent !== undefined ? opts.orgAgent : agentCfg ? {
+    model: openAiComputerModel({ apiKey: agentCfg.apiKey, apiUrl: agentCfg.apiUrl, model: agentCfg.model }),
+    browsers: browserProvider(agentCfg.browser),
+    // A browser on this server reaches the sandbox EMR directly; a hosted one only through the public address.
+    selfUrl: agentCfg.browser.kind === 'local' || !config.publicUrl ? `http://127.0.0.1:${config.port}` : config.publicUrl,
+  } : null;
+  const orgs = organisationRuntime({
+    db: deps.db, keyrings: deps.secrets.fileKeys, fetch: opts.orgFetch,
+    agent: orgAgent ? { ...orgAgent, concurrency: agentCfg?.concurrency ?? 2 } : null,
+  });
+  // Tasks a previous process left queued or running cannot continue (one API instance runs tasks; docs/connectors.md).
+  if (orgAgent) orgs.recoverTasks().then(n => { if (n) console.warn(`[org-agent] ${n} task(s) left by a restart were marked failed`); }).catch(e => console.error('[org-agent] could not recover tasks', e));
+  const sandboxEmrApp = opts.sandboxEmr ?? sandboxEmr();
   // Map tiles on the Labs page may come from another host (see facilities/map.ts).
   const appCsp = addCspSources(APP_CSP, mapCspSources(config));
 
@@ -218,6 +241,8 @@ export function createApp(input: DepsInput, opts: AppOptions = {}): Hono<AppEnv>
   // Uploads carry a document (up to 5 MB, base64) inside the JSON.
   app.use('/v1/mcp', bodyLimit({ maxSize: 8 * 1024 * 1024, onError: c => c.json({ jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Request too large.' } }, 413) }));
   app.route('/v1/mcp', organisationMcpRoutes(deps.db, orgs));
+  // Synthetic patients only: the agent's practice EMR for sandbox connections.
+  app.route(SANDBOX_EMR_PATH, sandboxEmrApp.app);
   app.route('/v1', organisationRoutes(deps.db, orgs));
   app.use('/oauth/*', bodyLimit({ maxSize: 64 * 1024, onError: c => c.json({ error: 'invalid_request', error_description: 'Request too large.' }, 413) }));
   app.route('/', oauthRoutes(deps, opts.oauth));

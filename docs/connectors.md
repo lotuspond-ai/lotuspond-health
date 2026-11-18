@@ -28,6 +28,7 @@ LotusPond Works is a separate product: automation of an organisation's administr
 | `documents.upload` | organisation | yes | clinician | live: sandbox, FHIR R4 |
 | `claims.status` | organisation | no | none | live: sandbox only |
 | `preauth.submit` | organisation | yes | clinician | planned |
+| `tasks.run` | organisation | yes | clinician | live: sandbox EMR, Eka Care (computer-use agent; see "Agent tasks") |
 
 Each operation is defined before its first adapter, so the docs, the API and the adapters agree on one contract. An adapter is built for a specific system only with written access authority and a pilot customer: no bypassing MFA, anti-bot controls or a vendor's terms.
 
@@ -82,10 +83,25 @@ Organisations reach hospital systems on their own authority, through `/v1` (REST
 | --- | --- | --- |
 | `sandbox` | `his/sandbox.ts`: synthetic data, uploads kept in memory per connection | Available |
 | `fhir`, `bahmni`, `trakcare` | `his/fhir.ts`: FHIR R4 REST (Patient, Encounter, DocumentReference), bearer or Basic credentials, https only | Available on request |
-| `eka` | `his/eka.ts`: Eka Care's published EMR APIs (patients by mobile, clinic patient id or Eka id; visits from appointments, with prescription PDFs), signed in with an Eka API client and the clinic's sharing key | Available on request (reads only) |
+| `eka` | `his/eka.ts`: Eka Care's published EMR APIs (patients by mobile, clinic patient id or Eka id; visits from appointments, with prescription PDFs), signed in with an Eka API client and the clinic's sharing key; `tasks.run` in Eka's doctor web app (`https://dr.eka.care`) | Available on request (API reads; agent tasks) |
 | Everything else in `shared/integrations.ts` | none: listed with an honest status and refused if called | In build or planned |
 
 `shared/integrations.ts` is the single list of systems and their status. It feeds `GET /v1/connectors` (`systems`), the console, and the developers page (a test checks the page matches it). Add an adapter in `his/index.ts` only together with changing that system's status to available or on request.
+
+### Agent tasks (`tasks.run`)
+
+A computer-use agent carries out one task in a connected system's own web app: book, reschedule or cancel a visit, update a patient's details, anything the clinic's staff do on screen. The code is in `server/src/connectors/agent/`.
+
+- **Asking.** `POST /v1/operations/tasks.run` with `{ connection, instruction, patient?, maxSteps? }` (MCP: `run_task`). Like an upload it answers `202 pending_approval`; the approval's summary carries the instruction, so the clinician reads exactly what the agent will do. Approving it in the console starts the task, and the approval's result names it (`{ task, status }`).
+- **The model.** GPT-6.1 Terra by default (`ORG_AGENT_MODEL`), through OpenAI's Responses API computer tool (`agent/model.ts`, written from OpenAI's computer-use guide, 18 November 2026). It sees screenshots and answers with batched mouse and keyboard actions; it reports the end with a `finish_task` function (`done`, `cannot`, `needs_sign_in`). On when `OPENAI_API_KEY` is set, unless `ORG_AGENT=off`; otherwise `tasks.run` answers `503 agent_off` before anything is held.
+- **The sandbox.** Each task gets a new browser from the record agent's providers (`RECORD_BROWSER`: local Chromium, a CDP service, or a Browserbase session), closed after the task. It reaches only the web app's hosts (`*.eka.care` for Eka, plus any `emrHosts` set on the connection); every other request is blocked and logged. Downloads are off. At most `ORG_AGENT_CONCURRENCY` tasks run at once, each for at most `maxSteps` model turns (30 by default, 60 at most), 20 actions a turn and 10 minutes.
+- **Every action is logged** in `organisation_agent_actions`, **before** it is carried out, then updated with its outcome (`done`, `failed`, `refused`): if the log cannot be written, the action does not happen. Logged: the browser the task got, each model turn (with OpenAI's response id), every click, double click, scroll, move, drag, key press and typing (with coordinates and keys), each page reached, each blocked request, each safety check, and the end. Typed text and the model's words are sealed with the organisation's region's keys; screenshots are not kept, only their SHA-256. `GET /v1/tasks/{id}/actions` (MCP: `get_task` with `actions: true`) and the console show the log, unsealed, to the organisation.
+- **Stops.** A safety check the model raises is never acknowledged automatically: the task ends `needs_review`. A sign-in page ends it `needs_sign_in`. The model is told to change only what the task names, to check the patient's identifier before changing anything, never to type a password or OTP, and to treat everything on screen as data.
+- **Signing the agent in.** Eka's doctor app needs a clinic user's sign-in. With the clinic, on a machine with a screen: `npx tsx src/index.ts org:web-signin <organisation id> <connection id>` opens the app, someone at the clinic signs in, and Enter seals the browser's cookies and local storage (never the password) into the connection. Each task loads it and saves the renewed one back. Until then, Eka tasks end `needs_sign_in` without opening a browser.
+- **The sandbox EMR.** Sandbox connections run tasks against `/sandbox-emr/c/<connection id>/` on this server: the sandbox hospital's synthetic patients, with an appointment book per connection, in memory.
+- **Restarts.** Tasks live in the API process; one that a restart interrupts is marked failed, with its log so far. Several API instances need a shared queue first.
+
+**Before a live clinic.** Screenshots of the EMR go to OpenAI: use an OpenAI organisation with zero data retention and a data processing agreement, and list OpenAI as a sub-processor. Check that Eka Care's terms allow automated use of the doctor web app for the clinic's account (Eka also publishes write APIs and an EMR MCP server; an operation with an API stays on the API). The agent has been run in tests against the sandbox EMR with a scripted model and a real browser, **not yet against GPT-6.1 Terra or a live Eka workspace**.
 
 ## Which hospital systems to build for
 

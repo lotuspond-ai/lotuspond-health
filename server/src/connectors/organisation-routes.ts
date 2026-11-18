@@ -3,6 +3,9 @@
 //   GET  /v1/connections               the organisation's connections: its sandbox hospital, and real systems LotusPond set up
 //   POST /v1/operations/:operation     run an operation on one connection: { "connection": "…", …input }
 //   GET  /v1/approvals/:id             a held write: pending until someone on the organisation's side approves it
+//   GET  /v1/tasks                     the computer-use agent's tasks (tasks.run), newest first
+//   GET  /v1/tasks/:id                 one task: queued, running, succeeded, failed, cannot, needs_sign_in or needs_review
+//   GET  /v1/tasks/:id/actions         every action the agent took in the system, in order: the audit log
 // An operation that runs only on a person's authority (records.fetch) is refused, as is one outside the key's list;
 // a planned operation answers 501. Every call is recorded (organisation_calls). No cookies or browsers are involved.
 import { Hono } from 'hono';
@@ -59,6 +62,22 @@ export function organisationRoutes(db: Db, runtime: OrganisationRuntime) {
     const a = UUID.test(id) ? await runtime.getApproval(c.var.org.id, id) : null;
     if (!a) throw new HttpError(404, 'not_found', 'No such approval for this organisation.');
     return c.json(a);
+  });
+
+  app.get('/tasks', async c => c.json({ tasks: await runtime.listTasks(c.var.org.id, 50) }));
+
+  app.get('/tasks/:id', async c => {
+    const id = c.req.param('id');
+    const t = UUID.test(id) ? await runtime.getTask(c.var.org.id, id) : null;
+    if (!t) throw new HttpError(404, 'not_found', 'No such task for this organisation.');
+    return c.json(t);
+  });
+
+  app.get('/tasks/:id/actions', async c => {
+    const id = c.req.param('id');
+    const actions = UUID.test(id) ? await runtime.taskActions(c.var.org.id, id) : null;
+    if (!actions) throw new HttpError(404, 'not_found', 'No such task for this organisation.');
+    return c.json({ task: id, actions });
   });
 
   return app;
