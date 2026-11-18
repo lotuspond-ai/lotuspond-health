@@ -137,6 +137,8 @@ const card = (title: string | null, ...children: (Node | null | false)[]) =>
 
 function table(cols: string[], rows: HTMLTableRowElement[], empty: string): HTMLElement {
   if (!rows.length) return el('p', { class: 'cx-empty' }, empty);
+  // On a phone each row stacks into a card (console.css), with each cell named by its column.
+  for (const row of rows) [...row.cells].forEach((cell, i) => { if (cols[i]) cell.dataset.label = cols[i]; });
   return el('div', { class: 'cx-table-wrap' }, el('table', { class: 'cx-table' },
     el('thead', {}, el('tr', {}, ...cols.map(c => el('th', { scope: 'col' }, c)))),
     el('tbody', {}, ...rows)));

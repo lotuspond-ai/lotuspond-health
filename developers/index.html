@@ -46,7 +46,8 @@
         <div class="prose">
           <section id="systems" aria-labelledby="systems-title">
             <h2 class="home-d-md" id="systems-title">Systems you can reach</h2>
-            <p>The status of each system is stated plainly. We do not have partnership agreements with these vendors; product names are used only to say which systems a connection can reach. The same list is published as JSON at <a href="/v1/connectors?region=in"><code>/v1/connectors</code></a>.</p>
+            <p>The status of each system is stated plainly. We do not have partnership agreements with these vendors; product names and logos, trademarks of their owners, are used only to say which systems a connection can reach. The same list is published as JSON at <a href="/v1/connectors?region=in"><code>/v1/connectors</code></a>.</p>
+            <!-- @include system-logos -->
             <div class="table-wrap">
               <table class="table">
                 <thead>
@@ -57,7 +58,7 @@
                   <tr data-integration="fhir"><th scope="row">Any FHIR R4 server</th><td><span class="dev-status dev-status-on_request">Available on request</span></td><td>FHIR R4 REST: Patient, Encounter and DocumentReference</td><td>Hospitals whose HIS exposes FHIR R4</td></tr>
                   <tr data-integration="bahmni"><th scope="row">Bahmni and OpenMRS</th><td><span class="dev-status dev-status-on_request">Available on request</span></td><td>OpenMRS FHIR2 module (FHIR R4)</td><td>Public and non-profit hospitals and clinics</td></tr>
                   <tr data-integration="trakcare"><th scope="row">InterSystems TrakCare</th><td><span class="dev-status dev-status-on_request">Available on request</span></td><td>FHIR R4 through the hospital’s InterSystems interoperability toolkit</td><td>Manipal Hospitals, Sir Ganga Ram Hospital</td></tr>
-                  <tr data-integration="eka"><th scope="row">Eka Care EMR</th><td><span class="dev-status dev-status-on_request">Available on request</span></td><td>Eka’s published EMR APIs, with the clinic’s sharing key for its Eka workspace</td><td>Clinics and doctors using Eka</td></tr>
+                  <tr data-integration="eka"><th scope="row">Eka Care EMR</th><td><span class="dev-status dev-status-on_request">Available on request</span></td><td>Eka’s published EMR APIs, with the clinic’s sharing key for its Eka workspace; agent tasks in Eka’s doctor web app</td><td>Clinics and doctors using Eka</td></tr>
                   <tr data-integration="abdm"><th scope="row">ABDM-certified HIS (consented records)</th><td><span class="dev-status dev-status-planned">Planned</span></td><td>ABDM health-information-user flow, with each patient’s consent</td><td>C-DAC e-Sushrut, NIC NextGen eHospital and other certified systems</td></tr>
                   <tr data-integration="nhcx"><th scope="row">NHCX claims exchange</th><td><span class="dev-status dev-status-planned">Planned</span></td><td>National Health Claims Exchange (FHIR claim profiles)</td><td>Insurers and TPAs on NHCX</td></tr>
                   <tr data-integration="akhil"><th scope="row">Akhil Systems Miracle HIS</th><td><span class="dev-status dev-status-planned">Planned</span></td><td>Needs Akhil Systems’ partnership</td><td>Aster, Paras, probably CARE</td></tr>
@@ -104,7 +105,7 @@ curl https://health.lotuspond.ai/v1/operations/patients.search \
     }
   }
 }</code></pre>
-            <p>The tools follow the key: <code>list_connections</code>, <code>search_patients</code>, <code>list_encounters</code>, <code>upload_document</code>, <code>get_claim_status</code> and <code>get_approval</code>. A key without an operation does not see its tool. This server is for organisations; people connect their own records at <code>/mcp</code> instead.</p>
+            <p>The tools follow the key: <code>list_connections</code>, <code>search_patients</code>, <code>list_encounters</code>, <code>upload_document</code>, <code>get_claim_status</code>, <code>run_task</code>, <code>get_task</code> and <code>get_approval</code>. A key without an operation does not see its tool. This server is for organisations; people connect their own records at <code>/mcp</code> instead.</p>
           </section>
 
           <section id="operations" aria-labelledby="operations-title">
@@ -117,11 +118,12 @@ curl https://health.lotuspond.ai/v1/operations/patients.search \
                   <tr><th scope="row"><code>encounters.list</code></th><td><code>connection</code>, <code>patient</code>; optional <code>limit</code></td><td>Bundle of Encounter and DocumentReference</td></tr>
                   <tr><th scope="row"><code>documents.upload</code></th><td><code>connection</code>, <code>patient</code>, <code>title</code>, <code>contentType</code> (PDF, JPEG, PNG or text), base64 <code>data</code> up to 5 MB; optional <code>encounter</code>, <code>author</code></td><td>Held for approval, then DocumentReference</td></tr>
                   <tr><th scope="row"><code>claims.status</code></th><td><code>connection</code>, <code>claim</code></td><td>ClaimResponse (sandbox today; NHCX and TPA portals later)</td></tr>
+                  <tr><th scope="row"><code>tasks.run</code></th><td><code>connection</code>, <code>instruction</code> (what to do, naming the patient); optional <code>patient</code>, <code>maxSteps</code></td><td>Held for approval, then a task: a computer-use agent (GPT-6.1 Terra) does it in the system’s web app, in an isolated browser, and every action it takes is logged. Sandbox and Eka Care today</td></tr>
                   <tr><th scope="row"><code>preauth.submit</code></th><td><span class="dev-status dev-status-planned">Planned</span></td><td>Claim and ClaimResponse</td></tr>
                 </tbody>
               </table>
             </div>
-            <p>Also: <code>GET /v1/organisation</code> (who the key belongs to), <code>GET /v1/connections</code> and <code>GET /v1/approvals/{id}</code>.</p>
+            <p>Also: <code>GET /v1/organisation</code> (who the key belongs to), <code>GET /v1/connections</code>, <code>GET /v1/approvals/{id}</code>, <code>GET /v1/tasks/{id}</code> and <code>GET /v1/tasks/{id}/actions</code> (the agent’s action log).</p>
           </section>
 
           <section id="live" aria-labelledby="live-title">

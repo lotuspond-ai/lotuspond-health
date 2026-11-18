@@ -11,7 +11,7 @@ const fixtures = join(here, 'fixtures');
 const lib = p => new URL(`../src/lib/${p}`, import.meta.url).href;
 
 const { matchMarkerName, BIOMARKERS, findMarker, SYSTEM_LABELS } = await import(lib('catalog.ts'));
-const { parseRangeText, computeStatus, resolveRange, normalizeUnit, formatValue, refreshMeasurement } = await import(lib('status.ts'));
+const { parseRangeText, computeStatus, resolveRange, normalizeUnit, formatValue, refreshMeasurement, convertRange } = await import(lib('status.ts'));
 const { detectReportDate, parseDate } = await import(lib('parse/dates.ts'));
 const { parseCsvText } = await import(lib('parse/csv.ts'));
 const { parseJsonText } = await import(lib('parse/json.ts'));
@@ -363,9 +363,15 @@ for (const m of pdf.measurements) console.log(`    ${m.markerId?.padEnd(18)} ${S
 // Regression checks for column bleed (MCHC range swallowing the lipid column), units absorbing numbers
 // (platelets "lakhs/cumm 1.5"), and lost low bounds (WBC "4000 - 11000").
 const rowOf = id => byId(pdf, id);
+{
+  const k = v => v / 1000, mmol = v => Math.round(v / 18 * 10) / 10; // normalizeUnit's converters round like this
+  check('converted range text keeps its printed style', convertRange({ low: 4000, high: 11000, text: '4,000 - 11,000', source: 'report' }, k)?.text === '4 - 11');
+  check('converted "<" range keeps its sign', convertRange({ high: 200, text: '<200', source: 'report' }, mmol)?.text === '<11.1');
+  check('converted range with extra numbers in its text is written afresh', convertRange({ high: 11000, text: 'Adult (18+): up to 11000', source: 'report' }, k)?.text === '< 11');
+}
 check('PDF MCHC range stops at its own column', rowOf('mchc')?.range?.text === '31.5 - 34.5', rowOf('mchc')?.range?.text);
-check('PDF platelets unit + range', rowOf('platelets')?.unit === '10^3/µL' && rowOf('platelets')?.range?.low === 150 && rowOf('platelets')?.range?.high === 410 && rowOf('platelets')?.range?.text === '1.5 - 4.1', JSON.stringify(rowOf('platelets')));
-check('PDF WBC range keeps low bound', rowOf('wbc')?.range?.low === 4 && rowOf('wbc')?.range?.high === 11 && rowOf('wbc')?.range?.text === '4000 - 11000', JSON.stringify(rowOf('wbc')?.range));
+check('PDF platelets unit + range', rowOf('platelets')?.unit === '10^3/µL' && rowOf('platelets')?.range?.low === 150 && rowOf('platelets')?.range?.high === 410 && rowOf('platelets')?.range?.text === '150 - 410', JSON.stringify(rowOf('platelets')));
+check('PDF WBC range keeps low bound, shown in the converted unit', rowOf('wbc')?.range?.low === 4 && rowOf('wbc')?.range?.high === 11 && rowOf('wbc')?.range?.text === '4 - 11', JSON.stringify(rowOf('wbc')?.range));
 check('PDF units never contain digits-only tokens', pdf.measurements.every(m => !/\s\d/.test(m.unit)), pdf.measurements.map(m => m.unit).join(','));
 // Same failure modes with merged cells (one text item for "unit + range", side-by-side tables in one cell).
 {

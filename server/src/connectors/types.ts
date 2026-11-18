@@ -26,7 +26,8 @@ export type OperationId =
   | 'encounters.list'
   | 'documents.upload'
   | 'claims.status'
-  | 'preauth.submit';
+  | 'preauth.submit'
+  | 'tasks.run';
 
 export interface OperationSpec {
   id: OperationId;
@@ -67,6 +68,10 @@ export const OPERATIONS: Record<OperationId, OperationSpec> = {
   'preauth.submit': {
     id: 'preauth.submit', summary: 'Submit a pre-authorisation request, with its documents, to an insurer or TPA',
     authority: ['organisation'], writes: true, approval: 'clinician', fhir: ['Claim', 'ClaimResponse'], stage: 'planned',
+  },
+  'tasks.run': {
+    id: 'tasks.run', summary: "Have a computer-use agent carry out a task in the system's own web app (book a visit, update a patient's details), in an isolated browser, with every action logged",
+    authority: ['organisation'], writes: true, approval: 'clinician', fhir: ['Task'], stage: 'live',
   },
 };
 
