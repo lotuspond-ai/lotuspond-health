@@ -3,7 +3,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { backend, errorMessage, inApp } from '../api';
 import { startAccountsSignIn } from '../native/accounts';
-import { oauthReturn } from '../site/links';
+import { accountsReturn } from '../site/links';
 import { useSession } from '../state/session';
 import type { SignUpProblem } from '../../shared/regions';
 import { accountsStartPath } from '../../shared/identity';
@@ -54,7 +54,7 @@ export function AccountsSignUp() {
         <p className="muted">{error ?? 'That sign-up took too long, or was started in another browser.'}</p>
         {inApp
           ? <button type="button" className="btn btn--primary btn--block" onClick={() => { startAccountsSignIn('signup').catch(e => setError(errorMessage(e))); }}>Continue with LotusPond Account</button>
-          : <a className="btn btn--primary btn--block" href={accountsStartPath('signup', oauthReturn())}>Continue with LotusPond Account</a>}
+          : <a className="btn btn--primary btn--block" href={accountsStartPath('signup', accountsReturn())}>Continue with LotusPond Account</a>}
       </>
     );
   }

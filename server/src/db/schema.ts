@@ -576,21 +576,31 @@ export const organisations = pgTable('organisations', {
 });
 
 /**
- * Organisation accounts: the people who use the developer console, on behalf of an organisation. They are kept in the
- * default database and are separate from personal LotusPond Health accounts (which live in a person's cell and hold
- * their own records), as in LotusPond Works: an account belongs to a person, and organisations are workspaces it is a
- * member of. An employer therefore never controls the account that holds someone's own health records (company
- * ADR-0001, decision 8). When LotusPond Accounts ships, these become Accounts sign-ins with the same memberships.
+ * Organisation accounts: the people who use the developer console, on behalf of an organisation, kept in the default
+ * database. The console opens with the person's LotusPond Health sign-in (settled by the owner, 2026-11-18): each row
+ * belongs to one Health account (`healthUserId`), made the first time that person opens the console. As in LotusPond
+ * Works, organisations are workspaces the account is a member of. Memberships, keys and calls never open anyone's
+ * records, and records stay in the cells.
  */
 export const organisationAccounts = pgTable('organisation_accounts', {
   id: uuid('id').primaryKey().defaultRandom(),
   /** Stored lower-cased and trimmed. */
   email: text('email').notNull(),
   name: text('name').notNull(),
-  passwordHash: text('password_hash').notNull(),
+  /** The console's own password, from before it opened with the Health sign-in. Null for accounts made since. */
+  passwordHash: text('password_hash'),
+  /**
+   * The LotusPond Health account (users.id, in the cell for `healthRegion`) that opens this console account. Set the
+   * first time that person opens the console. No foreign key: users live in the cells, this table in the default database.
+   */
+  healthUserId: uuid('health_user_id'),
+  healthRegion: text('health_region').$type<DataRegion>(),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
-}, t => [uniqueIndex('organisation_accounts_email_key').on(t.email)]);
+}, t => [
+  uniqueIndex('organisation_accounts_email_key').on(t.email),
+  uniqueIndex('organisation_accounts_health_user_key').on(t.healthRegion, t.healthUserId),
+]);
 
 /** Console sessions: only the SHA-256 of the cookie token is kept, as for personal sessions. */
 export const organisationSessions = pgTable('organisation_sessions', {

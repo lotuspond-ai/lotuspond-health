@@ -18,7 +18,7 @@ import type { Deps } from '../src/http.ts';
 import { DiskFileStore } from '../src/lib/files.ts';
 import { organisationRuntime } from '../src/connectors/runtime.ts';
 import { resetEkaTokens } from '../src/connectors/his/eka.ts';
-import { makeClient } from './helpers.ts';
+import { consoleUser } from './helpers.ts';
 
 let database: Database;
 let filesDir: string;
@@ -67,7 +67,7 @@ before(async () => {
   database = await openDatabase({ url: process.env.TEST_DATABASE_URL });
   await database.migrate(fileURLToPath(new URL('../drizzle', import.meta.url)));
   filesDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lotuspond-eka-'));
-  deps = completeDeps({ db: database.db, files: new DiskFileStore(filesDir), config: loadConfig({ NODE_ENV: 'test', RECORD_AGENT: 'off' }) });
+  deps = completeDeps({ db: database.db, files: new DiskFileStore(filesDir), config: loadConfig({ NODE_ENV: 'test', ACCOUNTS_ISSUER: 'fake', RECORD_AGENT: 'off' }) });
   app = createApp(deps, { orgFetch: fakeFetch });
 });
 after(async () => { await database.close(); fs.rmSync(filesDir, { recursive: true, force: true }); });
@@ -79,10 +79,8 @@ const api = (url: string, key: string, body: unknown) => app.request(url, {
 
 /** A live organisation with an Eka connection and a key for both reads. */
 async function setup(email: string, secret: Record<string, string> = { clientId: 'EC_1431', clientSecret: 'secret', sharingKey: 'clinic-share-1' }) {
-  const person = makeClient(app);
-  // An organisation account in the developer console, with its organisation (not a personal Health account).
-  const { organisation: org } = await person.json<{ organisation: { id: string } }>('POST', '/api/console/auth/register',
-    { name: 'Clinic Dev', email, password: 'correct horse battery', terms: true, organisation: { name: 'Clinic Tools', region: 'in' } }, 201);
+  const { person, org: made } = await consoleUser(app, email, { name: 'Clinic Tools', region: 'in' });
+  const org = made!;
   await database.db.update(organisations).set({ access: 'live' }).where(eq(organisations.id, org.id));
   const runtime = organisationRuntime({ db: database.db, keyrings: deps.secrets.fileKeys, fetch: fakeFetch });
   const conn = await runtime.addConnection(org.id, { connectorId: 'eka', name: 'Clinic on Eka', settings: { baseUrl: 'http://localhost/' }, secret });

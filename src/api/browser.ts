@@ -540,6 +540,7 @@ export class BrowserBackend implements Backend {
     return keys(this.store);
   }
 
+  async console<T>(): Promise<T> { throw new ApiError(503, 'preview', 'The developer console needs the LotusPond server, and this preview runs without one.'); }
   async agentConnections(): Promise<AgentConnectionsInfo> { throw noAgents(); }
   // No agents can connect to the preview, so nothing is ever added by one.
   async notifications(): Promise<NotificationList> { return { unread: 0, items: [] }; }

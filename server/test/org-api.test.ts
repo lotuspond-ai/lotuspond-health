@@ -14,12 +14,13 @@ import { completeDeps } from '../src/cells.ts';
 import type { Deps } from '../src/http.ts';
 import { loadConfig } from '../src/config.ts';
 import { openDatabase, type Database } from '../src/db/client.ts';
-import { organisationApprovals, organisationConnections, organisations } from '../src/db/schema.ts';
+import { organisationAccounts, organisationApprovals, organisationConnections, organisations, users } from '../src/db/schema.ts';
+import { hashPassword } from '../src/auth/password.ts';
 import { DiskFileStore } from '../src/lib/files.ts';
 import { organisationRuntime } from '../src/connectors/runtime.ts';
 import { INTEGRATIONS, INTEGRATION_STATUS_TEXT } from '../../shared/integrations.ts';
 import { HIS_ADAPTERS } from '../src/connectors/his/index.ts';
-import { makeClient, registration } from './helpers.ts';
+import { consoleUser, makeClient, registration } from './helpers.ts';
 
 let database: Database;
 let filesDir: string;
@@ -60,19 +61,15 @@ const mcp = (key: string, method: string, params?: unknown) => app.request('/v1/
   body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, ...(params ? { params } : {}) }),
 });
 
-/** An organisation account in the console, the way LotusPond Works makes one: name, email, password, and optionally the organisation. */
-const orgSignup = (email: string, organisation?: { name: string; region: string }) => ({ name: 'Dev Person', email, password: 'correct horse battery', terms: true, ...(organisation ? { organisation } : {}) });
-
+/** Someone who opens the console with their Health sign-in. */
 async function consoleAccount(email: string) {
-  const person = makeClient(app);
-  await person.json('POST', '/api/console/auth/register', orgSignup(email), 201);
-  return person;
+  return (await consoleUser(app, email)).person;
 }
 
+/** Someone who opens the console and makes an organisation there. */
 async function consoleOrg(email: string) {
-  const person = makeClient(app);
-  const made = await person.json<{ organisation: { id: string; access: string; role: string } }>('POST', '/api/console/auth/register', orgSignup(email, { name: 'Scribe Startup', region: 'in' }), 201);
-  return { person, org: made.organisation };
+  const { person, org } = await consoleUser(app, email, { name: 'Scribe Startup', region: 'in' });
+  return { person, org: org! };
 }
 
 describe('organisation API: sandbox, console, MCP', () => {
@@ -237,35 +234,64 @@ describe('organisation API: sandbox, console, MCP', () => {
 });
 
 describe('organisation accounts in the developer console', () => {
-  test('organisation accounts are separate from personal Health accounts, both ways', async () => {
-    const personal = makeClient(app);
-    await personal.signUp(registration('both@example.com'));
-    assert.equal((await personal.call('GET', '/api/console')).status, 401, 'a personal Health session does not open the console');
+  test('the console opens with the Health sign-in, and only with it', async () => {
+    assert.equal((await makeClient(app).call('GET', '/api/console')).status, 401, 'signed out');
+    const person = makeClient(app);
+    await person.signUp(registration('both@example.com', 'IN', { displayName: 'Meera Iyer' }));
+    const first = await person.json<{ account: { email: string; name: string }; organisations: unknown[]; regions: { id: string }[] }>('GET', '/api/console');
+    assert.equal(first.account.email, 'both@example.com');
+    assert.equal(first.account.name, 'Meera Iyer', 'named after their own profile');
+    assert.deepEqual(first.organisations, []);
+    assert.ok(first.regions.some(r => r.id === 'in'));
+    const org = await person.json<{ id: string; role: string; approves: boolean }>('POST', '/api/console/organisations', { name: 'Clinic Co', region: 'in' }, 201);
+    assert.deepEqual([org.role, org.approves], ['owner', true]);
+    const again = await person.json<{ account: { email: string }; organisations: { id: string }[] }>('GET', '/api/console');
+    assert.deepEqual(again.organisations.map(o => o.id), [org.id], 'the same console account each time');
+    const [rows] = [await database.db.select().from(organisationAccounts).where(eq(organisationAccounts.email, 'both@example.com'))];
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].passwordHash, null, 'no console password');
 
-    const org = makeClient(app);
-    assert.equal((await org.call('POST', '/api/console/auth/login', { email: 'both@example.com', password: 'correct horse battery' })).status, 401, 'nor does a personal password');
-    await org.json('POST', '/api/console/auth/register', orgSignup('both@example.com', { name: 'Clinic Co', region: 'in' }), 201);
-    assert.match(org.cookie, /^lp_org_session=lpo\./);
-    const me = await org.json<{ account: { email: string; name: string }; organisations: { role: string; approves: boolean }[]; regions: { id: string }[] }>('GET', '/api/console');
-    assert.equal(me.account.email, 'both@example.com');
-    assert.deepEqual(me.organisations.map(o => [o.role, o.approves]), [['owner', true]]);
-    assert.ok(me.regions.some(r => r.id === 'in'));
-    assert.equal(await org.json('GET', '/api/auth/me'), null, 'and a console session opens no one\'s records');
-
-    assert.equal((await makeClient(app).call('POST', '/api/console/auth/register', orgSignup('BOTH@example.com'))).status, 409);
-    const again = makeClient(app);
-    assert.equal((await again.call('POST', '/api/console/auth/login', { email: 'both@example.com', password: 'wrong password!!' })).status, 401);
-    await again.json('POST', '/api/console/auth/login', { email: 'Both@Example.com', password: 'correct horse battery' });
-    await again.json('GET', '/api/console');
-    assert.equal((await again.call('POST', '/api/console/auth/logout')).status, 204);
-    assert.equal((await again.call('GET', '/api/console')).status, 401);
+    // The console's own sign-up and sign-in are gone.
+    for (const path of ['/api/console/auth/register', '/api/console/auth/login']) {
+      assert.equal((await makeClient(app).call('POST', path, { email: 'x@example.com', password: 'correct horse battery' })).status, 404, path);
+    }
+    // Signing out of Health closes the console too.
+    assert.equal((await person.call('POST', '/api/auth/logout')).status < 400, true);
+    assert.equal((await person.call('GET', '/api/console')).status, 401);
   });
 
-  test('sign-up needs the terms, a long enough password and a served region', async () => {
-    const c = makeClient(app);
-    assert.equal((await c.call('POST', '/api/console/auth/register', { ...orgSignup('t1@example.com'), terms: false })).status, 400);
-    assert.equal((await c.call('POST', '/api/console/auth/register', { ...orgSignup('t1@example.com'), password: 'short' })).status, 400);
-    assert.equal((await c.call('POST', '/api/console/auth/register', orgSignup('t1@example.com', { name: 'Nowhere', region: 'mars' }))).status, 400);
+  test('an earlier console account with the same email is joined by a verified Accounts email, or by its password', async () => {
+    const make = async (email: string, name: string) => {
+      const [acc] = await database.db.insert(organisationAccounts).values({ email, name, passwordHash: await hashPassword('old console pass') }).returning();
+      const [o] = await database.db.insert(organisations).values({ name, region: 'in' }).returning();
+      const { organisationMembers } = await import('../src/db/schema.ts');
+      await database.db.insert(organisationMembers).values({ organisationId: o.id, accountId: acc.id, role: 'owner', approves: true });
+      return o.id;
+    };
+    // Signed in through LotusPond Accounts, which joins only verified emails: joined at once.
+    const viaAccounts = await make('earlier1@example.com', 'Earlier One');
+    const one = makeClient(app);
+    await one.signUp(registration('earlier1@example.com'));
+    const seen = await one.json<{ organisations: { id: string }[] }>('GET', '/api/console');
+    assert.deepEqual(seen.organisations.map(o => o.id), [viaAccounts]);
+
+    // A Health account without Accounts (a password account): asked once for the console password.
+    const byPassword = await make('earlier2@example.com', 'Earlier Two');
+    const two = makeClient(app);
+    await two.signUp(registration('earlier2@example.com'));
+    await database.db.update(users).set({ accountsSubject: null }).where(eq(users.email, 'earlier2@example.com'));
+    assert.equal((await two.error('GET', '/api/console')).code, 'link_required');
+    assert.equal((await two.error('POST', '/api/console/link', { password: 'not it' })).code, 'wrong_password');
+    await two.json('POST', '/api/console/link', { password: 'old console pass' });
+    const joined = await two.json<{ organisations: { id: string }[] }>('GET', '/api/console');
+    assert.deepEqual(joined.organisations.map(o => o.id), [byPassword]);
+    assert.equal((await two.error('POST', '/api/console/link', { password: 'old console pass' })).code, 'wrong_password', 'nothing left to join');
+  });
+
+  test('organisations need a name and a served region', async () => {
+    const c = await consoleAccount('t1@example.com');
+    assert.equal((await c.call('POST', '/api/console/organisations', { name: 'X', region: 'in' })).status, 400);
+    assert.equal((await c.call('POST', '/api/console/organisations', { name: 'Nowhere', region: 'mars' })).status, 400);
   });
 
   test('members join by email with a role, as in LotusPond Works, and roles limit what they can do', async () => {

@@ -300,6 +300,7 @@ export class HttpBackend implements Backend {
     return this.request<GeoReverse>('GET', `/geo/reverse?${new URLSearchParams({ lat: roundCoord(lat).toFixed(2), lon: roundCoord(lon).toFixed(2) })}`);
   }
 
+  console<T>(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: string, body?: unknown) { return this.request<T>(method, `/console${path}`, body); }
   agentConnections() { return this.request<AgentConnectionsInfo>('GET', '/agents'); }
   createAgentToken(input: CreateAgentTokenInput) { return this.request<CreatedAgentToken>('POST', '/agents/tokens', input); }
   updateAgentConnection(id: string, patch: UpdateAgentConnectionInput) { return this.request<AgentConnection>('PATCH', `/agents/${id}`, patch); }

@@ -32,12 +32,17 @@ export const APP_LINKS_HOST = 'open.health.lotuspond.ai';
 export const APP_LINK_PATH = '/accounts-return';
 
 /**
- * Where to go after signing in when an agent sent the person to approve a connection: only this site's consent page
- * (/oauth/authorize?…), so the parameter cannot send anyone elsewhere. Null for anything else.
+ * Where to go after signing in: an agent's consent page when an agent sent the person to approve a connection
+ * (/oauth/authorize?…), or the developer console in the app (CONSOLE_PATH). Only these, so the parameter cannot send
+ * anyone elsewhere. Null for anything else.
  */
 export function agentConsentNext(next: string | null | undefined): string | null {
+  if (next === CONSOLE_PATH) return next;
   return next && /^\/oauth\/authorize\?[^\\]*$/.test(next) && !next.includes('//') ? next : null;
 }
+
+/** The developer console: a page of the app, opened with the Health sign-in (src/pages/Console.tsx). */
+export const CONSOLE_PATH = '/app#console';
 
 /** Where the website starts a sign-in through LotusPond Accounts; `next` brings an agent's consent page back after. */
 export const accountsStartPath = (intent: 'signup' | 'login', next?: string | null) =>

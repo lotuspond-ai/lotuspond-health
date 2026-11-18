@@ -10,6 +10,7 @@ import Labs from './pages/Labs';
 import Sources from './pages/Sources';
 import Home from './pages/Home';
 import Agents from './pages/Agents';
+import Console from './pages/Console';
 import { MarkerDrawer, ScanViewer, UploadDialog } from './components/Overlays';
 import { BookingDialog } from './components/labs/BookingDialog';
 import { ResultReview } from './components/labs/ResultReview';
@@ -115,6 +116,7 @@ function Shell({ hidden }: { hidden: boolean }) {
         {view === 'profile' && <ProfilePage />}
         {view === 'account' && <AccountPage />}
         {view === 'labs' && <Labs />}
+        {view === 'console' && <Console />}
         <MarkerDrawer />
         <UploadDialog />
         <AssistantPanel />

@@ -1,65 +1,99 @@
-// Organisation accounts for the developer console: sign-up, sign-in and sessions. They work like LotusPond Works'
-// accounts (a person's account, with organisations as workspaces it is a member of) and are kept apart from personal
-// LotusPond Health accounts: a different table in the default database, a different cookie sent only to
-// /api/console, and no health consent or family profile. A personal Health session never opens the console, and a
-// console session never opens anyone's records.
-import { createHash, randomBytes } from 'node:crypto';
-import { and, eq, lt } from 'drizzle-orm';
-import type { Context } from 'hono';
-import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
+// Organisation accounts for the developer console. The console opens with the person's LotusPond Health sign-in (the
+// same session cookie as the app, or the apps' bearer token; settled by the owner, 2026-11-18). Each Health account
+// has one organisation account, made the first time it opens the console; organisations are workspaces that account is
+// a member of, as in LotusPond Works. The organisation account holds no records and opens none: it only names who is
+// in which organisation, with which role.
+import { and, eq, isNull, lt } from 'drizzle-orm';
 import type { Db } from '../db/client.ts';
-import { organisationAccounts, organisationSessions } from '../db/schema.ts';
-import { ORG_SESSION_COOKIE } from '../auth/sessions.ts';
+import { organisationAccounts, organisationSessions, profiles, type UserRow } from '../db/schema.ts';
+import type { ActiveSession } from '../auth/sessions.ts';
+import { HttpError } from '../lib/errors.ts';
 
 export type OrganisationAccountRow = typeof organisationAccounts.$inferSelect;
 
-const COOKIE_PATH = '/api/console';
-/** Console sessions last 12 hours from sign-in, extended while in use, for at most 7 days without signing in again. */
-export const CONSOLE_SESSION_MS = 12 * 60 * 60 * 1000;
-const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
-const REFRESH_AFTER_MS = 60 * 60 * 1000;
-const TOKEN = /^lpo\.[\w-]{43}$/;
-const digest = (token: string) => createHash('sha256').update(token).digest('hex');
+/** Refused with this code when an earlier console account (with its own password) uses the person's email. */
+export const LINK_REQUIRED = 'link_required';
 
-export async function createConsoleSession(db: Db, accountId: string, userAgent: string | undefined): Promise<{ token: string; expiresAt: Date }> {
-  const token = `lpo.${randomBytes(32).toString('base64url')}`;
-  const expiresAt = new Date(Date.now() + CONSOLE_SESSION_MS);
-  await db.insert(organisationSessions).values({ id: digest(token), accountId, expiresAt, userAgent: userAgent?.slice(0, 300) ?? null });
-  return { token, expiresAt };
+/** A unique-index refusal, whether the driver's error comes bare or wrapped by Drizzle (as `cause`). */
+export const isUniqueViolation = (e: unknown): boolean => !!e && typeof e === 'object'
+  && (('code' in e && (e as { code: unknown }).code === '23505') || ('cause' in e && isUniqueViolation((e as { cause: unknown }).cause)));
+
+const byHealthUser = (user: UserRow) => and(eq(organisationAccounts.healthRegion, user.region), eq(organisationAccounts.healthUserId, user.id));
+
+/** The console account of a Health account, if it has opened the console before. */
+async function linked(db: Db, user: UserRow): Promise<OrganisationAccountRow | null> {
+  const [row] = await db.select().from(organisationAccounts).where(byHealthUser(user)).limit(1);
+  return row ?? null;
 }
 
-export async function findConsoleSession(db: Db, token: string): Promise<{ id: string; account: OrganisationAccountRow } | null> {
-  if (!TOKEN.test(token)) return null;
-  const id = digest(token);
-  const [row] = await db.select({ session: organisationSessions, account: organisationAccounts }).from(organisationSessions)
-    .innerJoin(organisationAccounts, eq(organisationAccounts.id, organisationSessions.accountId)).where(eq(organisationSessions.id, id)).limit(1);
-  if (!row) return null;
-  const now = Date.now();
-  if (row.session.expiresAt.getTime() <= now || now - row.session.createdAt.getTime() > MAX_AGE_MS) {
-    await db.delete(organisationSessions).where(eq(organisationSessions.id, id));
-    return null;
+/** An earlier console account with this email that no Health account opens yet. */
+export async function unlinkedByEmail(db: Db, email: string): Promise<OrganisationAccountRow | null> {
+  const [row] = await db.select().from(organisationAccounts)
+    .where(and(eq(organisationAccounts.email, email), isNull(organisationAccounts.healthUserId))).limit(1);
+  return row ?? null;
+}
+
+/** The name the console shows for a person: their own profile's name in Health, else their email. */
+async function displayName(session: ActiveSession): Promise<string> {
+  const [self] = await session.cell.db.select({ name: profiles.displayName }).from(profiles)
+    .where(and(eq(profiles.userId, session.user.id), eq(profiles.relationship, 'self'))).limit(1);
+  return (self?.name?.trim() || session.user.email).slice(0, 120);
+}
+
+export async function linkConsoleAccount(db: Db, account: OrganisationAccountRow, user: UserRow): Promise<OrganisationAccountRow> {
+  const [row] = await db.update(organisationAccounts).set({ healthUserId: user.id, healthRegion: user.region, updatedAt: new Date() })
+    .where(and(eq(organisationAccounts.id, account.id), isNull(organisationAccounts.healthUserId))).returning();
+  if (!row) throw new HttpError(409, 'already_linked', 'That console account is already opened by another LotusPond Health account.');
+  return row;
+}
+
+/**
+ * The console account for a signed-in Health account, made on first use.
+ *
+ * An earlier console account (from when the console had its own sign-up) with the same email is joined to it only
+ * when the email is known to be the person's: when they signed in through LotusPond Accounts, which joins only
+ * verified emails (docs/identity.md). Otherwise the console asks once for that account's console password
+ * (POST /api/console/link), so someone who signed up to Health with another person's email cannot take over their
+ * organisations.
+ */
+export async function consoleAccountFor(db: Db, session: ActiveSession): Promise<OrganisationAccountRow> {
+  const { user } = session;
+  const found = await linked(db, user);
+  if (found) {
+    if (found.email === user.email) return found;
+    // The Health email changed: follow it, unless another console account already has the new one.
+    try {
+      const [row] = await db.update(organisationAccounts).set({ email: user.email, updatedAt: new Date() }).where(eq(organisationAccounts.id, found.id)).returning();
+      return row;
+    } catch (e) {
+      if (isUniqueViolation(e)) return found;
+      throw e;
+    }
   }
-  if (now - row.session.lastSeenAt.getTime() > REFRESH_AFTER_MS) {
-    await db.update(organisationSessions).set({ lastSeenAt: new Date(now), expiresAt: new Date(now + CONSOLE_SESSION_MS) }).where(eq(organisationSessions.id, id));
+  const earlier = await unlinkedByEmail(db, user.email);
+  if (earlier) {
+    if (user.accountsSubject) return linkConsoleAccount(db, earlier, user);
+    throw new HttpError(409, LINK_REQUIRED, 'You made a developer console account with this email before the console used your LotusPond Health sign-in. Enter its console password once to bring its organisations here.');
   }
-  return { id, account: row.account };
+  try {
+    const [row] = await db.insert(organisationAccounts)
+      .values({ email: user.email, name: await displayName(session), passwordHash: null, healthUserId: user.id, healthRegion: user.region }).returning();
+    return row;
+  } catch (e) {
+    // Two first requests at once: the other one made it.
+    if (isUniqueViolation(e)) {
+      const again = await linked(db, user);
+      if (again) return again;
+      throw new HttpError(409, 'email_taken', 'Another LotusPond Health account already opens a console account with this email.');
+    }
+    throw e;
+  }
 }
 
-export async function deleteConsoleSession(db: Db, id: string): Promise<void> {
-  await db.delete(organisationSessions).where(eq(organisationSessions.id, id));
-}
-
-export async function purgeExpiredConsoleSessions(db: Db, accountId?: string): Promise<void> {
-  const expired = lt(organisationSessions.expiresAt, new Date());
-  await db.delete(organisationSessions).where(accountId ? and(eq(organisationSessions.accountId, accountId), expired) : expired);
-}
-
-export const readConsoleToken = (c: Context) => getCookie(c, ORG_SESSION_COOKIE);
-
-export function writeConsoleCookie(c: Context, token: string, expiresAt: Date, secure: boolean): void {
-  setCookie(c, ORG_SESSION_COOKIE, token, { httpOnly: true, sameSite: 'Lax', secure, path: COOKIE_PATH, expires: expiresAt });
-}
-
-export function clearConsoleCookie(c: Context, secure: boolean): void {
-  deleteCookie(c, ORG_SESSION_COOKIE, { path: COOKIE_PATH, secure });
+/**
+ * Sessions of the console's own sign-in, from before it used the Health sign-in. Nothing makes or reads them now; the
+ * hourly sweep removes them as they expire (at most 7 days after they were made).
+ */
+export async function purgeExpiredConsoleSessions(db: Db): Promise<void> {
+  await db.delete(organisationSessions).where(lt(organisationSessions.expiresAt, new Date()));
 }
