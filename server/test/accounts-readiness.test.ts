@@ -1,4 +1,4 @@
-// Readiness to turn Health passwords off (build plan M8): counts of who is active and how they sign in.
+// accounts:readiness: counts of who is active, and how they signed in: with a Health password before M9, or Accounts.
 import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -6,14 +6,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { eq } from 'drizzle-orm';
-import { createApp } from '../src/app.ts';
-import { loadConfig } from '../src/config.ts';
 import { openDatabase, type Database } from '../src/db/client.ts';
 import { sessions, users } from '../src/db/schema.ts';
 import { DiskFileStore } from '../src/lib/files.ts';
 import { singleCell } from '../src/cells.ts';
-import { cleanupCheck, formatCleanupCheck, formatReadiness, readiness } from '../src/auth/accounts-migration.ts';
-import { registration } from './helpers.ts';
+import { formatReadiness, readiness } from '../src/auth/accounts-migration.ts';
 
 let database: Database;
 let filesDir: string;
@@ -25,13 +22,10 @@ before(async () => {
 after(async () => { await database.close(); fs.rmSync(filesDir, { recursive: true, force: true }); });
 
 test('readiness counts active people by how they sign in, and who has not moved yet', async () => {
-  const app = createApp({ db: database.db, files: new DiskFileStore(filesDir), config: loadConfig({ NODE_ENV: 'test', RECORD_AGENT: 'off' }) });
+  // Each person with a session from a Health password sign-in, as before M9.
   const register = async (address: string) => {
-    const res = await app.request('http://health.test/api/auth/register', {
-      method: 'POST', headers: { 'content-type': 'application/json', 'sec-fetch-site': 'same-origin' }, body: JSON.stringify(registration(address)),
-    });
-    assert.equal(res.status, 201);
-    const [u] = await database.db.select().from(users).where(eq(users.email, address));
+    const [u] = await database.db.insert(users).values({ email: address, country: 'IN', region: 'in' }).returning();
+    await database.db.insert(sessions).values({ id: `password-session-${address}`, userId: u.id, expiresAt: new Date(Date.now() + 86_400_000) });
     return u.id;
   };
   const moved = await register('moved@example.com');
@@ -56,40 +50,3 @@ test('readiness counts active people by how they sign in, and who has not moved 
   assert.doesNotMatch(text, /@|[0-9a-f]{8}-[0-9a-f]{4}-/, 'counts only');
 });
 
-test('the M9 gate waits for passwords off and one session lifetime without a password sign-in', async () => {
-  const day = 86_400_000;
-  const db = database.db;
-  const add = async (email: string, over: Partial<typeof users.$inferInsert> = {}) =>
-    (await db.insert(users).values({ email, passwordHash: '$argon2id$v=19$m=19456,t=2,p=1$c2FsdA$aGFzaA', ...over }).returning())[0].id;
-  const session = (id: string, userId: string, createdDaysAgo: number, viaAccounts: boolean) =>
-    db.insert(sessions).values({ id, userId, viaAccounts, createdAt: new Date(Date.now() - createdDaysAgo * day), expiresAt: new Date(Date.now() + 10 * day) });
-  // A fresh database of its own, so the first test's people do not count.
-  await db.delete(sessions);
-  await db.delete(users);
-  const old = await add('old-password@example.com');
-  const moved = await add('moved-gate@example.com', { accountsSubject: 'sub-gate', accountsSignedInAt: new Date() });
-  await add('never-imported@example.com');
-  await session('old-password-session', old, 40, false);
-  await session('accounts-session', moved, 2, true);
-
-  const cells = [singleCell(db, new DiskFileStore(filesDir), ['in', 'eu', 'us', 'global']).defaultCell];
-  const off = { accountsOn: true, passwordSignIn: false, sessionTtlMs: 30 * day };
-
-  const ready = await cleanupCheck(cells, off);
-  assert.deepEqual(ready, {
-    passwordsOff: true, days: 30, recentPasswordSignIns: 0, livePasswordSessions: 1, livePasswordPeopleNotMoved: 1,
-    passwordNotLinked: 2, ready: true,
-  });
-  const text = formatCleanupCheck(ready);
-  assert.match(text, /^Ready for M9 on this host/m);
-  assert.doesNotMatch(text, /@|[0-9a-f]{8}-[0-9a-f]{4}-/, 'counts only');
-
-  assert.equal((await cleanupCheck(cells, { ...off, passwordSignIn: true })).ready, false, 'passwords still on');
-  assert.equal((await cleanupCheck(cells, { ...off, accountsOn: false })).ready, false, 'Accounts not on');
-
-  await session('recent-password-session', old, 29, false);
-  const recent = await cleanupCheck(cells, off);
-  assert.equal(recent.recentPasswordSignIns, 1);
-  assert.equal(recent.ready, false);
-  assert.match(formatCleanupCheck(recent), /NOT READY: wait until there are none/);
-});

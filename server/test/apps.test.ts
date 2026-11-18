@@ -12,7 +12,9 @@ import { openDatabase, type Database } from '../src/db/client.ts';
 import { DiskFileStore } from '../src/lib/files.ts';
 import type { AppEnv } from '../src/http.ts';
 import type { Profile, ServiceInfo, SessionInfo } from '../../shared/types.ts';
-import { registration } from './helpers.ts';
+import { makeClient, registration } from './helpers.ts';
+import { profiles, users } from '../src/db/schema.ts';
+import { createSession } from '../src/auth/sessions.ts';
 
 const migrations = fileURLToPath(new URL('../drizzle', import.meta.url));
 const run = Date.now().toString(36);
@@ -27,7 +29,7 @@ before(async () => {
   database = await openDatabase({ url: process.env.TEST_DATABASE_URL });
   await database.migrate(migrations);
   filesDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lotuspond-apps-'));
-  const config = loadConfig({ NODE_ENV: 'test', TRUST_PROXY: 'true', REGION_API_ORIGINS: 'in=https://in.health.lotuspond.ai' });
+  const config = loadConfig({ NODE_ENV: 'test', TRUST_PROXY: 'true', ACCOUNTS_ISSUER: 'fake', REGION_API_ORIGINS: 'in=https://in.health.lotuspond.ai' });
   app = createApp({ db: database.db, files: new DiskFileStore(filesDir), config });
 });
 
@@ -48,40 +50,27 @@ function fromApp(method: string, url: string, opts: { token?: string; body?: unk
   return app.request(url, { method, headers, body });
 }
 
-async function appSignUp(origin = IOS) {
+/**
+ * A person signed in on the app, with a token session. The app's own way there, through LotusPond Accounts in the
+ * system browser and /api/auth/accounts/app-exchange, is tested in accounts.test.ts; here it is what the token does.
+ */
+async function appSignUp() {
   const email = `app${++n}.${run}@example.com`;
-  const res = await fromApp('POST', '/api/auth/register', { body: registration(email), origin, app: true });
-  assert.equal(res.status, 201, await res.clone().text());
-  const data = await res.json() as SessionInfo & { token: string; expiresAt: string };
-  return { res, data, email, token: data.token };
+  const [user] = await database.db.insert(users).values({ email, country: 'IN', region: 'in', ageConfirmedAt: new Date() }).returning();
+  await database.db.insert(profiles).values({ userId: user.id, relationship: 'self', displayName: 'Asha Rao' });
+  const token = await another(user.id);
+  const data = await (await fromApp('GET', '/api/auth/me', { token })).json() as SessionInfo;
+  return { data, email, userId: user.id, token };
 }
 
+/** Another token session for the same person, as from signing in on another device. */
+const another = async (userId: string) => (await createSession(database.db, 'in', userId, 30 * 86_400_000, undefined)).token;
+
 describe('mobile apps', () => {
-  it('sign-up with X-LotusPond-Client: app returns a token and sets no cookie', async () => {
-    const { res, data } = await appSignUp();
-    assert.equal(res.headers.get('set-cookie'), null);
-    assert.match(data.token, /^[a-z]+\.[\w-]{20,}$/, 'region-prefixed token');
-    assert.ok(Date.parse(data.expiresAt) > Date.now());
-    assert.equal(data.profiles[0].relationship, 'self');
-    assert.equal(res.headers.get('access-control-allow-origin'), IOS);
-  });
-
-  it('sign-in with X-LotusPond-Client: app returns a token and sets no cookie', async () => {
-    const { email } = await appSignUp(ANDROID);
-    const res = await fromApp('POST', '/api/auth/login', { body: { email, password: 'correct horse battery' }, origin: ANDROID, app: true });
-    assert.equal(res.status, 200);
-    assert.equal(res.headers.get('set-cookie'), null);
-    const data = await res.json() as SessionInfo & { token?: string };
-    assert.ok(data.token);
-  });
-
-  it('browsers still get a cookie and no token', async () => {
-    const res = await app.request('/api/auth/register', {
-      method: 'POST', body: JSON.stringify(registration(`browser.${run}@example.com`)),
-      headers: { 'content-type': 'application/json', 'sec-fetch-site': 'same-origin', 'x-forwarded-for': '10.8.0.1' },
-    });
+  it('browsers get a cookie and no token', async () => {
+    const res = await makeClient(app).signUpCall(registration(`browser.${run}@example.com`));
     assert.equal(res.status, 201);
-    assert.match(res.headers.get('set-cookie') ?? '', /^lp_session=/);
+    assert.ok(res.headers.getSetCookie().some(c => c.startsWith('lp_session=')));
     assert.equal((await res.json() as { token?: string }).token, undefined);
   });
 
@@ -99,10 +88,10 @@ describe('mobile apps', () => {
   });
 
   it('another site cannot sign in for an app without a preflight (custom header), and gets no cookie if it tries', async () => {
-    const { email } = await appSignUp();
     // Without the app header the request is an ordinary cross-site form post: blocked.
-    const plain = await fromApp('POST', '/api/auth/login', { body: { email, password: 'correct horse battery' }, origin: 'https://evil.example' });
+    const plain = await fromApp('POST', '/api/auth/accounts/app-exchange', { body: { code: 'x', verifier: 'v'.repeat(43) }, origin: 'https://evil.example' });
     assert.equal(plain.status, 403);
+    assert.deepEqual(plain.headers.getSetCookie(), []);
   });
 
   it('a wrong or missing token is refused', async () => {
@@ -112,11 +101,9 @@ describe('mobile apps', () => {
   });
 
   it('a cookie request from another site is still blocked, even with a bearer token added', async () => {
-    const browser = await app.request('/api/auth/register', {
-      method: 'POST', body: JSON.stringify(registration(`victim.${run}@example.com`)),
-      headers: { 'content-type': 'application/json', 'sec-fetch-site': 'same-origin', 'x-forwarded-for': '10.8.0.2' },
-    });
-    const cookie = (browser.headers.get('set-cookie') ?? '').split(';')[0];
+    const browser = makeClient(app);
+    await browser.signUp(registration(`victim.${run}@example.com`));
+    const cookie = browser.cookie;
     const { token } = await appSignUp();
     for (const extra of [{}, { authorization: `Bearer ${token}` }]) {
       const res = await app.request('/api/profiles', {
@@ -160,23 +147,18 @@ describe('mobile apps', () => {
   });
 
   it('signing out with a bearer token revokes that session only', async () => {
-    const { email, token: first } = await appSignUp();
-    const second = await (await fromApp('POST', '/api/auth/login', { body: { email, password: 'correct horse battery' }, app: true })).json() as { token: string };
+    const { userId, token: first } = await appSignUp();
+    const second = await another(userId);
     assert.equal((await fromApp('POST', '/api/auth/logout', { token: first })).status, 204);
     assert.equal((await fromApp('GET', '/api/profiles', { token: first })).status, 401);
-    assert.equal((await fromApp('GET', '/api/profiles', { token: second.token })).status, 200);
+    assert.equal((await fromApp('GET', '/api/profiles', { token: second })).status, 200);
   });
 
-  it('changing the password or signing out other devices with a bearer token keeps only that session', async () => {
-    const { email, token: phone } = await appSignUp();
-    const login = async () => (await (await fromApp('POST', '/api/auth/login', { body: { email, password: 'correct horse battery' }, app: true })).json() as { token: string }).token;
-    const tablet = await login();
+  it('signing out other devices with a bearer token keeps only that session', async () => {
+    const { userId, token: phone } = await appSignUp();
+    const tablet = await another(userId);
     assert.equal((await fromApp('DELETE', '/api/auth/sessions', { token: phone })).status, 204);
     assert.equal((await fromApp('GET', '/api/profiles', { token: tablet })).status, 401);
-    const laptop = await login();
-    const changed = await fromApp('POST', '/api/auth/password', { token: phone, body: { currentPassword: 'correct horse battery', newPassword: 'a brand new password' } });
-    assert.equal(changed.status, 204);
-    assert.equal((await fromApp('GET', '/api/profiles', { token: laptop })).status, 401);
     assert.equal((await fromApp('GET', '/api/profiles', { token: phone })).status, 200);
   });
 

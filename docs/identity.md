@@ -1,6 +1,6 @@
 # One LotusPond account
 
-Status: **accepted on 2026-11-16. Health's side is built for the website and the apps, off unless `ACCOUNTS_ISSUER` is set** ([Built so far](#built-so-far)). LotusPond Accounts itself is not built yet. The decisions are recorded here:
+Status: **accepted on 2026-11-16. Health's side is built for the website and the apps. Since M9, LotusPond Accounts is the only way in: Health keeps no passwords and no email directory** ([Built so far](#built-so-far)). LotusPond Accounts is built in `lotuspond-ai/lotuspond-accounts`. The decisions are recorded here:
 - [ADR-0001, one LotusPond account for Health and Works](https://github.com/lotuspond-ai/lotuspond/blob/main/docs/architecture/0001-one-lotuspond-account.md), in the company repository (it was Works ADR-0018);
 - [ADR-0002, separate databases for Accounts, Health and Works](https://github.com/lotuspond-ai/lotuspond/blob/main/docs/architecture/0002-account-and-product-databases.md), in the company repository (it was part of Works ADR-0019).
 
@@ -41,23 +41,24 @@ The organisation API's console already has accounts of its own, built like Lotus
 
 - Health's Argon2id hashes and regions are imported into Accounts unchanged.
 - If the same email also has a Works account, the two are joined only after the person proves control of each: mailbox verification where that product had already verified the address, otherwise one sign-in with that product's old password.
-- Health's `users.password_hash` is dropped only after a reviewed migration and a period with both sign-in paths available.
+- Health's `users.password_hash` and its email `directory` were dropped in M9, by migration `0021_m9_drop_passwords_and_directory`, after a period with both sign-in paths available ([step 6](#moving-the-directory-into-accounts)).
 
 ## Built so far
 
-Health's side works for the website and the apps, against a stand-in for Accounts. It changes nothing until `ACCOUNTS_ISSUER` is set; password sign-up and sign-in work as before alongside it.
+Health's side works for the website and the apps, against LotusPond Accounts or a stand-in for it. Since M9 it is the only way in. `ACCOUNTS_ISSUER` is required in production. On a server without it, nobody can sign in.
 
 | Setting | Meaning |
 | --- | --- |
-| `ACCOUNTS_ISSUER` | The Accounts OpenID Connect issuer URL (https), or `fake` for the stand-in inside the server. `fake` is refused in production. |
+| `ACCOUNTS_ISSUER` | The Accounts OpenID Connect issuer URL (https), or `fake` for the stand-in inside the server. `fake` is the default in development and for `npm run local`, which only this computer can reach, and is refused on any other production server. |
 | `ACCOUNTS_CLIENT_ID` | Health's client id at Accounts (`lotuspond-health` for the stand-in). |
 | `ACCOUNTS_CLIENT_SECRET` | Optional. Without it Health is a public client and relies on PKCE alone. |
 
-To try it: `ACCOUNTS_ISSUER=fake npm run dev`, open `/signup` and choose **Continue with LotusPond Account**. The stand-in's page asks for an email and lets you choose what Accounts would say: whether the email is verified, the region, and whether the account came from a company's single sign-on. It remembers the sign-in in that browser until you sign out at it, so `prompt=none` can be tried.
+To try it: `npm run dev`, open `/signup` and choose **Continue with LotusPond Account**. The stand-in's page asks for an email and lets you choose what Accounts would say: whether the email is verified, the region, and whether the account came from a company's single sign-on. It remembers the sign-in in that browser until you sign out at it, so `prompt=none` can be tried.
 
 - **Flow** (`server/src/routes/accounts.ts`, `server/src/auth/oidc.ts`). Authorization code with PKCE (S256), state and nonce, kept for 10 minutes in a signed, HttpOnly cookie. The ID token is checked against the issuer's published keys (RS256 or ES256), with its issuer, audience, expiry and nonce. Then Health starts its own session, as for a password sign-in.
-- **First sign-in.** Health still asks its own questions: name, country, age, Terms and Privacy, and the health-data consent. The email comes from Accounts and there is no Health password (`users.password_hash` is null; `users.accounts_subject` holds the Accounts `sub`). The Accounts identity waits for 30 minutes in a signed cookie while the person answers.
-- **Existing Health accounts** with the same email are linked on their first Accounts sign-in, only when Accounts says the email is verified. **Once they have signed in with Accounts (`users.accounts_signed_in_at`), their Health password opens nothing while `ACCOUNTS_ISSUER` is set** (settled by the owner, 2026-11-18). Being linked by `accounts:link` alone does not count, so people on apps without the Accounts sign-in keep their password until they move: it may have been changed or leaked since they moved, and Health cannot reset passwords. The hash is kept, so a rollback (`ACCOUNTS_ISSUER` unset) brings the password back, until the reviewed migration removes it. The Account page offers no Health password for them.
+- **First sign-in.** Health still asks its own questions: name, country, age, Terms and Privacy, and the health-data consent. The email comes from Accounts and there is no Health password (`users.accounts_subject` holds the Accounts `sub`). The Accounts identity waits for 30 minutes in a signed cookie while the person answers.
+- **Existing Health accounts** with the same email are linked on their first Accounts sign-in, only when Accounts says the email is verified. `users.accounts_signed_in_at` records that first sign-in, and `accounts:readiness` counts it. Health keeps no password for anyone (M9).
+- **Apps from before Accounts.** `/api/auth/register`, `/api/auth/login` and `/api/auth/password` remain, and answer `use_accounts`. An old app then tells its person to update it and continue with their LotusPond account, rather than failing. Sessions started with a Health password before M9 keep working until they end.
 - **Regional hosts on the website** (`REGION_API_ORIGINS`, where each regional host is its own site and API). If the account is held in a region another host serves, the callback sends the browser to `/api/auth/accounts/start?hop=1` on that host, which signs it in on its own site with its own session. No code or token crosses between hosts: Accounts remembers the person, so the second pass does not ask again. Each regional host's `/api/auth/accounts/callback` must be registered as a redirect URI at Accounts. A sign-in is handed on once at most, then refused with `wrong_region`. The stand-in issuer remembers a sign-in only on the host it ran on, so the second host asks for the email again.
 - **Signing out** (OpenID Connect RP-Initiated Logout 1.0). Sessions record whether they came from Accounts (`sessions.via_accounts`). Signing out of such a session on the website ends Health's session, then sends the browser to Accounts' `end_session_endpoint`, which returns it to Health's `/login` page.
   - That page must be registered at Accounts as a post-logout redirect URI.
@@ -127,9 +128,9 @@ Health reads `sub`, `email` and `email_verified`, plus two LotusPond claims, nam
 
 ### Moving the directory into Accounts
 
-Health's side is built; running it is a decision, and the privacy texts need review first ([Before launch](#before-launch)).
+Done in this order. Steps 1, 5 and 6 are history since M9: the export and the gate went with the password hashes, and `PASSWORD_SIGN_IN=off` is now how Health always runs.
 
-1. **Export.** On each regional host, run `npm run accounts:export -w server -- <file>` (production: `node dist/index.js accounts:export <file>`).
+1. **Export** (removed in M9). On each regional host, `accounts:export <file>` wrote the accounts for Accounts to import.
    - It writes every account in that host's cells as JSON Lines: Health's user id, email, Argon2id hash exactly as stored, region, country, creation time, and any Accounts subject already linked.
    - The file is owner-readable only and is never overwritten. It holds emails and password hashes, so hand it to Accounts over a secure channel and delete it once imported.
 2. **Accounts imports it.** The hashes and regions stay unchanged, so people keep their password, and an email that also has a Works account is joined as described in [Existing accounts](#existing-accounts).
@@ -144,20 +145,25 @@ Health's side is built; running it is a decision, and the privacy texts need rev
    - all accounts: moved, linked by the import but not moved, not linked.
 
    Health does not record app versions, so it cannot say how many installs still run an app without the Accounts sign-in.
-5. **`PASSWORD_SIGN_IN=off`** (needs `ACCOUNTS_ISSUER`). LotusPond Accounts becomes the only way in:
+5. **`PASSWORD_SIGN_IN=off`** (needed `ACCOUNTS_ISSUER`). LotusPond Accounts became the only way in:
    - **Password routes:** `/register`, `/login` and the password change answer `use_accounts`.
    - **Sign-in page:** shows only Continue with LotusPond Account.
    - **Deleting an account:** asks for a recent Accounts sign-in instead of a password.
    - **The email directory is no longer read or written.** An account is found by its Accounts subject. The host comes from the `region` claim. One never linked is found by email in the host's own cells, and a new one is created without a directory entry.
-6. **Later** (build plan M9), after a reviewed migration: drop the `directory` table and `users.password_hash`. The WhatsApp directory, keyed by phone number, stays. This removes the way back to Health passwords, so first run `accounts:cleanup-check` on each regional host (production: `node dist/index.js accounts:cleanup-check`). It prints counts only, and exits 0 only when:
+6. **M9: drop the `directory` table and `users.password_hash`,** by migration `0021_m9_drop_passwords_and_directory`. The WhatsApp directory, keyed by phone number, stays. This removed the way back to Health passwords, so it waited until `accounts:cleanup-check` passed on each regional host. That command was removed with the hashes it read. It printed counts only, and exited 0 only when:
    - this host has `ACCOUNTS_ISSUER` set and `PASSWORD_SIGN_IN=off`;
    - nobody has signed in with a Health password within one session lifetime (`SESSION_DAYS`).
 
-   It also reports, without blocking:
+   It also reported, without blocking:
    - **Password sessions still in use.** Sessions slide, so one in regular use never ends. They keep working after M9, which never reads a signed-in person's password hash.
    - **Accounts with a password and no Accounts link,** which were not in the import. After M9 they sign up at Accounts with the same email, and Health joins them by verified email.
 
-   The database cannot show that 30 days have passed since passwords went off, or that a backup was taken just before. Check both yourself.
+   The database could not show that 30 days had passed since passwords went off, or that a backup was taken just before. Both were checked by hand.
+
+   Since M9:
+   - `ACCOUNTS_ISSUER` is required in production;
+   - `PASSWORD_SIGN_IN=off` is still accepted and changes nothing;
+   - `PASSWORD_SIGN_IN=on` is refused.
 
 ### Database
 
@@ -167,9 +173,10 @@ All of this PR's schema changes are in one migration, `0018_accounts_sign_in`:
 - `sessions.via_accounts` and `sessions.accounts_sid`;
 - the `spent_tokens` table.
 
-### Not built yet
-
-- **Dropping the `directory` table and `users.password_hash`**, after the reviewed migration and a period with `PASSWORD_SIGN_IN=off`.
+Then, from the work that made Accounts the only way in:
+- `0019_accounts_id_token`: `sessions.accounts_id_token`, the ID token sent as `id_token_hint` at sign-out;
+- `0020_accounts_signed_in_at`: `users.accounts_signed_in_at`;
+- `0021_m9_drop_passwords_and_directory` (M9): drops `users.password_hash` and the `directory` table. It cannot be undone; restoring from a backup is the only way back.
 
 ## Before launch
 

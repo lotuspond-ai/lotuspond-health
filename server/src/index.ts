@@ -32,7 +32,7 @@ import { gmailFetcher, outlookFetcher } from './records/api/mail.ts';
 import { digilockerFetcher } from './records/api/digilocker.ts';
 import { createOrganisation, createOrganisationKey, ORGANISATION_OPERATIONS, revokeOrganisationKey } from './connectors/organisations.ts';
 import type { OperationId } from './connectors/types.ts';
-import { exportAccounts, linkAccounts, readJsonLines, readiness, formatReadiness, cleanupCheck, formatCleanupCheck } from './auth/accounts-migration.ts';
+import { linkAccounts, readJsonLines, readiness, formatReadiness } from './auth/accounts-migration.ts';
 import { organisationRuntime } from './connectors/runtime.ts';
 import { organisationAccounts, organisationConnections, organisationMembers, organisations, type OrganisationRole } from './db/schema.ts';
 import { HIS_ADAPTERS } from './connectors/his/index.ts';
@@ -164,11 +164,9 @@ if (['org:create', 'org:key', 'org:revoke', 'org:requests', 'org:live', 'org:con
   process.exit(0);
 }
 // Moving account identity into LotusPond Accounts (docs/identity.md, "Moving the directory into Accounts"):
-//   accounts:export <file>   every account in this server's cells, for Accounts to import (JSON Lines; holds
-//                            emails and password hashes: readable by its owner only; delete it once imported)
 //   accounts:link <file>     Accounts' answer, { "health_user_id", "sub" } per line: link each account
-//   accounts:readiness [days] before turning passwords off: who is active and how they sign in (counts only)
-//   accounts:cleanup-check   before dropping passwords and the directory (M9): exits 1 unless this host is ready
+//   accounts:readiness [days] who is active and how they sign in (counts only)
+// accounts:export and accounts:cleanup-check read Health's password hashes, and went with them in M9.
 if (command === 'accounts:readiness') {
   const days = process.argv[3] ? Number(process.argv[3]) : 14;
   if (!Number.isInteger(days) || days < 1 || days > 90) fail('Usage: accounts:readiness [days, 1 to 90]');
@@ -178,36 +176,19 @@ if (command === 'accounts:readiness') {
   await opened.close();
   process.exit(0);
 }
-if (command === 'accounts:cleanup-check') {
-  let r;
-  try {
-    r = await cleanupCheck(allCells, { accountsOn: !!config.accounts, passwordSignIn: config.passwordSignIn, sessionTtlMs: config.sessionTtlMs });
-    console.log(formatCleanupCheck(r));
-  } catch (e) { await opened.close(); fail(e); }
-  await opened.close();
-  process.exit(r.ready ? 0 : 1);
-}
-if (command === 'accounts:export' || command === 'accounts:link') {
+if (command === 'accounts:link') {
   const file = process.argv[3];
   if (!file) fail(`Usage: ${command} <file>`);
   try {
-    if (command === 'accounts:export') {
-      if (fs.existsSync(file)) fail(`${file} already exists; choose a new file name.`);
-      const fd = fs.openSync(file, 'wx', 0o600);
-      const n = await exportAccounts(allCells, line => fs.writeSync(fd, `${line}\n`));
-      fs.closeSync(fd);
-      console.log(`[accounts] ${n} accounts written to ${file} (owner-readable only). It holds emails and password hashes: hand it to LotusPond Accounts over a secure channel and delete it once imported.`);
-    } else {
-      const r = await linkAccounts(allCells, readJsonLines(fs.readFileSync(file, 'utf8')));
-      console.log(`[accounts] linked ${r.linked}, already linked ${r.unchanged}, conflicts ${r.conflicts.length}, not on this server ${r.missing.length}, unreadable lines ${r.invalid}.`);
-      for (const c of r.conflicts) console.log(`[accounts]   conflict: ${c.health_user_id}: ${c.reason}`);
-      if (r.missing.length) console.log(`[accounts]   not on this server (another regional host, or deleted): ${r.missing.join(', ')}`);
-    }
+    const r = await linkAccounts(allCells, readJsonLines(fs.readFileSync(file, 'utf8')));
+    console.log(`[accounts] linked ${r.linked}, already linked ${r.unchanged}, conflicts ${r.conflicts.length}, not on this server ${r.missing.length}, unreadable lines ${r.invalid}.`);
+    for (const c of r.conflicts) console.log(`[accounts]   conflict: ${c.health_user_id}: ${c.reason}`);
+    if (r.missing.length) console.log(`[accounts]   not on this server (another regional host, or deleted): ${r.missing.join(', ')}`);
   } catch (e) { await opened.close(); fail(e); }
   await opened.close();
   process.exit(0);
 }
-if (command) fail(`Unknown command "${command}". Commands: files:rekey, org:create, org:key, org:revoke, org:requests, org:live, org:connect, org:member, org:web-signin, accounts:export, accounts:link, accounts:readiness, accounts:cleanup-check.`);
+if (command) fail(`Unknown command "${command}". Commands: files:rekey, org:create, org:key, org:revoke, org:requests, org:live, org:connect, org:member, org:web-signin, accounts:link, accounts:readiness.`);
 
 async function sweep() {
   await purgeSpentTokens(registry.defaultCell.db);

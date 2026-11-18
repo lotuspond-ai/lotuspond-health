@@ -1,6 +1,6 @@
 // Sign-in through LotusPond Accounts (docs/identity.md), against the stand-in issuer (ACCOUNTS_ISSUER=fake):
-// a first sign-in finishes sign-up on Health's page, a returning one signs straight in, an existing password account
-// is linked only when Accounts has verified its email, company-managed accounts are refused, and the flow's state,
+// a first sign-in finishes sign-up on Health's page, a returning one signs straight in, an account from before
+// Accounts is linked only when Accounts has verified its email, company-managed accounts are refused, and the flow's state,
 // nonce and PKCE are checked.
 import { after, before, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -14,10 +14,11 @@ import type { Hono } from 'hono';
 import { createApp } from '../src/app.ts';
 import { loadConfig } from '../src/config.ts';
 import { openDatabase, type Database } from '../src/db/client.ts';
-import { auditEvents, sessions, users } from '../src/db/schema.ts';
+import { auditEvents, profiles, sessions, users } from '../src/db/schema.ts';
+import { createSession } from '../src/auth/sessions.ts';
 import { DiskFileStore } from '../src/lib/files.ts';
 import { AccountsClient, OidcError, pkceChallenge } from '../src/auth/oidc.ts';
-import { fakeAccounts, fakeSubject } from '../src/auth/fake-accounts.ts';
+import { fakeAccounts } from '../src/auth/fake-accounts.ts';
 import type { AppEnv } from '../src/http.ts';
 import type { SessionInfo } from '../../shared/types.ts';
 import { registration } from './helpers.ts';
@@ -54,6 +55,19 @@ function browser() {
     return res;
   }
   return { jar, go, json: (method: string, url: string, body?: unknown) => go(method, url, body === undefined ? undefined : JSON.stringify(body), body === undefined ? undefined : 'application/json') };
+}
+
+/** A Health account from before LotusPond Accounts: no Accounts subject yet. */
+async function existing(address: string) {
+  const [u] = await database.db.insert(users).values({ email: address, country: 'IN', region: 'in', ageConfirmedAt: new Date() }).returning();
+  await database.db.insert(profiles).values({ userId: u.id, relationship: 'self', displayName: 'Asha Rao' });
+  return u;
+}
+
+/** A session from a Health password sign-in before M9, in this browser. Such sessions outlive the passwords. */
+async function passwordSession(b: ReturnType<typeof browser>, userId: string) {
+  const { token } = await createSession(database.db, 'in', userId, 30 * 86_400_000, undefined);
+  b.jar.set('lp_session', token);
 }
 
 interface Choices { email: string; verified?: boolean; region?: string; enterprise?: boolean }
@@ -132,10 +146,9 @@ describe('LotusPond Accounts sign-in', () => {
     assert.equal((await b.go('GET', '/api/auth/accounts/pending')).status, 404, 'the pending sign-up is used up');
 
     const [row] = await database.db.select().from(users).where(eq(users.email, address));
-    assert.equal(row.passwordHash, null);
     assert.match(row.accountsSubject ?? '', /^dev\|/);
 
-    // The password form explains where this account signs in.
+    // An app from before Accounts, signing in with a password, is told where this account signs in.
     const pw = await browser().json('POST', '/api/auth/login', { email: address, password: 'anything at all' });
     assert.equal(pw.status, 409);
     assert.equal(((await pw.json()) as { error: { code: string } }).error.code, 'use_accounts');
@@ -146,10 +159,9 @@ describe('LotusPond Accounts sign-in', () => {
     assert.equal(((await (await again.go('GET', '/api/auth/me')).json()) as SessionInfo).account.email, address);
   });
 
-  test('an existing password account is linked when Accounts has verified the email, and keeps its hash for a rollback', async () => {
+  test('an account from before Accounts is linked when Accounts has verified the email', async () => {
     const address = email('existing');
-    const reg = await browser().json('POST', '/api/auth/register', registration(address));
-    assert.equal(reg.status, 201, await reg.clone().text());
+    await existing(address);
 
     const unverified = await signInWithAccounts(browser(), { email: address, verified: false });
     assert.equal(unverified.searchParams.get('accounts_error'), 'email_unverified');
@@ -160,45 +172,20 @@ describe('LotusPond Accounts sign-in', () => {
     assert.equal((await signInWithAccounts(b, { email: address })).pathname, '/app');
     [row] = await database.db.select().from(users).where(eq(users.email, address));
     assert.match(row.accountsSubject ?? '', /^dev\|/);
+    assert.ok(row.accountsSignedInAt, 'the first Accounts sign-in is recorded');
     const events = await database.db.select().from(auditEvents).where(eq(auditEvents.userId, row.id));
     assert.ok(events.some(e => e.kind === 'accounts_linked'));
-    assert.ok(row.passwordHash, 'the hash is kept, so a rollback brings the password back');
 
-    // While Accounts sign-in is on, the old Health password opens nothing (settled by the owner, 2026-11-18): it may
-    // have been changed or leaked since the person moved.
-    const pw = await browser().json('POST', '/api/auth/login', { email: address, password: 'correct horse battery' });
-    assert.equal(pw.status, 409);
-    assert.equal(((await pw.json()) as { error: { code: string } }).error.code, 'use_accounts');
-    const wrong = await browser().json('POST', '/api/auth/login', { email: address, password: 'not the password at all' });
-    assert.equal(wrong.status, 409, 'the same answer whatever the password, so it reveals nothing');
+    // Health has no passwords: the old routes give the same answer, whatever is sent.
+    for (const password of ['correct horse battery', 'not the password at all']) {
+      const pw = await browser().json('POST', '/api/auth/login', { email: address, password });
+      assert.equal(pw.status, 409);
+      assert.equal(((await pw.json()) as { error: { code: string } }).error.code, 'use_accounts');
+    }
     const me = (await (await b.go('GET', '/api/auth/me')).json()) as SessionInfo;
-    assert.equal(me.account.hasPassword, false, 'the Account page offers no Health password');
+    assert.equal('hasPassword' in me.account, false, 'the Account page has no Health password to offer');
     const change = await b.json('POST', '/api/auth/password', { currentPassword: 'correct horse battery', newPassword: 'another long password' });
     assert.equal(change.status, 409);
-
-    // Rolled back (ACCOUNTS_ISSUER unset), on the same database: the old password works again.
-    const rolledBack = createApp({ db: database.db, files: new DiskFileStore(filesDir), config: loadConfig({ NODE_ENV: 'test', RECORD_AGENT: 'off' }) });
-    const back = await rolledBack.request('http://health.test/api/auth/login', {
-      method: 'POST', headers: { 'content-type': 'application/json', 'sec-fetch-site': 'same-origin', host: 'health.test' },
-      body: JSON.stringify({ email: address, password: 'correct horse battery' }),
-    });
-    assert.equal(back.status, 200, 'after a rollback, the kept hash signs in again');
-  });
-
-  test('linked by the import alone, the Health password keeps working; the first Accounts sign-in ends that', async () => {
-    const address = email('imported');
-    assert.equal((await browser().json('POST', '/api/auth/register', registration(address))).status, 201);
-    // What accounts:link does after Accounts' import: the subject, and nothing else.
-    await database.db.update(users).set({ accountsSubject: fakeSubject(address) }).where(eq(users.email, address));
-    const before = await browser().json('POST', '/api/auth/login', { email: address, password: 'correct horse battery' });
-    assert.equal(before.status, 200, 'not moved yet: an older app with no Accounts sign-in can still get in');
-
-    const b = browser();
-    assert.equal((await signInWithAccounts(b, { email: address })).pathname, '/app');
-    const [row] = await database.db.select().from(users).where(eq(users.email, address));
-    assert.ok(row.accountsSignedInAt, 'the first Accounts sign-in is recorded');
-    const after = await browser().json('POST', '/api/auth/login', { email: address, password: 'correct horse battery' });
-    assert.equal(after.status, 409, 'moved now: the Health password opens nothing while Accounts sign-in is on');
   });
 
   test('an account made through a company single sign-on is refused', async () => {
@@ -284,13 +271,14 @@ describe('LotusPond Accounts sign-in', () => {
     assert.equal(new URL(stranger.headers.get('location')!).pathname, '/login');
   });
 
-  test('signing out of a password session stays on Health', async () => {
+  test('signing out of a session from a Health password, from before M9, stays on Health', async () => {
     const b = browser();
-    assert.equal((await b.json('POST', '/api/auth/register', registration(email('pw-out')))).status, 201);
+    await passwordSession(b, (await existing(email('pw-out'))).id);
+    assert.ok(await (await b.go('GET', '/api/auth/me')).json(), 'the session outlives the passwords');
     assert.equal((await b.go('POST', '/api/auth/logout')).status, 204);
   });
 
-  test('an account without a Health password can delete itself only soon after signing in', async () => {
+  test('an account can delete itself only soon after signing in with Accounts', async () => {
     const b = browser();
     const address = email('delete');
     await signInWithAccounts(b, { email: address }, 'signup');
@@ -306,7 +294,7 @@ describe('LotusPond Accounts sign-in', () => {
 describe('LotusPond Accounts sign-in from the apps', () => {
   test('an existing account: the one-time code and the app\'s verifier give a token session, once', async () => {
     const address = email('app');
-    assert.equal((await browser().json('POST', '/api/auth/register', registration(address))).status, 201);
+    await existing(address);
     const { code, verifier } = await appThroughAccounts({ email: address });
     assert.ok(code);
 
@@ -333,7 +321,6 @@ describe('LotusPond Accounts sign-in from the apps', () => {
     assert.equal(done.status, 201, await done.clone().text());
     const info = await done.json() as SessionInfo & { token: string };
     assert.equal(info.account.email, address);
-    assert.equal(info.account.hasPassword, false);
     assert.equal(((await (await appCall('GET', '/api/auth/me', undefined, info.token)).json()) as SessionInfo).account.email, address);
     // Signing out in the app: Health's session ends, and the app gets an address to open in the system browser.
     const out = await appCall('POST', '/api/auth/logout', undefined, info.token);
@@ -405,7 +392,7 @@ describe('an agent\'s consent page with LotusPond Accounts', () => {
   test('signing in with Accounts from there returns to the consent page; later, Accounts\' own sign-in is enough', async () => {
     const consent = consentUrl(await registerAgent());
     const address = email('agent');
-    assert.equal((await browser().json('POST', '/api/auth/register', registration(address))).status, 201);
+    await existing(address);
     const b = browser();
     const back = await throughAccounts(b, { email: address }, `intent=login&${new URLSearchParams({ next: consent })}`);
     assert.equal(new URL(back.headers.get('location')!).pathname + new URL(back.headers.get('location')!).search, consent);
@@ -437,7 +424,7 @@ describe('back-channel logout', () => {
   test('signing out everywhere at Accounts ends the website and app sessions from Accounts, not password sessions', async () => {
     const address = email('bcl');
     const pw = browser();
-    assert.equal((await pw.json('POST', '/api/auth/register', registration(address))).status, 201);
+    await passwordSession(pw, (await existing(address)).id);
     const web = browser();
     assert.equal((await signInWithAccounts(web, { email: address })).pathname, '/app', 'links the account');
     const { code, verifier } = await appThroughAccounts({ email: address });

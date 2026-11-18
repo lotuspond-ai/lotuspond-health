@@ -13,14 +13,11 @@ export const users = pgTable('users', {
   id: uuid('id').primaryKey().defaultRandom(),
   /** Stored lower-cased and trimmed. */
   email: text('email').notNull(),
-  /** Argon2id hash. Null for an account that signs in only through LotusPond Accounts (docs/identity.md). */
-  passwordHash: text('password_hash'),
   /** The account's subject (`sub`) at LotusPond Accounts, once it has signed in there. */
   accountsSubject: text('accounts_subject'),
   /**
-   * When this account first signed in with LotusPond Accounts. From then on, while ACCOUNTS_ISSUER is set, its Health
-   * password opens nothing (serialize.ts, passwordUsable). Being linked by accounts:link alone does not set it: until
-   * the person actually signs in with Accounts, their Health password keeps working, for apps that cannot yet.
+   * When this account first signed in with LotusPond Accounts. Being linked by accounts:link alone does not set it.
+   * Health passwords were removed in M9 (docs/identity.md); accounts:readiness still counts who has moved.
    */
   accountsSignedInAt: timestamp('accounts_signed_in_at', { withTimezone: true }),
   /** ISO 3166-1 alpha-2 country of residence from sign-up. Null for accounts created before it was asked. */
@@ -201,17 +198,6 @@ export const spentTokens = pgTable('spent_tokens', {
   id: text('id').primaryKey(),
   expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
 }, t => [index('spent_tokens_expires_idx').on(t.expiresAt)]);
-
-/**
- * Which cell holds each account, keyed by an HMAC of the email (DIRECTORY_SECRET) so no address is stored in plain
- * text outside its cell. Lives in the default database only; cells leave theirs empty.
- */
-export const directory = pgTable('directory', {
-  emailHash: text('email_hash').primaryKey(),
-  region: text('region').$type<DataRegion>().notNull(),
-  userId: uuid('user_id').notNull(),
-  createdAt: createdAt(),
-}, t => [index('directory_user_idx').on(t.userId)]);
 
 /* ---------- lab bookings (personal data: kept in the account's cell) ---------- */
 
@@ -445,7 +431,7 @@ export const whatsappLinks = pgTable('whatsapp_links', {
 }, t => [uniqueIndex('whatsapp_links_phone_key').on(t.phone)]);
 
 /**
- * Which cell holds the account a WhatsApp number is linked to, keyed by an HMAC of the number (like `directory`).
+ * Which cell holds the account a WhatsApp number is linked to, keyed by an HMAC of the number.
  * Default database only.
  */
 export const whatsappDirectory = pgTable('whatsapp_directory', {

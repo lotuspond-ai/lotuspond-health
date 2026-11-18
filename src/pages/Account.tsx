@@ -16,11 +16,12 @@ import '../styles/compliance.css';
 const focusDeletePassword = () => document.querySelector<HTMLInputElement>('#delete-account input[type=password]')?.focus();
 
 export default function AccountPage() {
-  const { account, profiles, service } = useSession();
+  const { account, profiles } = useSession();
   const { consents, activity, reload, failed } = useAccountRecords();
   if (!account) return null;
-  // No Health password to use: an account that signs in only with LotusPond Accounts, or password sign-in is off.
-  const noPassword = account.hasPassword === false || service?.passwordSignIn === false;
+  // Health keeps no passwords (M9): the account signs in with LotusPond Accounts. Only the browser-only preview,
+  // whose account lives in this browser, has a password of its own.
+  const noPassword = !isPreview;
   return (
     <main className="page page--narrow">
       <div className="page__head">

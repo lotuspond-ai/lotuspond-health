@@ -145,32 +145,18 @@ export class HttpBackend implements Backend {
     if (!this.app) return this.request<SessionInfo>('POST', '/auth/accounts/complete', input);
     const pending = this.appAccountsPending;
     if (!pending) throw new ApiError(409, 'accounts_expired', 'That sign-up took too long. Continue with LotusPond Account again.');
-    // As for sign-up with a password: the account is created on the host for the country's data region. Regional
-    // hosts share the key that opens the sign-up token.
+    // The account is created on the host for the country's data region. Regional hosts share the key that opens the
+    // sign-up token.
     this.app.useOrigin(this.app.originForRegion(countryPolicy(input.country).region, this.apiOrigins));
     const info = await this.appSignIn('/auth/accounts/complete', { ...input, pendingToken: pending.token });
     this.appAccountsPending = null;
     return info;
   }
-  register(input: RegisterInput) {
-    if (!this.app) return this.request<SessionInfo>('POST', '/auth/register', input);
-    // The account is created on the host for the country's data region (one host serves all by default).
-    this.app.useOrigin(this.app.originForRegion(countryPolicy(input.country).region, this.apiOrigins));
-    return this.appSignIn('/auth/register', input);
-  }
-  async login(input: { email: string; password: string }) {
-    if (!this.app) return this.request<SessionInfo>('POST', '/auth/login', input);
-    try {
-      return await this.appSignIn('/auth/login', input);
-    } catch (e) {
-      // With regional hosts, an account on another host is answered with that host's origin: sign in there.
-      const origin = e instanceof ApiError && e.code === 'wrong_region' ? e.detail.apiOrigin : null;
-      if (typeof origin !== 'string' || !origin) throw e;
-      this.app.useOrigin(origin);
-      return this.appSignIn('/auth/login', input);
-    }
-  }
-  /** App sign-in / sign-up: the response carries the token instead of setting a cookie. */
+  // Health keeps no passwords on a server (M9): these answer `use_accounts`, and the sign-in page offers only
+  // Continue with LotusPond Account. The browser-only preview has its own (api/browser.ts).
+  register(input: RegisterInput) { return this.request<SessionInfo>('POST', '/auth/register', input); }
+  login(input: { email: string; password: string }) { return this.request<SessionInfo>('POST', '/auth/login', input); }
+  /** App sign-up through Accounts: the response carries the token instead of setting a cookie. */
   private async appSignIn(path: string, input: unknown): Promise<SessionInfo> {
     const r = await this.request<AppSignIn>('POST', path, input);
     if (!r.token) throw new ApiError(502, 'no_token', 'The server did not start a session for the app. Try again, or update the app.');

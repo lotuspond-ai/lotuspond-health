@@ -1,45 +1,43 @@
-// Accounts: register, sign in/out, current session, password change, account deletion, and the compliance
-// endpoints (service info, unit preference, consents, recent activity).
-// Personal data is read and written in the account's cell; the directory (default database) says which cell that is.
+// Accounts: sign-out, current session, account deletion, and the compliance endpoints (service info, unit
+// preference, consents, recent activity). People sign up and sign in with LotusPond Accounts (routes/accounts.ts):
+// Health's own passwords were removed in M9 (docs/identity.md). The old password routes answer `use_accounts`, so an
+// app from before Accounts tells its person to update instead of failing.
+// Personal data is read and written in the account's cell; the session token names it.
 import { Hono } from 'hono';
 import { asc, eq } from 'drizzle-orm';
-import { CONSENT_VERSION, countryPolicy, REGIONS, signUpProblem } from '../../../shared/regions.ts';
+import { CONSENT_VERSION, countryPolicy } from '../../../shared/regions.ts';
 import type { ServiceInfo, SessionInfo } from '../../../shared/types.ts';
 import { profiles, sessions, users, type UserRow } from '../db/schema.ts';
 import type { Db } from '../db/client.ts';
 import type { Cell } from '../cells.ts';
-import { hashPassword, verifyAgainstDummy, verifyPassword } from '../auth/password.ts';
 import {
-  clearSessionCookie, createSession, deleteSession, deleteUserSessions, findSession, readSessionToken, wantsTokenSession, writeSessionCookie,
+  clearSessionCookie, deleteSession, deleteUserSessions, findSession, readSessionToken, wantsTokenSession,
 } from '../auth/sessions.ts';
 import { eventContext, eraseHistory, recentActivity, recordEvent } from '../compliance/audit.ts';
 import { currentConsents, listConsents, outdatedConsents, recordConsents, REQUIRED_CONSENTS } from '../compliance/consents.ts';
-import { claim, locate, release } from '../compliance/directory.ts';
-import { badRequest, conflict, HttpError, tooMany } from '../lib/errors.ts';
-import { RateLimiter } from '../lib/rate-limit.ts';
-import { clientIp, readJson, requireAuth, type AppEnv, type Ctx, type Deps } from '../http.ts';
-import { ChangePasswordBody, ConsentPatchBody, DeleteAccountBody, LoginBody, PreferencesBody, RegisterBody } from '../schemas.ts';
-import { passwordUsable, toAccount, toProfile } from '../serialize.ts';
+import { release } from '../compliance/directory.ts';
+import { badRequest, conflict, HttpError } from '../lib/errors.ts';
+import { readJson, requireAuth, type AppEnv, type Deps } from '../http.ts';
+import { ConsentPatchBody, PreferencesBody } from '../schemas.ts';
+import { toAccount, toProfile } from '../serialize.ts';
 import { relationshipOrder } from './profiles.ts';
 import { appSignOutUrl, issueSignOutTicket } from './accounts.ts';
 
 const MINUTE = 60_000;
-const EMAIL_TAKEN = 'An account with this email already exists. Sign in instead.';
-const USES_ACCOUNTS = 'This account signs in with LotusPond Accounts, not a LotusPond Health password.';
-/** An account without a Health password proves it is the holder by a sign-in this recent before deleting itself. */
+/** Deleting an account needs a sign-in with LotusPond Accounts this recent: the proof that the holder is present. */
 export const RECENT_SIGN_IN_MS = 10 * MINUTE;
 
-export async function sessionInfo(db: Db, user: UserRow, accountsOn = false): Promise<SessionInfo> {
+export async function sessionInfo(db: Db, user: UserRow): Promise<SessionInfo> {
   const [rows, consents] = await Promise.all([
     db.select().from(profiles).where(eq(profiles.userId, user.id)).orderBy(asc(profiles.createdAt)),
     listConsents(db, user.id),
   ]);
-  return { account: toAccount(user, accountsOn), profiles: rows.sort(relationshipOrder).map(toProfile), consentsOutdated: outdatedConsents(consents) };
+  return { account: toAccount(user), profiles: rows.sort(relationshipOrder).map(toProfile), consentsOutdated: outdatedConsents(consents) };
 }
 
 /** A new account in its cell: the user, their own profile, and the consents given at sign-up. */
 export async function insertAccount(
-  cell: Cell, who: { id: string; email: string; passwordHash: string | null; accountsSubject?: string; accountsSignedInAt?: Date },
+  cell: Cell, who: { id: string; email: string; accountsSubject: string; accountsSignedInAt: Date },
   policy: ReturnType<typeof countryPolicy>, displayName: string, marketing: boolean,
 ): Promise<UserRow> {
   return cell.db.transaction(async tx => {
@@ -67,97 +65,20 @@ export const isUniqueViolation = (e: unknown): boolean => {
 export function authRoutes(deps: Deps) {
   const { config, cells } = deps;
   const app = new Hono<AppEnv>();
-  const loginByIp = new RateLimiter(20, 15 * MINUTE);
-  const loginByEmail = new RateLimiter(8, 15 * MINUTE);
-  // Sign-ups per network per hour. Relaxed outside production so local testing does not lock itself out.
-  const registerByIp = new RateLimiter(config.env === 'production' ? 10 : 500, 60 * MINUTE);
   const auth = requireAuth(deps);
-
-  /**
-   * Start a session. Browsers get an HttpOnly cookie. Apps (X-LotusPond-Client: app) get the token in the response
-   * instead, to send as `Authorization: Bearer`; it is stored and expires exactly like a cookie session.
-   */
-  async function startSession(c: Ctx, cell: Cell, user: UserRow): Promise<{ token: string; expiresAt: string } | null> {
-    const { token, expiresAt } = await createSession(cell.db, user.region, user.id, config.sessionTtlMs, c.req.header('user-agent'));
-    if (wantsTokenSession(c)) return { token, expiresAt: expiresAt.toISOString() };
-    writeSessionCookie(c, token, expiresAt, config.cookieSecure);
-    return null;
-  }
 
   /** Public facts for sign-up and the Account page. */
   app.get('/config', c => c.json<ServiceInfo>({
     servedRegions: cells.servedRegions,
     consentVersion: CONSENT_VERSION,
     accounts: !!config.accounts,
-    passwordSignIn: config.passwordSignIn,
     contacts: { grievance: config.grievanceContact ?? null, dpo: config.dpoContact ?? null },
     apiOrigins: config.regionApiOrigins,
   }));
 
-  /** With PASSWORD_SIGN_IN=off, LotusPond Accounts is the only way in (docs/identity.md). */
-  const accountsOnly = () => new HttpError(409, 'use_accounts', 'LotusPond Health now uses your LotusPond account. Continue with LotusPond Account.');
-  /** LotusPond Accounts sign-in is on (ACCOUNTS_ISSUER set): moved accounts sign in only there. */
-  const accountsOn = !!config.accounts;
-
-  app.post('/register', async c => {
-    if (!config.passwordSignIn) throw accountsOnly();
-    const wait = registerByIp.hit(clientIp(c, config.trustProxy));
-    if (wait) throw tooMany(`Too many new accounts from this network. Try again in ${Math.ceil(wait / 60)} minutes.`);
-    const body = await readJson(c, RegisterBody);
-    const problem = signUpProblem(body, cells.servedRegions, config.openCountries);
-    if (problem) {
-      const refused = problem.code === 'country_unavailable' || problem.code === 'region_not_served';
-      throw new HttpError(refused ? 403 : 400, problem.code, problem.message);
-    }
-    const policy = countryPolicy(body.country);
-    const cell = cells.forRegion(policy.region)!;
-    if (await locate(deps, body.email)) throw conflict(EMAIL_TAKEN, 'email_taken');
-
-    const passwordHash = await hashPassword(body.password);
-    const userId = crypto.randomUUID();
-    // Reserve the email in the directory first: its key is unique across every cell.
-    if (!(await claim(deps, body.email, policy.region, userId))) throw conflict(EMAIL_TAKEN, 'email_taken');
-    let user: UserRow;
-    try {
-      user = await insertAccount(cell, { id: userId, email: body.email, passwordHash }, policy, body.displayName, body.consents.marketing);
-    } catch (e) {
-      await release(deps, userId).catch(() => {});
-      // An account from before the directory, or two sign-ups racing in one cell: the unique index rejects it.
-      if (isUniqueViolation(e)) throw conflict(EMAIL_TAKEN, 'email_taken');
-      throw e;
-    }
-    await recordEvent(cell.db, eventContext(c, deps), user.id, 'account_created');
-    const appSession = await startSession(c, cell, user);
-    return c.json({ ...(await sessionInfo(cell.db, user, accountsOn)), ...appSession }, 201);
-  });
-
-  app.post('/login', async c => {
-    if (!config.passwordSignIn) throw accountsOnly();
-    const body = await readJson(c, LoginBody);
-    const ipWait = loginByIp.hit(clientIp(c, config.trustProxy));
-    const emailWait = loginByEmail.hit(body.email);
-    const wait = Math.max(ipWait, emailWait);
-    if (wait) throw tooMany(`Too many sign-in attempts. Try again in ${Math.ceil(wait / 60)} minutes.`);
-    const found = await locate(deps, body.email);
-    if (found && !found.cell) {
-      throw new HttpError(403, 'wrong_region', `This account's records are kept on ${REGIONS[found.region].storage}, and this server does not hold them. Sign in through LotusPond Health for that region.`,
-        { region: found.region, apiOrigin: config.regionApiOrigins[found.region] ?? null });
-    }
-    if (found && found.cell && !passwordUsable(found.user, accountsOn)) {
-      // No Health password, or one that moved to Accounts while Accounts sign-in is on: the same time as a check.
-      await verifyAgainstDummy(body.password);
-      throw new HttpError(409, 'use_accounts', USES_ACCOUNTS);
-    }
-    const ok = found ? await verifyPassword(found.user.passwordHash!, body.password) : await verifyAgainstDummy(body.password);
-    if (!found || !ok) {
-      if (found) await recordEvent(found.cell.db, eventContext(c, deps), found.user.id, 'sign_in_failed');
-      throw new HttpError(401, 'invalid_credentials', 'Email or password is incorrect.');
-    }
-    loginByEmail.reset(body.email);
-    await recordEvent(found.cell.db, eventContext(c, deps), found.user.id, 'sign_in');
-    const appSession = await startSession(c, found.cell, found.user);
-    return c.json({ ...(await sessionInfo(found.cell.db, found.user, accountsOn)), ...appSession });
-  });
+  /** Health's password routes, for apps from before LotusPond Accounts: the person continues with their LotusPond account. */
+  const accountsOnly = () => new HttpError(409, 'use_accounts', 'LotusPond Health now uses your LotusPond account. Update the app if you need to, then continue with LotusPond Account.');
+  for (const path of ['/register', '/login', '/password']) app.post(path, () => { throw accountsOnly(); });
 
   app.post('/logout', async c => {
     const presented = readSessionToken(c);
@@ -184,20 +105,7 @@ export function authRoutes(deps: Deps) {
       if (presented?.via === 'cookie') clearSessionCookie(c, config.cookieSecure);
       return c.json(null);
     }
-    return c.json(await sessionInfo(session.cell.db, session.user, accountsOn));
-  });
-
-  app.post('/password', auth, async c => {
-    const { db } = c.var.cell;
-    const body = await readJson(c, ChangePasswordBody);
-    if (!passwordUsable(c.var.user, accountsOn) || !config.passwordSignIn) throw new HttpError(409, 'use_accounts', `${USES_ACCOUNTS} Change your password there.`);
-    if (!(await verifyPassword(c.var.user.passwordHash!, body.currentPassword))) {
-      throw new HttpError(400, 'wrong_password', 'Your current password is incorrect.');
-    }
-    await db.update(users).set({ passwordHash: await hashPassword(body.newPassword), updatedAt: new Date() }).where(eq(users.id, c.var.user.id));
-    await deleteUserSessions(db, c.var.user.id, c.var.sessionId);
-    await recordEvent(db, eventContext(c, deps), c.var.user.id, 'password_changed');
-    return c.body(null, 204);
+    return c.json(await sessionInfo(session.cell.db, session.user));
   });
 
   /** Sign out every other browser and device. */
@@ -210,14 +118,9 @@ export function authRoutes(deps: Deps) {
   app.delete('/account', auth, async c => {
     const { db, files } = c.var.cell;
     const user = c.var.user;
-    const body = await readJson(c, DeleteAccountBody);
-    if (passwordUsable(user, accountsOn) && config.passwordSignIn) {
-      if (!(await verifyPassword(user.passwordHash!, body.password))) throw new HttpError(400, 'wrong_password', 'Your password is incorrect.');
-    } else {
-      const [session] = await db.select({ createdAt: sessions.createdAt }).from(sessions).where(eq(sessions.id, c.var.sessionId)).limit(1);
-      if (!session || Date.now() - session.createdAt.getTime() > RECENT_SIGN_IN_MS) {
-        throw new HttpError(409, 'recent_sign_in_required', 'To delete your account, sign out and sign in with LotusPond Accounts again, then delete it within 10 minutes.');
-      }
+    const [session] = await db.select({ createdAt: sessions.createdAt }).from(sessions).where(eq(sessions.id, c.var.sessionId)).limit(1);
+    if (!session || Date.now() - session.createdAt.getTime() > RECENT_SIGN_IN_MS) {
+      throw new HttpError(409, 'recent_sign_in_required', 'To delete your account, sign out and sign in with LotusPond Accounts again, then delete it within 10 minutes.');
     }
     const owned = await db.select({ id: profiles.id }).from(profiles).where(eq(profiles.userId, user.id));
     await db.delete(users).where(eq(users.id, user.id)); // cascades to sessions, profiles, records and consents
@@ -237,7 +140,7 @@ export function authRoutes(deps: Deps) {
     if (body.unitSystem !== c.var.user.unitSystem) {
       await recordEvent(db, eventContext(c, deps), row.id, 'preferences_changed', { unitSystem: body.unitSystem });
     }
-    return c.json(toAccount(row, accountsOn));
+    return c.json(toAccount(row));
   });
 
   app.get('/consents', auth, async c => c.json(await listConsents(c.var.cell.db, c.var.user.id)));

@@ -92,8 +92,9 @@ export function AuthScreen({ initialMode = 'in' }: { initialMode?: AuthMode }) {
   // Sign-in through LotusPond Accounts, when the server has it switched on (docs/identity.md): the website goes
   // through its own page, the apps through the system browser (src/native/accounts.ts).
   const accountsOn = !!service?.accounts && !isPreview;
-  // Health's own password form, until LotusPond Accounts is the only way in (PASSWORD_SIGN_IN=off).
-  const passwordOn = service?.passwordSignIn !== false || isPreview;
+  // A password form only in the browser-only preview, whose account lives in this browser. On a server, LotusPond
+  // Accounts is the only way in (M9, docs/identity.md).
+  const passwordOn = isPreview;
   const accountsButton = (primary: boolean) => inApp ? (
     <button type="button" className={`btn btn--block${primary ? ' btn--primary' : ''}`} onClick={() => {
       setError(null);

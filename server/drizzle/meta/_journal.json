@@ -148,6 +148,13 @@
       "when": 1794987060518,
       "tag": "0020_accounts_signed_in_at",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1794990904873,
+      "tag": "0021_m9_drop_passwords_and_directory",
+      "breakpoints": true
     }
   ]
 }

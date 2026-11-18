@@ -1,6 +1,7 @@
 // Sign-in with LotusPond Accounts from the apps across regional hosts (REGION_API_ORIGINS): each host keeps one
-// region's cell, and the hosts share the directory database and DIRECTORY_SECRET. A sign-in started on the Europe
-// host for an account held in India comes back with a code for the India host, which decides there.
+// region's cell, and the hosts share the default database and DIRECTORY_SECRET. Accounts' `region` claim says which
+// host holds an account: a sign-in started on the Europe host for an account held in India comes back with a code
+// for the India host, which decides there. Health keeps no email directory of its own (M9).
 import { after, before, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -12,7 +13,7 @@ import { eq } from 'drizzle-orm';
 import { createApp } from '../src/app.ts';
 import { loadConfig } from '../src/config.ts';
 import { openDatabase, type Database, type Db } from '../src/db/client.ts';
-import { users } from '../src/db/schema.ts';
+import { profiles, users } from '../src/db/schema.ts';
 import { CellRegistry, fileStore, type Cell } from '../src/cells.ts';
 import { ephemeralSecrets } from '../src/compliance/secrets.ts';
 import { pkceChallenge } from '../src/auth/oidc.ts';
@@ -56,6 +57,12 @@ before(async () => {
 after(async () => { await Promise.all(dbs.map(d => d.close())); fs.rmSync(tmp, { recursive: true, force: true }); });
 
 const hostFor = (origin: string) => origin === IN ? hostIn : hostEu;
+
+/** A Health account in the India cell from before LotusPond Accounts: no Accounts subject yet. */
+async function existingInIndia(address: string) {
+  const [u] = await inDb.insert(users).values({ email: address, country: 'IN', region: 'in', ageConfirmedAt: new Date() }).returning();
+  await inDb.insert(profiles).values({ userId: u.id, relationship: 'self', displayName: 'Asha Rao' });
+}
 
 /** The system browser on one host: start (as an app), the stand-in Accounts page, and the link back to the app. */
 async function signInFromApp(origin: string, who: { email: string; region?: string }) {
@@ -128,13 +135,9 @@ const email = (tag: string) => `${tag}.${Date.now().toString(36)}.${++n}@example
 describe('LotusPond Accounts across regional hosts', () => {
   test('an India account signed in from the Europe host is handed to the India host, which links it and signs in', async () => {
     const address = email('india');
-    assert.equal((await hostIn.request(`${IN}/api/auth/register`, {
-      method: 'POST', body: JSON.stringify(registration(address, 'IN')),
-      headers: { 'content-type': 'application/json', 'sec-fetch-site': 'same-origin' },
-    })).status, 201);
+    await existingInIndia(address);
 
-    // Accounts says nothing about the region here: the shared directory finds the account on the India host.
-    const back = await signInFromApp(EU, { email: address });
+    const back = await signInFromApp(EU, { email: address, region: 'in' });
     assert.equal(back.apiOrigin, IN);
     assert.ok(back.code);
     assert.equal((await appCall(EU, 'POST', '/api/auth/accounts/app-exchange', { code: back.code, verifier: back.verifier })).status, 409,
@@ -161,11 +164,8 @@ describe('LotusPond Accounts across regional hosts', () => {
 
   test('the website: an India account signing in on the Europe site is sent to sign in on the India site', async () => {
     const address = email('web-india');
-    assert.equal((await hostIn.request(`${IN}/api/auth/register`, {
-      method: 'POST', body: JSON.stringify(registration(address, 'IN')),
-      headers: { 'content-type': 'application/json', 'sec-fetch-site': 'same-origin' },
-    })).status, 201);
-    const { to, hosts, jars } = await webSignIn(EU, { email: address });
+    await existingInIndia(address);
+    const { to, hosts, jars } = await webSignIn(EU, { email: address, region: 'in' });
     assert.deepEqual(hosts, [EU, IN], 'started on Europe, finished on India');
     assert.equal(to.toString(), `${IN}/app`);
     assert.ok((jars.get(IN) ?? []).some(c => /^lp_session=in\./.test(c)), 'the India site holds the session');
@@ -176,18 +176,6 @@ describe('LotusPond Accounts across regional hosts', () => {
     const { to, hosts } = await webSignIn(EU, { email: email('web-new'), region: 'in' }, 'signup');
     assert.deepEqual(hosts, [EU, IN]);
     assert.equal(`${to.origin}${to.pathname}${to.search}`, `${IN}/signup?accounts=continue`);
-  });
-
-  test('the website is handed on once at most', async () => {
-    // Accounts says Europe while the shared directory holds the account in India: India must not send it back.
-    const address = email('web-loop');
-    await hostIn.request(`${IN}/api/auth/register`, {
-      method: 'POST', body: JSON.stringify(registration(address, 'IN')),
-      headers: { 'content-type': 'application/json', 'sec-fetch-site': 'same-origin' },
-    });
-    const { to, hosts } = await webSignIn(EU, { email: address, region: 'eu' });
-    assert.deepEqual(hosts, [EU, IN]);
-    assert.equal(to.searchParams.get('accounts_error'), 'wrong_region');
   });
 
   test('an app code works once across instances of a host, not once per instance', async () => {

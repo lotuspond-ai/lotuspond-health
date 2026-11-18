@@ -1,5 +1,5 @@
-// Moving account identity into LotusPond Accounts: the export for Accounts to import, linking Accounts' answer, and a
-// server with PASSWORD_SIGN_IN=off, where Accounts is the only way in and Health's email directory is no longer used.
+// LotusPond Accounts as the only way in (M9): linking Accounts' answer to its import, the old password routes, and
+// finding a Health account by email without the email directory, which M9 dropped with the password hashes.
 import { after, before, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -12,12 +12,11 @@ import type { Hono } from 'hono';
 import { createApp } from '../src/app.ts';
 import { loadConfig } from '../src/config.ts';
 import { openDatabase, type Database } from '../src/db/client.ts';
-import { auditEvents, directory, users } from '../src/db/schema.ts';
+import { auditEvents, profiles, users } from '../src/db/schema.ts';
 import { DiskFileStore } from '../src/lib/files.ts';
 import { singleCell } from '../src/cells.ts';
 import { ephemeralSecrets } from '../src/compliance/secrets.ts';
-import { emailHash } from '../src/compliance/directory.ts';
-import { exportAccounts, linkAccounts, readJsonLines, type ExportedAccount } from '../src/auth/accounts-migration.ts';
+import { linkAccounts, readJsonLines } from '../src/auth/accounts-migration.ts';
 import { fakeSubject } from '../src/auth/fake-accounts.ts';
 import type { AppEnv } from '../src/http.ts';
 import type { ServiceInfo, SessionInfo } from '../../shared/types.ts';
@@ -25,8 +24,7 @@ import { registration } from './helpers.ts';
 
 let database: Database;
 let filesDir: string;
-let withPasswords: Hono<AppEnv>;
-let accountsOnly: Hono<AppEnv>;
+let app: Hono<AppEnv>;
 const secrets = ephemeralSecrets();
 
 before(async () => {
@@ -34,12 +32,9 @@ before(async () => {
   await database.migrate(fileURLToPath(new URL('../drizzle', import.meta.url)));
   filesDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lotuspond-accounts-migration-'));
   const files = new DiskFileStore(filesDir);
-  const base = { NODE_ENV: 'test', RECORD_AGENT: 'off', ACCOUNTS_ISSUER: 'fake' } as const;
-  const on = loadConfig(base);
-  const off = loadConfig({ ...base, PASSWORD_SIGN_IN: 'off' });
-  const cells = singleCell(database.db, files, on.servedRegions);
-  withPasswords = createApp({ db: database.db, files, config: on, cells, secrets });
-  accountsOnly = createApp({ db: database.db, files, config: off, cells, secrets });
+  // PASSWORD_SIGN_IN=off, as every host had it set before M9: still accepted, and it changes nothing.
+  const config = loadConfig({ NODE_ENV: 'test', RECORD_AGENT: 'off', ACCOUNTS_ISSUER: 'fake', PASSWORD_SIGN_IN: 'off' });
+  app = createApp({ db: database.db, files, config, cells: singleCell(database.db, files, config.servedRegions), secrets });
 });
 after(async () => { await database.close(); fs.rmSync(filesDir, { recursive: true, force: true }); });
 
@@ -47,8 +42,15 @@ let n = 0;
 const email = (tag: string) => `${tag}.${Date.now().toString(36)}.${++n}@example.com`;
 const cellsOf = () => [singleCell(database.db, new DiskFileStore(filesDir), ['in', 'eu', 'us', 'global']).defaultCell];
 
-/** A browser on one of the two apps: cookies, same-origin requests, and a sign-in through the stand-in. */
-function browser(app: Hono<AppEnv>) {
+/** A Health account from before LotusPond Accounts, as the import found it: no Accounts subject yet. */
+async function existing(address: string) {
+  const [u] = await database.db.insert(users).values({ email: address, country: 'IN', region: 'in', ageConfirmedAt: new Date() }).returning();
+  await database.db.insert(profiles).values({ userId: u.id, relationship: 'self', displayName: 'Asha Rao' });
+  return u;
+}
+
+/** A browser: cookies, same-origin requests, and a sign-in through the stand-in. */
+function browser() {
   const jar = new Map<string, string>();
   async function go(method: string, url: string, body?: string, type?: string) {
     const headers: Record<string, string> = { 'sec-fetch-site': 'same-origin' };
@@ -74,27 +76,12 @@ function browser(app: Hono<AppEnv>) {
   return { go, json, accounts };
 }
 
-describe('export and link', () => {
-  test('the export lists each account with its Argon2id hash as it is, its region and any link already made', async () => {
-    const pw = email('export-pw');
-    assert.equal((await browser(withPasswords).json('POST', '/api/auth/register', registration(pw))).status, 201);
-    const lines: string[] = [];
-    const count = await exportAccounts(cellsOf(), l => lines.push(l));
-    assert.equal(count, lines.length);
-    const mine = lines.map(l => JSON.parse(l) as ExportedAccount).find(a => a.email === pw)!;
-    assert.match(mine.password_hash ?? '', /^\$argon2id\$v=19\$m=19456,t=2,p=1\$/);
-    assert.equal(mine.region, 'in');
-    assert.equal(mine.country, 'IN');
-    assert.equal(mine.accounts_subject, null);
-    assert.deepEqual(Object.keys(mine).sort(), ['accounts_subject', 'country', 'created_at', 'email', 'health_user_id', 'password_hash', 'region']);
-  });
-
-  test('linking Accounts\' answer: new links, unchanged ones, conflicts, unknown ids and unreadable lines', async () => {
+describe('linking Accounts\' answer to its import', () => {
+  test('new links, unchanged ones, conflicts, unknown ids and unreadable lines', async () => {
     const a = email('link-a');
     const b = email('link-b');
-    for (const x of [a, b]) assert.equal((await browser(withPasswords).json('POST', '/api/auth/register', registration(x))).status, 201);
-    const [ua] = await database.db.select().from(users).where(eq(users.email, a));
-    const [ub] = await database.db.select().from(users).where(eq(users.email, b));
+    const ua = await existing(a);
+    const ub = await existing(b);
     const answer = [
       JSON.stringify({ health_user_id: ua.id, sub: fakeSubject(a) }),
       JSON.stringify({ health_user_id: ub.id, sub: fakeSubject(a) }), // the same LotusPond account for another Health account
@@ -116,30 +103,32 @@ describe('export and link', () => {
   });
 });
 
-describe('PASSWORD_SIGN_IN=off', () => {
-  test('the password routes say to use LotusPond Accounts, and the service says so', async () => {
-    const b = browser(accountsOnly);
+describe('LotusPond Accounts only (M9)', () => {
+  test('the old password routes tell an app from before Accounts to use it, and the service says Accounts is on', async () => {
+    const b = browser();
     const info = await (await b.go('GET', '/api/auth/config')).json() as ServiceInfo;
-    assert.equal(info.passwordSignIn, false);
     assert.equal(info.accounts, true);
-    for (const [url, body] of [['/api/auth/register', registration(email('off'))], ['/api/auth/login', { email: 'x@example.com', password: 'whatever it is' }]] as const) {
+    assert.equal('passwordSignIn' in info, false);
+    const old = [
+      ['/api/auth/register', registration(email('old-app'))],
+      ['/api/auth/login', { email: 'x@example.com', password: 'whatever it is' }],
+      ['/api/auth/password', { currentPassword: 'whatever it is', newPassword: 'another long one' }],
+    ] as const;
+    for (const [url, body] of old) {
       const res = await b.json('POST', url, body);
-      assert.equal(res.status, 409);
+      assert.equal(res.status, 409, url);
       assert.equal(((await res.json()) as { error: { code: string } }).error.code, 'use_accounts');
     }
   });
 
-  test('an account linked by the migration signs in by its subject; one never linked is still found by email, without the directory', async () => {
-    const linked = email('off-linked');
-    const unlinked = email('off-unlinked');
-    for (const x of [linked, unlinked]) assert.equal((await browser(withPasswords).json('POST', '/api/auth/register', registration(x))).status, 201);
-    const [ul] = await database.db.select().from(users).where(eq(users.email, linked));
+  test('an account linked by the import signs in by its subject; one never linked is found by email in the cells', async () => {
+    const linked = email('linked');
+    const unlinked = email('unlinked');
+    const ul = await existing(linked);
+    await existing(unlinked);
     await linkAccounts(cellsOf(), [{ health_user_id: ul.id, sub: fakeSubject(linked) }]);
-    // The directory is gone for these two (as after it is dropped): sign-in must not need it.
-    for (const x of [linked, unlinked]) await database.db.delete(directory).where(eq(directory.emailHash, emailHash(secrets.directoryKey, x)));
-
     for (const x of [linked, unlinked]) {
-      const b = browser(accountsOnly);
+      const b = browser();
       assert.equal((await b.accounts(x)).pathname, '/app', x);
       assert.equal(((await (await b.go('GET', '/api/auth/me')).json()) as SessionInfo).account.email, x);
     }
@@ -147,17 +136,25 @@ describe('PASSWORD_SIGN_IN=off', () => {
     assert.equal(uu.accountsSubject, fakeSubject(unlinked));
   });
 
-  test('someone new signs up through Accounts without a directory entry', async () => {
-    const address = email('off-new');
-    const b = browser(accountsOnly);
+  test('someone new signs up through Accounts, and signs straight in the next time', async () => {
+    const address = email('new');
+    const b = browser();
     assert.equal((await b.accounts(address)).pathname, '/signup');
     const { email: _e, password: _p, ...answers } = registration('unused@example.com');
     assert.equal((await b.json('POST', '/api/auth/accounts/complete', answers)).status, 201);
-    assert.equal((await database.db.select().from(directory).where(eq(directory.emailHash, emailHash(secrets.directoryKey, address)))).length, 0);
     assert.equal((await database.db.select().from(users).where(eq(users.email, address))).length, 1);
+    assert.equal((await browser().accounts(address)).pathname, '/app');
   });
 
-  test('it needs ACCOUNTS_ISSUER', () => {
-    assert.throws(() => loadConfig({ NODE_ENV: 'test', PASSWORD_SIGN_IN: 'off' }), /needs ACCOUNTS_ISSUER/);
+  test('settings: Accounts is required in production and the default in development and npm run local; PASSWORD_SIGN_IN=on is refused', () => {
+    assert.throws(() => loadConfig({ NODE_ENV: 'production' }), /ACCOUNTS_ISSUER is required/);
+    assert.equal(loadConfig({ NODE_ENV: 'development' }).accounts?.issuer, 'fake');
+    // npm run local: a production build only this computer reaches signs in with the stand-in; a server never does.
+    assert.equal(loadConfig({ NODE_ENV: 'production', LOCAL_SECRETS: 'true', HOST: '127.0.0.1' }).accounts?.issuer, 'fake');
+    assert.throws(() => loadConfig({ NODE_ENV: 'production', LOCAL_SECRETS: 'true', HOST: '0.0.0.0' }), /ACCOUNTS_ISSUER is required/);
+    assert.throws(() => loadConfig({ NODE_ENV: 'production', HOST: '127.0.0.1', ACCOUNTS_ISSUER: 'fake' }), /stand-in/);
+    assert.equal(loadConfig({ NODE_ENV: 'test' }).accounts, undefined);
+    assert.throws(() => loadConfig({ NODE_ENV: 'test', ACCOUNTS_ISSUER: 'fake', PASSWORD_SIGN_IN: 'on' }), /removed in M9/);
+    assert.equal(loadConfig({ NODE_ENV: 'test', ACCOUNTS_ISSUER: 'fake', PASSWORD_SIGN_IN: 'off' }).accounts?.issuer, 'fake');
   });
 });

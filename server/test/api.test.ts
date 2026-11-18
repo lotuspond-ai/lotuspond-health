@@ -12,7 +12,8 @@ import { openDatabase, type Database } from '../src/db/client.ts';
 import { DiskFileStore } from '../src/lib/files.ts';
 import { EncryptedFileStore } from '../src/lib/files-encrypted.ts';
 import type { AppEnv } from '../src/http.ts';
-import type { Measurement, ProfileRecords, ScanItem, SessionInfo, StoredDocument, Profile } from '../../shared/types.ts';
+import type { Measurement, ProfileRecords, RegisterInput, ScanItem, SessionInfo, StoredDocument, Profile } from '../../shared/types.ts';
+import { makeClient, registration } from './helpers.ts';
 
 const migrations = fileURLToPath(new URL('../drizzle', import.meta.url));
 let database: Database;
@@ -26,7 +27,7 @@ before(async () => {
   database = await openDatabase({ url: process.env.TEST_DATABASE_URL });
   await database.migrate(migrations);
   filesDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lotuspond-files-'));
-  const config = loadConfig({ NODE_ENV: 'test', TRUST_PROXY: 'true' });
+  const config = loadConfig({ NODE_ENV: 'test', TRUST_PROXY: 'true', ACCOUNTS_ISSUER: 'fake' });
   // Files go through the same encryption layer as production; tests read them back through the API.
   const files = new EncryptedFileStore(new DiskFileStore(filesDir), { current: crypto.getRandomValues(Buffer.alloc(32)), previous: [] });
   app = createApp({ db: database.db, files, config });
@@ -37,35 +38,9 @@ after(async () => {
   fs.rmSync(filesDir, { recursive: true, force: true });
 });
 
-/** A browser-like client: keeps the session cookie and sends same-origin fetch metadata. */
+/** A browser-like client (test/helpers.ts): cookies, same-origin fetch metadata, sign-up through the stand-in Accounts. */
 let clients = 0;
-function client(ip = `10.0.${++clients % 250}.${Math.floor(clients / 250) + 1}`) {
-  let cookie = '';
-  async function call(method: string, url: string, body?: unknown, headers: Record<string, string> = {}) {
-    const h: Record<string, string> = { 'sec-fetch-site': 'same-origin', 'x-forwarded-for': ip, ...headers };
-    if (cookie) h.cookie = cookie;
-    let payload: FormData | string | undefined;
-    if (body instanceof FormData) payload = body;
-    else if (body !== undefined) { payload = JSON.stringify(body); h['content-type'] = 'application/json'; }
-    const res = await app.request(url, { method, headers: h, body: payload });
-    const set = res.headers.get('set-cookie');
-    if (set) {
-      const [pair] = set.split(';');
-      cookie = pair.endsWith('=') ? '' : pair;
-    }
-    return res;
-  }
-  return {
-    call,
-    get cookie() { return cookie; },
-    json: async <T>(method: string, url: string, body?: unknown, expect = 200): Promise<T> => {
-      const res = await call(method, url, body);
-      const text = await res.text();
-      assert.equal(res.status, expect, `${method} ${url} → ${res.status} ${text}`);
-      return (text ? JSON.parse(text) : null) as T;
-    },
-  };
-}
+const client = (ip = `10.0.${++clients % 250}.${Math.floor(clients / 250) + 1}`) => makeClient(app, { ip });
 
 const measurement = (over: Partial<Measurement> = {}): Omit<Measurement, 'id'> => ({
   markerId: 'ldl', rawName: 'LDL Cholesterol', value: 138, valueText: '138', unit: 'mg/dL',
@@ -73,60 +48,47 @@ const measurement = (over: Partial<Measurement> = {}): Omit<Measurement, 'id'> =
   sourceFile: 'report.pdf', confidence: 'high', ...over,
 });
 
-/** A complete sign-up body: an adult in India who agreed to everything required. */
-const registration = (email: string, over: Record<string, unknown> = {}) => ({
-  email, password: 'correct horse battery', displayName: 'Asha', country: 'IN', ageConfirmed: true,
-  consents: { termsAndPrivacy: true, healthData: true, crossBorder: false, marketing: false }, ...over,
-});
+/** A complete sign-up: an adult in India who agreed to everything required. */
+const asha = (email: string, over: Partial<RegisterInput> = {}) => registration(email, 'IN', { displayName: 'Asha', ...over });
 
 let counter = 0;
 async function signUp(c = client()) {
   const email = `person${++counter}.${run}@example.com`;
-  const info = await c.json<SessionInfo>('POST', '/api/auth/register', registration(email), 201);
+  const info = await c.signUp(asha(email));
   return { c, email, info, self: info.profiles[0] };
 }
 
 describe('accounts', () => {
-  it('registers, creates the own profile, and keeps the session', async () => {
+  it('signs up through LotusPond Accounts, creates the own profile, and keeps the session', async () => {
     const { c, email, info } = await signUp();
     assert.equal(info.account.email, email);
     assert.equal(info.profiles.length, 1);
     assert.equal(info.profiles[0].relationship, 'self');
     assert.equal(info.profiles[0].displayName, 'Asha');
-    assert.match(c.cookie, /^lp_session=/);
+    assert.match(c.cookie, /(^|; )lp_session=/);
     const me = await c.json<SessionInfo>('GET', '/api/auth/me');
     assert.equal(me.account.id, info.account.id);
   });
 
   it('sets an HttpOnly, SameSite cookie', async () => {
-    const res = await client().call('POST', '/api/auth/register', registration(`cookie.${run}@example.com`, { password: 'long enough password', displayName: 'C' }));
-    const set = res.headers.get('set-cookie') ?? '';
+    const res = await client().signUpCall(asha(`cookie.${run}@example.com`, { displayName: 'C' }));
+    const set = res.headers.getSetCookie().find(c => c.startsWith('lp_session=')) ?? '';
     assert.match(set, /HttpOnly/i);
     assert.match(set, /SameSite=Lax/i);
   });
 
-  it('rejects a duplicate email, case-insensitively', async () => {
-    const { email } = await signUp();
-    const res = await client().call('POST', '/api/auth/register', registration(email.toUpperCase(), { password: 'another password', displayName: 'B' }));
-    assert.equal(res.status, 409);
-  });
-
-  it('validates sign-up input', async () => {
-    const short = await client().call('POST', '/api/auth/register', registration('x@example.com', { password: 'short', displayName: 'X' }));
-    assert.equal(short.status, 400);
-    assert.match((await short.json() as { error: { message: string } }).error.message, /at least 10/);
-    const bad = await client().call('POST', '/api/auth/register', registration('not-an-email', { password: 'long enough password', displayName: 'X' }));
-    assert.equal(bad.status, 400);
+  it('validates Health\'s sign-up questions', async () => {
+    const res = await client().signUpCall(asha(`unnamed.${run}@example.com`, { displayName: ' ' }));
+    assert.equal(res.status, 400);
+    assert.match((await res.json() as { error: { message: string } }).error.message, /Enter your name/);
   });
 
   it('signs in and out', async () => {
     const { email } = await signUp();
     const c = client();
-    const wrong = await c.call('POST', '/api/auth/login', { email, password: 'wrong password!' });
-    assert.equal(wrong.status, 401);
-    await c.json('POST', '/api/auth/login', { email: email.toUpperCase(), password: 'correct horse battery' });
+    assert.equal((await c.signIn(email)).pathname, '/app');
     await c.json('GET', '/api/auth/me');
-    await c.json('POST', '/api/auth/logout', undefined, 204);
+    await c.json('POST', '/api/auth/logout');
     assert.equal(await c.json('GET', '/api/auth/me'), null, 'signed out: no session');
   });
 
@@ -137,17 +99,14 @@ describe('accounts', () => {
     assert.equal(await forged.json(), null);
   });
 
-  it('changing the password signs out other sessions', async () => {
+  it('signing out other devices ends their sessions', async () => {
     const { c, email } = await signUp();
     const other = client();
-    await other.json('POST', '/api/auth/login', { email, password: 'correct horse battery' });
-    const wrong = await c.call('POST', '/api/auth/password', { currentPassword: 'nope nope nope', newPassword: 'a brand new password' });
-    assert.equal(wrong.status, 400);
-    await c.json('POST', '/api/auth/password', { currentPassword: 'correct horse battery', newPassword: 'a brand new password' }, 204);
+    await other.signIn(email);
+    await c.json('DELETE', '/api/auth/sessions', undefined, 204);
     assert.equal(await other.json('GET', '/api/auth/me'), null, 'other session revoked');
     assert.equal((await other.call('GET', '/api/profiles')).status, 401, 'revoked session cannot read data');
     await c.json('GET', '/api/auth/me');
-    await client().json('POST', '/api/auth/login', { email, password: 'a brand new password' });
   });
 
   it('blocks changes sent from another site', async () => {
@@ -159,14 +118,6 @@ describe('accounts', () => {
       headers: { cookie: c.cookie, origin: 'https://evil.example', host: 'localhost', 'content-type': 'application/json' },
     });
     assert.equal(legacy.status, 403);
-  });
-
-  it('rate-limits repeated failed sign-ins', async () => {
-    const { email } = await signUp();
-    const c = client('10.9.9.9');
-    let last = 0;
-    for (let i = 0; i < 10; i++) last = (await c.call('POST', '/api/auth/login', { email, password: `wrong-${i}-password` })).status;
-    assert.equal(last, 429);
   });
 });
 
@@ -315,10 +266,9 @@ describe('records', () => {
     form.append('file', new File(['abc'], 'a.png', { type: 'image/png' }));
     const doc = await (await c.call('POST', `/api/profiles/${self.id}/documents`, form)).json() as StoredDocument;
     assert.ok(fs.existsSync(path.join(filesDir, self.id, doc.id)));
-    assert.equal((await c.call('DELETE', '/api/auth/account', { password: 'wrong password!!' })).status, 400);
-    await c.json('DELETE', '/api/auth/account', { password: 'correct horse battery' }, 204);
+    await c.json('DELETE', '/api/auth/account', {}, 204);
     assert.equal(fs.existsSync(path.join(filesDir, self.id)), false);
-    assert.equal((await client().call('POST', '/api/auth/login', { email, password: 'correct horse battery' })).status, 401);
+    assert.equal((await client().signIn(email)).pathname, '/signup', 'Health holds no account for that email now');
   });
 });
 

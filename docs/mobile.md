@@ -31,10 +31,9 @@ The apps accept any file type in the picker, because phones grey out types they 
 
 The apps load the shell from `capacitor://localhost` (iOS) or `https://localhost` (Android). Every API call is therefore cross-site and carries no cookies, so the apps use the server's **token sessions** (README, *Mobile apps*):
 
-- **Sign-in and sign-up** send `X-LotusPond-Client: app`. The server answers with a token instead of a cookie, and the app saves it with `@aparajita/capacitor-secure-storage`.
+- **Sign-in and sign-up** go through LotusPond Accounts: **Continue with LotusPond Account** opens the system browser, and the sign-in comes back to the app on `ai.lotuspond.health:/accounts` ([identity.md](identity.md#built-so-far)). The app exchanges the one-time code with `X-LotusPond-Client: app`, and the server answers with a token instead of a cookie. The app saves it with `@aparajita/capacitor-secure-storage`. Health has no passwords (M9).
 - **Every request** carries `Authorization: Bearer <token>`. If the server answers 401 (the session expired, or was signed out from another device), the app forgets the token and returns to the sign-in screen.
-- **Regions.** Sign-up goes to the server for the region of the chosen country (`apiOrigins` from `GET /api/auth/config`). Sign-in follows a `wrong_region` answer to the host that holds the account and stays with it.
-- **LotusPond Accounts** (when the server has `ACCOUNTS_ISSUER` set): **Continue with LotusPond Account** opens the system browser, and the sign-in comes back to the app on `ai.lotuspond.health:/accounts` ([identity.md](identity.md#built-so-far)).
+- **Regions.** Accounts' `region` claim names the host that holds the account, and the app follows it when the server lists that host (`apiOrigins` from `GET /api/auth/config`). Sign-up finishes on the server for the region of the chosen country.
 - **Code.** `src/api/appSession.ts` (token, origin, headers) and `src/api/http.ts` in app mode, which `src/api/index.ts` turns on when running natively. They are tested against the real API in `tools/test-app-client.ts` (`npm run test:app`), through a stand-in for the web view that preflights, enforces CORS and refuses cookies.
 
 By default the apps call the public site (`SITE_URL`, `https://health.lotuspond.ai`). Set `VITE_API_ORIGIN` at build time to use another server.
@@ -202,7 +201,7 @@ Turned on from **Account → App lock**, in the apps only. Turning it on or off 
 - **Android's prompt.** The fingerprint prompt runs in its own activity, so Android pauses and resumes the app around it. Those events are ignored, so unlocking doesn't trigger another lock.
 - **Passcode removed.** If the phone no longer has Face ID, a fingerprint or a passcode, the lock can't work, so it turns itself off and says so on Account.
 - **Damaged settings.** If the settings file (`Library/lotuspond/settings.json`) exists but can't be read, the lock stays on.
-- **What it protects.** It stops someone holding the unlocked phone from opening LotusPond on it. It only applies to that phone: signing in anywhere else still needs the password.
+- **What it protects.** It stops someone holding the unlocked phone from opening LotusPond on it. It only applies to that phone: signing in anywhere else still needs the LotusPond account.
 
 ## Not done yet
 
