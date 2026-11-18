@@ -17,7 +17,7 @@ import { openDatabase, type Database } from '../src/db/client.ts';
 import { auditEvents, sessions, users } from '../src/db/schema.ts';
 import { DiskFileStore } from '../src/lib/files.ts';
 import { AccountsClient, OidcError, pkceChallenge } from '../src/auth/oidc.ts';
-import { fakeAccounts } from '../src/auth/fake-accounts.ts';
+import { fakeAccounts, fakeSubject } from '../src/auth/fake-accounts.ts';
 import type { AppEnv } from '../src/http.ts';
 import type { SessionInfo } from '../../shared/types.ts';
 import { registration } from './helpers.ts';
@@ -181,6 +181,22 @@ describe('LotusPond Accounts sign-in', () => {
       body: JSON.stringify({ email: address, password: 'correct horse battery' }),
     });
     assert.equal(back.status, 200, 'after a rollback, the kept hash signs in again');
+  });
+
+  test('linked by the import alone, the Health password keeps working; the first Accounts sign-in ends that', async () => {
+    const address = email('imported');
+    assert.equal((await browser().json('POST', '/api/auth/register', registration(address))).status, 201);
+    // What accounts:link does after Accounts' import: the subject, and nothing else.
+    await database.db.update(users).set({ accountsSubject: fakeSubject(address) }).where(eq(users.email, address));
+    const before = await browser().json('POST', '/api/auth/login', { email: address, password: 'correct horse battery' });
+    assert.equal(before.status, 200, 'not moved yet: an older app with no Accounts sign-in can still get in');
+
+    const b = browser();
+    assert.equal((await signInWithAccounts(b, { email: address })).pathname, '/app');
+    const [row] = await database.db.select().from(users).where(eq(users.email, address));
+    assert.ok(row.accountsSignedInAt, 'the first Accounts sign-in is recorded');
+    const after = await browser().json('POST', '/api/auth/login', { email: address, password: 'correct horse battery' });
+    assert.equal(after.status, 409, 'moved now: the Health password opens nothing while Accounts sign-in is on');
   });
 
   test('an account made through a company single sign-on is refused', async () => {

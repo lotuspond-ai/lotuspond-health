@@ -19,7 +19,7 @@
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { Hono } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { countryPolicy, REGIONS, signUpProblem, type DataRegion } from '../../../shared/regions.ts';
 import { sessions, users, type UserRow } from '../db/schema.ts';
 import type { Cell } from '../cells.ts';
@@ -198,6 +198,10 @@ export function accountsRoutes(deps: Deps, runtime: AccountsRuntime) {
 
   /** Start Health's own session: a cookie for the website, a token in the answer for the apps. */
   async function signIn(c: Ctx, cell: Cell, user: UserRow, forApp: boolean, from: { sid?: string; idToken?: string }) {
+    // The first sign-in with Accounts: from now on, while Accounts sign-in is on, the Health password opens nothing.
+    if (!user.accountsSignedInAt) {
+      await cell.db.update(users).set({ accountsSignedInAt: new Date() }).where(and(eq(users.id, user.id), isNull(users.accountsSignedInAt)));
+    }
     const { token, expiresAt } = await createSession(cell.db, user.region, user.id, config.sessionTtlMs, c.req.header('user-agent'), from);
     if (!forApp) writeSessionCookie(c, token, expiresAt, config.cookieSecure);
     await recordEvent(cell.db, eventContext(c, deps), user.id, 'sign_in');

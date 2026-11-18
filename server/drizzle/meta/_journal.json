@@ -141,6 +141,13 @@
       "when": 1794982925128,
       "tag": "0019_accounts_id_token",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1794987060518,
+      "tag": "0020_accounts_signed_in_at",
+      "breakpoints": true
     }
   ]
 }
