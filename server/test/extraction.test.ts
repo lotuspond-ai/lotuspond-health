@@ -9,7 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Anthropic from '@anthropic-ai/sdk';
 import type { Hono } from 'hono';
-import { AI_EXTRACTION_NOTICE_VERSION, type ActivityEvent, type AiExtraction, type ConsentRecord, type ProfileRecords, type PublicConfig, type SessionInfo } from '../../shared/types.ts';
+import { AI_EXTRACTION_NOTICE_VERSION, type ActivityEvent, type AiExtraction, type ConsentRecord, type ProfileRecords, type PublicConfig } from '../../shared/types.ts';
 import { createApp } from '../src/app.ts';
 import { loadConfig } from '../src/config.ts';
 import { openDatabase, type Database } from '../src/db/client.ts';
@@ -39,7 +39,7 @@ before(async () => {
   database = await openDatabase({ url: process.env.TEST_DATABASE_URL });
   await database.migrate(migrations);
   filesDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lotuspond-extract-'));
-  app = createApp({ db: database.db, files: new DiskFileStore(filesDir), config: loadConfig({ NODE_ENV: 'test', TRUST_PROXY: 'true' }), extractor: fake });
+  app = createApp({ db: database.db, files: new DiskFileStore(filesDir), config: loadConfig({ NODE_ENV: 'test', ACCOUNTS_ISSUER: 'fake', TRUST_PROXY: 'true' }), extractor: fake });
 });
 after(async () => {
   await database?.close();
@@ -49,7 +49,7 @@ after(async () => {
 let n = 0;
 async function account() {
   const c = makeClient(app);
-  const info = await c.json<SessionInfo>('POST', '/api/auth/register', registration(`extract-${Date.now()}-${++n}@example.com`), 201);
+  const info = await c.signUp(registration(`extract-${Date.now()}-${++n}@example.com`));
   return { c, pid: info.profiles[0].id };
 }
 function form(file: Uint8Array | null, fields: Record<string, string> = { consent: 'accepted', noticeVersion: AI_EXTRACTION_NOTICE_VERSION }) {

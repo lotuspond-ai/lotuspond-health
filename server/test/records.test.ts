@@ -14,7 +14,7 @@ import { serve, type ServerType } from '@hono/node-server';
 import { eq } from 'drizzle-orm';
 import { DEMO_SOURCE_ID, RECORD_AGENT_NOTICE_VERSION, type RecordConnectionView, type RecordRunView, type SourcesInfo } from '../../shared/sources.ts';
 import type { NotificationList } from '../../shared/notifications.ts';
-import type { ConsentRecord, ProfileRecords, SessionInfo } from '../../shared/types.ts';
+import type { ConsentRecord, ProfileRecords } from '../../shared/types.ts';
 import { createApp } from '../src/app.ts';
 import { singleCell } from '../src/cells.ts';
 import { loadConfig } from '../src/config.ts';
@@ -58,7 +58,7 @@ after(async () => {
 });
 
 function setup(extra: Partial<Parameters<typeof createRecordAgent>[0]> = {}) {
-  const config = loadConfig({ NODE_ENV: 'test', TRUST_PROXY: 'true' });
+  const config = loadConfig({ NODE_ENV: 'test', ACCOUNTS_ISSUER: 'fake', TRUST_PROXY: 'true' });
   const files = new DiskFileStore(filesDir);
   // A test may bring its own cells (a file store that fails); the app and the agent share them.
   const cells = extra.cells ?? singleCell(database.db, files);
@@ -74,7 +74,7 @@ function setup(extra: Partial<Parameters<typeof createRecordAgent>[0]> = {}) {
 let k = 0;
 async function account(app: ReturnType<typeof setup>['app']) {
   const c = makeClient(app);
-  const info = await c.json<SessionInfo>('POST', '/api/auth/register', registration(`records-${Date.now()}-${++k}@example.com`), 201);
+  const info = await c.signUp(registration(`records-${Date.now()}-${++k}@example.com`));
   return { c, self: info.profiles[0] };
 }
 

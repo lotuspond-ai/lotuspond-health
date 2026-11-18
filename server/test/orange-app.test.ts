@@ -10,7 +10,6 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { eq } from 'drizzle-orm';
 import { LAB_BOOKING_NOTICE_VERSION, type LabOrderView, type LabResultView } from '../../shared/lab-bundle.ts';
-import type { SessionInfo } from '../../shared/types.ts';
 import { createApp } from '../src/app.ts';
 import { singleCell } from '../src/cells.ts';
 import { ephemeralSecrets } from '../src/compliance/secrets.ts';
@@ -87,7 +86,7 @@ test('book with Orange Health, follow a signed webhook to results, and cancel an
   let t = Date.now();
   const tomorrow = new Date(t + 330 * 60_000 + 86_400_000).toISOString().slice(0, 10); // India date
   const now = () => t;
-  const config = loadConfig({ NODE_ENV: 'test', TRUST_PROXY: 'true' });
+  const config = loadConfig({ NODE_ENV: 'test', ACCOUNTS_ISSUER: 'fake', TRUST_PROXY: 'true' });
   const files = new DiskFileStore(filesDir);
   const cells = singleCell(database.db, files, config.servedRegions);
   const secrets = ephemeralSecrets();
@@ -101,7 +100,7 @@ test('book with Orange Health, follow a signed webhook to results, and cancel an
   const app = createApp({ db: database.db, files, config, cells, secrets, labs });
 
   const c = makeClient(app);
-  const info = await c.json<SessionInfo>('POST', '/api/auth/register', registration(`orange-${Date.now()}@example.com`), 201);
+  const info = await c.signUp(registration(`orange-${Date.now()}@example.com`));
   const pid = info.profiles[0].id;
 
   const catalog = await c.json<{ items: { code: string; partner: string }[] }>('GET', '/api/lab/catalog?pincode=560043');

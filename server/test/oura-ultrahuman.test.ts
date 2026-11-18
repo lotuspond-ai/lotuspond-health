@@ -13,7 +13,6 @@ import { Hono } from 'hono';
 import { serve, type ServerType } from '@hono/node-server';
 import { eq } from 'drizzle-orm';
 import { RECORD_AGENT_NOTICE_VERSION, sourceById, type RecordConnectionView, type RecordRunView, type SourcesInfo } from '../../shared/sources.ts';
-import type { SessionInfo } from '../../shared/types.ts';
 import { createApp } from '../src/app.ts';
 import { singleCell } from '../src/cells.ts';
 import { loadConfig } from '../src/config.ts';
@@ -143,7 +142,7 @@ after(async () => {
 
 function setup() {
   const config = loadConfig({
-    NODE_ENV: 'test', TRUST_PROXY: 'true', PUBLIC_URL: 'https://health.example',
+    NODE_ENV: 'test', ACCOUNTS_ISSUER: 'fake', TRUST_PROXY: 'true', PUBLIC_URL: 'https://health.example',
     OURA_CLIENT_ID: 'oura-client-id', OURA_CLIENT_SECRET: 'test-secret-123',
     ULTRAHUMAN_CLIENT_ID: 'uh-client-id', ULTRAHUMAN_CLIENT_SECRET: 'test-secret-123', ULTRAHUMAN_CGM: 'on',
   });
@@ -199,7 +198,7 @@ describe('Oura and Ultrahuman', { timeout: 60_000 }, () => {
 
   test('Oura: sign in, a year of nights in one file, then only new nights; a lapsed membership is explained', async () => {
     const c = makeClient(app);
-    const info = await c.json<SessionInfo>('POST', '/api/auth/register', registration(`oura-${Date.now()}@example.com`), 201);
+    const info = await c.signUp(registration(`oura-${Date.now()}@example.com`));
     const sources = await c.json<SourcesInfo>('GET', '/api/records');
     assert.equal(sources.sources.find(s => s.id === 'oura')!.availability, 'api');
 
@@ -246,7 +245,7 @@ describe('Oura and Ultrahuman', { timeout: 60_000 }, () => {
 
   test('Ultrahuman: one call per day, resting HR, SpO2, breathing and CGM glucose; a late-synced day comes in next time', async () => {
     const c = makeClient(app);
-    const info = await c.json<SessionInfo>('POST', '/api/auth/register', registration(`uh-${Date.now()}@example.com`), 201);
+    const info = await c.signUp(registration(`uh-${Date.now()}@example.com`));
     const { auth, conn } = await connect(app, agent, c, info.profiles[0].id, 'ultrahuman');
     assert.equal(auth.origin + auth.pathname, 'https://auth.ultrahuman.example/authorise');
     assert.equal(auth.searchParams.get('scope'), 'ring_data cgm_data');

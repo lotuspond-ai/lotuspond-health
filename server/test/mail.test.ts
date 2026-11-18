@@ -12,7 +12,6 @@ import type { AddressInfo } from 'node:net';
 import { Hono, type Context } from 'hono';
 import { serve, type ServerType } from '@hono/node-server';
 import { RECORD_AGENT_NOTICE_VERSION, type RecordConnectionView, type RecordRunView, type SourcesInfo } from '../../shared/sources.ts';
-import type { SessionInfo } from '../../shared/types.ts';
 import { createApp } from '../src/app.ts';
 import { singleCell } from '../src/cells.ts';
 import { loadConfig } from '../src/config.ts';
@@ -173,7 +172,7 @@ after(async () => {
 
 function setup(maxReports?: number) {
   const config = loadConfig({
-    NODE_ENV: 'test', TRUST_PROXY: 'true', PUBLIC_URL: 'https://health.example',
+    NODE_ENV: 'test', ACCOUNTS_ISSUER: 'fake', TRUST_PROXY: 'true', PUBLIC_URL: 'https://health.example',
     GMAIL_CLIENT_ID: 'gmail-client-id', GMAIL_CLIENT_SECRET: 'mail-secret-123', OUTLOOK_CLIENT_ID: 'outlook-client-id', OUTLOOK_CLIENT_SECRET: 'mail-secret-123',
   });
   const r = config.records!;
@@ -232,7 +231,7 @@ describe('email sources', { timeout: 60_000 }, () => {
 
   test('Gmail: offline access, the reports from a year of mail once, then only new mail; refresh keeps the token', async () => {
     const c = makeClient(app);
-    const info = await c.json<SessionInfo>('POST', '/api/auth/register', registration(`gmail-${Date.now()}@example.com`), 201);
+    const info = await c.signUp(registration(`gmail-${Date.now()}@example.com`));
     assert.equal((await c.json<SourcesInfo>('GET', '/api/records')).sources.find(s => s.id === 'gmail')!.availability, 'api');
     const { auth, conn } = await connect(app, agent, c, info.profiles[0].id, 'gmail');
     assert.equal(auth.searchParams.get('scope'), 'https://www.googleapis.com/auth/gmail.readonly');
@@ -266,7 +265,7 @@ describe('email sources', { timeout: 60_000 }, () => {
 
   test('Outlook: Mail.Read, paging, file attachments only, and the rotated refresh token kept', async () => {
     const c = makeClient(app);
-    const info = await c.json<SessionInfo>('POST', '/api/auth/register', registration(`outlook-${Date.now()}@example.com`), 201);
+    const info = await c.signUp(registration(`outlook-${Date.now()}@example.com`));
     const { auth, conn } = await connect(app, agent, c, info.profiles[0].id, 'outlook');
     assert.equal(auth.searchParams.get('scope'), 'offline_access Mail.Read');
     const r = conn.lastRun!;
@@ -287,7 +286,7 @@ describe('email sources', { timeout: 60_000 }, () => {
     const small = setup(2);
     graph.tokens.codes.add('good-code');
     const c = makeClient(small.app);
-    const info = await c.json<SessionInfo>('POST', '/api/auth/register', registration(`backlog-${Date.now()}@example.com`), 201);
+    const info = await c.signUp(registration(`backlog-${Date.now()}@example.com`));
     const { conn } = await connect(small.app, small.agent, c, info.profiles[0].id, 'outlook');
     const r1 = conn.lastRun!;
     assert.deepEqual(r1.documents.map(d => d.fileName), ['TC823411_Report.pdf', 'CBC.pdf'], 'the two oldest');
@@ -309,7 +308,7 @@ describe('email sources', { timeout: 60_000 }, () => {
     try {
       graph.tokens.codes.add('good-code');
       const c = makeClient(app);
-      const info = await c.json<SessionInfo>('POST', '/api/auth/register', registration(`busy-${Date.now()}@example.com`), 201);
+      const info = await c.signUp(registration(`busy-${Date.now()}@example.com`));
       const { conn } = await connect(app, agent, c, info.profiles[0].id, 'outlook');
       assert.match(conn.lastRun!.note ?? '', /more emails to look at/);
       assert.ok(!conn.lastRun!.documents.some(d => d.fileName === 'Late.pdf'));

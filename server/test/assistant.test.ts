@@ -10,7 +10,6 @@ import Anthropic from '@anthropic-ai/sdk';
 import type { Hono } from 'hono';
 import { ASSISTANT_NOTICE_VERSION, type AssistantEvent, type AssistantInfo } from '../../shared/assistant.ts';
 import type { NotificationList } from '../../shared/notifications.ts';
-import type { SessionInfo } from '../../shared/types.ts';
 import { createApp } from '../src/app.ts';
 import { loadConfig } from '../src/config.ts';
 import { openDatabase, type Database } from '../src/db/client.ts';
@@ -32,7 +31,7 @@ before(async () => {
   database = await openDatabase({ url: process.env.TEST_DATABASE_URL });
   await database.migrate(migrations);
   filesDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lotuspond-assistant-'));
-  const config = loadConfig({ NODE_ENV: 'test', TRUST_PROXY: 'true', PUBLIC_URL: 'https://health.example' });
+  const config = loadConfig({ NODE_ENV: 'test', ACCOUNTS_ISSUER: 'fake', TRUST_PROXY: 'true', PUBLIC_URL: 'https://health.example' });
   let n = 0;
   const client = new Anthropic({
     apiKey: 'sk-ant-test', maxRetries: 0,
@@ -52,7 +51,7 @@ after(async () => {
 let k = 0;
 async function account() {
   const c = makeClient(app);
-  const info = await c.json<SessionInfo>('POST', '/api/auth/register', registration(`assistant-${Date.now()}-${++k}@example.com`), 201);
+  const info = await c.signUp(registration(`assistant-${Date.now()}-${++k}@example.com`));
   const self = info.profiles[0];
   await c.json('PATCH', `/api/profiles/${self.id}`, { conditions: ['Type 2 diabetes'], dateOfBirth: '1990-05-01' });
   await c.json('POST', `/api/profiles/${self.id}/measurements`, { measurements: [measurement({ date: '2026-03-14', value: 138, valueText: '138' })] }, 201);

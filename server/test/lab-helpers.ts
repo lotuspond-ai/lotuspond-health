@@ -1,7 +1,6 @@
 // Shared lab test fixtures, and a harness running the real app over a test database with the simulated lab.
 import type { Hono } from 'hono';
 import { LAB_BOOKING_NOTICE_VERSION, type LabOrderView } from '../../shared/lab-bundle.ts';
-import type { SessionInfo } from '../../shared/types.ts';
 import { createApp } from '../src/app.ts';
 import { singleCell } from '../src/cells.ts';
 import { ephemeralSecrets } from '../src/compliance/secrets.ts';
@@ -46,7 +45,7 @@ export function labEnv(database: Database, filesDir: string, opts: { tags?: Fake
   const now = () => t;
   const log = memoryLogger();
   // OPEN_COUNTRIES=all: accounts outside India test the lab's region rules.
-  const config = loadConfig({ NODE_ENV: 'test', TRUST_PROXY: 'true', OPEN_COUNTRIES: 'all' });
+  const config = loadConfig({ NODE_ENV: 'test', ACCOUNTS_ISSUER: 'fake', TRUST_PROXY: 'true', OPEN_COUNTRIES: 'all' });
   const files = new DiskFileStore(filesDir);
   const cells = singleCell(database.db, files, config.servedRegions);
   const secrets = ephemeralSecrets();
@@ -70,7 +69,7 @@ export function labEnv(database: Database, filesDir: string, opts: { tags?: Fake
   /** Sign up a new account (India unless given) and return its client and self profile id. */
   async function signUp(country = 'IN'): Promise<{ c: TestClient; profileId: string }> {
     const c = makeClient(app);
-    const info = await c.json<SessionInfo>('POST', '/api/auth/register', registration(`lab-${Date.now()}-${++users}@example.com`, country), 201);
+    const info = await c.signUp(registration(`lab-${Date.now()}-${++users}@example.com`, country));
     return { c, profileId: info.profiles[0].id };
   }
   const tomorrow = () => istDate(t + 86_400_000);
