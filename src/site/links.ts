@@ -2,7 +2,7 @@
 // The server-less preview (VITE_BACKEND=browser) has no website and its host only passes a #hash into the page,
 // so there sign-in or sign-up is chosen with #login or #signup, and website links open the live site in a new tab.
 // The iOS and Android apps work the same way: they hold only the app shell, and website links open in the browser.
-import { agentConsentNext } from '../../shared/identity';
+import { agentConsentNext, CONSOLE_PATH } from '../../shared/identity';
 import { inApp, isPreview } from '../api';
 
 /** No website around the app: the preview and the iOS / Android apps. */
@@ -14,7 +14,7 @@ declare const __SITE_URL__: string;
 export const SITE_URL: string = __SITE_URL__;
 
 export type AuthMode = 'in' | 'up';
-export type SitePath = '/' | '/privacy/' | '/terms/' | '/trust/';
+export type SitePath = '/' | '/privacy/' | '/terms/' | '/trust/' | '/developers/';
 
 const TITLE = 'LotusPond Health';
 const AUTH_PATH = /^\/(login|signup)\/?$/;
@@ -80,4 +80,13 @@ export function leaveApp(): void {
 export function oauthReturn(): string | null {
   if (shellOnly || typeof location === 'undefined') return null;
   return agentConsentNext(new URLSearchParams(location.search).get('next'));
+}
+
+/**
+ * Where a sign-in through LotusPond Accounts returns to: an agent's consent page (as oauthReturn), or the developer
+ * console when the sign-in screen was opened on it (/app#console). A password sign-in stays on the page, hash and all.
+ */
+export function accountsReturn(): string | null {
+  if (!shellOnly && typeof location !== 'undefined' && location.hash === '#console') return CONSOLE_PATH;
+  return oauthReturn();
 }

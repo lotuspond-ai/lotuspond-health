@@ -11,7 +11,7 @@ import { sessions, users, type UserRow } from '../db/schema.ts';
 import type { Cell, CellRegistry } from '../cells.ts';
 
 export const SESSION_COOKIE = 'lp_session';
-/** The developer console's session (organisation accounts, connectors/console-accounts.ts), sent only to /api/console. */
+/** The developer console's own session cookie, from before it used the Health sign-in. Browsers may still hold one for a week. */
 export const ORG_SESSION_COOKIE = 'lp_org_session';
 /** Extend a session's expiry at most once a day while it is in use. */
 const REFRESH_AFTER_MS = 24 * 60 * 60 * 1000;

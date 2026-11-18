@@ -6,6 +6,7 @@ import { bodyLimit } from 'hono/body-limit';
 import { secureHeaders } from 'hono/secure-headers';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { APP_FILE, APP_PATHS, NOT_FOUND_FILE, SITE_PAGES } from '../../shared/site.ts';
+import { CONSOLE_PATH } from '../../shared/identity.ts';
 import { forbidden, HttpError } from './lib/errors.ts';
 import { isAppRequest } from './auth/sessions.ts';
 import type { AppEnv } from './http.ts';
@@ -315,6 +316,8 @@ function serveSite(app: Hono<AppEnv>, dir: string, appCsp: string): void {
     };
   };
 
+  // The developer console is a page of the app now, opened with the Health sign-in; its old address leads there.
+  for (const p of ['/developers/console', '/developers/console/']) app.get(p, c => c.redirect(CONSOLE_PATH, 302));
   // Folder pages have one address each: /privacy redirects to /privacy/.
   for (const page of SITE_PAGES) {
     if (page.path === '/') continue;

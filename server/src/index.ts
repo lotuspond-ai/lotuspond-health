@@ -116,7 +116,7 @@ if (['org:create', 'org:key', 'org:revoke', 'org:requests', 'org:live', 'org:con
       const role = (c ?? 'owner') as OrganisationRole;
       if (!a || !b || !['owner', 'admin', 'editor', 'viewer'].includes(role)) fail('Usage: org:member <organisation id> <email> [owner|admin|editor|viewer]');
       const [account] = await db.select().from(organisationAccounts).where(eq(organisationAccounts.email, b.trim().toLowerCase())).limit(1);
-      if (!account) fail(`No organisation account for ${b}. The person makes one in the developer console first.`);
+      if (!account) fail(`No organisation account for ${b}. They sign in to LotusPond Health and open the developer console once first.`);
       await db.insert(organisationMembers).values({ organisationId: a, accountId: account.id, role, approves: role === 'owner' })
         .onConflictDoUpdate({ target: [organisationMembers.organisationId, organisationMembers.accountId], set: { role } });
       console.log(`${account.email} is ${role === 'owner' || role === 'admin' ? 'an' : 'a'} ${role} of organisation ${a}.`);

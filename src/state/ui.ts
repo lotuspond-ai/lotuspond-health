@@ -1,8 +1,8 @@
 import { create } from 'zustand';
 import type { OrganId } from '../types';
 
-export type View = 'home' | 'body' | 'markers' | 'scans' | 'files' | 'sources' | 'agents' | 'profile' | 'account' | 'labs';
-export const VIEWS: View[] = ['home', 'body', 'markers', 'scans', 'files', 'sources', 'agents', 'profile', 'account', 'labs'];
+export type View = 'home' | 'body' | 'markers' | 'scans' | 'files' | 'sources' | 'agents' | 'profile' | 'account' | 'labs' | 'console';
+export const VIEWS: View[] = ['home', 'body', 'markers', 'scans', 'files', 'sources', 'agents', 'profile', 'account', 'labs', 'console'];
 /** The views under Records: results, the body map, scans and files. */
 export const RECORD_VIEWS: View[] = ['markers', 'body', 'scans', 'files'];
 

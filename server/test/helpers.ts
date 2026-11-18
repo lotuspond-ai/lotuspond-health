@@ -119,3 +119,16 @@ export async function upload(c: TestClient, profileId: string, name: string, byt
   assert.equal(res.status, 201, await res.clone().text());
   return await res.json() as { id: string };
 }
+
+/**
+ * Someone with a LotusPond Health account who opens the developer console (it uses the Health sign-in), optionally
+ * making an organisation there. Needs ACCOUNTS_ISSUER=fake, like `signUp`.
+ */
+export async function consoleUser(app: Hono<AppEnv>, email: string, organisation?: { name: string; region: string }) {
+  const person = makeClient(app);
+  await person.signUp(registration(email));
+  const org = organisation
+    ? await person.json<{ id: string; access: string; role: string; approves: boolean }>('POST', '/api/console/organisations', organisation, 201)
+    : (await person.json('GET', '/api/console'), null);
+  return { person, org };
+}

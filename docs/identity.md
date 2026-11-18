@@ -31,17 +31,18 @@ This page says what the decision changes for Health.
 
 ## The developer console's organisation accounts
 
-The organisation API's console already has accounts of its own, built like LotusPond Works' (a person's account, with organisations as workspaces and a role in each), and kept apart from personal Health accounts ([connectors.md](connectors.md#the-organisation-api)). When Accounts ships:
+Settled by the owner, 2026-11-18: **the developer console opens with the person's LotusPond Health sign-in**, as a page of the app, instead of with organisation accounts of its own. This replaces the earlier plan here (separate console accounts, signed in through Accounts by `(issuer, subject)`, open to managed enterprise accounts). It also sets aside, for the console, the separation in ADR-0001 decision 8 that kept an employer's organisation account apart from the account that holds someone's own records: the same Health account now holds both the person's records and their organisation memberships.
 
-- they sign in through Accounts too, and are stored by `(issuer, subject)`;
-- a managed account from a Works enterprise connection may open the console, because it holds no one's health records; it still cannot open personal Health;
-- organisations and memberships stay in Health, as Works keeps its own.
+- Each Health account has one organisation account, joined by `(health_region, health_user_id)` ([connectors.md](connectors.md#the-organisation-api)). Memberships, keys and calls stay in the default database; records stay in the cells. Membership in an organisation opens no one's records, and an organisation's owners and admins cannot see, suspend or reset the member's Health account.
+- Because Health refuses employer-managed accounts (above), a managed account from a Works enterprise connection cannot open the console either.
+- Organisations and memberships stay in Health, as Works keeps its own.
+- Company ADR-0001 in `lotuspond-ai/lotuspond` still records decision 8 as written; it should be amended to match.
 
 ## Existing accounts
 
 - Health's Argon2id hashes and regions are imported into Accounts unchanged.
 - If the same email also has a Works account, the two are joined only after the person proves control of each: mailbox verification where that product had already verified the address, otherwise one sign-in with that product's old password.
-- Health's `users.password_hash` and its email `directory` were dropped in M9, by migration `0021_m9_drop_passwords_and_directory`, after a period with both sign-in paths available ([step 6](#moving-the-directory-into-accounts)).
+- Health's `users.password_hash` and its email `directory` were dropped in M9, by migration `0022_m9_drop_passwords_and_directory`, after a period with both sign-in paths available ([step 6](#moving-the-directory-into-accounts)).
 
 ## Built so far
 
@@ -150,7 +151,7 @@ Done in this order. Steps 1, 5 and 6 are history since M9: the export and the ga
    - **Sign-in page:** shows only Continue with LotusPond Account.
    - **Deleting an account:** asks for a recent Accounts sign-in instead of a password.
    - **The email directory is no longer read or written.** An account is found by its Accounts subject. The host comes from the `region` claim. One never linked is found by email in the host's own cells, and a new one is created without a directory entry.
-6. **M9: drop the `directory` table and `users.password_hash`,** by migration `0021_m9_drop_passwords_and_directory`. The WhatsApp directory, keyed by phone number, stays. This removed the way back to Health passwords, so it waited until `accounts:cleanup-check` passed on each regional host. That command was removed with the hashes it read. It printed counts only, and exited 0 only when:
+6. **M9: drop the `directory` table and `users.password_hash`,** by migration `0022_m9_drop_passwords_and_directory`. The WhatsApp directory, keyed by phone number, stays. This removed the way back to Health passwords, so it waited until `accounts:cleanup-check` passed on each regional host. That command was removed with the hashes it read. It printed counts only, and exited 0 only when:
    - this host has `ACCOUNTS_ISSUER` set and `PASSWORD_SIGN_IN=off`;
    - nobody has signed in with a Health password within one session lifetime (`SESSION_DAYS`).
 
@@ -176,7 +177,7 @@ All of this PR's schema changes are in one migration, `0018_accounts_sign_in`:
 Then, from the work that made Accounts the only way in:
 - `0019_accounts_id_token`: `sessions.accounts_id_token`, the ID token sent as `id_token_hint` at sign-out;
 - `0020_accounts_signed_in_at`: `users.accounts_signed_in_at`;
-- `0021_m9_drop_passwords_and_directory` (M9): drops `users.password_hash` and the `directory` table. It cannot be undone; restoring from a backup is the only way back.
+- `0022_m9_drop_passwords_and_directory` (M9): drops `users.password_hash` and the `directory` table. It cannot be undone; restoring from a backup is the only way back.
 
 ## Before launch
 

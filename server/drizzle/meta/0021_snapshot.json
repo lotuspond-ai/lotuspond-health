@@ -1,5 +1,5 @@
 {
-  "id": "2187c5c0-6f26-4cdb-b4d8-78a9bf648453",
+  "id": "d165fdfc-95ed-4db6-966b-466d9d5a0bb2",
   "prevId": "83de51da-32bf-46e1-9f04-9ab3a92926e7",
   "version": "7",
   "dialect": "postgresql",
@@ -620,6 +620,60 @@
           "onUpdate": "no action"
         }
       },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.directory": {
+      "name": "directory",
+      "schema": "",
+      "columns": {
+        "email_hash": {
+          "name": "email_hash",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "region": {
+          "name": "region",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "directory_user_idx": {
+          "name": "directory_user_idx",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
@@ -1854,7 +1908,19 @@
           "name": "password_hash",
           "type": "text",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
+        },
+        "health_user_id": {
+          "name": "health_user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "health_region": {
+          "name": "health_region",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
         },
         "created_at": {
           "name": "created_at",
@@ -1877,6 +1943,27 @@
           "columns": [
             {
               "expression": "email",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "organisation_accounts_health_user_key": {
+          "name": "organisation_accounts_health_user_key",
+          "columns": [
+            {
+              "expression": "health_region",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "health_user_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -4117,6 +4204,12 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true
+        },
+        "password_hash": {
+          "name": "password_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
         },
         "accounts_subject": {
           "name": "accounts_subject",
