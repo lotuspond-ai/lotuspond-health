@@ -10,6 +10,8 @@ There are two ways to deploy every commit on `main`. Production uses the first: 
 2. **Deploy:** GitHub Actions connects to the server over SSH and runs [`remote-deploy.sh`](remote-deploy.sh) with the commit to deploy. The script checks the commit is on `origin/main` or `origin/development`, checks it out, rebuilds and restarts the stack (`docker compose up -d --build`; database migrations run on start), and waits for the app's health check.
 3. **Check:** the workflow calls `DEPLOY_URL/api/health` until it answers.
 
+Pull requests run step 1 only, so a change is checked before it reaches `main`. The deploy job is skipped for every pull request, whatever its branch.
+
 | Branch | GitHub environment | Server |
 | --- | --- | --- |
 | `main` | `production` | https://health.lotuspond.ai |
