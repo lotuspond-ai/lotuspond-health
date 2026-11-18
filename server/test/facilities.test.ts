@@ -342,6 +342,8 @@ describe('public config', () => {
     assert.equal(res.status, 200);
     const cfg = await res.json() as PublicConfig;
     assert.equal(cfg.nearbySearch, true);
+    // No lab partner on this server (LAB_PARTNERS unset): the app must not offer Home collection or ask the lab API.
+    assert.equal(cfg.labBooking, false);
     assert.equal(cfg.map?.type, 'raster');
   });
 

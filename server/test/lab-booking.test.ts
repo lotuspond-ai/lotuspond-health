@@ -32,6 +32,12 @@ after(async () => {
 
 
 describe('catalogue and slots', () => {
+  test('the public config says lab booking is set up, so the app offers Home collection', async () => {
+    const env = labEnv(database, filesDir);
+    const cfg = await (await env.app.request('/api/config')).json() as { labBooking?: boolean };
+    assert.equal(cfg.labBooking, true);
+  });
+
   test('signed-in accounts in India see the catalogue in paise, cached a day; other regions see none', async () => {
     let calls = 0;
     const env = labEnv(database, filesDir, { wrap: real => withOverrides(real, { catalog: async (pin: string) => { calls++; return real.catalog(pin); } }) });

@@ -46,13 +46,17 @@ export const useLabs = create<LabsState>(set => ({
 let configPromise: Promise<PublicConfig> | null = null;
 let configValue: PublicConfig | null = null;
 
-function loadConfig(): Promise<PublicConfig> {
+/** The server's public settings, loaded once (also used to tell whether lab booking is set up). */
+export function loadConfig(): Promise<PublicConfig> {
   configPromise ??= backend.publicConfig().then(
     c => (configValue = c),
     () => { configPromise = null; return { map: null, nearbySearch: true }; },
   );
   return configPromise;
 }
+
+/** The settings if they have loaded, without waiting. */
+export const publicConfigNow = (): PublicConfig | null => configValue;
 
 /** Map settings from the server, or null while loading. */
 export function usePublicConfig(): PublicConfig | null {
