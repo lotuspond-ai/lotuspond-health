@@ -2,9 +2,17 @@
 import type { Account, BloodType, Measurement, Profile, Relationship, ScanItem, Sex, StoredDocument } from '../../shared/types.ts';
 import type { DocumentRow, MeasurementRow, ProfileRow, ScanRow, UserRow } from './db/schema.ts';
 
-export const toAccount = (u: UserRow): Account => ({
+/**
+ * Whether this account's Health password may be used: it has one, and the person has not signed in with LotusPond
+ * Accounts while Accounts sign-in is on. Such an account keeps its hash, so a rollback (ACCOUNTS_ISSUER unset) brings
+ * the password back; while Accounts is on, the old password, possibly changed or leaked since, opens nothing. Being
+ * linked by the import alone (accounts:link) does not count: that person has not moved yet (docs/identity.md).
+ */
+export const passwordUsable = (u: UserRow, accountsOn: boolean): boolean => !!u.passwordHash && !(accountsOn && u.accountsSignedInAt);
+
+export const toAccount = (u: UserRow, accountsOn = false): Account => ({
   id: u.id, email: u.email, createdAt: u.createdAt.toISOString(), country: u.country, region: u.region, unitSystem: u.unitSystem,
-  hasPassword: !!u.passwordHash,
+  hasPassword: passwordUsable(u, accountsOn),
 });
 
 export const toProfile = (p: ProfileRow): Profile => ({

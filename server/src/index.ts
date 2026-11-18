@@ -32,7 +32,7 @@ import { gmailFetcher, outlookFetcher } from './records/api/mail.ts';
 import { digilockerFetcher } from './records/api/digilocker.ts';
 import { createOrganisation, createOrganisationKey, ORGANISATION_OPERATIONS, revokeOrganisationKey } from './connectors/organisations.ts';
 import type { OperationId } from './connectors/types.ts';
-import { exportAccounts, linkAccounts, readJsonLines } from './auth/accounts-migration.ts';
+import { exportAccounts, linkAccounts, readJsonLines, readiness, formatReadiness } from './auth/accounts-migration.ts';
 import { organisationRuntime } from './connectors/runtime.ts';
 import { organisationAccounts, organisationConnections, organisationMembers, organisations, type OrganisationRole } from './db/schema.ts';
 import { HIS_ADAPTERS } from './connectors/his/index.ts';
@@ -167,6 +167,16 @@ if (['org:create', 'org:key', 'org:revoke', 'org:requests', 'org:live', 'org:con
 //   accounts:export <file>   every account in this server's cells, for Accounts to import (JSON Lines; holds
 //                            emails and password hashes: readable by its owner only; delete it once imported)
 //   accounts:link <file>     Accounts' answer, { "health_user_id", "sub" } per line: link each account
+//   accounts:readiness [days] before turning passwords off: who is active and how they sign in (counts only)
+if (command === 'accounts:readiness') {
+  const days = process.argv[3] ? Number(process.argv[3]) : 14;
+  if (!Number.isInteger(days) || days < 1 || days > 90) fail('Usage: accounts:readiness [days, 1 to 90]');
+  try {
+    console.log(formatReadiness(await readiness(allCells, days)));
+  } catch (e) { await opened.close(); fail(e); }
+  await opened.close();
+  process.exit(0);
+}
 if (command === 'accounts:export' || command === 'accounts:link') {
   const file = process.argv[3];
   if (!file) fail(`Usage: ${command} <file>`);

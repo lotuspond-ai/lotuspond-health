@@ -15,7 +15,8 @@
     "partners:import:prod": "node dist/facilities/import-cli.js",
     "files:rekey": "tsx src/index.ts files:rekey",
     "accounts:export": "tsx src/index.ts accounts:export",
-    "accounts:link": "tsx src/index.ts accounts:link"
+    "accounts:link": "tsx src/index.ts accounts:link",
+    "accounts:readiness": "tsx src/index.ts accounts:readiness"
   },
   "devDependencies": {
     "@types/pg": "^8.23.1",

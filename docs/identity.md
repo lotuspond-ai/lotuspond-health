@@ -57,12 +57,14 @@ To try it: `ACCOUNTS_ISSUER=fake npm run dev`, open `/signup` and choose **Conti
 
 - **Flow** (`server/src/routes/accounts.ts`, `server/src/auth/oidc.ts`). Authorization code with PKCE (S256), state and nonce, kept for 10 minutes in a signed, HttpOnly cookie. The ID token is checked against the issuer's published keys (RS256 or ES256), with its issuer, audience, expiry and nonce. Then Health starts its own session, as for a password sign-in.
 - **First sign-in.** Health still asks its own questions: name, country, age, Terms and Privacy, and the health-data consent. The email comes from Accounts and there is no Health password (`users.password_hash` is null; `users.accounts_subject` holds the Accounts `sub`). The Accounts identity waits for 30 minutes in a signed cookie while the person answers.
-- **Existing Health accounts** with the same email are linked on their first Accounts sign-in, only when Accounts says the email is verified. They keep their password until the reviewed migration removes it.
+- **Existing Health accounts** with the same email are linked on their first Accounts sign-in, only when Accounts says the email is verified. **Once they have signed in with Accounts (`users.accounts_signed_in_at`), their Health password opens nothing while `ACCOUNTS_ISSUER` is set** (settled by the owner, 2026-11-18). Being linked by `accounts:link` alone does not count, so people on apps without the Accounts sign-in keep their password until they move: it may have been changed or leaked since they moved, and Health cannot reset passwords. The hash is kept, so a rollback (`ACCOUNTS_ISSUER` unset) brings the password back, until the reviewed migration removes it. The Account page offers no Health password for them.
 - **Regional hosts on the website** (`REGION_API_ORIGINS`, where each regional host is its own site and API). If the account is held in a region another host serves, the callback sends the browser to `/api/auth/accounts/start?hop=1` on that host, which signs it in on its own site with its own session. No code or token crosses between hosts: Accounts remembers the person, so the second pass does not ask again. Each regional host's `/api/auth/accounts/callback` must be registered as a redirect URI at Accounts. A sign-in is handed on once at most, then refused with `wrong_region`. The stand-in issuer remembers a sign-in only on the host it ran on, so the second host asks for the email again.
 - **Signing out** (OpenID Connect RP-Initiated Logout 1.0). Sessions record whether they came from Accounts (`sessions.via_accounts`). Signing out of such a session on the website ends Health's session, then sends the browser to Accounts' `end_session_endpoint`, which returns it to Health's `/login` page.
   - That page must be registered at Accounts as a post-logout redirect URI.
   - The trip to Accounts needs a 2-minute ticket that only Health's own sign-out sets, so a link from another site cannot sign anyone out of Accounts.
-  - No ID token is kept, so Accounts may ask the person to confirm.
+  - **The ID token goes as `id_token_hint`.** Accounts' Hydra refuses `post_logout_redirect_uri` without it, so each session from Accounts keeps the ID token it started from (`sessions.accounts_id_token`, migration 0019). Hydra accepts an expired token as the hint, so it works for the whole session. Accounts still asks the person to confirm before signing out.
+  - **The ticket is encrypted** (AES-256-GCM), since it carries that token, and the apps' ticket travels in an address.
+  - **A session from before ID tokens were kept** signs out at Accounts with `client_id` only and stays on Accounts' signed-out page: without a hint, Accounts would refuse the return address.
   - Password sessions sign out of Health only.
   - **In the apps**, the Accounts sign-in lives in the system browser, so after Health's own sign-out the app opens `/api/auth/accounts/sign-out?ticket=…` there.
     - The 2-minute ticket goes in the address because that browser has no cookie from the app. Someone who got it could at most sign the browser that opens it out of Accounts.
@@ -116,10 +118,12 @@ Apple fetches the file through its CDN, which can take a day to pick up a change
 
 ### Claims
 
-Health reads `sub`, `email` and `email_verified`, plus two LotusPond claims whose names are this side's proposal until Accounts publishes its own:
+Health reads `sub`, `email` and `email_verified`, plus two LotusPond claims, named as LotusPond Accounts publishes them (the owner settled `org` on 2026-11-17, as ADR-0001 decision 7 has it):
 
 - `region`: `in`, `eu`, `us` or `global`, the cell that holds the account;
-- `enterprise_connection`: present (any non-empty string) when the account was created through a company's single sign-on.
+- `org`: present (any non-empty string) on a company-managed account, naming its organisation. Health refuses such accounts.
+
+**Asking for sign-up:** Health sends `screen_hint=signup`, and Accounts opens its sign-up page. Not `prompt=create`: Accounts' Hydra refuses that value and aborts the sign-in. The stand-in issuer refuses it too, as it refuses a return address after sign-out without `id_token_hint`, so Health's tests catch both.
 
 ### Moving the directory into Accounts
 
@@ -134,12 +138,18 @@ Health's side is built; running it is a decision, and the privacy texts need rev
    - conflicts (linked to another subject, or a subject already used);
    - ids another host holds;
    - unreadable lines.
-4. **`PASSWORD_SIGN_IN=off`** (needs `ACCOUNTS_ISSUER`). LotusPond Accounts becomes the only way in:
+4. **Before turning passwords off,** run `accounts:readiness [days]` (production: `node dist/index.js accounts:readiness 14`). It reads only Health's own database and prints counts only:
+   - active accounts, and how they signed in (Health password or Accounts);
+   - how many active people have never signed in with Accounts;
+   - all accounts: moved, linked by the import but not moved, not linked.
+
+   Health does not record app versions, so it cannot say how many installs still run an app without the Accounts sign-in.
+5. **`PASSWORD_SIGN_IN=off`** (needs `ACCOUNTS_ISSUER`). LotusPond Accounts becomes the only way in:
    - **Password routes:** `/register`, `/login` and the password change answer `use_accounts`.
    - **Sign-in page:** shows only Continue with LotusPond Account.
    - **Deleting an account:** asks for a recent Accounts sign-in instead of a password.
    - **The email directory is no longer read or written.** An account is found by its Accounts subject. The host comes from the `region` claim. One never linked is found by email in the host's own cells, and a new one is created without a directory entry.
-5. **Later**, after a reviewed migration: drop the `directory` table and `users.password_hash`. The WhatsApp directory, keyed by phone number, stays.
+6. **Later**, after a reviewed migration: drop the `directory` table and `users.password_hash`. The WhatsApp directory, keyed by phone number, stays.
 
 ### Database
 

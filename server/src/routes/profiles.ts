@@ -151,7 +151,7 @@ export function profileRoutes(deps: Deps) {
     const records = await loadRecords(db, p.id);
     await recordEvent(db, eventContext(c, deps), c.var.user.id, 'export', { profileId: p.id });
     const account = p.relationship === 'self'
-      ? { ...toAccount(c.var.user), consents: await listConsents(db, c.var.user.id), activity: await recentActivity(db, c.var.user.id, 500) }
+      ? { ...toAccount(c.var.user, !!config.accounts), consents: await listConsents(db, c.var.user.id), activity: await recentActivity(db, c.var.user.id, 500) }
       : undefined;
     const payload = { version: 1, app: 'LotusPond Health', exportedAt: new Date().toISOString(), profile: toProfile(p), ...records, account };
     const name = `lotuspond-${p.displayName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'profile'}-${new Date().toISOString().slice(0, 10)}.json`;

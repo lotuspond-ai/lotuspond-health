@@ -18,8 +18,8 @@ export interface IssuerMetadata {
 }
 
 /**
- * What Health reads from an Accounts ID token. `region` and `enterprise_connection` are LotusPond claims; their names
- * are this side's proposal until LotusPond Accounts publishes its own (docs/identity.md, "Claims").
+ * What Health reads from an Accounts ID token. `region` and `org` are LotusPond claims, as LotusPond Accounts
+ * publishes them (lotuspond-ai/lotuspond ADR-0001; docs/identity.md, "Claims").
  */
 export interface AccountsIdentity {
   subject: string;
@@ -27,10 +27,15 @@ export interface AccountsIdentity {
   emailVerified: boolean;
   /** The data region that holds the account, when Accounts says. */
   region: DataRegion | null;
-  /** Set when the account was created through a company's single sign-on. Health refuses such accounts. */
-  enterpriseConnection: string | null;
+  /** The organisation that manages the account (`org`), set only for a company-managed account. Health refuses those. */
+  org: string | null;
   /** The Accounts session (`sid`), when Accounts sends one: a back-channel logout can name it. */
   sessionId?: string;
+  /**
+   * The ID token itself, kept with the session it starts: signing out of Accounts with a return to Health needs it
+   * as `id_token_hint` (Hydra refuses `post_logout_redirect_uri` without one, and accepts an expired one).
+   */
+  idToken?: string;
 }
 
 export class OidcError extends Error {
@@ -85,8 +90,9 @@ export class AccountsClient {
       code_challenge: pkceChallenge(p.verifier),
       code_challenge_method: 'S256',
     });
-    // OpenID Connect's prompt=create asks the issuer to open on its sign-up page.
-    if (p.signUp) q.set('prompt', 'create');
+    // Ask Accounts to open on its sign-up page. Not prompt=create: Accounts' Hydra refuses that value and aborts the
+    // sign-in. screen_hint=signup passes through to Accounts, which opens sign-up for it.
+    if (p.signUp) q.set('screen_hint', 'signup');
     // prompt=none: only if the person is already signed in at Accounts; it answers login_required otherwise.
     else if (p.silent) q.set('prompt', 'none');
     return `${m.authorization_endpoint}?${q}`;
@@ -94,13 +100,18 @@ export class AccountsClient {
 
   /**
    * Where to sign out of Accounts (RP-Initiated Logout), coming back to `postLogoutRedirectUri`, which must be
-   * registered at Accounts. Null when Accounts publishes no end-session endpoint. Without an ID token hint, Accounts
-   * may ask the person to confirm.
+   * registered at Accounts. Null when Accounts publishes no end-session endpoint.
+   *
+   * Accounts returns to Health only with the session's ID token as `id_token_hint`: its Hydra refuses
+   * `post_logout_redirect_uri` without one (and accepts an expired one). A session with no ID token kept (started
+   * before Health kept them) signs out at Accounts and stays on Accounts' signed-out page.
    */
-  async endSessionUrl(postLogoutRedirectUri: string): Promise<string | null> {
+  async endSessionUrl(postLogoutRedirectUri: string, idTokenHint?: string | null): Promise<string | null> {
     const m = await this.metadata();
     if (!m.end_session_endpoint) return null;
-    const q = new URLSearchParams({ client_id: this.config.clientId, post_logout_redirect_uri: postLogoutRedirectUri });
+    const q = idTokenHint
+      ? new URLSearchParams({ id_token_hint: idTokenHint, post_logout_redirect_uri: postLogoutRedirectUri })
+      : new URLSearchParams({ client_id: this.config.clientId });
     return `${m.end_session_endpoint}?${q}`;
   }
 
@@ -119,7 +130,7 @@ export class AccountsClient {
     if (!res.ok || typeof tokens?.id_token !== 'string') {
       throw new OidcError('sign_in_failed', `LotusPond Accounts refused the sign-in${typeof tokens?.error === 'string' ? ` (${tokens.error})` : ''}.`);
     }
-    return this.verifyIdToken(tokens.id_token, p.nonce);
+    return { ...(await this.verifyIdToken(tokens.id_token, p.nonce)), idToken: tokens.id_token };
   }
 
   /** Check a JWT from Accounts: its signature against the published keys, its issuer and its audience. */
@@ -158,13 +169,13 @@ export class AccountsClient {
     if (typeof claims.email !== 'string' || !claims.email.includes('@')) throw new OidcError('invalid_token', 'LotusPond Accounts did not share an email address.');
 
     const region = typeof claims.region === 'string' && (DATA_REGIONS as readonly string[]).includes(claims.region) ? claims.region as DataRegion : null;
-    const enterprise = claims.enterprise_connection;
+    const org = claims.org;
     return {
       subject: claims.sub,
       email: claims.email.trim().toLowerCase(),
       emailVerified: claims.email_verified === true,
       region,
-      enterpriseConnection: typeof enterprise === 'string' && enterprise ? enterprise : null,
+      org: typeof org === 'string' && org ? org : null,
       ...(typeof claims.sid === 'string' && claims.sid ? { sessionId: claims.sid } : {}),
     };
   }

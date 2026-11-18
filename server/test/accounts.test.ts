@@ -17,7 +17,7 @@ import { openDatabase, type Database } from '../src/db/client.ts';
 import { auditEvents, sessions, users } from '../src/db/schema.ts';
 import { DiskFileStore } from '../src/lib/files.ts';
 import { AccountsClient, OidcError, pkceChallenge } from '../src/auth/oidc.ts';
-import { fakeAccounts } from '../src/auth/fake-accounts.ts';
+import { fakeAccounts, fakeSubject } from '../src/auth/fake-accounts.ts';
 import type { AppEnv } from '../src/http.ts';
 import type { SessionInfo } from '../../shared/types.ts';
 import { registration } from './helpers.ts';
@@ -72,7 +72,9 @@ async function throughAccounts(b: ReturnType<typeof browser>, who: Choices, quer
   const authorize = new URL(start.headers.get('location')!, 'http://health.test');
   assert.equal(authorize.pathname, '/api/dev-accounts/authorize');
   assert.equal(authorize.searchParams.get('code_challenge_method'), 'S256');
-  assert.equal(authorize.searchParams.get('prompt'), intent === 'signup' ? 'create' : null);
+  // Sign-up is asked with screen_hint=signup: Accounts' Hydra refuses prompt=create.
+  assert.equal(authorize.searchParams.get('screen_hint'), intent === 'signup' ? 'signup' : null);
+  assert.equal(authorize.searchParams.get('prompt'), null);
   const form = new URLSearchParams();
   for (const k of ['client_id', 'redirect_uri', 'state', 'nonce', 'code_challenge']) form.set(k, authorize.searchParams.get(k)!);
   form.set('email', who.email);
@@ -121,6 +123,8 @@ describe('LotusPond Accounts sign-in', () => {
     assert.deepEqual(pending, { email: address, region: 'in' });
     const done = await b.json('POST', '/api/auth/accounts/complete', finish());
     assert.equal(done.status, 201, await done.clone().text());
+    const [made] = await database.db.select().from(users).where(eq(users.email, address));
+    assert.ok(made.accountsSignedInAt, 'made by signing in with Accounts: moved from the start');
     const info = await done.json() as SessionInfo;
     assert.equal(info.account.email, address);
     assert.equal(info.account.region, 'in');
@@ -142,7 +146,7 @@ describe('LotusPond Accounts sign-in', () => {
     assert.equal(((await (await again.go('GET', '/api/auth/me')).json()) as SessionInfo).account.email, address);
   });
 
-  test('an existing password account is linked when Accounts has verified the email, and keeps its password', async () => {
+  test('an existing password account is linked when Accounts has verified the email, and keeps its hash for a rollback', async () => {
     const address = email('existing');
     const reg = await browser().json('POST', '/api/auth/register', registration(address));
     assert.equal(reg.status, 201, await reg.clone().text());
@@ -158,8 +162,43 @@ describe('LotusPond Accounts sign-in', () => {
     assert.match(row.accountsSubject ?? '', /^dev\|/);
     const events = await database.db.select().from(auditEvents).where(eq(auditEvents.userId, row.id));
     assert.ok(events.some(e => e.kind === 'accounts_linked'));
+    assert.ok(row.passwordHash, 'the hash is kept, so a rollback brings the password back');
+
+    // While Accounts sign-in is on, the old Health password opens nothing (settled by the owner, 2026-11-18): it may
+    // have been changed or leaked since the person moved.
     const pw = await browser().json('POST', '/api/auth/login', { email: address, password: 'correct horse battery' });
-    assert.equal(pw.status, 200, 'the old password still works while both ways are open');
+    assert.equal(pw.status, 409);
+    assert.equal(((await pw.json()) as { error: { code: string } }).error.code, 'use_accounts');
+    const wrong = await browser().json('POST', '/api/auth/login', { email: address, password: 'not the password at all' });
+    assert.equal(wrong.status, 409, 'the same answer whatever the password, so it reveals nothing');
+    const me = (await (await b.go('GET', '/api/auth/me')).json()) as SessionInfo;
+    assert.equal(me.account.hasPassword, false, 'the Account page offers no Health password');
+    const change = await b.json('POST', '/api/auth/password', { currentPassword: 'correct horse battery', newPassword: 'another long password' });
+    assert.equal(change.status, 409);
+
+    // Rolled back (ACCOUNTS_ISSUER unset), on the same database: the old password works again.
+    const rolledBack = createApp({ db: database.db, files: new DiskFileStore(filesDir), config: loadConfig({ NODE_ENV: 'test', RECORD_AGENT: 'off' }) });
+    const back = await rolledBack.request('http://health.test/api/auth/login', {
+      method: 'POST', headers: { 'content-type': 'application/json', 'sec-fetch-site': 'same-origin', host: 'health.test' },
+      body: JSON.stringify({ email: address, password: 'correct horse battery' }),
+    });
+    assert.equal(back.status, 200, 'after a rollback, the kept hash signs in again');
+  });
+
+  test('linked by the import alone, the Health password keeps working; the first Accounts sign-in ends that', async () => {
+    const address = email('imported');
+    assert.equal((await browser().json('POST', '/api/auth/register', registration(address))).status, 201);
+    // What accounts:link does after Accounts' import: the subject, and nothing else.
+    await database.db.update(users).set({ accountsSubject: fakeSubject(address) }).where(eq(users.email, address));
+    const before = await browser().json('POST', '/api/auth/login', { email: address, password: 'correct horse battery' });
+    assert.equal(before.status, 200, 'not moved yet: an older app with no Accounts sign-in can still get in');
+
+    const b = browser();
+    assert.equal((await signInWithAccounts(b, { email: address })).pathname, '/app');
+    const [row] = await database.db.select().from(users).where(eq(users.email, address));
+    assert.ok(row.accountsSignedInAt, 'the first Accounts sign-in is recorded');
+    const after = await browser().json('POST', '/api/auth/login', { email: address, password: 'correct horse battery' });
+    assert.equal(after.status, 409, 'moved now: the Health password opens nothing while Accounts sign-in is on');
   });
 
   test('an account made through a company single sign-on is refused', async () => {
@@ -193,6 +232,30 @@ describe('LotusPond Accounts sign-in', () => {
     assert.equal(expired.status, 409);
   });
 
+  test('a session kept from before ID tokens were stored signs out at Accounts without asking to come back', async () => {
+    const b = browser();
+    const address = email('old-session');
+    await signInWithAccounts(b, { email: address }, 'signup');
+    assert.equal((await b.json('POST', '/api/auth/accounts/complete', finish())).status, 201);
+    const [user] = await database.db.select({ id: users.id }).from(users).where(eq(users.email, address));
+    await database.db.update(sessions).set({ accountsIdToken: null }).where(eq(sessions.userId, user.id));
+    await b.go('POST', '/api/auth/logout');
+    const end = new URL((await b.go('GET', '/api/auth/accounts/sign-out')).headers.get('location')!, 'http://health.test');
+    assert.equal(end.searchParams.get('client_id'), 'lotuspond-health');
+    assert.equal(end.searchParams.get('post_logout_redirect_uri'), null, 'no return address without a hint: Accounts would refuse it');
+    assert.equal((await b.go('GET', `${end.pathname}${end.search}`)).status, 200);
+  });
+
+  test('the stand-in refuses what Accounts refuses: prompt=create, and a return after sign-out without a hint', async () => {
+    const q = new URLSearchParams({ client_id: 'lotuspond-health', response_type: 'code', redirect_uri: 'http://health.test/cb', state: 's'.repeat(12), nonce: 'n'.repeat(12), code_challenge: 'c'.repeat(43), code_challenge_method: 'S256', prompt: 'create' });
+    const create = await browser().go('GET', `/api/dev-accounts/authorize?${q}`);
+    assert.equal(create.status, 400);
+    assert.match(await create.text(), /unknown value (&#39;|')create(&#39;|') for prompt/);
+    const back = await browser().go('GET', `/api/dev-accounts/logout?${new URLSearchParams({ client_id: 'lotuspond-health', post_logout_redirect_uri: 'http://health.test/login' })}`);
+    assert.equal(back.status, 400);
+    assert.match(await back.text(), /id_token_hint is missing/);
+  });
+
   test('signing out of a session from Accounts goes on to sign out there, once, and only from Health\'s own sign-out', async () => {
     const b = browser();
     const address = email('signout');
@@ -207,7 +270,10 @@ describe('LotusPond Accounts sign-in', () => {
     assert.equal(toAccounts.status, 302);
     const end = new URL(toAccounts.headers.get('location')!, 'http://health.test');
     assert.equal(end.pathname, '/api/dev-accounts/logout');
-    assert.equal(end.searchParams.get('client_id'), 'lotuspond-health');
+    // The session's own ID token goes as the hint: without it, Accounts refuses to send the browser back.
+    const hint = end.searchParams.get('id_token_hint') ?? '';
+    assert.match(hint, /^[\w-]+\.[\w-]+\.[\w-]+$/);
+    assert.equal(JSON.parse(Buffer.from(hint.split('.')[1], 'base64url').toString()).email, address);
     assert.equal(end.searchParams.get('post_logout_redirect_uri'), 'http://health.test/login');
     assert.equal((await b.go('GET', `${end.pathname}${end.search}`)).status, 200, 'the stand-in shows its sign-out page');
     const again = await b.go('GET', '/api/auth/accounts/sign-out');
@@ -282,6 +348,9 @@ describe('LotusPond Accounts sign-in from the apps', () => {
     const end = new URL(toAccounts.headers.get('location')!, 'http://health.test');
     assert.equal(end.pathname, '/api/dev-accounts/logout');
     assert.equal(end.searchParams.get('post_logout_redirect_uri'), 'http://health.test/api/auth/accounts/signed-out');
+    assert.ok(end.searchParams.get('id_token_hint'), 'the app\'s sign-out carries the ID token as the hint too');
+    assert.doesNotMatch(accountsSignOut, /eyJ/, 'the ticket in the address is encrypted: no readable token in it');
+    assert.equal((await sys.go('GET', `${end.pathname}${end.search}`)).status, 200, 'the stand-in accepts it');
     const page = await (await sys.go('GET', '/api/auth/accounts/signed-out')).text();
     assert.match(page, /url=ai\.lotuspond\.health:\/accounts\?signed_out=1"/);
     assert.match(page, /Signed out of your LotusPond account/);

@@ -17,6 +17,12 @@ export const users = pgTable('users', {
   passwordHash: text('password_hash'),
   /** The account's subject (`sub`) at LotusPond Accounts, once it has signed in there. */
   accountsSubject: text('accounts_subject'),
+  /**
+   * When this account first signed in with LotusPond Accounts. From then on, while ACCOUNTS_ISSUER is set, its Health
+   * password opens nothing (serialize.ts, passwordUsable). Being linked by accounts:link alone does not set it: until
+   * the person actually signs in with Accounts, their Health password keeps working, for apps that cannot yet.
+   */
+  accountsSignedInAt: timestamp('accounts_signed_in_at', { withTimezone: true }),
   /** ISO 3166-1 alpha-2 country of residence from sign-up. Null for accounts created before it was asked. */
   country: text('country'),
   /** Data-residency cell that holds this account (shared/regions.ts). */
@@ -40,6 +46,11 @@ export const sessions = pgTable('sessions', {
   viaAccounts: boolean('via_accounts').notNull().default(false),
   /** The Accounts session (`sid`) it came from, when Accounts sent one: a back-channel logout can name it. */
   accountsSid: text('accounts_sid'),
+  /**
+   * The Accounts ID token this session started from. Signing out of Accounts with a return to Health sends it as
+   * `id_token_hint` (routes/accounts.ts). It holds the account's subject and email, as the users row does.
+   */
+  accountsIdToken: text('accounts_id_token'),
 }, t => [index('sessions_user_idx').on(t.userId), index('sessions_accounts_sid_idx').on(t.accountsSid)]);
 
 export const profiles = pgTable('profiles', {

@@ -19,18 +19,20 @@ const TOKEN = /^(?:(in|eu|us|global)\.)?([\w-]{20,100})$/;
 
 const digest = (token: string) => createHash('sha256').update(token).digest('hex');
 
-export interface ActiveSession { id: string; user: UserRow; cell: Cell; viaAccounts: boolean }
+export interface ActiveSession { id: string; user: UserRow; cell: Cell; viaAccounts: boolean; accountsIdToken: string | null }
 
 export async function createSession(
   db: Db, region: DataRegion, userId: string, ttlMs: number, userAgent: string | undefined,
-  /** Started by a sign-in with LotusPond Accounts, with the Accounts session (`sid`) when it sent one. */
-  accounts?: { sid?: string },
+  /** Started by a sign-in with LotusPond Accounts: its session (`sid`) and ID token, when it sent them. */
+  accounts?: { sid?: string; idToken?: string },
 ): Promise<{ token: string; expiresAt: Date }> {
   const token = `${region}.${randomBytes(32).toString('base64url')}`;
   const expiresAt = new Date(Date.now() + ttlMs);
   await db.insert(sessions).values({
     id: digest(token), userId, expiresAt, userAgent: userAgent?.slice(0, 300) ?? null,
     viaAccounts: !!accounts, accountsSid: accounts?.sid?.slice(0, 200) ?? null,
+    // An ID token is a few kilobytes at most; anything far larger is not one and is not kept.
+    accountsIdToken: accounts?.idToken && accounts.idToken.length <= 16_384 ? accounts.idToken : null,
   });
   return { token, expiresAt };
 }
@@ -62,7 +64,7 @@ export async function findSession(cells: CellRegistry, token: string, ttlMs: num
   if (now - row.session.lastSeenAt.getTime() > REFRESH_AFTER_MS) {
     await db.update(sessions).set({ lastSeenAt: new Date(now), expiresAt: new Date(now + ttlMs) }).where(eq(sessions.id, id));
   }
-  return { id, user: row.user, cell: found.cell, viaAccounts: row.session.viaAccounts };
+  return { id, user: row.user, cell: found.cell, viaAccounts: row.session.viaAccounts, accountsIdToken: row.session.accountsIdToken };
 }
 
 export async function deleteSession(db: Db, id: string): Promise<void> {

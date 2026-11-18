@@ -1,0 +1,1 @@
+ALTER TABLE "sessions" ADD COLUMN "accounts_id_token" text;
